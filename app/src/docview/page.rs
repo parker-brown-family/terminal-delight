@@ -2177,7 +2177,7 @@ impl PageDoc {
         // record where they land this frame.
         if let Some(layer) = &self.notes {
             layer.clear_zones();
-            layers.extend(layer.draw_marks(&self.page_marks(), th));
+            layers.extend(layer.draw_marks(&self.page_marks(), th, sk));
         }
         let t = &crate::lang::current().strings().parts;
         match &self.status {
@@ -2213,7 +2213,7 @@ impl PageDoc {
                 _ => layers.push(note(t.doc_opening.into())),
             }
             if let Some(layer) = &self.notes {
-                layers.extend(layer.draw_marks(&self.dialog_marks(), th));
+                layers.extend(layer.draw_marks(&self.dialog_marks(), th, sk));
             }
         }
         // TD's own chrome over the page: the bar, then the note box above

@@ -59,6 +59,7 @@ use serde::Deserialize;
 use crate::theme::{self, Theme};
 mod catalogue;
 pub(crate) mod parts;
+mod words;
 
 /// Today's chrome, stated as tokens. Must stay pixel-faithful to what main.rs
 /// draws — `default_skin_reproduces_todays_chrome` is the gate.
@@ -71,6 +72,7 @@ const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("deco", include_str!("../skins/deco.toml")),
     ("ops", include_str!("../skins/ops.toml")),
     ("clean", include_str!("../skins/clean.toml")),
+    ("terminimalist", include_str!("../skins/terminimalist.toml")),
 ];
 
 // ---------------------------------------------------------------------------
@@ -682,6 +684,16 @@ pub struct Shapes {
     pub gauge: Gauge,
     pub title: Title,
     pub focus: Focus,
+    pub controls: Controls,
+}
+
+/// Native controls can name their action instead of drawing an icon. Content
+/// renderers never consult this policy.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub enum Controls {
+    #[default]
+    Icons,
+    Text,
 }
 
 #[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
@@ -697,6 +709,7 @@ pub struct ShapeSpecs {
     pub gauge: Option<Gauge>,
     pub title: Option<Title>,
     pub focus: Option<Focus>,
+    pub controls: Option<Controls>,
 }
 
 impl ShapeSpecs {
@@ -719,6 +732,7 @@ impl ShapeSpecs {
             gauge: self.gauge.unwrap_or_default(),
             title: self.title.unwrap_or_default(),
             focus: self.focus.unwrap_or_default(),
+            controls: self.controls.unwrap_or_default(),
         }
     }
 }
@@ -818,6 +832,13 @@ pub struct Skin {
 }
 
 impl SkinSpec {
+    /// Open text furniture asks for the existing Clean UI set. A person's
+    /// explicit set or individual switches still take precedence.
+    pub fn ui_default(&self) -> Option<&'static str> {
+        (self.shape.controls == Some(Controls::Text) && self.shape.boundary == Some(Boundary::None))
+            .then_some(crate::uiconfig::CLEAN)
+    }
+
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         let mut ink = self.ink.bake(th);
         if self.shape.bake().material == Material::Paper {
@@ -876,6 +897,55 @@ impl SkinSpec {
 }
 
 impl Skin {
+    pub fn text_controls(&self) -> bool {
+        self.shape.controls == Controls::Text
+    }
+
+    /// Open native furniture is an explicit combination; icon skins retain
+    /// their existing borders even when their panel boundary is None.
+    pub fn unboxed(&self) -> bool {
+        self.text_controls() && self.shape.boundary == Boundary::None
+    }
+
+    pub fn box_border(&self, legacy: f32) -> Pixels {
+        px(if self.unboxed() { 0. } else { legacy })
+    }
+
+    /// Only native labels pass here. Never use this on terminal cells, user
+    /// titles, authored documents, code or workbench prose.
+    pub fn control_text(&self, label: &str) -> String {
+        if self.text_controls() {
+            words::label(label)
+        } else {
+            label.to_string()
+        }
+    }
+
+    pub fn control<'a>(&self, icon: &'a str, word: &'a str) -> &'a str {
+        if self.text_controls() {
+            word
+        } else {
+            icon
+        }
+    }
+
+    /// Project the skin's native ink into legacy chrome. This value is local
+    /// to a native renderer; never store it as a Design or pass it to a grid.
+    pub fn chrome_theme(&self, th: &Theme) -> Theme {
+        let mut chrome = th.clone();
+        if self.text_controls() {
+            chrome.bg = self.ink.panel;
+            chrome.surface = self.ink.panel_raised;
+            chrome.text = self.ink.ink;
+            chrome.faint = self.ink.ink_faint;
+            chrome.accent = self.ink.mark;
+            chrome.complement = self.ink.ink;
+            chrome.glow = 0.;
+            chrome.grade.phosphor = 0.;
+        }
+        chrome
+    }
+
     pub fn glass(&self) -> bool {
         self.shape.tube == Tube::Glass
     }
@@ -891,8 +961,16 @@ impl Skin {
     pub fn note_palette(&self, th: &Theme) -> crate::sticky::Paper {
         let mut paper = crate::sticky::paper_for(th);
         if self.note_stock && th.note_paper == crate::theme::NotePaper::Contrast {
-            paper.base = crate::mix(self.ink.btn_face, th.accent, 0.07);
-            paper.ink = th.text;
+            paper.base = if self.text_controls() {
+                self.ink.btn_face
+            } else {
+                crate::mix(self.ink.btn_face, th.accent, 0.07)
+            };
+            paper.ink = if self.text_controls() {
+                self.ink.ink
+            } else {
+                th.text
+            };
             paper.pin = th.ansi[1];
         }
         paper
@@ -951,7 +1029,7 @@ impl Skin {
     }
 
     pub fn region_face(&self, legacy: Hsla) -> Hsla {
-        if self.is_paper() {
+        if self.text_controls() || self.is_paper() {
             self.ink.panel
         } else {
             legacy
@@ -969,7 +1047,13 @@ impl Skin {
     }
 
     pub fn frame<E: Styled>(&self, d: E) -> E {
-        if self.is_paper() {
+        if self.unboxed() {
+            self.open_control(d).rounded(self.radius())
+        } else if self.text_controls() {
+            d.rounded(self.radius())
+                .border(px(self.m.border))
+                .shadow(Vec::new())
+        } else if self.is_paper() {
             d.rounded(px(0.))
                 .border_color(gpui::transparent_black())
                 .shadow(crate::paper::shadows_with(self.stock()))
@@ -1032,19 +1116,32 @@ impl Skin {
         if self.is_paper() {
             self.paper_option(d, active)
         } else {
-            self.tab(d.relative().rounded(self.radius()), active, self.ink.select)
-                .font_family(self.font_family.clone())
-                .text_color(if active {
-                    self.lit_label()
-                } else {
-                    self.ink.ink_dim
-                })
+            self.tab(
+                self.open_control(d).relative().rounded(self.radius()),
+                active,
+                self.ink.select,
+            )
+            .font_family(self.font_family.clone())
+            .text_color(if active {
+                self.lit_label()
+            } else {
+                self.ink.ink_dim
+            })
+        }
+    }
+
+    fn open_control<E: Styled>(&self, d: E) -> E {
+        if self.unboxed() {
+            d.border(px(0.)).shadow(Vec::new())
+        } else {
+            d
         }
     }
 
     /// An action has a raised backing; a choice is writing on the parent region.
     /// Apply this before adding content: ParentElement appends visual children.
     pub fn action<E: Styled + ParentElement>(&self, d: E, active: bool) -> E {
+        let d = self.open_control(d);
         if self.is_paper() {
             self.paper_control(d, active)
         } else if let Some(glass) = self.smoked_backing(
@@ -1191,18 +1288,36 @@ impl Skin {
 
     /// Finish a region before its content is added, replacing legacy chrome.
     pub fn finish<E: Styled + ParentElement>(&self, d: E) -> E {
-        self.finish_edged(d, self.ink.edge_strong)
+        if self.unboxed() {
+            self.chrome(self.open_control(d))
+                .bg(self.ink.panel)
+                .rounded(self.radius())
+        } else {
+            self.finish_edged(d, self.ink.edge_strong)
+        }
     }
 
     /// A grouping inside an overlay. Its backing stays independent of the
     /// overlay's opaque frame, so the glass never changes the frame's material.
     pub fn finish_group<E: Styled + ParentElement>(&self, d: E) -> E {
-        self.finish_group_edged(d, self.ink.edge_strong)
+        if self.unboxed() {
+            self.chrome(self.open_control(d))
+                .bg(gpui::transparent_black())
+        } else {
+            self.finish_group_edged(d, self.ink.edge_strong)
+        }
     }
 
     /// A foreground grouping whose edge carries selection, severity or identity.
     /// Apply before adding content, as with `finish_group`.
     pub fn finish_group_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if self.unboxed() {
+            return self
+                .chrome(self.open_control(d))
+                .bg(gpui::transparent_black())
+                .border_l(px(self.m.hairline))
+                .border_color(edge);
+        }
         if let Some(glass) = self.smoked_backing(edge, false) {
             self.chrome(d)
                 .relative()
@@ -1231,6 +1346,23 @@ impl Skin {
     /// than furniture — the red rim of a destructive confirm. A cut plate draws
     /// its edge in `edge`; every other strategy behaves exactly as `finish`.
     pub fn finish_edged<E: Styled + ParentElement>(&self, d: E, edge: Hsla) -> E {
+        if self.unboxed() {
+            return self
+                .chrome(self.open_control(d))
+                .bg(self.ink.panel)
+                .rounded(self.radius())
+                .border_l(px(self.m.hairline))
+                .border_color(edge);
+        }
+        if self.text_controls() {
+            return self
+                .chrome(d)
+                .bg(self.ink.panel)
+                .rounded(self.radius())
+                .border(px(self.m.border))
+                .border_color(edge)
+                .shadow(Vec::new());
+        }
         let d = self.chrome(d);
         if let Some(glass) = self.smoked_backing(edge, true) {
             return d
@@ -1990,6 +2122,12 @@ impl Skin {
     /// No inset shadow: an inset reads as a bevel, and a bevel claims the thing
     /// is raised, which is the opposite of what a glow says.
     pub fn ring<E: Styled + ParentElement>(&self, d: E, lit: bool, tint: Hsla, rest: Rest) -> E {
+        if self.unboxed() {
+            return self
+                .open_control(d)
+                .border_b(px(self.m.hairline))
+                .border_color(if lit { tint } else { gpui::transparent_black() });
+        }
         if self.is_paper() {
             let d = b_all(d.relative(), self.m.border)
                 .bg(hsla(0., 0., 0., 0.))
@@ -2159,6 +2297,16 @@ impl Skin {
             // `max_w` + `text_ellipsis` for a clean "…".
             .whitespace_nowrap()
             .cursor_pointer();
+        if self.unboxed() {
+            return self
+                .open_control(base)
+                .bg(gpui::transparent_black())
+                .text_color(if active {
+                    self.lit_label()
+                } else {
+                    self.ink.ink_dim
+                });
+        }
         if self.is_paper() {
             return self.paper_control(base, active);
         }
@@ -2287,6 +2435,7 @@ struct FileRecipe {
 
 #[derive(Deserialize)]
 struct FileShape {
+    controls: Option<String>,
     material: Option<String>,
     tube: Option<String>,
     corner: Option<String>,
@@ -2652,6 +2801,12 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
             "shape.focus",
             u,
         );
+        spec.shape.controls = enum_of(
+            sh.controls.as_ref(),
+            &[("icons", Controls::Icons), ("text", Controls::Text)],
+            "shape.controls",
+            u,
+        );
     }
 
     Ok(spec)
@@ -2830,6 +2985,17 @@ pub fn hold(cx: &mut App) {
 pub fn skin(cx: &App, scale: f32) -> Skin {
     let th = theme::theme(cx);
     spec(cx).bake(&th, scale)
+}
+
+/// Native furniture only. A grid must keep `theme::theme` / its pane's resolved
+/// Design; projecting chrome never mutates the registry or a saved palette.
+pub fn native_theme(cx: &App, th: Arc<Theme>) -> Arc<Theme> {
+    let spec = spec(cx);
+    if spec.shape.controls == Some(Controls::Text) {
+        Arc::new(spec.bake(&th, 1.).chrome_theme(&th))
+    } else {
+        th
+    }
 }
 
 /// The skin for chrome that belongs to a PANE rather than to the window — a pane
@@ -3249,7 +3415,7 @@ impl Skin {
             "optical": { "scale": self.type_scale, "min_px": self.type_min_px, "line_height": self.line_height },
             "note": { "decoration": format!("{:?}", self.note_decoration), "stock": self.note_stock },
             "material": format!("{:?}", self.shape.material), "scale": self.scale, "text_size": self.ty.k(),
-            "shape": { "corner": format!("{:?}", self.shape.corner), "boundary": format!("{:?}", self.shape.boundary), "emphasis": format!("{:?}", self.shape.emphasis), "divider": format!("{:?}", self.shape.divider), "caps": format!("{:?}", self.shape.caps), "shine": format!("{:?}", self.shape.shine), "gauge": format!("{:?}", self.shape.gauge), "title": format!("{:?}", self.shape.title), "focus": format!("{:?}", self.shape.focus), "tube": format!("{:?}", self.shape.tube) },
+            "shape": { "controls": format!("{:?}", self.shape.controls), "corner": format!("{:?}", self.shape.corner), "boundary": format!("{:?}", self.shape.boundary), "emphasis": format!("{:?}", self.shape.emphasis), "divider": format!("{:?}", self.shape.divider), "caps": format!("{:?}", self.shape.caps), "shine": format!("{:?}", self.shape.shine), "gauge": format!("{:?}", self.shape.gauge), "title": format!("{:?}", self.shape.title), "focus": format!("{:?}", self.shape.focus), "tube": format!("{:?}", self.shape.tube) },
             "ink": inks, "metric": metrics, "type": ty
         })).expect("resolved skin JSON")
     }
@@ -3359,6 +3525,125 @@ mod tests {
             }
         }
         visit(&std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src"));
+    }
+
+    #[test]
+    fn text_controls_are_opt_in_and_the_skin_does_not_rewrite_a_design() {
+        let th = palette();
+        let ordinary = parse(DEFAULT_SKIN_TOML).unwrap().bake(&th, 1.);
+        assert!(!ordinary.text_controls());
+        assert_eq!(ordinary.control_text("🎨"), "🎨");
+        assert_eq!(ordinary.chrome_theme(&th).bg, th.bg);
+
+        let minimal = parse(builtin_toml("terminimalist").unwrap()).unwrap();
+        assert!(minimal.unknown.is_empty());
+        let sk = minimal.bake(&th, 1.);
+        assert!(sk.text_controls());
+        assert_eq!(sk.control_text("🎨"), "look");
+        assert_eq!(sk.control_text("0%"), "0%");
+        assert_eq!(sk.control_text("unavailable"), "unavailable");
+        let projected = sk.chrome_theme(&th);
+        assert_eq!(projected.bg, sk.ink.panel);
+        assert_eq!(sk.region_face(th.surface.alpha(0.05)), sk.ink.panel);
+        assert_eq!(projected.text, sk.ink.ink);
+        assert_eq!(
+            projected.ansi, th.ansi,
+            "status colours retain their meaning"
+        );
+        assert_eq!(projected.font_family, th.font_family);
+        assert_eq!(projected.font_size, th.font_size);
+        assert_eq!(projected.warp, th.warp);
+        assert_eq!(projected.crt, th.crt);
+        assert_eq!(
+            sk.to_json("reference")
+                .parse::<serde_json::Value>()
+                .unwrap()["shape"]["controls"],
+            "Text"
+        );
+    }
+
+    #[test]
+    fn open_furniture_removes_boxes_but_keeps_selection_and_warning_rules() {
+        let sk = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        assert!(sk.unboxed());
+        let mut forced = sk.clone();
+        forced.m.border = 3.;
+        let mut frame = forced.frame(div().border_2());
+        assert_eq!(
+            frame.style().border_widths,
+            div().border(px(0.)).style().border_widths
+        );
+        let border = || div().border_2();
+        let zero = div().border(px(0.)).style().border_widths.clone();
+        for mut d in [
+            sk.frame(border()),
+            sk.finish(border()),
+            sk.finish_group(border()),
+            sk.action(border(), false),
+            sk.bezel(false, 1.),
+        ] {
+            assert_eq!(d.style().border_widths, zero);
+        }
+        let mut selected = sk.choice(border(), true);
+        let mut expected = div().border(px(0.)).border_l(px(1.));
+        assert_eq!(
+            selected.style().border_widths,
+            expected.style().border_widths
+        );
+        let mut warning = sk.finish_edged(border(), sk.ink.danger);
+        assert_eq!(
+            warning.style().border_widths,
+            expected.style().border_widths
+        );
+        assert_eq!(warning.style().border_color, Some(sk.ink.danger));
+        assert_eq!(sk.box_border(2.), px(0.));
+    }
+
+    #[test]
+    fn legacy_skin_box_widths_are_unchanged_even_without_panel_boundaries() {
+        for (id, src) in BUILTIN_SKINS {
+            let mut sk = parse(src).unwrap().bake(&palette(), 1.);
+            if sk.text_controls() {
+                continue;
+            }
+            assert!(!sk.unboxed(), "{id}");
+            assert_eq!(sk.box_border(1.), px(1.), "{id}");
+            assert_eq!(sk.box_border(2.), px(2.), "{id}");
+            sk.shape.boundary = Boundary::None;
+            assert!(
+                !sk.unboxed(),
+                "{id}: icon controls do not opt into open furniture"
+            );
+            assert_eq!(sk.box_border(2.), px(2.), "{id}");
+        }
+        let mut sk = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        sk.shape.boundary = Boundary::Hairline;
+        assert!(
+            !sk.unboxed(),
+            "text controls alone do not remove a requested border"
+        );
+        assert_eq!(sk.box_border(2.), px(2.));
+    }
+
+    #[test]
+    fn pinned_note_stock_keeps_readable_ink_on_a_pale_terminal() {
+        let mut th = palette();
+        th.bg = gpui::white();
+        th.text = gpui::black();
+        let spec = parse(builtin_toml("terminimalist").unwrap()).unwrap();
+        let paper = spec.bake(&th, 1.).note_palette(&th);
+        let ratio = crate::notepaper::contrast(
+            crate::notepaper::Rgb::of(paper.base),
+            crate::notepaper::Rgb::of(paper.ink),
+        );
+        assert!(
+            ratio >= 4.5,
+            "skin stock must retain readable handwriting: {ratio}"
+        );
     }
 
     #[test]

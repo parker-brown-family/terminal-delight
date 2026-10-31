@@ -126,6 +126,7 @@ icon = "▢"
 # which element a helper builds, not what colour it is painted.
 
 [shape]
+# controls = "icons"    # icons | text; native action labels only
 corner   = "round"      # round | square | cut
 boundary = "hairline"   # hairline | double | inset | none
 # THE PHOSPHOR RING. Changed from `fill` on 2026-09-12, at the owner's request,

@@ -184,10 +184,12 @@ impl Sticky {
         self.edit.is_some()
     }
 
-    /// Degrees clockwise. Alternates sign off a seed bit so two notes on
-    /// neighbouring panes don't lean the same way, and never sits at 0 — a
-    /// sticky that happens to land square reads as a mis-drawn rectangle.
-    pub fn tilt(&self) -> f32 {
+    /// Degrees clockwise. Open text skins keep the section square; other skins
+    /// retain the seed's paper tilt across frames and restarts.
+    pub fn tilt(&self, flat: bool) -> f32 {
+        if flat {
+            return 0.;
+        }
         let magnitude = 2.4 + (self.seed >> 3 & 0xff) as f32 / 255.0 * 3.4;
         if self.seed & 1 == 0 {
             magnitude
@@ -963,6 +965,26 @@ pub fn paint(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let sk = crate::skin::skin(cx, 1.);
+    if sk.unboxed() {
+        // An open, square section: solid stock and one hairline on three sides.
+        // Paint through the same inverse warp as the writing and hit geometry.
+        let (hw, hh) = (
+            f32::from(lay.size.width) / 2.,
+            f32::from(lay.size.height) / 2.,
+        );
+        let line = sk.m.hairline;
+        fill(lay, &quad(-hw, -hh, hw, hh), pal.base, window);
+        for edge in [
+            quad(-hw, -hh, -hw + line, hh),
+            quad(-hw, hh - line, hw, hh),
+            quad(hw - line, -hh + f32::from(lay.pad), hw, hh),
+        ] {
+            fill(lay, &edge, sk.ink.edge, window);
+        }
+        paint_writing(note, lay, pal, window, cx);
+        return;
+    }
     let lift = if hover_peel { 2.1 } else { 1.0 };
     let sheet = Sheet::new(lay.size, note.seed, lift);
 
@@ -1097,7 +1119,7 @@ pub fn paint(
 
     // Under the writing, so a stamp that lands on a long note's last word
     // never makes it harder to read.
-    if stamped(note) {
+    if stamped(note) && !crate::skin::skin(cx, 1.).text_controls() {
         fill_even_odd(
             lay,
             &stamp(hw, hh, note.seed),
@@ -1346,7 +1368,12 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
             .as_ref()
             .map(|l| l.size(line_height).height)
             .unwrap_or_default();
-        let fits = body_rows + title_rows <= MAX_ROWS
+        let title_fits = !crate::skin::skin(cx, 1.).unboxed()
+            || heading
+                .as_ref()
+                .is_none_or(|line| line.unwrapped_layout.width <= wrap);
+        let fits = title_fits
+            && body_rows + title_rows <= MAX_ROWS
             && f32::from(body_height) + f32::from(title_height)
                 <= f32::from(lay.size.height - lay.pad * 1.5);
         if fits || scale < 0.75 {
@@ -1573,7 +1600,7 @@ mod tests {
                 pinned: false,
                 by: None,
             };
-            let t = note.tilt();
+            let t = note.tilt(false);
             assert!(
                 (2.3..=6.0).contains(&t.abs()),
                 "seed {seed} tilted {t}, outside the paper range"
@@ -1587,8 +1614,26 @@ mod tests {
         assert!(left && right, "every seed leaned the same way");
     }
 
-    /// The same note must lean the same way every frame and across a restart —
-    /// the seed is persisted precisely so the angle is not re-rolled.
+    /// The rendered square and its click targets must use the same angle.
+    #[test]
+    fn flat_notes_keep_square_hit_targets_for_every_seed() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(900.), px(700.)));
+        for seed in 0..64 {
+            let note = Sticky::composing("square", seed);
+            let lay = layout(bounds, note.tilt(true)).unwrap();
+            assert_eq!(lay.tilt, 0.);
+            assert_eq!(
+                lay.text_matrix(1., point(px(0.), px(0.))).rotation_scale,
+                [[1., 0.], [0., 1.]]
+            );
+            let left = lay.center.x - lay.size.width / 2.;
+            let top = lay.center.y - lay.size.height / 2.;
+            assert!(Hit::at(point(left + px(1.), top + px(1.)), &lay).is_some());
+            assert!(Hit::at(point(left - px(1.), top + px(1.)), &lay).is_none());
+        }
+    }
+
+    /// The seed keeps the paper's angle stable across frames and restarts.
     #[test]
     fn the_lean_is_stable_for_a_seed() {
         let a = Sticky {
@@ -1607,7 +1652,11 @@ mod tests {
             pinned: false,
             by: None,
         };
-        assert_eq!(a.tilt(), b.tilt(), "the tilt comes from the seed alone");
+        assert_eq!(
+            a.tilt(false),
+            b.tilt(false),
+            "the tilt comes from the seed alone"
+        );
     }
 
     /// THE regression guard for this feature.

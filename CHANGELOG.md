@@ -23,6 +23,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   SVG links resolve to ordinary URL strings, preserving local fragment jumps
   and document base URLs instead of failing with `url.indexOf is not a function`.
 
+### TERMINIMALIST
+
+- TERMINIMALIST adds square, flat furniture with olive text on a dark green
+  ground. Its text-control policy replaces native icons with word labels and
+  named palette choices; both split directions have room for their labels in
+  the footer. Terminal cells and authored documents keep their own presentation.
+- TERMINIMALIST removes nested pane frames, button outlines and settings boxes.
+  Hairline sides and structural dividers remain; selected choices and warnings
+  keep a single rule. The top edge and pane-header line are absent.
+- TERMINIMALIST asks for Clean UI defaults: Git notice hidden, tabs across the
+  top, footer actions in CONFIG, and pane actions behind a right-click on the
+  title. The header shows the title and agent model; double-click still renames.
+  SPINE and TABS switch navigation. The trash bay is absent. Explicit UI choices
+  still win, and other skins retain their existing defaults and boundaries.
+- ADD PROJECT stays visible at the top left in both navigation modes. Wider
+  gaps separate navigation and settings groups. Sticky notes use a flat square
+  section with an open hairline boundary, retaining handwriting and gestures.
+- Custom skins can opt into the same native policy with `controls = "text"`
+  under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
+  Existing skins retain icon controls.
+
 ### Installer ownership and cleanup
 
 - Source installers record the hashes and paths of installed hooks, key-sheet

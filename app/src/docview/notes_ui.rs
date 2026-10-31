@@ -1875,7 +1875,12 @@ impl NotesLayer {
     }
 
     /// The marks, drawn: under the bar and the note box.
-    pub fn draw_marks(&self, marks: &[Mark], th: &Theme) -> Vec<AnyElement> {
+    pub fn draw_marks(
+        &self,
+        marks: &[Mark],
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Vec<AnyElement> {
         let count = |f: fn(&Mark) -> bool| marks.iter().filter(|m| f(m)).count();
         let (boxes, buttons) = self.drawn.get();
         self.drawn.set((
@@ -1900,13 +1905,17 @@ impl NotesLayer {
                     let (bg, fg, label): (Hsla, Hsla, SharedString) = if *count > 0 {
                         (accent, th.bg, count.to_string().into())
                     } else {
-                        (th.surface, th.text.alpha(0.8), "💬".into())
+                        (
+                            th.surface,
+                            th.text.alpha(0.8),
+                            sk.control("💬", "add").into(),
+                        )
                     };
                     at_rect(div(), *at)
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(side * 0.23))
+                        .rounded(sk.capped(side * 0.23))
                         .bg(bg)
                         .border_1()
                         .border_color(if *open { th.text } else { accent })
@@ -1971,7 +1980,7 @@ impl NotesLayer {
             .border_1()
             .border_color(th.accent.alpha(if live { 1.0 } else { 0.3 }))
             .text_color(th.accent.alpha(if live { 1.0 } else { 0.4 }))
-            .child(label.to_string())
+            .child(sk.control_text(label))
             .child(self.record(zone))
     }
 

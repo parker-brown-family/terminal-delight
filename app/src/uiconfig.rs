@@ -327,9 +327,12 @@ pub fn init(cx: &mut App, choice: UiChoice) {
     });
 }
 
-/// The set the design worn at the OUTER scope asks for.
+/// A skin's UI preference, else the outer design's. Neither is persisted as
+/// a hand choice, so changing skins restores the previous design's defaults.
 fn design_ask(cx: &App) -> Option<String> {
-    crate::theme::theme(cx).ui.clone()
+    cx.try_global::<crate::skin::SkinRegistry>()
+        .and_then(|_| crate::skin::spec(cx).ui_default().map(str::to_string))
+        .or_else(|| crate::theme::theme(cx).ui.clone())
 }
 
 /// The id of the set speaking for this window right now.
@@ -533,6 +536,67 @@ mod tests {
     fn builtin(id: &str) -> UiSet {
         let src = BUILTIN_SETS.iter().find(|(i, _)| *i == id).unwrap().1;
         parse(id, src).unwrap()
+    }
+
+    #[gpui::test]
+    fn open_text_skin_prefers_clean_without_overwriting_the_persons_choices(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        cx.update(|cx| {
+            crate::theme::init_embedded(
+                cx,
+                crate::theme::ThemeChoice {
+                    id: "hacker".into(),
+                    ..Default::default()
+                },
+            );
+            crate::skin::init_embedded(cx);
+            cx.set_global(UiState {
+                choice: UiChoice::default(),
+                sets: BUILTIN_SETS
+                    .iter()
+                    .map(|(id, src)| Arc::new(parse(id, src).unwrap()))
+                    .collect(),
+            });
+            let baseline = active_set(cx);
+            let initial = choice(cx);
+            crate::skin::select(cx, "terminimalist").unwrap();
+            assert_eq!(active_set(cx), CLEAN);
+            for key in [
+                Key::GitNotice,
+                Key::LeftBar,
+                Key::PaneClose,
+                Key::PaneFace,
+                Key::Artifacts,
+                Key::Surfaces,
+                Key::Sliders,
+                Key::Agents,
+            ] {
+                assert!(!shown(cx, key), "{key:?}");
+            }
+            assert_eq!(
+                choice(cx),
+                initial,
+                "defaults do not become saved hand flips"
+            );
+
+            // A person's individual choice and explicit set both outrank the skin.
+            flip(cx, Key::GitNotice, true);
+            flip(cx, Key::LeftBar, true);
+            assert!(shown(cx, Key::GitNotice));
+            assert!(shown(cx, Key::LeftBar));
+            pick_set(cx, Some(ALL.into()));
+            assert_eq!(active_set(cx), ALL);
+            assert!(shown(cx, Key::PaneClose));
+            pick_set(cx, None);
+            assert_eq!(active_set(cx), CLEAN);
+
+            for id in ["default", "chalk", "ops"] {
+                crate::skin::select(cx, id).unwrap();
+                assert_eq!(active_set(cx), baseline, "{id} keeps its design's defaults");
+                assert_eq!(choice(cx), initial);
+            }
+        });
     }
 
     /// Every built-in set parses with nothing unknown, and `all` names every

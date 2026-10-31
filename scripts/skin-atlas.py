@@ -214,7 +214,12 @@ def main():
         if fixture["action"] == "document":
             document = out / "content.md"
             document.write_text("# Authored content\n\nNative controls follow the skin; this document keeps its reading typography.\n\n```rust\nlet reading: Option<f32> = None;\n```\n" + "\n\n".join(f"## Reading {i}\n\nA measured zero and an unavailable reading mean different things. The surrounding native rail reports progress through this long document." for i in range(1, 21)))
-            rpc(pid, "open_document", {"path": str(document), "placement": "here"}, origin=(session, target["pane_id"]))
+            # The runner is an operator of its private scripted window, not an
+            # agent descended from a pane. Use that explicit window's document
+            # route rather than claiming a host caller identity.
+            answer = request(pid, "doc here " + str(document))
+            if not answer.startswith("ok"):
+                raise RuntimeError("fixture document open failed: " + answer)
         if fixture["action"] == "bench":
             surface = out / "state/terminal-delight/surfaces" / session / str(target["pane_id"])
             surface.mkdir(parents=True, exist_ok=True)

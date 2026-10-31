@@ -336,6 +336,8 @@ impl TerminalView {
     ) -> gpui::AnyElement {
         use crate::docopen::FloatHit;
         let sk = crate::skin::for_theme(cx, th, th.grade.scale);
+        let chrome = sk.chrome_theme(th);
+        let th = &chrome;
         let s = crate::lang::current().strings();
         let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
         let r = crate::docopen::clamp_float(float.rect, w, h);
@@ -357,9 +359,9 @@ impl TerminalView {
                 .relative()
                 .flex_none()
                 .px(px(5.))
-                .rounded(px(3.))
+                .rounded(sk.capped(3.))
                 .when(float.hover == Some(hit), |d| d.bg(acc.alpha(0.22)))
-                .child(label)
+                .child(sk.control_text(&label))
                 .children(zone(hit))
         };
         let mut strip = div()
@@ -387,9 +389,9 @@ impl TerminalView {
                         // In the strip, because TD has no toast and this is
                         // where the person is already looking.
                         Some(crate::docopen::FloatNote::FourPanes) => {
-                            format!("☰ {name} · {}", s.float_four_panes)
+                            format!("{}{name} · {}", sk.control("☰ ", ""), s.float_four_panes)
                         }
-                        None => format!("☰ {name}"),
+                        None => format!("{}{name}", sk.control("☰ ", "")),
                     })),
             );
         if let Some(zoom) = zoom {
@@ -398,9 +400,12 @@ impl TerminalView {
                 crate::docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0).into(),
             };
             strip = strip
-                .child(button("−".into(), FloatHit::ZoomOut))
+                .child(button(
+                    sk.control("−", "zoom out").into(),
+                    FloatHit::ZoomOut,
+                ))
                 .child(button(now, FloatHit::ZoomFit))
-                .child(button("+".into(), FloatHit::ZoomIn))
+                .child(button(sk.control("+", "zoom in").into(), FloatHit::ZoomIn))
                 .child(div().w(px(4.)));
         }
         strip = strip

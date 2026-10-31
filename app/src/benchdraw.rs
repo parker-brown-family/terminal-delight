@@ -519,7 +519,7 @@ pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
                 .flex_none()
                 .text_size(px(sk.pt(Step::Small)))
                 .text_color(mine)
-                .child("\u{2b}"),
+                .child(sk.control("\u{2b}", "add")),
         )
         .child(
             div()
@@ -862,7 +862,7 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
         .px(px(10.))
         .py(px(6.))
         .rounded(sk.radius())
-        .border_1()
+        .border(sk.box_border(1.))
         .border_color(sk.ink.rule)
         .text_size(px(sk.pt(Step::Fine)))
         .font_family(sk.font_family.clone())
@@ -1393,7 +1393,7 @@ fn response(title: &str, r: &Response, picks: Option<&Picks>, sk: &Skin, th: &Th
         d.px(px(11.))
             .py(px(9.))
             .rounded(sk.radius_lg())
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(lit.tint.alpha(0.45))
     });
 
@@ -2767,7 +2767,7 @@ fn strip_face(open: bool, primary: bool, sk: &Skin, th: &Theme) -> Div {
         .px(px(sk.tpx(9.)))
         .py(px(sk.tpx(4.)))
         .rounded(sk.rad(4.))
-        .border_1()
+        .border(sk.box_border(1.))
         .border_color(edge)
         .bg(fill)
 }
@@ -2803,7 +2803,7 @@ pub fn dial(value: &str, known: bool, open: bool, live: bool, sk: &Skin, th: &Th
                 } else {
                     sk.ink.ink_ghost
                 })
-                .child("\u{25be}"),
+                .child(sk.control("\u{25be}", "")),
         )
 }
 
@@ -2899,7 +2899,9 @@ pub fn strip_button(label: &str, glyph: &str, primary: bool, sk: &Skin, th: &The
         } else {
             th.text.alpha(0.78)
         })
-        .when(!glyph.is_empty(), |d| d.child(glyph.to_string()))
+        .when(!sk.text_controls() && !glyph.is_empty(), |d| {
+            d.child(glyph.to_string())
+        })
         .child(sk.caps(&label.to_uppercase()));
     if primary {
         // A CONTROL's halo, not a region's. This is a two-word button; it took
@@ -2931,7 +2933,12 @@ pub fn option_button<E: Styled>(el: E, primary: bool, chosen: bool, sk: &Skin, t
         } else {
             sk.pt(Step::Body)
         }))
-        .border_1();
+        .border(sk.box_border(1.));
+    let el = if sk.unboxed() && (primary || chosen) {
+        el.border_b(px(sk.m.hairline))
+    } else {
+        el
+    };
     if primary {
         el.border_color(th.accent.alpha(0.9))
     } else if chosen {
@@ -4090,6 +4097,17 @@ pub fn waiting_block(
 /// the rail's header because the thing it closes is the whole column, and a
 /// control that lives inside what it hides is a control you cannot find again.
 pub fn rail_handle(open: bool, sk: &Skin, th: &Theme) -> Div {
+    if sk.text_controls() {
+        return div()
+            .w(sk.px(42.))
+            .flex_none()
+            .flex()
+            .items_center()
+            .justify_center()
+            .text_size(sk.text_px(10.))
+            .text_color(sk.ink.ink_dim)
+            .child(if open { "hide" } else { "show" });
+    }
     div()
         .w(px(20.))
         .flex_none()
@@ -4245,7 +4263,7 @@ pub fn launch_button(sk: &Skin, th: &Theme) -> Div {
             .cursor_pointer()
             .text_size(px(sk.pt(Step::Head)))
             .font_weight(gpui::FontWeight::BOLD)
-            .child("\u{2301}")
+            .child(sk.control("\u{2301}", ""))
             .child(sk.caps(words().benchdraw_launch_agent)),
         th.human,
         th,

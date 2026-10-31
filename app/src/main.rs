@@ -1554,7 +1554,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                 .px_3()
                 .py_1()
                 .rounded(sk.radius_lg())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(th.accent.alpha(0.8 * fade))
                 .bg(th.bg.alpha(0.88 * fade))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -10348,7 +10348,7 @@ impl Workspace {
                 .px_2()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(match (lit, chosen) {
                     (true, true) => acc.alpha(0.85),
                     (true, false) => txt.alpha(0.40),
@@ -10514,7 +10514,11 @@ impl Workspace {
                         div()
                             .text_size(sk.text_px(8.))
                             .text_color(th.complement.alpha(0.75))
-                            .child(if open { "\u{25be}" } else { "\u{25b8}" }),
+                            .child(if open {
+                                sk.control("\u{25be}", "hide")
+                            } else {
+                                sk.control("\u{25b8}", "show")
+                            }),
                     )
                     .child(
                         div()
@@ -10641,7 +10645,7 @@ impl Workspace {
                     .px_2()
                     .py_0p5()
                     .rounded(sk.radius_pill())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                     .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.04) })
                     .text_size(sk.text_px(10.))
@@ -10684,7 +10688,7 @@ impl Workspace {
                 .px_2()
                 .py_1()
                 .rounded_sm()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(hsla(0.09, 0.8, 0.6, 0.45))
                 .bg(hsla(0.09, 0.8, 0.6, 0.08))
                 .child(
@@ -10791,7 +10795,9 @@ impl Workspace {
                             // sits on, so it read as a stray mark instead of a
                             // flame. The glow (inside `flame`) still carries
                             // the true band colour.
-                            .child(flame(flame_px, brighten(col, 1.7))),
+                            .when(!sk.text_controls(), |d| {
+                                d.child(flame(flame_px, brighten(col, 1.7)))
+                            }),
                     )
             };
 
@@ -10969,7 +10975,11 @@ impl Workspace {
                     div()
                         .text_size(sk.text_px(8.))
                         .text_color(th.text.alpha(0.55))
-                        .child(if history_open { "\u{25be}" } else { "\u{25b8}" }),
+                        .child(if history_open {
+                            sk.control("\u{25be}", "hide")
+                        } else {
+                            sk.control("\u{25b8}", "show")
+                        }),
                 )
                 .child(
                     div()
@@ -11187,18 +11197,18 @@ impl Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded_sm()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(acc.alpha(if refreshing { 0.3 } else { 0.6 }))
                         .text_size(sk.text_px(9.))
                         .text_color(acc.alpha(if refreshing { 0.5 } else { 1. }))
                         .cursor_pointer()
                         .hover(move |st| st.bg(acc.alpha(0.15)))
                         .map(|d| sk.action(d, false))
-                        .child(if refreshing {
+                        .child(sk.control_text(if refreshing {
                             ui.use_collecting
                         } else {
                             ui.use_refresh
-                        })
+                        }))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -11265,9 +11275,9 @@ impl Workspace {
                     .flex_row()
                     .px_1p5()
                     .py_0p5()
-                    .rounded_sm()
+                    .rounded(sk.capped(4.))
                     .bg(hsla(0., 0., 0.06, 1.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(green.alpha(0.5))
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
                     .text_size(sk.text_px(13.))
@@ -11300,19 +11310,21 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap_2()
-            .child(
-                div()
-                    .px_1p5()
-                    .py_0p5()
-                    .rounded_sm()
-                    .bg(th.accent.alpha(0.12))
-                    .border_1()
-                    .border_color(th.accent.alpha(0.55))
-                    .font_weight(gpui::FontWeight::EXTRA_BOLD)
-                    .text_size(sk.text_px(13.))
-                    .text_color(th.accent)
-                    .child("\u{03a3}"),
-            )
+            .when(!sk.text_controls(), |d| {
+                d.child(
+                    div()
+                        .px_1p5()
+                        .py_0p5()
+                        .rounded(sk.capped(4.))
+                        .bg(th.accent.alpha(0.12))
+                        .border(sk.box_border(1.))
+                        .border_color(th.accent.alpha(0.55))
+                        .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                        .text_size(sk.text_px(13.))
+                        .text_color(th.accent)
+                        .child("\u{03a3}"),
+                )
+            })
             .child(
                 div()
                     .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -11343,7 +11355,7 @@ impl Workspace {
                 .px_2p5()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on { acc.alpha(0.85) } else { txt.alpha(0.16) })
                 .bg(if on { acc.alpha(0.16) } else { txt.alpha(0.03) })
                 .text_size(sk.text_px(10.))
@@ -11388,7 +11400,7 @@ impl Workspace {
                 .px_2p5()
                 .py_0p5()
                 .rounded_full()
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if left_mode {
                     acc.alpha(0.85)
                 } else {
@@ -11511,7 +11523,7 @@ impl Workspace {
                             .px_2()
                             .py_0p5()
                             .rounded_full()
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(green.alpha(0.5))
                             .text_size(sk.text_px(10.))
                             .text_color(green)
@@ -11540,8 +11552,8 @@ impl Workspace {
                         .gap_2()
                         .px_2()
                         .py_0p5()
-                        .rounded_sm()
-                        .border_1()
+                        .rounded(sk.capped(4.))
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.10))
                         .text_size(sk.text_px(9.5))
                         .child(
@@ -11711,7 +11723,7 @@ impl Workspace {
             .overflow_hidden()
             .p_3()
             .rounded_md()
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.62))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -12914,7 +12926,7 @@ impl Workspace {
             .w(px(400.))
             .rounded(sk.rad_raw(8.))
             .overflow_hidden()
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(danger.alpha(0.9))
             .bg(sk.region_face(darken(th.surface, 0.62)))
             .shadow(float_shadows(danger, th.grade.phosphor))
@@ -12936,7 +12948,11 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(div().text_size(sk.text_px(18.)).child("\u{26a0}"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(18.))
+                            .child(sk.control("\u{26a0}", "warning")),
+                    )
                     .child(
                         div()
                             .text_size(sk.text_px(15.))
@@ -13027,7 +13043,7 @@ impl Workspace {
                     })
                 })
             })
-            .child(label.into())
+            .child(sk.control_text(&label.into()))
     }
 
     fn bar_menu_rule(th: &theme::Theme, s: f32) -> gpui::Div {
@@ -16424,7 +16440,7 @@ impl Workspace {
                             .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child(format!("\u{1f50d}  {scope_lbl}")),
+                            .child(format!("{} {scope_lbl}", sk.control("\u{1f50d}", ""))),
                     )
                     .child(
                         div()
@@ -16447,7 +16463,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -16496,7 +16512,7 @@ impl Workspace {
                 } else {
                     hsla(0., 0., 0., 0.)
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if selected {
                     th.accent.alpha(0.55)
                 } else {
@@ -16563,7 +16579,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .map(|d| sk.chrome(sk.finish(d)))
@@ -16853,7 +16869,7 @@ impl Workspace {
                             .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child(format!("\u{1f50e}  {}", ui.lk_hdr)),
+                            .child(format!("{} {}", sk.control("\u{1f50e}", ""), ui.lk_hdr)),
                     )
                     .child(
                         div()
@@ -16876,7 +16892,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -16962,7 +16978,7 @@ impl Workspace {
                 } else {
                     hsla(0., 0., 0., 0.)
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if selected {
                     th.accent.alpha(0.55)
                 } else {
@@ -17035,7 +17051,7 @@ impl Workspace {
             .rounded(sk.radius_lg())
             .overflow_hidden()
             .bg(sk.region_face(darken(th.surface, 0.35)))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .map(|d| sk.finish(d))
@@ -17136,7 +17152,7 @@ impl Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded_full()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.complement.alpha(0.5))
                         .text_color(th.complement)
                         .child(format!("{}  \u{00b7}  {}", a.label, a.surfaces.join("/"))),
@@ -17151,7 +17167,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.12))
                     .when(sk.m.frost > 0., |d| sk.finish_group(d))
                     .child(
@@ -17198,7 +17214,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17219,7 +17235,7 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(div().child("\u{1f9e9}"))
+                    .child(div().child(sk.control("\u{1f9e9}", "")))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -17343,7 +17359,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if live {
                     th.accent.alpha(0.55)
                 } else {
@@ -17356,7 +17372,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_size(sk.text_px(15.))
-                        .child(SharedString::from(glyph.to_string())),
+                        .child(SharedString::from(sk.control_text(glyph))),
                 )
                 .child(
                     div()
@@ -17396,7 +17412,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17422,7 +17438,11 @@ impl Workspace {
                     .text_size(sk.text_px(13.))
                     // The panel's mark is a lock, not the bug again: what it
                     // promises first is what it will not take.
-                    .child(div().text_size(sk.text_px(18.)).child("\u{1f512}"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(18.))
+                            .child(sk.control("\u{1f512}", "locked")),
+                    )
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -17561,7 +17581,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on {
                     th.accent.alpha(0.55)
                 } else {
@@ -17571,7 +17591,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_size(sk.text_px(15.))
-                        .child(SharedString::from(glyph.to_string())),
+                        .child(SharedString::from(sk.control_text(glyph))),
                 )
                 .child(
                     div()
@@ -17604,7 +17624,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17628,7 +17648,11 @@ impl Workspace {
                     // The mochi. It is the panel's mark, not decoration: the
                     // 🔔 glyph in the footer says WHERE you are, and a bell
                     // repeated inside the panel it opened says nothing twice.
-                    .child(div().text_size(sk.text_px(18.)).child("\u{1f361}"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(18.))
+                            .child(sk.control("\u{1f361}", "")),
+                    )
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -17851,7 +17875,7 @@ impl Workspace {
                 .px_2()
                 .py_2()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if on {
                     th.accent.alpha(0.55)
                 } else {
@@ -17861,7 +17885,7 @@ impl Workspace {
                 .child(
                     div()
                         .text_size(sk.text_px(15.))
-                        .child(SharedString::from(glyph.to_string())),
+                        .child(SharedString::from(sk.control_text(glyph))),
                 )
                 .child(
                     div()
@@ -17947,7 +17971,7 @@ impl Workspace {
             .overflow_y_scroll()
             .p_3()
             .rounded(sk.radius_lg())
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -17968,7 +17992,11 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(div().text_size(sk.text_px(18.)).child("\u{1f916}"))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(18.))
+                            .child(sk.control("\u{1f916}", "agents")),
+                    )
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18076,7 +18104,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.18))
                     .cursor_pointer()
                     .hover(|s| s.bg(th.accent.alpha(0.14)))
@@ -18172,7 +18200,7 @@ impl Workspace {
                             .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child(format!("\u{1f310}  {}", ui.lng_hdr)),
+                            .child(format!("{} {}", sk.control("\u{1f310}", ""), ui.lng_hdr)),
                     )
                     .child(
                         div()
@@ -18191,7 +18219,7 @@ impl Workspace {
                     .py_1()
                     .rounded(sk.radius())
                     .bg(th.bg.alpha(0.55))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .text_size(sk.text_px(13.))
                     .child(input),
@@ -18214,10 +18242,17 @@ impl Workspace {
                 .when(selected, |d| d.bg(th.accent.alpha(0.18)))
                 .child(
                     div()
-                        .w(px(16.))
+                        .w(px(if sk.text_controls() { 60. } else { 16. }))
                         .flex_none()
+                        .when(sk.text_controls(), |d| {
+                            d.text_size(sk.text_px(11.)).whitespace_nowrap()
+                        })
                         .text_color(th.accent)
-                        .child(if is_current { "\u{2713}" } else { "" }),
+                        .child(if is_current {
+                            sk.control("\u{2713}", "current")
+                        } else {
+                            ""
+                        }),
                 )
                 .child(
                     div()
@@ -18267,7 +18302,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .map(|mut d| {
@@ -18628,7 +18663,7 @@ impl Workspace {
             .overflow_y_scroll()
             .occlude()
             .bg(th.surface)
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(th.accent.alpha(0.55))
             .rounded(sk.radius_lg())
             .shadow_lg()
@@ -18659,7 +18694,7 @@ impl Workspace {
                     .px_2()
                     .py_1()
                     .rounded(sk.radius())
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.35))
                     .text_size(sk.text_px(13.))
                     .text_color(th.text)
@@ -18835,7 +18870,7 @@ impl Workspace {
                     .py(px(7.))
                     .rounded(sk.radius_lg())
                     .bg(th.bg.alpha(if active { 0.7 } else { 0.35 }))
-                    .border_2()
+                    .border(sk.box_border(2.))
                     .border_color(if active {
                         th.accent.alpha(0.85)
                     } else {
@@ -18886,7 +18921,7 @@ impl Workspace {
                             .text_size(sk.text_px(10.))
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
                             .text_color(th.accent)
-                            .child(format!("\u{1f5bc}  {}", ui.logo_hdr)),
+                            .child(format!("{} {}", sk.control("\u{1f5bc}", ""), ui.logo_hdr)),
                     )
                     .child(
                         div()
@@ -18983,7 +19018,12 @@ impl Workspace {
                     .rounded(sk.radius())
                     .cursor_pointer()
                     .text_color(th.text.alpha(0.7))
-                    .child(div().w(px(16.)).flex_none().child("\u{2715}"))
+                    .child(
+                        div()
+                            .w(px(if sk.text_controls() { 42. } else { 16. }))
+                            .flex_none()
+                            .child(sk.control("\u{2715}", "close")),
+                    )
                     .child(div().flex_1().min_w(px(0.)).child(match &ruling_dir {
                         Some(d) => lang::fill(ui.logo_remove_dir, &[("dir", &tilde(d))]),
                         None => ui.logo_remove.to_string(),
@@ -19023,7 +19063,7 @@ impl Workspace {
                         .flex_none()
                         .overflow_hidden()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.15))
                         .child(
                             gpui::img(PathBuf::from(c.path.clone()))
@@ -19090,7 +19130,7 @@ impl Workspace {
             .rounded(sk.rad_raw(10.))
             .overflow_hidden()
             .bg(darken(th.surface, 0.35))
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(th.accent.alpha(0.6))
             .font_family(skin::for_theme(cx, th, 1.0).font_family)
             .shadow(vec![BoxShadow {
@@ -19206,7 +19246,7 @@ impl Workspace {
             .rounded(sk.rad_raw(12.))
             .overflow_hidden()
             .bg(bg)
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(accent.alpha(0.7))
             .shadow(
                 std::iter::once(BoxShadow {
@@ -19303,7 +19343,12 @@ impl Workspace {
     /// of `reports/2026-09-29-alt-r-reader.html`): an agent's conversation in
     /// the accent, and anything the reader falls back on quieter, so a screen
     /// never passes for a transcript.
-    fn reader_chip(chip: docopen::ReadChip, accent: Hsla, text: Hsla) -> gpui::Div {
+    fn reader_chip(
+        chip: docopen::ReadChip,
+        accent: Hsla,
+        text: Hsla,
+        sk: &skin::Skin,
+    ) -> gpui::Div {
         let ink = if chip == docopen::ReadChip::Transcript {
             accent
         } else {
@@ -19312,8 +19357,8 @@ impl Workspace {
         div()
             .flex_none()
             .px(px(8.))
-            .rounded(px(9.))
-            .border_1()
+            .rounded(sk.capped(9.))
+            .border(sk.box_border(1.))
             .border_color(ink.alpha(0.55))
             .text_size(px(10.5))
             .text_color(ink)
@@ -19404,6 +19449,7 @@ impl Workspace {
             ..
         } = ReaderGlass::in_window(ww, wh);
         let (bg, text, accent) = pane.read(cx).reader_palette(cx);
+        let sk = skin::skin(cx, 1.);
         let s = lang::current().strings();
         let (name, zoom) = {
             let v = view.read(cx);
@@ -19430,7 +19476,10 @@ impl Workspace {
             .gap_3()
             .text_size(px(12.))
             .text_color(accent)
-            .child(lang::fill(s.ui.focus_hdr, &[("name", &name)]))
+            .child(lang::fill(
+                &sk.control_text(s.ui.focus_hdr),
+                &[("name", &name)],
+            ))
             .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
             .child(div().text_color(text.alpha(0.6)).child(s.ui.focus_esc));
         let store = self.focus_body_bounds.clone();
@@ -19904,7 +19953,7 @@ impl Workspace {
             .py_0p5()
             .rounded(sk.radius())
             .cursor_pointer()
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(if on {
                 accent.alpha(0.8)
             } else {
@@ -19917,7 +19966,11 @@ impl Workspace {
             })
             .text_size(sk.text_px(11.))
             .text_color(if on { accent } else { text.alpha(0.7) })
-            .child(if on { "◉" } else { "○" })
+            .child(if on {
+                sk.control("◉", "on")
+            } else {
+                sk.control("○", "off")
+            })
             .child(self.lang.strings().ui.focus_inherit_btn)
             .on_mouse_down(
                 MouseButton::Left,
@@ -22997,7 +23050,7 @@ impl Workspace {
             div()
                 .px(px(4. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(sk.ink.edge_strong)
                 .bg(if active {
                     sk.ink.mark.alpha(0.2)
@@ -23209,7 +23262,7 @@ impl Workspace {
     /// `bezel_btn` scaled by the menu-bar slider `s` — padding + text grow with
     /// the bar so tabs and split/new-tab buttons resize together.
     fn bezel_btn_s(sk: &skin::Skin, label: &str, active: bool, s: f32) -> gpui::Div {
-        sk.bezel(active, s).child(label.to_string())
+        sk.bezel(active, s).child(sk.control_text(label))
     }
 
     /// Open the tab config pane for tab `i`, anchored at `at`. Defaults the wheel
@@ -23271,7 +23324,26 @@ impl Workspace {
     /// The pulse and the blink step on the shared badge clock (`BADGE_STEP`),
     /// so every badge moves together and the window draws a few frames a
     /// second for them instead of every frame (#964).
-    fn agent_badge_el(badge: AgentBadge, tab: usize, slot: usize, s: f32) -> AnyElement {
+    fn agent_badge_el(
+        badge: AgentBadge,
+        tab: usize,
+        slot: usize,
+        s: f32,
+        sk: &skin::Skin,
+    ) -> AnyElement {
+        if sk.text_controls() {
+            return sk
+                .chrome(div())
+                .text_size(sk.text_px(10. * s))
+                .text_color(sk.ink.ink_dim)
+                .child(match badge {
+                    AgentBadge::NeedsInput => "waiting",
+                    AgentBadge::Working => "working",
+                    AgentBadge::Done => "done",
+                    AgentBadge::Blocked => "blocked",
+                })
+                .into_any_element();
+        }
         let side = px(15. * s);
         let _ = (tab, slot);
         match badge {
@@ -23304,8 +23376,14 @@ impl Workspace {
                     .opacity(pulse_alpha(eased))
                     .into_any_element()
             }
-            AgentBadge::Done => div().text_size(px(11. * s)).child("✅").into_any_element(),
-            AgentBadge::Blocked => div().text_size(px(11. * s)).child("❌").into_any_element(),
+            AgentBadge::Done => div()
+                .text_size(px(11. * s))
+                .child(sk.control("✅", "done"))
+                .into_any_element(),
+            AgentBadge::Blocked => div()
+                .text_size(px(11. * s))
+                .child(sk.control("❌", "blocked"))
+                .into_any_element(),
         }
     }
 
@@ -23318,7 +23396,18 @@ impl Workspace {
     /// `▸` (U+25B8) at all. The disclosure triangles rendered as nothing, and a
     /// fold you cannot see is a fold that does not exist. Four stacked bars
     /// whose widths taper are a triangle in any font, forever.
-    fn triangle(dir: BarDir, color: Hsla, s: f32) -> gpui::Div {
+    fn triangle(dir: BarDir, color: Hsla, s: f32, sk: &skin::Skin) -> gpui::Div {
+        if sk.text_controls() {
+            return sk
+                .chrome(div())
+                .text_size(sk.text_px(10. * s))
+                .text_color(color)
+                .child(match dir {
+                    BarDir::Down => "fold",
+                    BarDir::Left => "TABS",
+                    BarDir::Right => "unfold",
+                });
+        }
         let step = (2.0 * s).max(1.5);
         let widths: &[f32] = match dir {
             BarDir::Down => &[8., 6., 4., 2.],
@@ -23407,7 +23496,16 @@ impl Workspace {
             .flex()
             .items_center()
             .justify_center()
-            .child(Self::split_glyph(dir, sk.ink.ink, s))
+            .map(|d| {
+                if sk.text_controls() {
+                    d.w(sk.px(70.)).child(match dir {
+                        SplitDir::Row => "split right",
+                        SplitDir::Col => "split down",
+                    })
+                } else {
+                    d.child(Self::split_glyph(dir, sk.ink.ink, s))
+                }
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| ws.split(dir, window, cx)),
@@ -23439,6 +23537,7 @@ impl Workspace {
         key: usize,
         s: f32,
         _th: &theme::Theme,
+        sk: &skin::Skin,
     ) -> Vec<AnyElement> {
         // Open branch: the children speak for themselves.
         if !collapsed {
@@ -23461,7 +23560,7 @@ impl Workspace {
             };
             // The badge, and no tally beside it. A count here was a number on the
             // right edge of a row, which is the thing this column was cleared of.
-            out.push(Self::agent_badge_el(badge, key, 0, s * 0.9));
+            out.push(Self::agent_badge_el(badge, key, 0, s * 0.9, sk));
         }
         // Glyph only, never a count — "there is finished work in here" is the
         // news; how much of it is not, and a folded branch is exactly where a
@@ -23470,7 +23569,7 @@ impl Workspace {
             (n > 0).then(|| {
                 div()
                     .text_size(px(10. * s))
-                    .child(SharedString::from(glyph))
+                    .child(SharedString::from(sk.control_text(glyph)))
                     .into_any_element()
             })
         };
@@ -23494,7 +23593,7 @@ impl Workspace {
     /// Neutral draws nothing at all, explicit or inherited. A tree where every
     /// row carries a glyph is a tree where none of them mean anything, and the
     /// question these answer is "which of these did I single out".
-    fn level_mark(level: attention::Level, s: f32) -> Option<AnyElement> {
+    fn level_mark(level: attention::Level, s: f32, sk: &skin::Skin) -> Option<AnyElement> {
         let glyph = level.glyph()?;
         // Green up, blue down — settled with the plan's eighth question, and the
         // two hues are deliberately NOT the lane colours: a lane says what an
@@ -23517,7 +23616,7 @@ impl Workspace {
                 } else {
                     ink
                 })
-                .child(SharedString::from(glyph))
+                .child(SharedString::from(sk.control_text(glyph)))
                 .into_any_element(),
         )
     }
@@ -23527,7 +23626,7 @@ impl Workspace {
     /// A branch shows what IT is set to. Inheritance is a fact about the rows
     /// below, and drawing an inherited arrow on the initiative that received it
     /// would put two rows in the tree claiming one instruction.
-    fn branch_level_mark(&self, branch: BarBranch, s: f32) -> Option<AnyElement> {
+    fn branch_level_mark(&self, branch: BarBranch, s: f32, sk: &skin::Skin) -> Option<AnyElement> {
         let which = match branch {
             BarBranch::Project(id) => BarMenu::Project(id),
             BarBranch::Initiative(id) => BarMenu::Initiative(id),
@@ -23539,6 +23638,7 @@ impl Workspace {
                 inherited: false,
             },
             s,
+            sk,
         )
     }
 
@@ -23548,7 +23648,7 @@ impl Workspace {
     /// what it is saying — because the eye learns one shape and then reads the
     /// tree by indentation alone.
     fn bar_row(&self, row: tree::Row, cx: &mut Context<Self>) -> AnyElement {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let step = px(11. * s);
@@ -23780,7 +23880,7 @@ impl Workspace {
                     div()
                         .px(px(4. * s))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
                         .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -23851,7 +23951,11 @@ impl Workspace {
             .child(
                 div()
                     .id(SharedString::from(format!("bar-fold-{key}")))
-                    .w(px(FOLD_W * s))
+                    .w(px(if sk.text_controls() {
+                        38. * s
+                    } else {
+                        FOLD_W * s
+                    }))
                     .h(px(FOLD_W * s))
                     .flex()
                     .flex_row()
@@ -23872,6 +23976,7 @@ impl Workspace {
                             th.faint
                         },
                         s,
+                        &sk,
                     ))
                     .on_mouse_down(
                         MouseButton::Left,
@@ -23901,8 +24006,8 @@ impl Workspace {
                     })
                     .child(label.clone()),
             )
-            .children(self.branch_level_mark(branch, s))
-            .children(self.roll_badges(&roll, collapsed, key, s, th))
+            .children(self.branch_level_mark(branch, s, &sk))
+            .children(self.roll_badges(&roll, collapsed, key, s, th, &sk))
             // The task count used to sit here, so a folded branch still said how
             // much was in it. Removed 2026-09-12: on a real tree it is a column
             // of small numbers down the right edge that nobody reads and every
@@ -24078,14 +24183,16 @@ impl Workspace {
         // one gesture renames a task wherever it is grabbed from
         if let Some((_, eb)) = self.renaming.as_ref().filter(|(ri, _)| *ri == i) {
             return div()
-                .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
+                .pl(step * (depth as f32)
+                    + px(4. * s)
+                    + px(FOLD_W.max(if sk.text_controls() { 38. } else { 0. }) * s))
                 .pr(px(4. * s))
                 .py(px(1. * s))
                 .child(
                     div()
                         .px(px(4. * s))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(darken(th.bg, 0.8))
                         .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -24118,7 +24225,9 @@ impl Workspace {
                     // without clearing the one its PARENT wears it starts four
                     // pixels LEFT of the branch label it hangs from. Two levels of
                     // tree that do not read as two levels — see `FOLD_W`.
-                    .pl(step * (depth as f32) + px(4. * s) + px(FOLD_W * s))
+                    .pl(step * (depth as f32)
+                        + px(4. * s)
+                        + px(FOLD_W.max(if sk.text_controls() { 38. } else { 0. }) * s))
                     .pr(px(5. * s))
                     .py(px(2. * s))
                     .flex()
@@ -24176,7 +24285,7 @@ impl Workspace {
         // strength, or its branch's at half. Ahead of the agent badges because
         // it is a fact about the task rather than about what is happening in
         // it, and the two must not read as one cluster.
-        .children(Self::level_mark(self.level_of(i), s))
+        .children(Self::level_mark(self.level_of(i), s, &sk))
         // this task's own agent roster, animating exactly as it does on the
         // strip. The badge key is offset off the strip's range so a tab
         // showing in both places gets two animations rather than one shared
@@ -24189,7 +24298,7 @@ impl Workspace {
                 .take(MAX_TAB_BADGES)
                 .enumerate()
                 .map(|(slot, badge)| {
-                    Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85)
+                    Self::agent_badge_el(badge, BAR_BADGE_KEYS + i, slot, s * 0.85, &sk)
                 })
                 .collect();
             // The `+N` overflow counter used to go here. Removed 2026-09-12 with
@@ -24208,7 +24317,7 @@ impl Workspace {
             (pinned > 0).then(|| {
                 div()
                     .text_size(sk.text_px(10. * s))
-                    .child(SharedString::from("📌"))
+                    .child(SharedString::from(sk.control("📌", "pinned")))
                     .into_any_element()
             })
         })
@@ -24223,7 +24332,7 @@ impl Workspace {
                 .text_size(sk.text_px(11. * s))
                 .text_color(hsla(0., 0., 0., 0.))
                 .group_hover(grp, move |st| st.text_color(th.faint))
-                .child("×")
+                .child(sk.control("×", "close"))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -24517,7 +24626,7 @@ impl Workspace {
             // with a line down it, which reads as a gap in the bar rather than
             // as something closed. It stays while the doors are open: a frame
             // is the thing they are set into, not a state they are in.
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(sk.ink.rule_strong)
             // The fire throws light on the bar around it. Same phosphor shape
             // the delete dialog wears — a crisp rim plus a soft bloom — in ember
@@ -24616,13 +24725,13 @@ impl Workspace {
                                         div()
                                             .text_size(sk.text_px(BIN_PT * 0.78 * s))
                                             .text_color(ember.alpha(flicker * open))
-                                            .child("\u{1F525}"),
+                                            .child(sk.control("\u{1F525}", "pace")),
                                     )
                                     .child(
                                         div()
                                             .text_size(sk.text_px(BIN_PT * s))
                                             .text_color(bin_ink.alpha(bin_ink.a * open))
-                                            .child("\u{1F5D1}"),
+                                            .child(sk.control("\u{1F5D1}", "delete")),
                                     ),
                             )
                             .child(
@@ -24771,13 +24880,14 @@ impl Workspace {
 
         // "No reading", drawn so it cannot be mistaken for either end of the
         // scale: a hatched track with its own outline, at the rail's height.
+        let hatch_border = sk.box_border(1.);
         let hatch = move |h: f32| {
             let mut d = div()
                 .w_full()
                 .h(px(h))
                 .rounded(pill)
                 .bg(text.alpha(0.04))
-                .border_1()
+                .border(hatch_border)
                 .border_color(faint.alpha(0.40))
                 .flex()
                 .flex_row()
@@ -24993,7 +25103,7 @@ impl Workspace {
                             .w(px(mark_w * s))
                             .h(px(mark_w * s))
                             .rounded(rad)
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(text.alpha(0.18))
                             .bg(text.alpha(0.06))
                             .flex()
@@ -25013,23 +25123,29 @@ impl Workspace {
                                 inset: false,
                             }]);
                         }
-                        badge.map(|d| match self.provider_marks.get(&row.id) {
-                            // gpui draws an SVG as a MASK tinted by
-                            // `text_color`, so the mark follows the pace
-                            // tint the same way it already followed the
-                            // theme, rather than dragging a brand palette
-                            // into a window whose whole point is being
-                            // re-coloured.
-                            Some(path) => d.child(
-                                gpui::svg()
-                                    .external_path(SharedString::from(
-                                        path.to_string_lossy().into_owned(),
-                                    ))
-                                    .w(px(mark_w * s * 0.7))
-                                    .h(px(mark_w * s * 0.7))
-                                    .text_color(mark_col),
-                            ),
-                            None => d.child(row.initials.clone()),
+                        badge.map(|d| {
+                            match self
+                                .provider_marks
+                                .get(&row.id)
+                                .filter(|_| !sk.text_controls())
+                            {
+                                // gpui draws an SVG as a MASK tinted by
+                                // `text_color`, so the mark follows the pace
+                                // tint the same way it already followed the
+                                // theme, rather than dragging a brand palette
+                                // into a window whose whole point is being
+                                // re-coloured.
+                                Some(path) => d.child(
+                                    gpui::svg()
+                                        .external_path(SharedString::from(
+                                            path.to_string_lossy().into_owned(),
+                                        ))
+                                        .w(px(mark_w * s * 0.7))
+                                        .h(px(mark_w * s * 0.7))
+                                        .text_color(mark_col),
+                                ),
+                                None => d.child(row.initials.clone()),
+                            }
                         })
                     },
                 )
@@ -25171,7 +25287,7 @@ impl Workspace {
             .gap(px(5.0 * s))
             .px(px(6.0 * s))
             .rounded(sk.radius())
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(if tally.needs_you() {
                 hsla(0.11, 0.85, 0.60, 1.).alpha(0.55)
             } else {
@@ -25200,9 +25316,15 @@ impl Workspace {
                     .when_some(pane::chrome_glyph_font('\u{f06a9}', th), |d, family| {
                         d.font_family(family)
                     })
-                    .child("\u{f06a9}"),
+                    .child(sk.control("\u{f06a9}", "agents")),
             );
+        if sk.text_controls() && cells.iter().all(|(_, n)| *n == 0) {
+            counter = counter.child("0");
+        }
         for (state, n) in cells {
+            if sk.text_controls() && n == 0 {
+                continue;
+            }
             let glyph = state.rail_badge();
             let hot = n > 0;
             let col = if hot {
@@ -25235,7 +25357,11 @@ impl Workspace {
                             .and_then(|c| pane::chrome_glyph_font(c, th)),
                         |d, family| d.font_family(family),
                     )
-                    .child(glyph.to_string())
+                    .child(if sk.text_controls() {
+                        state.label().to_string()
+                    } else {
+                        glyph.to_string()
+                    })
                     .child(
                         div()
                             .text_size(sk.text_px(10.5 * s))
@@ -26295,7 +26421,9 @@ impl Workspace {
         let splits = uiconfig::shown(cx, uiconfig::Key::SplitButtons);
         column
             .child(head)
-            .when(splits, |d| d.child(self.split_button(SplitDir::Row, s, cx)))
+            .when(splits && !skin::skin(cx, s).text_controls(), |d| {
+                d.child(self.split_button(SplitDir::Row, s, cx))
+            })
     }
 
     /// The attention pill at the head of the right-hand column, when the
@@ -26367,7 +26495,7 @@ impl Workspace {
                 .px(px(5. * s))
                 .py(px(7. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 // Carried at a lower alpha than the fill it sits on, so
                 // the edge reads as an edge rather than as a second
                 // element. Same pair the tab chips use.
@@ -26424,7 +26552,7 @@ impl Workspace {
                             .mt(px(1. * s))
                             .text_size(sk.text_px(8. * s))
                             .text_color(sk.ink.ink)
-                            .child("\u{25cf}"),
+                            .child(sk.control("\u{25cf}", "on")),
                     )
                 }),
         )
@@ -26485,7 +26613,7 @@ impl Workspace {
         let sk = skin::skin(cx, s);
         let (items, _panes) = self.rail_queue(cx);
         let now = Instant::now();
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let rail_bounds = self.rail_bounds.clone();
 
         // The menu recipe, copied from the menu-bar scale popup rather than
@@ -26509,7 +26637,7 @@ impl Workspace {
             .p(px(7. * s))
             .w(px(316. * s))
             .rounded(sk.rad_raw(8.))
-            .border_2()
+            .border(sk.box_border(2.))
             .border_color(th.accent.alpha(0.85))
             .bg(sk.region_face(darken(th.surface, 0.45)))
             .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -26882,7 +27010,7 @@ impl Workspace {
                             div()
                                 .px(px(4. * s))
                                 .rounded(px(2. * s))
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(hsla(0.58, 0.72, 0.62, 0.6))
                                 .child(SharedString::from(self.lang.strings().ui.rail_beside_chip))
                                 // Its own act, like the link's, and it stops
@@ -26929,7 +27057,7 @@ impl Workspace {
                                     .id(SharedString::from(format!("rail-prompts-{key}-{n}")))
                                     .px(px(6. * s))
                                     .rounded(px(3. * s))
-                                    .border_1()
+                                    .border(sk.box_border(1.))
                                     .border_color(if n == chosen { ink } else { sk.ink.ink_dim })
                                     .text_size(sk.text_px(9.5 * s))
                                     .text_color(if n == chosen { ink } else { sk.ink.ink_dim })
@@ -26962,7 +27090,7 @@ impl Workspace {
                             .px(px(9. * s))
                             .py(px(2. * s))
                             .rounded(px(3. * s))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(if yes { ink } else { sk.ink.ink_dim })
                             .text_size(sk.text_px(10. * s))
                             .text_color(if yes { ink } else { sk.ink.ink })
@@ -27154,7 +27282,7 @@ impl Workspace {
         if !theme::paint_mode(cx) {
             return None;
         }
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let scale = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, scale);
         let aimed = theme::paint_target(cx) == theme::Target::Outer;
@@ -27338,9 +27466,10 @@ impl Workspace {
     /// through the branch they hang from.
     fn render_left_bar(&self, cx: &mut Context<Self>) -> Option<gpui::Div> {
         if !self.left_bar {
+            *self.bay_bounds.lock().unwrap() = None;
             return None;
         }
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         // The chrome's shape, resolved once for this whole region. Every element
         // below asks `sk` for a panel/row/rule/chip rather than spelling a
@@ -27348,6 +27477,10 @@ impl Workspace {
         // restyle the bar without a line of this function changing.
         let sk = skin::skin(cx, s);
         let bar_header = uiconfig::shown(cx, uiconfig::Key::LeftBarHeader);
+        if sk.unboxed() {
+            // An absent trash bay must never retain an invisible drop target.
+            *self.bay_bounds.lock().unwrap() = None;
+        }
         // Rebuilt every frame; the drop targets below are pushed back in during
         // paint. Stale boxes from the last frame would file a task into a
         // branch that has since moved.
@@ -27386,14 +27519,14 @@ impl Workspace {
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
             // NOT HIDE THE little arrow to change this even in clean mode."
-            .when(bar_header, |d| {
+            .when(bar_header && !sk.unboxed(), |d| {
                 d.child(
                     // fold or unfold the whole tree. One button rather than two,
                     // showing the triangle of what pressing it does: pointing down
                     // while anything is open (press to fold), pointing right once
                     // everything is folded (press to open).
                     sk.icon_btn("bar-fold-all")
-                        .w(sk.px(17.))
+                        .w(sk.px(if sk.text_controls() { 42. } else { 17. }))
                         .child(Self::triangle(
                             if self.tree_all_folded() {
                                 BarDir::Right
@@ -27402,6 +27535,7 @@ impl Workspace {
                             },
                             sk.ink.ink_dim,
                             s * 1.1,
+                            &sk,
                         ))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -27440,8 +27574,8 @@ impl Workspace {
             })
             .child(
                 sk.icon_btn("bar-hide")
-                    .w(sk.px(sk.m.row_h))
-                    .child(Self::triangle(BarDir::Left, sk.ink.ink_dim, s))
+                    .w(sk.px(if sk.text_controls() { 38. } else { sk.m.row_h }))
+                    .child(Self::triangle(BarDir::Left, sk.ink.ink_dim, s, &sk))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -27477,6 +27611,9 @@ impl Workspace {
             // border. Under deco it is square with a twin rule, and nothing here
             // had to know.
             sk.spine_panel()
+                .when(sk.unboxed(), |d| {
+                    d.border_r(px(sk.m.hairline)).border_color(sk.ink.edge)
+                })
                 .flex_none()
                 .w(px(self.left_bar_w * s))
                 .h_full()
@@ -27500,13 +27637,15 @@ impl Workspace {
                 .child(list.min_h(px(72. * s)))
                 // The bay sits between the tree and the allowance slot: below
                 // everything you can drag, above everything you only read.
-                .child(
-                    div()
-                        .flex_none()
-                        .px(px(6. * s))
-                        .pb(px(4. * s))
-                        .child(self.render_bay(&th, s, cx)),
-                )
+                .when(!sk.unboxed(), |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .px(px(6. * s))
+                            .pb(px(4. * s))
+                            .child(self.render_bay(&th, s, cx)),
+                    )
+                })
                 // The bottom slot, under the tree. It states its height and
                 // normally gets it exactly, so the tree yields that much and
                 // not a pixel more whatever the slot is holding — but it
@@ -27553,7 +27692,7 @@ impl Workspace {
     /// resolved fill/text (own override → group lead → bezel default).
     /// Right-click (or double-click) renames; ctrl+click opens the config pane.
     fn tab_button(&self, i: usize, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         // tabs ride the menu-bar slider: everything in the tab scales with the bar
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
@@ -27568,7 +27707,7 @@ impl Workspace {
                 .px(px(8. * s))
                 .py(px(2. * s))
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(sk.ink.mark)
                 .bg(darken(th.bg, 0.8))
                 .text_size(sk.text_px(CHROME_NAME_PT * s))
@@ -27604,7 +27743,7 @@ impl Workspace {
             .text_size(sk.text_px(12. * ts))
             .text_color(text.unwrap_or(if is_active { th.text } else { th.faint }))
             .cursor_pointer()
-            .child("×")
+            .child(sk.control("×", "close"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -27719,7 +27858,7 @@ impl Workspace {
                         .absolute()
                         .inset_0()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.accent)
                         .bg(th.accent.alpha(0.25)),
                 )
@@ -27735,9 +27874,9 @@ impl Workspace {
                     div()
                         .text_size(sk.text_px(CHROME_NAME_PT * ts))
                         .child(if pinned > 1 {
-                            SharedString::from(format!("📌{pinned}"))
+                            SharedString::from(format!("{}{pinned}", sk.control("📌", "pinned ")))
                         } else {
-                            SharedString::from("📌")
+                            SharedString::from(sk.control("📌", "pinned"))
                         })
                         .into_any_element()
                 })
@@ -27753,7 +27892,7 @@ impl Workspace {
                     .into_iter()
                     .take(MAX_TAB_BADGES)
                     .enumerate()
-                    .map(|(slot, badge)| Self::agent_badge_el(badge, i, slot, s))
+                    .map(|(slot, badge)| Self::agent_badge_el(badge, i, slot, s, &sk))
                     .collect();
                 if over > 0 {
                     // more agents than the strip can hold: keep the COUNT even
@@ -27768,7 +27907,7 @@ impl Workspace {
                 }
                 strip
             })
-            .child(close_x)
+            .when(!sk.unboxed(), |d| d.child(close_x))
     }
 
     /// The head of the tab strip while the tree is shut: the project, `›`, its
@@ -27794,7 +27933,7 @@ impl Workspace {
         if chips.is_empty() {
             return None;
         }
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let sk = skin::skin(cx, scale);
         let sep = || {
             div()
@@ -27939,7 +28078,7 @@ impl Workspace {
     /// Window-wide attention, derived from all cached projects. A clear local
     /// project cannot silence an alert elsewhere; unknown and stale stay visible.
     fn eng_badge(&self, pt: f32, cx: &mut Context<Self>) -> gpui::Div {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let snapshot = &self.coordination_store().snapshot;
@@ -28050,7 +28189,7 @@ impl Workspace {
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -28351,7 +28490,7 @@ fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful
 
 impl Render for SlotTooltip {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let mut card = over_the_glass_tip(&th, &sk, s).gap(px(2. * s));
@@ -28379,7 +28518,7 @@ struct AgentMemoryTooltip {
 
 impl Render for AgentMemoryTooltip {
     fn render(&mut self, w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let strings = lang::current().strings();
@@ -28476,7 +28615,7 @@ struct ThemeTooltip {
 
 impl Render for ThemeTooltip {
     fn render(&mut self, _w: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
         let mut card = over_the_glass_tip(&th, &sk, s).gap(px(3. * s)).child(
@@ -28492,7 +28631,7 @@ impl Render for ThemeTooltip {
                     div()
                         .w(px(11. * s))
                         .h(px(16. * s))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(th.text.alpha(0.2))
                         .bg(*c)
                 }),
@@ -28637,7 +28776,7 @@ fn palette_rule(label: &str, on: bool, th: &theme::Theme, sk: &skin::Skin) -> gp
         .py_1()
         .text_size(sk.text_px(10.))
         .cursor_pointer()
-        .child(label.to_string())
+        .child(sk.control_text(label))
         .child(slider_switch(on, th, sk))
 }
 
@@ -28837,7 +28976,7 @@ fn agent_card_shadows(glow: Hsla, live: bool, phosphor: f32) -> Vec<BoxShadow> {
 /// soft accent halo that reads as a *light source* — then casts a broad, dark
 /// shadow straight DOWN onto the panes, so the surface clearly hovers and the
 /// workspace beneath it sits in shadow. `glow` is the rim colour (the theme
-/// accent; a danger hue for destructive dialogs). Pair with `.border_2()` in the
+/// accent; a danger hue for destructive dialogs). Pair with `.border(sk.box_border(2.))` in the
 /// same hue, and `.rounded_*()` so the glow follows the corners.
 ///
 /// `phosphor` is the gauge reading the halo goes through (the scope's
@@ -29020,10 +29159,19 @@ fn render_node(
             // Its glow follows the pane's own phosphor gauge for the same reason.
             let (acc, glow, sk) = {
                 let pth = e.read(cx).resolved_theme(cx);
+                let sk = skin::for_theme(cx, &pth, pth.grade.scale);
                 (
-                    pth.accent,
-                    pth.grade.phosphor,
-                    skin::for_theme(cx, &pth, pth.grade.scale),
+                    if sk.text_controls() {
+                        sk.ink.focus
+                    } else {
+                        pth.accent
+                    },
+                    if sk.text_controls() {
+                        0.
+                    } else {
+                        pth.grade.phosphor
+                    },
+                    sk,
                 )
             };
             // is a dragged sub-tab hovering THIS pane right now? which side?
@@ -29043,7 +29191,7 @@ fn render_node(
                 // "bigger + raised" effect geometrically: INACTIVE panes recess a
                 // few px and dim, leaving the focused one flush, full-bright, and
                 // lifted by its drop shadow — colour-independent, always legible.
-                .when(!is_focused, |d| d.m(px(6.)))
+                .when(!is_focused && !sk.text_controls(), |d| d.m(px(6.)))
                 .overflow_hidden()
                 .rounded_md()
                 // A skin with a corner cap (Clean's 3 px) draws the pane nearly
@@ -29054,12 +29202,14 @@ fn render_node(
                 .when(sk.shape.corner != skin::Corner::Round, |d| {
                     d.rounded(px(0.))
                 })
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(if is_focused { acc } else { th.faint })
                 // highlighted pane gets a 2x-thick accent border (drawn inside the
                 // flex box, so the grid never reflows — only inner content shifts 1px)
-                .when(is_focused, |d| d.border_2())
-                .when(is_focused, |d| {
+                .when(is_focused && !sk.text_controls(), |d| {
+                    d.border(sk.box_border(2.))
+                })
+                .when(is_focused && !sk.text_controls(), |d| {
                     let mut stack = vec![
                         // crisp 1px outer ring: reads as a double border
                         BoxShadow {
@@ -29245,7 +29395,7 @@ fn render_node(
                 let slab = div()
                     .absolute()
                     .bg(th.accent.alpha(0.28))
-                    .border_2()
+                    .border(skin::skin(cx, 1.).box_border(2.))
                     .border_color(th.accent.alpha(0.85));
                 let slab = match zone {
                     Zone::Left => slab.left_0().top_0().bottom_0().w(gpui::relative(0.5)),
@@ -29749,7 +29899,7 @@ impl Render for Workspace {
             f32::from(wb.size.width),
             f32::from(wb.size.height),
         ));
-        let th = theme::theme(cx);
+        let th = skin::native_theme(cx, theme::theme(cx));
         if self.tabs.is_empty() {
             return csd::decorate(div(), window);
         }
@@ -30189,7 +30339,7 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .flex_wrap()
-            .gap(px(4. * scale))
+            .gap(px(if sk.unboxed() { 8. } else { 4. } * scale))
             .items_center()
             // min_w_0 lets the strip shrink BELOW its content so overflow wraps to
             // another row instead of overrunning the bar's edge.
@@ -30203,7 +30353,13 @@ impl Render for Workspace {
             tab_strip = tab_strip.child(
                 div()
                     .id("show-left-bar")
-                    .w(px(16. * scale))
+                    .debug_selector(|| "show-left-bar".into())
+                    .when(sk.unboxed(), |d| d.mr(px(12. * scale)))
+                    .w(px(if sk.text_controls() {
+                        38. * scale
+                    } else {
+                        16. * scale
+                    }))
                     .h(px(16. * scale))
                     .flex()
                     .items_center()
@@ -30211,7 +30367,20 @@ impl Render for Workspace {
                     .rounded(sk.radius())
                     .cursor_pointer()
                     .hover(|st| st.bg(hsla(0., 0., 1., 0.12)))
-                    .child(Self::triangle(BarDir::Right, th.text.alpha(0.7), scale))
+                    .map(|d| {
+                        if sk.text_controls() {
+                            d.text_size(sk.text_px(10. * scale))
+                                .text_color(sk.ink.ink_dim)
+                                .child("SPINE")
+                        } else {
+                            d.child(Self::triangle(
+                                BarDir::Right,
+                                th.text.alpha(0.7),
+                                scale,
+                                &sk,
+                            ))
+                        }
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30226,7 +30395,7 @@ impl Render for Workspace {
             // its groups, and yours lit — see `render_strip_head`. With the
             // tree shut it is the only place left that says so.
             if let Some(head) = self.render_strip_head(scale, cx) {
-                tab_strip = tab_strip.child(head);
+                tab_strip = tab_strip.child(head.when(sk.unboxed(), |d| d.mr(px(12. * scale))));
             }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
@@ -30340,7 +30509,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(9. * scale))
                     .text_color(th.text)
-                    .child("▭"),
+                    .child(sk.control("▭", "size")),
             )
             .child(
                 div()
@@ -30384,7 +30553,7 @@ impl Render for Workspace {
                             .h(px(3.))
                             .rounded(sk.radius_pill())
                             .bg(sk.region_face(darken(th.surface, 0.4)))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.faint),
                     )
                     .child(
@@ -30423,7 +30592,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(15. * scale))
                     .text_color(th.text)
-                    .child("▭"),
+                    .child(sk.control("▭", "size")),
             );
 
         // What the mother bar actually shows: ▭ 110%, one click to the track.
@@ -30437,7 +30606,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(11. * scale))
                     .text_color(th.text)
-                    .child("\u{25ad}"),
+                    .child(sk.control("\u{25ad}", "size")),
             )
             .child(
                 div()
@@ -30486,7 +30655,8 @@ impl Render for Workspace {
             };
             div()
                 .id(SharedString::from(format!("winctl-{glyph}")))
-                .w(px(20. * scale))
+                .min_w(px(20. * scale))
+                .when(sk.text_controls(), |d| d.px(sk.px(5.)))
                 .h(px(20. * scale))
                 .flex()
                 .items_center()
@@ -30496,7 +30666,7 @@ impl Render for Workspace {
                 .text_color(th.text.alpha(0.7))
                 .cursor_pointer()
                 .hover(move |s| s.bg(hover.alpha(0.9)).text_color(white()))
-                .child(glyph)
+                .child(sk.control_text(glyph))
         };
         let win_controls = div()
             .flex()
@@ -30550,7 +30720,12 @@ impl Render for Workspace {
         // thing that makes a collapse acceptable rather than a disappearance.
         const CHROME_NARROW: f32 = 720.;
         let chrome_vw = f32::from(window.viewport_size().width);
-        let chrome_narrow = chrome_vw < CHROME_NARROW;
+        let chrome_narrow = chrome_vw
+            < if sk.text_controls() {
+                1000.
+            } else {
+                CHROME_NARROW
+            };
         // UI CONFIG: which of the corner's controls this window draws. Any of
         // them hidden and CONFIG takes the corner — the `…` menu a narrow
         // window already folds its glyphs into, named, and opened by choice.
@@ -30568,16 +30743,24 @@ impl Render for Workspace {
         let ui_counts = ui_on(uiconfig::Key::Counts);
         let ui_scale = ui_on(uiconfig::Key::Scale);
         let ui_splits = ui_on(uiconfig::Key::SplitButtons);
-        let ui_mark = ui_on(uiconfig::Key::AppMark);
+        let ui_mark = !sk.text_controls() && ui_on(uiconfig::Key::AppMark);
         let ui_notice = ui_on(uiconfig::Key::GitNotice);
         let ui_counter = ui_on(uiconfig::Key::AgentCounter);
         let ui_allowance = ui_on(uiconfig::Key::Allowance);
         let config_corner = uiconfig::config_in_corner(cx);
 
         let ic_theme = Self::hicon_s(&sk, self.theme_menu.is_some(), scale)
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("🎨")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("🎨", "look"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30590,7 +30773,13 @@ impl Render for Workspace {
         let ic_osd = Self::hicon_s(&sk, self.osd_menu.is_some(), scale)
             .flex()
             .items_center()
-            .child(pane::eq_icon(th.accent, scale * 0.5))
+            .map(|d| {
+                if sk.text_controls() {
+                    d.child("gauges")
+                } else {
+                    d.child(pane::eq_icon(th.accent, scale * 0.5))
+                }
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30602,9 +30791,17 @@ impl Render for Workspace {
         let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
             .id("toolbar-agents")
             .debug_selector(|| "toolbar-agents".into())
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1f916}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1f916}", "agents"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30619,9 +30816,17 @@ impl Render for Workspace {
         // `…` menu below still lists it, because the left bar can be closed
         // (ctrl+shift+B) and a surface with no door at all is not a collapse.
         let ic_dead = Self::hicon_s(&sk, self.dead_menu, scale)
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1faa6}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1faa6}", "recover"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30637,9 +30842,17 @@ impl Render for Workspace {
         // the rest of the desktop, which is a different kind of question and
         // was previously not a question at all (see `notifpref`).
         let ic_notif = Self::hicon_s(&sk, self.notif_menu, scale)
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1f514}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1f514}", "notices"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30658,9 +30871,17 @@ impl Render for Workspace {
         let crashed = self.bug_unseen.is_some_and(|n| n > 0) || diag::crashes_this_run() > 0;
         let ic_bug = Self::hicon_s(&sk, self.bug_menu, scale)
             .relative()
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1f41e}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1f41e}", "report"))
             .when(crashed, |d| {
                 d.child(
                     div()
@@ -30682,9 +30903,17 @@ impl Render for Workspace {
                 }),
             );
         let ic_plugins = Self::hicon_s(&sk, self.plugins_menu, scale)
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1f9e9}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1f9e9}", ""))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30703,9 +30932,17 @@ impl Render for Workspace {
         // hiding the glyph never hides a hold.
         let ic_art = Self::hicon_s(&sk, self.art_rail, scale)
             .relative()
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{1f4dc}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{1f4dc}", "artifacts"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30717,9 +30954,17 @@ impl Render for Workspace {
         let (art_dot, art_bumps) = (self.art_unseen, self.art_bumps);
         let ic_more = Self::hicon_s(&sk, self.more_menu, scale)
             .relative()
-            .text_size(sk.text_px(CHROME_GLYPH * scale))
-            .line_height(px(CHROME_GLYPH * scale))
-            .child("\u{2026}")
+            .text_size(sk.text_px(if sk.text_controls() {
+                11. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .line_height(px(if sk.text_controls() {
+                14. * scale
+            } else {
+                CHROME_GLYPH * scale
+            }))
+            .child(sk.control("\u{2026}", "more"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -30774,7 +31019,7 @@ impl Render for Workspace {
             .flex()
             .flex_row()
             .items_center()
-            .gap(px(12. * scale))
+            .gap(px(if sk.unboxed() { 18. } else { 12. } * scale))
             .map(|d| {
                 if chrome_narrow && config_corner {
                     d.child(artifact_rail::art_news(
@@ -30789,7 +31034,9 @@ impl Render for Workspace {
                     // own settings.
                     d.when(config_corner, |d| {
                         d.child(if art_door_is_glyph {
-                            ic_config.into_any_element()
+                            ic_config
+                                .when(sk.unboxed(), |d| d.mr(px(8. * scale)))
+                                .into_any_element()
                         } else {
                             artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
                         })
@@ -30819,7 +31066,8 @@ impl Render for Workspace {
         } else {
             tab_strip.into_any_element()
         };
-        let top_empty = top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
+        let top_empty = !sk.unboxed()
+            && top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
         let bezel_top = sk
             .sheet()
             // min-height (not fixed): extra tab rows grow the bar downward.
@@ -30852,6 +31100,7 @@ impl Render for Workspace {
             // bar grows downward exactly as it did. `min_h` is a minimum.
             .flex_row()
             .items_center()
+            .when(sk.unboxed(), |d| d.items_start())
             .px(px(12. * scale))
             .py(px(if top_empty { 0. } else { 7. } * scale))
             // NO row gap, deliberately. The corner is pinned to the tree's
@@ -30917,6 +31166,20 @@ impl Render for Workspace {
                     .flex_row()
                     .items_center()
                     .gap(px(8. * scale))
+                    .when(sk.unboxed(), |d| {
+                        d.child(
+                            Self::bezel_btn_s(&sk, "ADD PROJECT", false, scale)
+                                .id("minimal-add-project")
+                                .debug_selector(|| "minimal-add-project".into())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        ws.new_project_with_terminal(window, cx);
+                                    }),
+                                ),
+                        )
+                    })
                     .when(ui_mark, |d| {
                         d.child(
                             gpui::img(crate::art::mark_png())
@@ -31007,7 +31270,12 @@ impl Render for Workspace {
             })
             .child(chrome_icons)
             .when(ui_scale, |d| d.child(scrubber))
-            .when(ui_splits, |d| d.child(split_down));
+            .when(ui_splits, |d| {
+                d.when(sk.text_controls(), |d| {
+                    d.child(self.split_button(SplitDir::Row, scale, cx))
+                })
+                .child(split_down)
+            });
 
         // ---- theme breakout: icon grid + seed swatches, per scope ----
         let menu_overlay = self.theme_menu.clone().map(|scope| {
@@ -31168,7 +31436,9 @@ impl Render for Workspace {
                     "chalk" => t.ui.pal_skin_chalk,
                     "ops" => t.ui.pal_skin_ops,
                     "clean" => t.ui.pal_skin_clean,
+                    "custom" if sk.text_controls() => "custom file",
                     "custom" => t.ui.pal_skin_custom,
+                    "terminimalist" => "TERMINIMALIST",
                     other => other,
                 };
                 skin_row = skin_row.child(
@@ -31569,13 +31839,18 @@ impl Render for Workspace {
                 dyn_entries.retain(|e| e.1);
             }
             const PER_COL: usize = 10; // fill a column vertically before wrapping
-            let columns = dyn_entries.len().div_ceil(PER_COL);
+            let per_col = if sk.text_controls() {
+                dyn_entries.len().max(1)
+            } else {
+                PER_COL
+            };
+            let columns = dyn_entries.len().div_ceil(per_col);
             let glyph_col_w = sk.fit(TRAY_GLYPH_COL_W, 190.).max(
                 columns as f32 * 40.
                     + columns.saturating_sub(1) as f32 * (2. * TRAY_GAP + TRAY_SEP),
             );
             let mut dyn_cols = div().flex().flex_row().gap_2();
-            for (ci, chunk) in dyn_entries.chunks(PER_COL).enumerate() {
+            for (ci, chunk) in dyn_entries.chunks(per_col).enumerate() {
                 if ci > 0 {
                     dyn_cols = dyn_cols.child(vsep());
                 }
@@ -31598,42 +31873,58 @@ impl Render for Workspace {
                         .justify_center()
                         .rounded(sk.rad_raw(6.))
                         .cursor_pointer();
-                    let tile = match chip {
-                        // The theme in miniature: its screen colour, ringed in
-                        // its accent, its glyph in its accent. The lit ring is
-                        // the scope's own text colour, which is this theme's
-                        // when it is the one worn.
-                        Some(c) => {
-                            let tile = tile.bg(c.bg);
-                            let tile = if active {
-                                tile.border_2().border_color(th.text)
-                            } else {
-                                tile.border_1().border_color(c.chips[0].alpha(0.55))
-                            };
-                            sk.frame(tile)
-                                .relative()
-                                .children(sk.grain())
-                                .children(sk.rim(c.chips[0].alpha(0.3), th.accent, active))
-                                .child(glyph::element(&c.id, c.chips[0], 20.))
+                    let tile = if sk.text_controls() {
+                        let name = chip
+                            .as_ref()
+                            .map(|c| c.id.replace('-', " "))
+                            .unwrap_or_else(|| "custom".to_string());
+                        sk.choice(
+                            tile.w(px(150.))
+                                .h(px(28.))
+                                .px(sk.px(7.))
+                                .justify_start()
+                                .child(name),
+                            active,
+                        )
+                    } else {
+                        match chip {
+                            // The theme in miniature: its screen colour, ringed in
+                            // its accent, its glyph in its accent. The lit ring is
+                            // the scope's own text colour, which is this theme's
+                            // when it is the one worn.
+                            Some(c) => {
+                                let tile = tile.bg(c.bg);
+                                let tile = if active {
+                                    tile.border(sk.box_border(2.)).border_color(th.text)
+                                } else {
+                                    tile.border(sk.box_border(1.))
+                                        .border_color(c.chips[0].alpha(0.55))
+                                };
+                                sk.frame(tile)
+                                    .relative()
+                                    .children(sk.grain())
+                                    .children(sk.rim(c.chips[0].alpha(0.3), th.accent, active))
+                                    .child(glyph::element(&c.id, c.chips[0], 20.))
+                            }
+                            // The custom wheel's cog, in the tray's own ink.
+                            None => tile
+                                .border(sk.box_border(1.))
+                                .border_color(if active {
+                                    th.accent
+                                } else {
+                                    th.faint.alpha(0.5)
+                                })
+                                .bg(if active {
+                                    th.accent.alpha(0.16)
+                                } else {
+                                    darken(th.surface, 0.3)
+                                })
+                                .text_size(sk.text_px(18.))
+                                .text_color(if active { th.text } else { th.text.alpha(0.7) })
+                                .child(theme::Dynamic::Custom(Box::default()).glyph()),
                         }
-                        // The custom wheel's cog, in the tray's own ink.
-                        None => tile
-                            .border_1()
-                            .border_color(if active {
-                                th.accent
-                            } else {
-                                th.faint.alpha(0.5)
-                            })
-                            .bg(if active {
-                                th.accent.alpha(0.16)
-                            } else {
-                                darken(th.surface, 0.3)
-                            })
-                            .text_size(sk.text_px(18.))
-                            .text_color(if active { th.text } else { th.text.alpha(0.7) })
-                            .child(theme::Dynamic::Custom(Box::default()).glyph()),
                     };
-                    let tile = tile.when(active, |d| {
+                    let tile = tile.when(active && !sk.text_controls(), |d| {
                         let d = d.border(px(3.)).border_color(th.text);
                         if sk.shape.material == skin::Material::Paper {
                             d.shadow(paper::shadows_with(paper::Stock {
@@ -31710,7 +32001,7 @@ impl Render for Workspace {
                     .w(px(width + 2. * TRAY_AREA_PAD))
                     .p(px(TRAY_AREA_PAD))
                     .rounded(sk.rad_raw(6.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .map(|d| sk.finish_group(d))
                     .child(label(title))
@@ -31885,9 +32176,14 @@ impl Render for Workspace {
                                 .child(format!("\u{b7} {}", t.ui.ui_yours)),
                         )
                     });
-                // The sets: follow the design, or pick one. One lit.
+                // Follow the active appearance preference, or pick a set.
+                let follow_label = if sk.unboxed() {
+                    "skin"
+                } else {
+                    t.ui.ui_set_design
+                };
                 let mut set_row = div().flex().flex_row().flex_wrap().gap_2().child(
-                    theme_icon_btn(&th, &sk, "\u{25ce}", t.ui.ui_set_design, following)
+                    theme_icon_btn(&th, &sk, "\u{25ce}", follow_label, following)
                         .id("ui-set-design")
                         .on_mouse_down(
                             MouseButton::Left,
@@ -31973,7 +32269,7 @@ impl Render for Workspace {
                                 .debug_selector(move || id.into())
                                 .cursor_pointer()
                                 .when(!on, |d| d.opacity(0.35))
-                                .child(glyph)
+                                .child(sk.control_text(glyph))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -32177,6 +32473,11 @@ impl Render for Workspace {
                 } else {
                     TRAY_UI_COL_W + 2. * TRAY_AREA_PAD + TRAY_COL_GAP
                 };
+            let panel_w = if sk.text_controls() {
+                panel_w.min((f32::from(window.viewport_size().width) - 24.).max(240.))
+            } else {
+                panel_w
+            };
             let panel_h_est = tray_panel_h_est();
             let mut panel = sk.sheet().id("theme-panel").absolute().w(px(panel_w));
             // Where the tray's top edge lands decides how tall it may be, so
@@ -32199,9 +32500,10 @@ impl Render for Workspace {
                 None => over_the_footer(panel, scale),
             };
             panel = panel
+                .when(sk.text_controls(), |d| d.right(px(8.)))
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(th.surface.alpha(0.82)))
                 // never spill past the RENDER: clip horizontally, scroll a
@@ -32228,6 +32530,7 @@ impl Render for Workspace {
                         }
                     }),
                 )
+                .when(sk.text_controls(), |d| d.flex_wrap().items_start())
                 .child(themes)
                 .child(pickers)
                 .child(controls)
@@ -32393,7 +32696,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -32659,7 +32962,7 @@ impl Render for Workspace {
                     .py_1()
                     .rounded(sk.rad_raw(8.))
                     .bg(th.accent.alpha(0.06))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.18))
                     .child(
                         div()
@@ -32806,7 +33109,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -32845,7 +33148,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(color.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.65) })
@@ -32898,7 +33201,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -32937,7 +33240,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
                         .text_color(if on { th.text } else { th.text.alpha(0.68) })
@@ -32991,7 +33294,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -33041,7 +33344,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { color } else { color.alpha(0.34) })
                         .when(on, |d| d.bg(color.alpha(0.18)))
                         .text_color(if on { th.text } else { th.text.alpha(0.68) })
@@ -33357,7 +33660,7 @@ impl Render for Workspace {
                             .px_1()
                             .py_0p5()
                             .rounded(sk.radius())
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(col.alpha(0.5))
                             .bg(col.alpha(0.10))
                             .child(
@@ -33498,7 +33801,7 @@ impl Render for Workspace {
                         .px_1()
                         .py_1()
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(status_glow.alpha(0.20))
                         .bg(well_bg.alpha(0.55))
                         .overflow_hidden();
@@ -33557,7 +33860,7 @@ impl Render for Workspace {
                         // its old thickness (5→3.3) — same outline + glow, slimmer.
                         .p(px(3.3 * cs))
                         .rounded(sk.rad_raw(8.))
-                        .border_2()
+                        .border(sk.box_border(2.))
                         .border_color(kind_col.alpha(if live_glow { 0.42 } else { 0.32 }))
                         .bg(linear_gradient(
                             135.,
@@ -33597,7 +33900,7 @@ impl Render for Workspace {
                                 .gap_1()
                                 .p_1()
                                 .rounded(sk.rad_raw(6.))
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(kind_col.alpha(0.3))
                                 .bg(sk.region_face(card_bg))
                                 .when(sk.m.frost > 0., |d| d.bg(gpui::transparent_black()))
@@ -33638,7 +33941,7 @@ impl Render for Workspace {
                                                         .text_size(sk.text_px(9. * cs))
                                                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                         .text_color(hsla(0., 0.85, 0.62, 1.))
-                                                        .child("\u{26a0}"),
+                                                        .child(sk.control("\u{26a0}", "warning")),
                                                 )
                                             },
                                         )
@@ -33661,7 +33964,7 @@ impl Render for Workspace {
                                                 .text_color(mode_col)
                                                 .px_1()
                                                 .rounded(sk.radius())
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
                                                 .child(mode_lbl.clone()),
@@ -33691,7 +33994,7 @@ impl Render for Workspace {
                                         // the warped screen reads as recessed
                                         // glass set into the card.
                                         .rounded(sk.rad_raw(8.))
-                                        .border_2()
+                                        .border(sk.box_border(2.))
                                         .border_color(darken(kind_col, 0.62))
                                         .bg(well_bg.alpha(0.7))
                                         // heavy inset vignette = the curved-glass
@@ -33816,7 +34119,7 @@ impl Render for Workspace {
                                                             .w(px(52. * cs))
                                                             .h(px(52. * cs))
                                                             .rounded(sk.radius_pill())
-                                                            .border_2()
+                                                            .border(sk.box_border(2.))
                                                             .border_color(gcol.alpha(0.55))
                                                             .bg(gcol.alpha(0.14))
                                                             .flex()
@@ -33934,12 +34237,12 @@ impl Render for Workspace {
                                             .w(px(18. * cs))
                                             .h(px(18. * cs))
                                             .rounded(sk.rad_raw(6.))
-                                            .border_1()
+                                            .border(sk.box_border(1.))
                                             .border_color(theme_tint.alpha(0.6))
                                             .bg(theme_tint.alpha(0.15))
                                             .text_size(sk.text_px(11. * cs))
                                             .text_color(theme_tint)
-                                            .child(theme_glyph),
+                                            .when(!sk.text_controls(), |d| d.child(theme_glyph)),
                                     )
                                 })
                                 // RULES TEXT: the recent message feed
@@ -33979,7 +34282,7 @@ impl Render for Workspace {
                                                 .px_1()
                                                 .py_0p5()
                                                 .rounded(sk.rad_raw(6.))
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(status_glow.alpha(0.55))
                                                 .bg(status_glow.alpha(0.12))
                                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -34003,7 +34306,9 @@ impl Render for Workspace {
                                                 .child(
                                                     div()
                                                         .text_size(sk.text_px(13. * cs))
-                                                        .child(pip_glyph),
+                                                        .when(!sk.text_controls(), |d| {
+                                                            d.child(pip_glyph)
+                                                        }),
                                                 )
                                                 .child(
                                                     div()
@@ -34063,7 +34368,7 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_4()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(if preview {
                     darken(th.bg, 0.78)
@@ -34122,7 +34427,7 @@ impl Render for Workspace {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(hsla(0.43, 0.68, 0.55, 0.6))
                                 .bg(hsla(0.43, 0.68, 0.55, 0.10))
                                 .text_size(sk.text_px(10.))
@@ -34130,7 +34435,7 @@ impl Render for Workspace {
                                 .text_color(hsla(0.43, 0.68, 0.55, 1.))
                                 .cursor_pointer()
                                 .hover(|s| s.bg(hsla(0.43, 0.68, 0.55, 0.22)))
-                                .child(ui.mcp_btn_savings)
+                                .child(sk.control_text(ui.mcp_btn_savings))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -34150,7 +34455,7 @@ impl Render for Workspace {
                                 .px_2()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(acc.alpha(0.6))
                                 .bg(acc.alpha(0.10))
                                 .text_size(sk.text_px(10.))
@@ -34158,7 +34463,7 @@ impl Render for Workspace {
                                 .text_color(acc)
                                 .cursor_pointer()
                                 .hover(move |s| s.bg(acc.alpha(0.22)))
-                                .child(ui.mcp_btn_usage)
+                                .child(sk.control_text(ui.mcp_btn_usage))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -34234,7 +34539,7 @@ impl Render for Workspace {
                             .py_1()
                             .rounded(sk.rad_raw(8.))
                             .bg(th.accent.alpha(0.06))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.accent.alpha(0.18))
                             .child(inner)
                     };
@@ -34462,7 +34767,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { th.accent } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(th.accent.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.6) })
@@ -34494,7 +34799,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_0p5()
                         .rounded(sk.radius_pill())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(if on { col } else { th.text.alpha(0.2) })
                         .when(on, |d| d.bg(col.alpha(0.16)))
                         .text_color(if on { th.text } else { th.text.alpha(0.65) })
@@ -34661,7 +34966,7 @@ impl Render for Workspace {
                         .px_2()
                         .py_1()
                         .rounded(sk.rad_raw(6.))
-                        .border_2()
+                        .border(sk.box_border(2.))
                         .border_color(dead_border)
                         .bg(dead_bg)
                         .shadow(agent_card_shadows(dead_glow, false, th.grade.phosphor))
@@ -34692,7 +34997,7 @@ impl Render for Workspace {
                                                 .flex_none()
                                                 .text_size(sk.text_px(7. * gs))
                                                 .text_color(dead_glow.alpha(0.7))
-                                                .child("\u{25cf}"),
+                                                .child(sk.control("\u{25cf}", "on")),
                                         )
                                         .child(
                                             div()
@@ -34702,7 +35007,7 @@ impl Render for Workspace {
                                                 .text_color(kind_col)
                                                 .px_1()
                                                 .rounded(sk.radius())
-                                                .border_1()
+                                                .border(sk.box_border(1.))
                                                 .border_color(kind_col.alpha(0.42))
                                                 .bg(kind_col.alpha(0.12))
                                                 .child(da.kind.label()),
@@ -34747,14 +35052,14 @@ impl Render for Workspace {
                                             .px_2()
                                             .py_0p5()
                                             .rounded(sk.rad_raw(6.))
-                                            .border_1()
+                                            .border(sk.box_border(1.))
                                             .border_color(th.complement.alpha(0.5))
                                             .text_size(sk.text_px(8.5 * gs))
                                             .font_weight(gpui::FontWeight::BOLD)
                                             .text_color(th.complement)
                                             .cursor_pointer()
                                             .hover(|s| s.bg(th.complement.alpha(0.16)))
-                                            .child("\u{2b07} .cdx")
+                                            .child(sk.control("\u{2b07} .cdx", "download .cdx"))
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(
@@ -34772,14 +35077,18 @@ impl Render for Workspace {
                                         .px_2()
                                         .py_0p5()
                                         .rounded(sk.rad_raw(6.))
-                                        .border_1()
+                                        .border(sk.box_border(1.))
                                         .border_color(th.accent.alpha(0.5))
                                         .text_size(sk.text_px(8.5 * gs))
                                         .font_weight(gpui::FontWeight::BOLD)
                                         .text_color(th.accent)
                                         .bg(th.accent.alpha(0.08))
                                         .hover(|s| s.bg(th.accent.alpha(0.18)))
-                                        .child(format!("{} \u{23ce}", s.resurrect)),
+                                        .child(format!(
+                                            "{} {}",
+                                            s.resurrect,
+                                            sk.control("\u{23ce}", "enter")
+                                        )),
                                 ),
                         )
                         .on_mouse_down(
@@ -34808,7 +35117,7 @@ impl Render for Workspace {
                 .overflow_hidden()
                 .p_3()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -34829,7 +35138,7 @@ impl Render for Workspace {
                         .items_center()
                         .gap_2()
                         .text_size(sk.text_px(13. * gs))
-                        .child(div().child("\u{1faa6}"))
+                        .child(div().child(sk.control("\u{1faa6}", "recover")))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -34864,7 +35173,7 @@ impl Render for Workspace {
                             .text_size(sk.text_px(9. * gs))
                             .text_color(th.complement)
                             .font_weight(gpui::FontWeight::BOLD)
-                            .child(format!("\u{2b07} {msg}")),
+                            .child(format!("{} {msg}", sk.control("\u{2b07}", "download"))),
                     )
                 })
                 .child(chips)
@@ -34935,7 +35244,7 @@ impl Render for Workspace {
                 .px_3()
                 .py_1()
                 .rounded(sk.radius())
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(danger)
                 .bg(danger.alpha(0.22))
                 .text_color(white().alpha(0.96))
@@ -35103,7 +35412,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_4()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -35189,20 +35498,22 @@ impl Render for Workspace {
                     .text_size(sk.text_px(11.5))
                     .text_color(th.text)
                     .hover(|s| s.bg(th.accent.alpha(0.2)))
-                    .child(
-                        div()
-                            .w(px(18.))
-                            .flex_none()
-                            .when_some(
-                                glyph
-                                    .chars()
-                                    .next()
-                                    .and_then(|c| pane::chrome_glyph_font(c, &th)),
-                                |d, family| d.font_family(family),
-                            )
-                            .child(glyph.to_string()),
-                    )
-                    .child(div().flex_1().min_w(px(0.)).child(label.to_string()))
+                    .when(!sk.text_controls(), |d| {
+                        d.child(
+                            div()
+                                .w(px(18.))
+                                .flex_none()
+                                .when_some(
+                                    glyph
+                                        .chars()
+                                        .next()
+                                        .and_then(|c| pane::chrome_glyph_font(c, &th)),
+                                    |d, family| d.font_family(family),
+                                )
+                                .child(glyph.to_string()),
+                        )
+                    })
+                    .child(div().flex_1().min_w(px(0.)).child(sk.control_text(label)))
             };
             // Over its own button, which is at the bottom right — see
             // `over_the_footer`.
@@ -35217,7 +35528,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -35420,7 +35731,7 @@ impl Render for Workspace {
                     d.child(
                         entry(
                             "\u{2192}",
-                            &format!("{} \u{2192}", s.ch_split),
+                            &format!("{} {}", s.ch_split, sk.control("\u{2192}", "right")),
                             "more-split-right",
                         )
                         .on_mouse_down(
@@ -35435,7 +35746,7 @@ impl Render for Workspace {
                     .child(
                         entry(
                             "\u{2193}",
-                            &format!("{} \u{2193}", s.ch_split),
+                            &format!("{} {}", s.ch_split, sk.control("\u{2193}", "down")),
                             "more-split-down",
                         )
                         .on_mouse_down(
@@ -35735,7 +36046,7 @@ impl Render for Workspace {
                 .cursor_pointer()
                 .text_color(th.text)
                 .text_size(sk.text_px(14.))
-                .child("✕")
+                .child(sk.control("✕", "close"))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -35754,7 +36065,7 @@ impl Render for Workspace {
                 .text_size(sk.text_px(10.5))
                 .font_weight(gpui::FontWeight::BOLD)
                 .text_color(th.complement)
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(th.accent.alpha(0.5))
                 .child(format!("🌐 {} ▾", cur_lang.native()))
                 .on_mouse_down(
@@ -35776,7 +36087,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_5()
                 .rounded(sk.rad_raw(8.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.45)))
                 .text_color(th.text)
@@ -35957,7 +36268,7 @@ impl Render for Workspace {
                             .rounded(sk.radius_pill())
                             .bg(c)
                             .cursor_pointer()
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(hsla(0., 0., 0., 0.5))
                             .on_mouse_down(
                                 MouseButton::Left,
@@ -36037,7 +36348,7 @@ impl Render for Workspace {
                                 .px_1()
                                 .py_0p5()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(g_col)
                                 .bg(g_col.alpha(0.3))
                                 .cursor_pointer()
@@ -36091,7 +36402,7 @@ impl Render for Workspace {
                             .px_1()
                             .py_0p5()
                             .rounded(sk.radius())
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(if on { th.accent } else { pcol })
                             .bg(pcol.alpha(if on { 0.55 } else { 0.25 }))
                             .cursor_pointer()
@@ -36148,7 +36459,7 @@ impl Render for Workspace {
                     .top(px(f32::from(at.y) + 8.))
                     .p_2()
                     .rounded(sk.rad_raw(6.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.85))
                     .bg(sk.region_face(darken(th.surface, 0.6)))
                     .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -36268,7 +36579,7 @@ impl Render for Workspace {
                         .rounded(sk.radius_pill())
                         .bg(c)
                         .cursor_pointer()
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(hsla(0., 0., 0., 0.5))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -36302,7 +36613,7 @@ impl Render for Workspace {
                 .overflow_y_scroll()
                 .p_2()
                 .rounded(sk.rad_raw(6.))
-                .border_2()
+                .border(sk.box_border(2.))
                 .border_color(th.accent.alpha(0.85))
                 .bg(sk.region_face(darken(th.surface, 0.6)))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -36717,9 +37028,9 @@ impl Render for Workspace {
                         .child(if self.focus_inline {
                             format!("{} · {}", ui.focus_hdr_chat_history, snap.title)
                         } else {
-                            lang::fill(ui.focus_hdr, &[("name", &snap.title)])
+                            lang::fill(&sk.control_text(ui.focus_hdr), &[("name", &snap.title)])
                         })
-                        .child(Self::reader_chip(chip, snap.accent, snap.text))
+                        .child(Self::reader_chip(chip, snap.accent, snap.text, &sk))
                         .child(self.focus_inherit_toggle(snap.accent, snap.text, cx)),
                 )
                 // text-size slider for the pane under scrutiny (live, per-open)
@@ -36988,16 +37299,20 @@ impl Render for Workspace {
         let registry = self.split_bounds.clone();
         let pane_reg = self.pane_bounds.clone();
         let drop = self.drop_target.clone();
-        let pane_area = div().size_full().flex().p(px(3.)).child(render_node(
-            &tab.root,
-            &th,
-            focused_id,
-            dragging,
-            &registry,
-            &pane_reg,
-            drop.as_ref(),
-            cx,
-        ));
+        let pane_area = div()
+            .size_full()
+            .flex()
+            .p(px(if sk.unboxed() { 0. } else { 3. }))
+            .child(render_node(
+                &tab.root,
+                &th,
+                focused_id,
+                dragging,
+                &registry,
+                &pane_reg,
+                drop.as_ref(),
+                cx,
+            ));
 
         let screen = div()
             .flex_1()
@@ -37006,7 +37321,7 @@ impl Render for Workspace {
             .rounded(sk.capped(10.))
             .overflow_hidden()
             .bg(th.bg)
-            .border_1()
+            .border(sk.box_border(1.))
             .border_color(darken(th.surface, 0.3))
             .mx_2()
             // Doubled black bezel gap between the mother bar and the screen.
@@ -37111,7 +37426,7 @@ impl Render for Workspace {
                         linear_color_stop(brighten(bezel, 1.6), 0.),
                         linear_color_stop(darken(bezel, 0.8), 1.),
                     ))
-                    .border_2()
+                    .border(sk.box_border(2.))
                     .border_color(th.accent.alpha(0.45))
                     .shadow(
                         vec![
@@ -37152,6 +37467,11 @@ impl Render for Workspace {
                         .collect::<Vec<_>>(),
                     )
                     .map(|d| sk.finish(d))
+                    .when(sk.unboxed(), |d| {
+                        d.border(px(sk.m.hairline))
+                            .border_t_0()
+                            .border_color(sk.ink.edge)
+                    })
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -37219,6 +37539,77 @@ mod tests {
         assert!(restored.theme == saved.theme);
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.skin.is_none());
+    }
+
+    #[gpui::test]
+    fn minimal_header_keeps_model_and_menu_without_an_invisible_trash_target(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+            skin::select(cx, "terminimalist").unwrap();
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        pane.update(cx, |v, _| {
+            v.mode = pane::PaneMode::Codex;
+            v.model_label = Some("SOL 6 XHIGH".into());
+        });
+        ws.update(cx, |ws, cx| {
+            ws.set_left_bar(true, cx);
+            *ws.bay_bounds.lock().unwrap() = Some(Bounds::new(
+                point(px(10.), px(700.)),
+                size(px(100.), px(56.)),
+            ));
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(cx);
+        assert!(cx.debug_bounds("minimal-add-project").is_some());
+        ws.update(cx, |ws, cx| ws.set_left_bar(false, cx));
+        draw(cx);
+        assert!(cx.debug_bounds("minimal-add-project").is_some());
+        assert!(cx.debug_bounds("show-left-bar").is_some());
+        assert!(cx.debug_bounds("pane-model").is_some());
+        assert!(ws.read_with(cx, |ws, _| ws.bay_bounds.lock().unwrap().is_none()));
+        let title = cx
+            .debug_bounds("pane-title")
+            .expect("title remains reachable");
+        cx.simulate_mouse_down(
+            title.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        cx.simulate_mouse_up(
+            title.center(),
+            MouseButton::Right,
+            gpui::Modifiers::default(),
+        );
+        draw(cx);
+        assert!(pane.update(cx, |v, cx| v.layers_up(cx).header_menu));
     }
 
     #[gpui::test]
@@ -38805,7 +39196,10 @@ mod tests {
             "the + button is the strip's one control and stays"
         );
         assert!(
-            src.contains(r#".id("show-left-bar")"#),
+            src.contains(
+                r#".id("show-left-bar")
+                    .debug_selector(|| "show-left-bar".into())"#
+            ),
             "and with the tree closed the strip still carries the handle that \
              opens it — that handle is now the only way back to the branches the \
              strip is not showing"
@@ -39724,7 +40118,7 @@ mod tests {
         let panel = body_of(&code, "fn rail_panel");
         for token in [
             "rad_raw(8.)",
-            "border_2()",
+            "sk.finish(d)",
             "th.accent.alpha(0.85)",
             "darken(th.surface, 0.45)",
             "float_shadows(th.accent, th.grade.phosphor)",
@@ -39741,6 +40135,15 @@ mod tests {
                  panel wears. A card with a thinner border and no phosphor glow reads \
                  as a decal stuck on the screen rather than as one of this window's \
                  menus, which is the state this guard exists to refuse."
+            );
+        }
+
+        // A skin may remove the input border through its shared policy. Both
+        // callers still request the same legacy width before that finish.
+        for (name, body) in [("panel", panel), ("tooltip", tip)] {
+            assert!(
+                body.contains("border_2()") || body.contains("border(sk.box_border(2.))"),
+                "{name} no longer requests the shared two-pixel legacy edge"
             );
         }
 

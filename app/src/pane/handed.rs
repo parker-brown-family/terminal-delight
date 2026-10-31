@@ -470,7 +470,7 @@ impl TerminalView {
                     div()
                         .text_size(px(7.))
                         .text_color(sk.ink.mark)
-                        .child("\u{25cf}"),
+                        .child(sk.control("\u{25cf}", "on")),
                 )
             })
             .child(div().text_color(ink).child(name))
@@ -492,7 +492,7 @@ impl TerminalView {
             .border_color(edge)
             .text_color(ink)
             .text_size(text * 0.8)
-            .child("\u{25bc}")
+            .child(sk.control("\u{25bc}", "next"))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {

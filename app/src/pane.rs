@@ -7039,7 +7039,7 @@ impl TerminalView {
     /// This pane's note box on the glass — recomputed from the LIVE content rect
     /// rather than cached, so a resize can never leave the paper and the thing
     /// you click in different places.
-    fn note_layout(&self) -> Option<crate::sticky::Layout> {
+    fn note_layout(&self, cx: &App) -> Option<crate::sticky::Layout> {
         // NO NOTE ON THE BENCH.
         //
         // Two rounds went into finding a corner for it and the answer was that
@@ -7061,7 +7061,7 @@ impl TerminalView {
         }
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt())
+        crate::sticky::layout(bounds, note.tilt(crate::skin::skin(cx, 1.).unboxed()))
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -7335,7 +7335,7 @@ impl TerminalView {
     /// where you aimed it, the same as clicking out of the tab-rename box.
     fn sticky_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         match crate::sticky::click(self.sticky_composing(), hit) {
             crate::sticky::Act::Peel => {
@@ -7370,7 +7370,7 @@ impl TerminalView {
     /// would be a surprise on a gesture whose whole job is to be uneventful.
     fn sticky_right_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if crate::sticky::right_click(hit) != crate::sticky::Act::Pin {
             return false;
@@ -7392,7 +7392,7 @@ impl TerminalView {
     fn sticky_hover(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         let was = self.note_hover;
         self.note_hover = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if was != self.note_hover {
             cx.notify();
@@ -11268,7 +11268,8 @@ impl Render for TerminalView {
         // UI CONFIG, the PANES layer: one config for every pane — no pane is in
         // charge of its own. The title, the state word and ⋯ are not switches.
         let ui = |k: crate::uiconfig::Key| crate::uiconfig::shown(cx, k);
-        let ui_logo = ui(crate::uiconfig::Key::PaneLogo);
+        let minimal_header = sk.unboxed();
+        let ui_logo = !sk.text_controls() && ui(crate::uiconfig::Key::PaneLogo);
         let ui_mode = ui(crate::uiconfig::Key::PaneMode);
         let ui_face = ui(crate::uiconfig::Key::PaneFace);
         let ui_agent = ui(crate::uiconfig::Key::PaneAgent);
@@ -11319,14 +11320,14 @@ impl Render for TerminalView {
         // Reserve the launch button before deciding which optional controls fit.
         let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
-        let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = ui_sliders && controls_w >= 410.; //    2nd: EQ / display
-        let show_theme = ui_surface && controls_w >= 360.; //  3rd: 🎨 theme
-        let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
-                                                                 // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
-                                                                 // The handover chip shrinks before anything tucks: its name above
-                                                                 // 470, the word for its list down to 264, and below that it is a row
-                                                                 // in the ⋯ menu like every other control here.
+        let show_human = !sk.text_controls() && SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
+        let show_eq = !sk.text_controls() && ui_sliders && controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = !sk.text_controls() && ui_surface && controls_w >= 360.; //  3rd: 🎨 theme
+        let show_focus = !sk.text_controls() && SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
+                                                                                        // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                                                                        // The handover chip shrinks before anything tucks: its name above
+                                                                                        // 470, the word for its list down to 264, and below that it is a row
+                                                                                        // in the ⋯ menu like every other control here.
         let handover_name = controls_w >= 470.;
         let show_handover = ui_handover && controls_w >= 264. && self.has_handovers();
         // UI CONFIG's hidden controls go where narrow-pane controls already go.
@@ -11388,7 +11389,7 @@ impl Render for TerminalView {
                         .py(px(12.))
                         .rounded(px(9.))
                         .bg(surf.alpha(0.94))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(violet.alpha(0.55))
                         .shadow_md()
                         .text_color(txt)
@@ -11405,7 +11406,7 @@ impl Render for TerminalView {
                                         .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
                                             d.font_family(f)
                                         })
-                                        .child("\u{f04b2}"),
+                                        .child(sk.control("\u{f04b2}", "asleep")),
                                 )
                                 .child(crate::lang::fill(
                                     parts.sleep_card_since,
@@ -11441,6 +11442,7 @@ impl Render for TerminalView {
                 )
         });
         let overflow_el = self.hdr_overflow.map(|pos| {
+            let sk = &sk;
             let (acc, surf, txt, human, _ff) = (
                 th.accent,
                 th.surface,
@@ -11459,8 +11461,10 @@ impl Render for TerminalView {
                     .cursor_pointer()
                     .text_color(txt)
                     .hover(move |s| s.bg(acc.alpha(0.22)))
-                    .child(div().w(px(22.)).child(icon.to_string()))
-                    .child(label.to_string())
+                    .when(!sk.text_controls(), |d| {
+                        d.child(div().w(px(22.)).child(icon.to_string()))
+                    })
+                    .child(sk.control_text(label))
             };
             let mut menu = div()
                 .flex()
@@ -11468,7 +11472,7 @@ impl Render for TerminalView {
                 .min_w(px(196.))
                 .py(px(4.))
                 .bg(surf)
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(acc.alpha(0.55))
                 .rounded(sk.rad_raw(8.))
                 .occlude()
@@ -11476,6 +11480,18 @@ impl Render for TerminalView {
                 .font_family(sk.font_family.clone())
                 .shadow_md()
                 .map(|d| sk.finish(d));
+            if minimal_header {
+                menu = menu.child(
+                    div()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .flex()
+                        .gap_2()
+                        .children(self.rest_chip(&th, txt, sk, scale))
+                        .children(self.memory_figure(txt, sk, scale))
+                        .child(sk.control_text(&status)),
+                );
+            }
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -11484,11 +11500,11 @@ impl Render for TerminalView {
                         .px(px(7.))
                         .py(px(1.))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(human.alpha(0.6))
                         .text_color(human)
                         .cursor_pointer()
-                        .child(glyph)
+                        .child(sk.control_text(glyph))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
@@ -11505,7 +11521,7 @@ impl Render for TerminalView {
                         .gap_2()
                         .px(px(12.))
                         .py(px(6.))
-                        .child(div().w(px(22.)).child("👤"))
+                        .child(div().w(px(22.)).child(sk.control("👤", "turns")))
                         .child(
                             crate::lang::current()
                                 .strings()
@@ -11662,9 +11678,13 @@ impl Render for TerminalView {
         // complement (the wheel's `C` target; defaults to the accent's opposite
         // hue, or the active dynamic's complement). Lightness is floored so a
         // dark complement override stays legible on the header.
-        let bar_fg = Hsla {
-            l: th.complement.l.clamp(0.5, 0.92),
-            ..th.complement
+        let bar_fg = if sk.text_controls() {
+            sk.ink.ink
+        } else {
+            Hsla {
+                l: th.complement.l.clamp(0.5, 0.92),
+                ..th.complement
+            }
         };
 
         // The global text-size scrubber now drives the MENU BAR: the bar height,
@@ -11676,6 +11696,11 @@ impl Render for TerminalView {
         // NOT `HICON`, which is the bar's own height budget: the bar is the
         // right size and the glyphs in it were not. See [`CHROME_GLYPH`].
         let hicon = CHROME_GLYPH * scale;
+        let hicon = if sk.text_controls() {
+            11. * scale
+        } else {
+            hicon
+        };
         let hpad = px(12. * scale); // header horizontal padding / control gap
 
         // ── The face toggle ─────────────────────────────────────────────────
@@ -11858,7 +11883,7 @@ impl Render for TerminalView {
                     .relative()
                     .overflow_hidden()
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(ring.alpha(0.65))
                     .child(
                         gpui::img(face.plate.clone())
@@ -11886,7 +11911,7 @@ impl Render for TerminalView {
                 base.w(px(logo_box))
                     .overflow_hidden()
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.35))
                     .child(
                         gpui::img(std::path::PathBuf::from(path))
@@ -11900,7 +11925,7 @@ impl Render for TerminalView {
                 base.gap_1()
                     .px(px(5. * scale))
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(bar_fg.alpha(0.18))
                     .text_color(bar_fg.alpha(0.4))
                     .group_hover(hdr_grp.clone(), move |s| {
@@ -11913,7 +11938,7 @@ impl Render for TerminalView {
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
-                            .child("\u{ff0b}"),
+                            .child(sk.control("\u{ff0b}", "add")),
                     )
                     .child(
                         div()
@@ -11940,9 +11965,20 @@ impl Render for TerminalView {
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
             // own header rather than borrowing the window's.
-            .bg(sk.ground(lighter, th.surface))
-            .border_b_1()
-            .border_color(sk.ink.edge_strong)
+            .bg(sk.ground(
+                lighter,
+                if sk.text_controls() {
+                    sk.ink.panel_raised
+                } else {
+                    th.surface
+                },
+            ))
+            .border_b(sk.box_border(1.))
+            .border_color(if sk.unboxed() && focused_now {
+                sk.ink.focus
+            } else {
+                sk.ink.edge_strong
+            })
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
             .text_size(sk.text_px(th.font_size * scale))
@@ -11966,7 +12002,11 @@ impl Render for TerminalView {
                     .items_center()
                     .gap_2()
                     .when(ui_logo, |d| d.child(logo_el))
-                    .child(format!("▸ {} · {buf}", self.header_lead()))
+                    .child(format!(
+                        "{}{} · {buf}",
+                        sk.control("▸ ", ""),
+                        self.header_lead()
+                    ))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
             } else {
@@ -11977,6 +12017,8 @@ impl Render for TerminalView {
                 // pane was renamed — see `header_title`.
                 let label = self.header_title();
                 div()
+                    .id("pane-title")
+                    .debug_selector(|| "pane-title".into())
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
                     // child keeps min-width:auto otherwise) — so it clips instead
@@ -12001,7 +12043,7 @@ impl Render for TerminalView {
                             .flex_none()
                             .px(px(5. * scale))
                             .rounded(sk.rad(4.))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.accent.alpha(0.6))
                             .text_color(th.accent)
                             .text_size(sk.text_px(9.5 * scale))
@@ -12011,13 +12053,17 @@ impl Render for TerminalView {
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
                     .children(focused_now.then(|| sk.chevron("»")).flatten())
-                    .child(if !ui_mode {
-                        // UI CONFIG put the mode away: the title alone.
+                    .child(if !ui_mode || minimal_header {
+                        // Minimal furniture puts the model in its own slot.
                         label.clone()
                     } else if focused_now && sk.chevron("»").is_some() {
                         format!("{} · {label}", self.header_lead())
                     } else {
-                        format!("▸ {} · {label}", self.header_lead())
+                        if sk.text_controls() {
+                            format!("{} · {label}", self.header_lead())
+                        } else {
+                            format!("▸ {} · {label}", self.header_lead())
+                        }
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -12035,10 +12081,14 @@ impl Render for TerminalView {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                        cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            view.renaming = Some(view.name.clone().unwrap_or_default());
-                            window.focus(&view.focus_handle, cx);
+                            if minimal_header {
+                                view.hdr_overflow = Some(ev.position);
+                            } else {
+                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                window.focus(&view.focus_handle, cx);
+                            }
                             cx.notify();
                         }),
                     )
@@ -12054,6 +12104,25 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
+                    .when(minimal_header && self.mode.is_agent(), |d| {
+                        d.child(
+                            div()
+                                .id("pane-model")
+                                .debug_selector(|| "pane-model".into())
+                                .text_size(sk.text_px(11. * scale))
+                                .text_color(sk.ink.ink_dim)
+                                .cursor_pointer()
+                                .child(self.header_lead().into_owned())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|view, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        view.hdr_overflow = Some(ev.position);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
                     .when(ui_face, |d| d.child(face_toggle))
                     .when(ui_agent, |d| {
                         d.child(
@@ -12063,14 +12132,14 @@ impl Render for TerminalView {
                                 .cursor_pointer()
                                 .text_size(sk.text_px((hicon * 0.42).max(8.5)))
                                 .whitespace_nowrap()
-                                .child(if pane_w / optical >= 470. {
+                                .child(sk.control_text(if pane_w / optical >= 470. {
                                     crate::lang::current()
                                         .strings()
                                         .parts
                                         .pane_launch_agent_chip
                                 } else {
                                     "⌁"
-                                })
+                                }))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -12099,7 +12168,7 @@ impl Render for TerminalView {
                                 .px(px(2.))
                                 .rounded(sk.radius())
                                 .cursor_pointer()
-                                .child(glyph)
+                                .child(sk.control_text(glyph))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
@@ -12116,7 +12185,7 @@ impl Render for TerminalView {
                                 .gap(px(1.))
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(th.human.alpha(0.6))
                                 .text_color(th.human)
                                 // the bust matches the consistent 2× glyph set
@@ -12125,7 +12194,7 @@ impl Render for TerminalView {
                                         .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
-                                        .child("👤"),
+                                        .child(sk.control("👤", "turns")),
                                 )
                                 .child(step("▲", false, cx))
                                 .child(step("▼", true, cx)),
@@ -12139,13 +12208,13 @@ impl Render for TerminalView {
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
-                                .child("👓")
+                                .child(sk.control("👓", "focus"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -12161,12 +12230,12 @@ impl Render for TerminalView {
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child("🎨")
+                                .child(sk.control("🎨", "look"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -12184,7 +12253,7 @@ impl Render for TerminalView {
                                 .flex()
                                 .items_center()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .child(eq_icon(th.accent, scale * 0.5))
@@ -12199,17 +12268,17 @@ impl Render for TerminalView {
                     })
                     // ⋯ overflow: appears once anything has been tucked away. Tap to
                     // open the menu of hidden controls (built above as overflow_el).
-                    .when(overflow, |row| {
+                    .when(overflow && !minimal_header, |row| {
                         row.child(
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child("⋯")
+                                .child(sk.control("⋯", "menu"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
@@ -12243,7 +12312,7 @@ impl Render for TerminalView {
                                 .flex_none()
                                 .px(px(5. * scale))
                                 .rounded(sk.rad(4.))
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(bar_fg.alpha(0.75))
                                 .text_color(bar_fg)
                                 .text_size(sk.text_px(9.5 * scale))
@@ -12252,9 +12321,11 @@ impl Render for TerminalView {
                     })
                     // Rest and sleep: whether the window has frozen or ended
                     // this pane's agent, and what the pane costs.
-                    .children(self.rest_chip(&th, bar_fg, &sk, scale))
-                    .children(self.memory_figure(bar_fg, &sk, scale))
-                    .child(status)
+                    .when(!minimal_header, |d| {
+                        d.children(self.rest_chip(&th, bar_fg, &sk, scale))
+                            .children(self.memory_figure(bar_fg, &sk, scale))
+                            .child(sk.control_text(&status))
+                    })
                     .when(ui_close, |d| {
                         d.child(
                             // close just this sub-tab (×): ends this pane's shell.
@@ -12279,7 +12350,7 @@ impl Render for TerminalView {
                                 .text_size(sk.text_px(hicon * 1.36))
                                 .line_height(px(hicon * 1.36))
                                 .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                                .child("×")
+                                .child(sk.control("×", "close"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -12290,7 +12361,9 @@ impl Render for TerminalView {
                         )
                     }),
             );
-        header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
+        if !sk.text_controls() {
+            header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
+        }
 
         let jiggle = self.fx.jiggle_px;
         let shake_y = jiggle;
@@ -12440,6 +12513,7 @@ impl Render for TerminalView {
             .filter(|_| on_terminal && ui_notes)
             .map(|note| {
                 let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
+                let flat = sk.unboxed();
                 let store = self.content_bounds.clone();
                 let pal = sk.note_palette(&th);
                 let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
@@ -12458,7 +12532,7 @@ impl Render for TerminalView {
                             let Some(content) = store.lock().ok().and_then(|b| *b) else {
                                 return;
                             };
-                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
+                            if let Some(mut lay) = crate::sticky::layout(content, note.tilt(flat)) {
                                 lay.pre_warp(content, k1, k2);
                                 crate::sticky::paint(
                                     &note,
@@ -12938,8 +13012,8 @@ mod tests {
         let pane = cut(include_str!("pane.rs"));
         let main = cut(include_str!("main.rs"));
         for (src, glyph, file) in [
-            (pane, ".child(\"\\u{ff0b}\")", "pane.rs"),
-            (main, ".child(\"\\u{f06a9}\")", "main.rs"),
+            (pane, ".control(\"\\u{ff0b}\",", "pane.rs"),
+            (main, ".control(\"\\u{f06a9}\",", "main.rs"),
         ] {
             let at = src
                 .find(glyph)

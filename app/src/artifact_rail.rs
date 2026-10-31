@@ -356,7 +356,11 @@ impl Workspace {
                     div()
                         .flex_none()
                         .text_color(ink)
-                        .child(state_glyph(c.state)),
+                        .child(if sk.text_controls() {
+                            c.state.label()
+                        } else {
+                            state_glyph(c.state)
+                        }),
                 )
                 .when_some(when, |d, when| {
                     d.child(
@@ -397,7 +401,7 @@ impl Workspace {
                         .flex_none()
                         .px(px(4.))
                         .rounded(sk.rad_raw(4.))
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(sk.ink.ink_dim.alpha(0.5))
                         .text_size(sk.text_px(9.5))
                         .text_color(sk.ink.ink_dim)
