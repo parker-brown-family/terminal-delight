@@ -54,7 +54,9 @@ appear in the pane.
 
 **Platform:** Linux only (X11 & Wayland, via gpui's wgpu renderer). Not macOS/Windows.
 
-## Status — 0.1 (multi-pane tiling terminal)
+## Status
+
+Stable releases, and previews of the next one, are on the [releases page](https://github.com/parker-brown-family/terminal-delight/releases). This table describes `main`, so anything added since the latest stable release reaches the preview first.
 
 | Capability | State |
 |---|---|
