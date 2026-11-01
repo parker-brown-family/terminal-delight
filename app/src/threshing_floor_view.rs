@@ -13,9 +13,11 @@ use crate::surfacefeed::now_ms;
 use gpui::{anchored, deferred, NavigationDirection, PathBuilder};
 
 /// A seat's box at scale 1: place, title, latest message, program and model,
-/// state and role, age and tokens, and the newest artifact.
-const SEAT_W: f32 = 248.;
-const SEAT_H: f32 = 156.;
+/// state and role, age and tokens, and the newest artifact. Sized for a
+/// text-control skin, whose type floor lifts every line to about 11px: at
+/// 248 by 156 TERMINIMALIST's artifact line sat on the bottom border.
+const SEAT_W: f32 = 264.;
+const SEAT_H: f32 = 184.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
 const PAD: f32 = 14.;
@@ -1368,8 +1370,8 @@ impl Workspace {
                                         .debug_selector(move || format!("floor-message-{}", seat.0))
                                         .text_size(sk.text_px(8.5))
                                         .text_color(message_ink)
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
+                                        .min_w(px(0.))
+                                        .truncate()
                                         .child(SharedString::from(m)),
                                 )
                             })
@@ -1377,8 +1379,8 @@ impl Workspace {
                                 div()
                                     .text_size(sk.text_px(8.5))
                                     .text_color(state_ink)
-                                    .overflow_hidden()
-                                    .whitespace_nowrap()
+                                    .min_w(px(0.))
+                                    .truncate()
                                     .child(SharedString::from(state_line)),
                             ),
                     )
@@ -1390,7 +1392,7 @@ impl Workspace {
                         div()
                             .mt_auto()
                             .pt(px(4. * s))
-                            .mr(px(30. * s))
+                            .mr(px(if sk.text_controls() { 40. } else { 30. } * s))
                             .border_t_1()
                             .border_color(th.text.alpha(0.12))
                             .flex()
@@ -1411,7 +1413,8 @@ impl Workspace {
                             .absolute()
                             .right(px(7. * s))
                             .bottom(px(5. * s))
-                            .w(px(24. * s))
+                            // The word "off" needs more room than the ring did.
+                            .w(px(if sk.text_controls() { 30. } else { 24. } * s))
                             .h(px(20. * s))
                             .rounded(sk.rad_raw(4.))
                             .border_1()

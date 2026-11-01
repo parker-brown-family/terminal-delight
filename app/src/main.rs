@@ -3605,6 +3605,9 @@ enum BarMenu {
     Project(u32),
     Initiative(u32),
     Task(usize),
+    /// The strip's project chip, with the tree shut: every top branch, so
+    /// moving to another project does not mean opening the spine first.
+    Switch,
 }
 
 /// Which way a drawn triangle points. Used for the fold disclosures and for the
@@ -13058,6 +13061,75 @@ impl Workspace {
             .bg(th.faint.alpha(0.28))
     }
 
+    /// The rows of [`BarMenu::Switch`]: the tree's top branches in its own
+    /// order, each in the mark and name the strip gives it, and the one you
+    /// are in lit. A press lands where the spine's own row would.
+    fn switch_rows(&self, sk: &skin::Skin, s: f32, cx: &mut Context<Self>) -> Vec<gpui::Div> {
+        let here = self.places().get(self.active).and_then(|p| {
+            p.project
+                .map(BarBranch::Project)
+                .or(p.initiative.map(BarBranch::Initiative))
+        });
+        let mut rows = Vec::new();
+        for row in tree::top_branches(&self.bar_rows(cx)) {
+            let branch = BarBranch::from(row);
+            let (name, color, project) = match branch {
+                BarBranch::Project(id) => match self.project_at(id) {
+                    Some(p) => (p.label().to_uppercase(), p.color, true),
+                    None => continue,
+                },
+                BarBranch::Initiative(id) => match self.groups.iter().find(|g| g.id == id) {
+                    Some(g) => (g.label(), g.color, false),
+                    None => continue,
+                },
+                BarBranch::Unfiled => continue,
+            };
+            let lit = here == Some(branch);
+            let mark = if project {
+                div()
+                    .w(px(7. * s))
+                    .h(px(7. * s))
+                    .rounded(sk.radius_pill())
+                    .bg(color)
+            } else {
+                div()
+                    .w(px(3. * s))
+                    .h(px(11. * s))
+                    .rounded(sk.radius())
+                    .bg(color)
+            };
+            rows.push(
+                div()
+                    .debug_selector(move || format!("switch-row-{branch:?}"))
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(7. * s))
+                    .px(px(9. * s))
+                    .py(px(4. * s))
+                    .rounded(sk.radius())
+                    .text_size(sk.text_px(11.5 * s))
+                    .text_color(if lit { sk.ink.ink_lit } else { sk.ink.ink })
+                    .when(project, |d| d.font_weight(gpui::FontWeight::EXTRA_BOLD))
+                    .when(lit, |d| d.bg(color.alpha(STRIP_CHIP_WASH)))
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(color.alpha(STRIP_CHIP_WASH * 0.75)))
+                    .child(mark.flex_none())
+                    .child(div().max_w(px(220. * s)).truncate().child(name))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.bar_menu = None;
+                            ws.go_to_branch(branch, window, cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        rows
+    }
+
     /// The open context menu, if any.
     ///
     /// Every destructive line states its own weight — "Delete — 4 tabs, 6
@@ -13182,6 +13254,10 @@ impl Workspace {
                             ),
                     );
                 }
+            }
+
+            BarMenu::Switch => {
+                items = items.children(self.switch_rows(&sk, s, cx));
             }
 
             BarMenu::Project(id) => {
@@ -26342,7 +26418,7 @@ impl Workspace {
                 .find(|g| g.id == id)
                 .and_then(|g| g.level),
             BarMenu::Task(i) => self.tabs.get(i).and_then(|t| t.level),
-            BarMenu::Header => None,
+            BarMenu::Header | BarMenu::Switch => None,
         }
     }
 
@@ -26376,7 +26452,7 @@ impl Workspace {
                     t.level = next;
                 }
             }
-            BarMenu::Header => {}
+            BarMenu::Header | BarMenu::Switch => {}
         }
         self.save(cx);
         cx.notify();
@@ -28038,7 +28114,7 @@ impl Workspace {
         let has_groups = chips.iter().any(|c| matches!(c, StripChip::Group { .. }));
         for chip in chips {
             match chip {
-                StripChip::Project { id, lit, go } => {
+                StripChip::Project { id, lit, go: _ } => {
                     let Some(p) = self.project_at(id) else {
                         continue;
                     };
@@ -28049,17 +28125,31 @@ impl Workspace {
                         .rounded(sk.radius_pill())
                         .bg(p.color);
                     let name = p.label().to_uppercase();
-                    let el = self.strip_chip(
-                        format!("strip-project-{id}"),
-                        name,
-                        true,
-                        p.color,
-                        dot,
-                        lit,
-                        go,
-                        scale,
-                        cx,
-                    );
+                    let color = p.color;
+                    // The project you are under is the door to the others: a
+                    // press opens every top branch beneath the strip.
+                    let el = self
+                        .strip_chip(
+                            format!("strip-project-{id}"),
+                            name,
+                            true,
+                            color,
+                            dot,
+                            lit,
+                            None,
+                            scale,
+                            cx,
+                        )
+                        .cursor_pointer()
+                        .hover(move |st| st.bg(color.alpha(STRIP_CHIP_WASH * 0.75)))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                let at = point(ev.position.x, ev.position.y + px(14. * scale));
+                                ws.open_bar_menu(BarMenu::Switch, at, cx);
+                            }),
+                        );
                     head = head.child(el);
                     // the project is joined to its groups by a `›`; the
                     // groups themselves sit side by side, as siblings do
@@ -29399,6 +29489,14 @@ fn render_node(
                 )
                 .size_full(),
             );
+            // A seam, not a gutter, where the clean design meets an unboxed
+            // skin: each terminal already draws its own hairline, so the two
+            // panes close up and those hairlines become the one rule between
+            // them. The tube designs keep the dark break, because a CRT needs
+            // glass between its screens.
+            let sk = skin::skin(cx, 1.);
+            let seam = sk.unboxed() && theme::outer_choice(cx).id == theme::CLEAN;
+            let hairline = sk.m.hairline;
             // the grab handle: flat black bar; accent only while dragging
             let mut handle = div().flex_none().bg(if is_dragging {
                 th.accent.alpha(0.8)
@@ -29406,9 +29504,43 @@ fn render_node(
                 gpui::black()
             });
             handle = match dir {
+                _ if seam => div().flex_none(),
                 SplitDir::Row => handle.w(px(7.)).h_full().cursor_col_resize(),
                 SplitDir::Col => handle.h(px(7.)).w_full().cursor_row_resize(),
             };
+            // With no gutter to press, the grip is a strip laid over the seam,
+            // above both panes, so a press there resizes instead of selecting.
+            let grip = seam.then(|| {
+                let grip = div()
+                    .id(SharedString::from(format!("split-seam-{id}")))
+                    .debug_selector(move || format!("split-seam-{id}"))
+                    .absolute()
+                    .when(is_dragging, |d| d.bg(th.accent.alpha(0.35)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.drag_split = Some(id);
+                            cx.notify();
+                        }),
+                    );
+                match dir {
+                    SplitDir::Row => grip
+                        .top_0()
+                        .bottom_0()
+                        .left(gpui::relative(*ratio))
+                        .ml(px(-4.))
+                        .w(px(9.))
+                        .cursor_col_resize(),
+                    SplitDir::Col => grip
+                        .left_0()
+                        .right_0()
+                        .top(gpui::relative(*ratio))
+                        .mt(px(-4.))
+                        .h(px(9.))
+                        .cursor_row_resize(),
+                }
+            });
 
             let first = div().min_w_0().min_h_0().flex().child(render_node(
                 a, th, focused, dragging, registry, pane_reg, drop, cx,
@@ -29417,9 +29549,19 @@ fn render_node(
                 SplitDir::Row => first.h_full().w(gpui::relative(*ratio)),
                 SplitDir::Col => first.w_full().h(gpui::relative(*ratio)),
             };
-            let second = div().flex_1().min_w_0().min_h_0().flex().child(render_node(
-                b, th, focused, dragging, registry, pane_reg, drop, cx,
-            ));
+            let second = div()
+                .flex_1()
+                .min_w_0()
+                .min_h_0()
+                .flex()
+                // Side by side, the right pane's left hairline lands on the
+                // left pane's right one; stacked, a header sits between them.
+                .when(seam && matches!(dir, SplitDir::Row), |d| {
+                    d.ml(px(-hairline))
+                })
+                .child(render_node(
+                    b, th, focused, dragging, registry, pane_reg, drop, cx,
+                ));
 
             let ratio_now = *ratio;
             let store2 = registry.clone();
@@ -29429,52 +29571,61 @@ fn render_node(
                 .min_h_0()
                 .relative()
                 .flex()
-                // proven pattern: container-level mousedown + handle-zone math
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
-                        if std::env::var("TD_KEYDEBUG").is_ok() {
-                            eprintln!(
-                                "split {id} container mousedown at {:?}, bounds {:?}",
-                                ev.position,
-                                ws.split_bounds
-                                    .lock()
-                                    .unwrap()
-                                    .get(&id)
-                                    .map(|b| (b.origin.x, b.size.width))
-                            );
-                        }
-                        if ws.drag_split.is_some() {
-                            return; // an inner split already claimed this press
-                        }
-                        let Some(b) = store2.lock().unwrap().get(&id).copied() else {
-                            return;
-                        };
-                        let (along, extent) = match dir {
-                            SplitDir::Row => (
-                                f32::from(ev.position.x) - f32::from(b.origin.x),
-                                f32::from(b.size.width),
-                            ),
-                            SplitDir::Col => (
-                                f32::from(ev.position.y) - f32::from(b.origin.y),
-                                f32::from(b.size.height),
-                            ),
-                        };
-                        let strip = ratio_now * extent;
-                        if along >= strip - 6. && along <= strip + 13. {
+                // proven pattern: container-level mousedown + handle-zone math.
+                // A seam has its own grip, and this zone would otherwise take
+                // presses meant for the text either side of it.
+                .when(!seam, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             if std::env::var("TD_KEYDEBUG").is_ok() {
-                                eprintln!("split handle grabbed: {id}");
+                                eprintln!(
+                                    "split {id} container mousedown at {:?}, bounds {:?}",
+                                    ev.position,
+                                    ws.split_bounds
+                                        .lock()
+                                        .unwrap()
+                                        .get(&id)
+                                        .map(|b| (b.origin.x, b.size.width))
+                                );
                             }
-                            ws.drag_split = Some(id);
-                            cx.notify();
-                        }
-                    }),
-                );
+                            if ws.drag_split.is_some() {
+                                return; // an inner split already claimed this press
+                            }
+                            let Some(b) = store2.lock().unwrap().get(&id).copied() else {
+                                return;
+                            };
+                            let (along, extent) = match dir {
+                                SplitDir::Row => (
+                                    f32::from(ev.position.x) - f32::from(b.origin.x),
+                                    f32::from(b.size.width),
+                                ),
+                                SplitDir::Col => (
+                                    f32::from(ev.position.y) - f32::from(b.origin.y),
+                                    f32::from(b.size.height),
+                                ),
+                            };
+                            let strip = ratio_now * extent;
+                            if along >= strip - 6. && along <= strip + 13. {
+                                if std::env::var("TD_KEYDEBUG").is_ok() {
+                                    eprintln!("split handle grabbed: {id}");
+                                }
+                                ws.drag_split = Some(id);
+                                cx.notify();
+                            }
+                        }),
+                    )
+                });
             let base = match dir {
                 SplitDir::Row => base.flex_row(),
                 SplitDir::Col => base.flex_col(),
             };
-            let base = base.child(measure).child(first).child(handle).child(second);
+            let base = base
+                .child(measure)
+                .child(first)
+                .child(handle)
+                .child(second)
+                .children(grip);
             // re-frame preview: a heavier accent slab spanning HALF this whole
             // container (the field, for the root) — reads bolder than a leaf
             // split's soft slab so the gesture is unmistakable.
@@ -30437,16 +30588,27 @@ impl Render for Workspace {
         // thing went. A feature you can only restore by knowing a chord is a
         // feature people turn off once and never see again.
         if !self.left_bar {
+            // Unboxed, ADD PROJECT is about the projects and SPINE about this
+            // strip: a hairline keeps the two from reading as one phrase.
+            if sk.unboxed() {
+                tab_strip = tab_strip.child(
+                    sk.rule_v()
+                        .debug_selector(|| "strip-corner-rule".into())
+                        .flex_none()
+                        .h(px(14. * scale))
+                        .mr(px(4. * scale)),
+                );
+            }
             tab_strip = tab_strip.child(
                 div()
                     .id("show-left-bar")
                     .debug_selector(|| "show-left-bar".into())
                     .when(sk.unboxed(), |d| d.mr(px(12. * scale)))
-                    .w(px(if sk.text_controls() && !sk.unboxed() {
-                        38. * scale
-                    } else {
-                        16. * scale
-                    }))
+                    // Unboxed, the word is its own width: a 16px box under
+                    // "SPINE" let the word spill onto the rule before it.
+                    .when(!sk.unboxed(), |d| {
+                        d.w(px(if sk.text_controls() { 38. } else { 16. } * scale))
+                    })
                     .h(px(16. * scale))
                     .flex()
                     .items_center()
@@ -32091,7 +32253,20 @@ impl Render for Workspace {
                     .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.4))
                     .map(|d| sk.finish_group(d))
-                    .child(label(title))
+                    // Unboxed, a title sits on a hairline that starts at the
+                    // column's own left rule, the way TABS sits on the left
+                    // bar's: a partial border, open to the right.
+                    .child(if sk.unboxed() {
+                        div()
+                            .ml(px(-TRAY_AREA_PAD))
+                            .pl(px(TRAY_AREA_PAD))
+                            .pb(px(4.))
+                            .border_b(px(sk.m.hairline))
+                            .border_color(sk.ink.rule)
+                            .child(label(title))
+                    } else {
+                        label(title)
+                    })
             };
             // A folded row is a target of its own: a hover on it opens it after
             // `FOLD_OPEN_MS`, and a click anywhere on it opens it at once. A

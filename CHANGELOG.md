@@ -53,6 +53,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - Custom skins can opt into the same native policy with `controls = "text"`
   under `[shape]`. Combining it with `boundary = "none"` removes native boxes.
   Existing skins retain icon controls.
+- In the clean design, side-by-side panes meet on one shared hairline instead
+  of a dark gutter; dragging the rule still resizes them. CRT designs keep the
+  gutter. CONFIG column titles sit on a partial rule like the spine's TABS, and
+  a hairline separates ADD PROJECT from SPINE.
+- In tabs view, the project chip opens a switcher listing every top-level
+  project and group in spine order; choosing one moves there. This applies to
+  every skin.
+- Threshing Floor cards are larger (264 by 184) so text-control skins keep the
+  artifact line and the connect control inside the border; long messages end
+  in an ellipsis.
 
 ### Installer ownership and cleanup
 
