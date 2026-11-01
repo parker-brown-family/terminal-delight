@@ -1,34 +1,34 @@
 <script type="application/json" data-page>
 {
   "title": "Workbench",
-  "description": "Every agent pane in Terminal Delight has a second face: the workbench, where the agent's replies, the decisions it is waiting on, and the files it made sit as cards, apart from its tool calls.",
-  "updated": "2026-09-24",
-  "trueOf": "main at 81ec545",
+  "description": "Every agent pane in Terminal Delight has a second face: the workbench, where the agent's replies, the questions it is waiting on and the files it made sit as cards, apart from its tool calls. Alt+K flips to it, and you answer and type to the agent from there.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "The agent's work as cards"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Every agent pane in Terminal Delight has a second face. The terminal face is the agent at work: tool calls, file reads, diffs, logs. The workbench face is what the agent made for you, laid out as cards.</p>
-<p>Its replies sit on the <b>overview</b>, each under the message that asked for it. Questions it is waiting on sit under <b>decisions</b>, and a digit answers one. Pages, tables and diagrams it produced go to <b>artifacts</b>. Your own notes go to <b>comments</b>, and those never reach the agent.</p>
-<p>Flip between the faces with the <code>TERM</code> ⇄ <code>BENCH</code> switch in the pane header, or <kbd>Alt</kbd>+<kbd>K</kbd>. The terminal keeps running underneath. You can talk to the agent from the bench as well: start typing anywhere and a composer opens, and nothing is sent until you press <kbd>Enter</kbd>.</p>
-<p>An agent puts richer work on the bench, such as a decision with options or a table, by presenting a small JSON document over MCP, as a file, or through the <code>terminal-delight surface</code> command.</p>
-<p class="invite">Story explains why an agent needs a second face at all. Technical has the protocol, the keys and the limits.</p>
+<p>Its replies sit on the <b>overview</b> under the message that asked for each, and the turn in progress has a card of its own. Questions sit under <b>decisions</b>; a digit answers one, and a round of questions is one card sent with <b>✔ SUBMIT</b>. Pages, tables and diagrams go to <b>artifacts</b>. Your own notes go to <b>comments</b>, and those never reach the agent.</p>
+<p>Flip between the faces with the <code>TERM</code> ⇄ <code>BENCH</code> switch in the pane header, or <kbd>Alt</kbd>+<kbd>K</kbd>; the terminal keeps running underneath. Start typing anywhere on the bench and a composer opens, and nothing is sent until you press <kbd>Enter</kbd>. The strip across the top pauses the turn and changes the model and effort.</p>
+<p>For Claude Code, run <code>scripts/install-agent-hooks.sh</code> once, and questions arrive whole through its hooks.</p>
+<p class="invite">Story explains why an agent needs a second face at all. Technical has the hooks, the cards, the keys and the limits.</p>
 </section>
 
 <section data-register="story" data-headline="The doorway">
 <p>You've hired a carpenter to build a bookcase, and you're working in the next room. Every so often you get up and stand in the workshop doorway to see how it's going.</p>
 <p>From the doorway you see everything. The saw is running, there are offcuts on the floor, a jig is clamped to the table, and a board has pencil marks on it that will be cut in half in a minute. All of it is real work, and almost none of it is for you. If you want to know whether the carpenter needs an answer from you, you have to stand there until you catch them looking up.</p>
 <p>A coding agent's terminal is that doorway. Most of what scrolls past is the agent talking to its tools: files read, commands run, diffs applied. The part written for you, a reply or a question, is a few lines at the bottom, and the next tool call pushes it out of sight. On real transcripts, the prose meant for a person comes to between one and three percent of the text.</p>
-<p>A tidy workshop solves this with a bench by the door. When a piece is finished, it goes on the bench. When the carpenter needs a decision, the question goes on the bench with the two options chalked beside it. When there's a drawing, the drawing goes there too. You can walk up, see what's waiting, answer, and go back to your room without learning anything about jigs.</p>
+<p>A tidy workshop solves this with a bench by the door. When a piece is finished, it goes on the bench. When the carpenter needs a decision, the question goes on the bench with the options chalked beside it. When there's a drawing, the drawing goes there too. You can walk up, see what's waiting, answer, and go back to your room without learning anything about jigs.</p>
 <p>That's the workbench. Each agent pane in Terminal Delight has two faces, and a switch in the pane header flips between them. <b>TERM</b> is the doorway: the running terminal. <b>BENCH</b> is the bench by the door. The terminal keeps working while you look at the bench. You've only stopped watching it.</p>
-<p>The bench is split the way a tidy one would be. Replies go on the <b>overview</b>, each beneath the message that asked for it, so you read the question and the answer together. Questions the agent is waiting on go under <b>decisions</b>, and you answer with a digit. Anything it drew or wrote up goes under <b>artifacts</b>. There is also a notepad that belongs to you: <b>comments</b> are notes you keep about the work, and the agent never sees them.</p>
-<p>You can still talk to the carpenter from the bench. Start typing and a <b>composer</b> opens. Nothing leaves it until you press enter, so you can write the whole sentence, fix it, and then send it.</p>
-<p>Some things reach the bench on their own: the agent's replies can arrive straight from its hooks. Anything richer, the agent writes down in a shape Terminal Delight can read, which is a small JSON document it presents over MCP, drops into a folder, or pipes through a command. One of those documents is called a <b>surface</b>, and the rules they follow are the <b>surface protocol</b>.</p>
-<p class="invite">Technical has the protocol itself, every key, and where the limits are.</p>
+<p>The bench is split the way a tidy one would be. Replies go on the <b>overview</b>, each beneath the message that asked for it, so you read the question and the answer together. While the carpenter is still working, a card says what they're on and how long it's taken. Questions go under <b>decisions</b>, and you answer with a digit. Anything drawn or written up goes under <b>artifacts</b>. There is also a notepad that belongs to you: <b>comments</b> are notes you keep about the work, and the agent never sees them.</p>
+<p>You can still talk to the carpenter from the bench. Start typing and a <b>composer</b> opens. Nothing leaves it until you press enter, so you can write the whole sentence, fix it, and then send it. And there's a hand on the shoulder when you need one: <b>PAUSE TURN</b> stops what they're doing without sending them home.</p>
+<p>Some things reach the bench on their own: Claude Code's replies and questions arrive through its hooks, a small program it runs at fixed moments. Anything richer, the agent writes down in a shape Terminal Delight can read, a small JSON document it presents over MCP, drops into a folder, or pipes through a command. One of those documents is called a <b>surface</b>, and the rules they follow are the <b>surface protocol</b>.</p>
+<p class="invite">Technical has the hooks, every card and key, and where the limits are.</p>
 </section>
 
-<section data-register="technical" data-headline="Surfaces">
+<section data-register="technical" data-headline="The bench">
 <p>A coding agent's transcript has two audiences. Tool calls and their results are written for the agent, and replies and questions are written for you. Across five real transcripts measured while the workbench was designed, prose meant for a person was 1.0% to 2.9% of the text, and tool results alone were 51% to 59%.<sup><a href="#s1">1</a></sup> A terminal shows all of it in order, so the part you need sits under the part you don't. The workbench gives the first part a separate place.</p>
 
 <h3>Faces</h3>
@@ -36,32 +36,83 @@
   <thead><tr><th>Face</th><th>Chip</th><th>Shows</th></tr></thead>
   <tbody>
     <tr><td>Terminal</td><td><code>TERM</code></td><td>The pane's terminal, unchanged and still running.</td></tr>
-    <tr><td>Workbench</td><td><code>BENCH</code></td><td>The pane's surfaces, on four shelves.</td></tr>
+    <tr><td>Workbench</td><td><code>BENCH</code></td><td>The pane's cards, on four shelves.</td></tr>
     <tr><td>Document</td><td><code>DOC</code></td><td>A document opened into the pane. Exists only on such a pane.</td></tr>
   </tbody>
 </table>
-<p><kbd>Alt</kbd>+<kbd>K</kbd> flips the face; on a pane holding a document it moves between the document and its shell. The bench keeps the pane's scanlines, bloom and bend and drops the vignette. From a script: <code>ctl bench on|off|toggle|choose &lt;1-20&gt;|submit|say &lt;text&gt;|type &lt;text&gt;</code>.</p>
+<p><kbd>Alt</kbd>+<kbd>K</kbd> or the switch flips the face; on a pane holding a document it moves between the document and its shell. The bench is a surface you stay on: <kbd>Esc</kbd> never takes you back to the terminal, and choosing an option on a card leaves you on the bench. Window and pane keys such as <kbd>Alt</kbd>+<kbd>S</kbd> and <kbd>Ctrl</kbd>+<kbd>W</kbd> work while it shows. When an agent ends, its bench clears, and the next agent started in that pane opens on an empty one.<sup><a href="#s2">2</a></sup> From a script: <code>ctl bench on|off|toggle|choose &lt;n&gt;|submit|say &lt;text&gt;|type &lt;text&gt;</code> (see <a href="/ctl">ctl</a>).</p>
 
 <h3>Shelves</h3>
 <table>
-  <thead><tr><th>Shelf</th><th>Receives</th><th>Key</th></tr></thead>
+  <thead><tr><th>Shelf</th><th>Holds</th><th>Key</th></tr></thead>
   <tbody>
-    <tr><td><code>overview</code></td><td><code>response</code></td><td><kbd>Alt</kbd>+<kbd>1</kbd></td></tr>
+    <tr><td><code>overview</code></td><td>replies (<code>response</code>), and the turn in progress</td><td><kbd>Alt</kbd>+<kbd>1</kbd></td></tr>
     <tr><td><code>artifacts</code></td><td><code>artifact</code>, <code>markdown</code>, <code>table</code>, <code>architecture</code>, and any kind the build does not know</td><td><kbd>Alt</kbd>+<kbd>2</kbd></td></tr>
     <tr><td><code>decisions</code></td><td><code>decision</code>, <code>question</code>, <code>changeset</code></td><td><kbd>Alt</kbd>+<kbd>3</kbd></td></tr>
-    <tr><td><code>comments</code></td><td><code>comment</code></td><td><kbd>Alt</kbd>+<kbd>4</kbd></td></tr>
+    <tr><td><code>comments</code></td><td>your own notes (<a href="/comments">Comments</a>)</td><td><kbd>Alt</kbd>+<kbd>4</kbd></td></tr>
   </tbody>
 </table>
-<p>An agent's <a href="/briefs">decision brief</a> is an <code>artifact</code>: it lands on <code>artifacts</code>, and opening it puts the brief in a square over the bench where every element takes a note.</p>
-<p>With no card open, the newest response stands by itself. Your own prompt sits above its reply as a <code>YOU</code> block. A turn in flight becomes a card the moment it starts and is retired when the reply arrives. The rail labels its rows <code>THIS TURN</code>, <code>WAITING ON YOU</code>, <code>ALSO WAITING</code>, <code>STANDS NOW</code>, <code>ANSWERED</code> and <code>DONE</code>.</p>
+<p><kbd>Tab</kbd> cycles the shelves. A shelf with nothing on it says so: <code>No responses yet</code>, <code>No artifacts yet</code>, <code>No decisions yet</code>, <code>No comments yet</code>. An empty bench is one card, <code>NOTHING ON THE WORKBENCH</code>; on an agent's pane it adds <code>This agent has presented no work objects yet.</code> and the folder a <code>.json</code> can be dropped in, and on a shell it offers <code>⌁ LAUNCH AGENT</code>.<sup><a href="#s3">3</a></sup> An agent's <a href="/briefs">decision brief</a> is an <code>artifact</code>: opening it puts the brief in a floating square over the bench, where every element takes a note. Everything an agent has handed over is also listed from the pane header (<a href="/artifacts">Artifacts</a>).</p>
+
+<h3>The overview</h3>
+<p>With no card open, the newest reply stands by itself, and your own message sits above it as a <code>YOU</code> block in your own colour. That block is held outside the card's scroll and comes from the conversation record, so it stays after a long turn has pushed your words out of the terminal's scrollback.</p>
+<p>The moment you send, the overview shows a <code>THIS TURN</code> card in place of the last answer: the tool the agent is in, or <code>thinking — no tool call yet</code>, the turn's clock and its tokens. Its heading follows the agent: <code>IN FLIGHT</code>, <code>PAUSED</code>, <code>WAITING ON YOU</code> or <code>BLOCKED</code>. The reply replaces it when it lands. A turn that ends with no reply says <code>THE TURN ENDED</code> · <code>no reply has landed on the bench</code>, and an agent that quits mid-turn says <code>AGENT GONE</code>.<sup><a href="#s4">4</a></sup> A turn Claude Code started by itself, for a finished background task or a message from another session, is headed <code>WOKEN · A BACKGROUND TASK FINISHED</code> or <code>WOKEN · A MESSAGE FROM …</code>, apart from what you typed.</p>
+<p>The rail down the side labels its rows <code>THIS TURN</code>, <code>WAITING ON YOU</code>, <code>ALSO WAITING</code>, <code>STANDS NOW</code>, <code>ANSWERED</code> and <code>DONE</code>; the newest note on the comments shelf is <code>LATEST</code>.</p>
+
+<h3>Hooks</h3>
+<p>Without help, Terminal Delight follows an agent by reading its screen and answers by typing keys into it. For Claude Code there is a better route. Run this once from the source tree:</p>
+<pre class="cmd"><code>scripts/install-agent-hooks.sh</code></pre>
+<p>It copies <code>td-agent-hooks</code> to <code>~/.local/bin</code> and adds it to <code>~/.claude/settings.json</code> on five events, appended beside any hooks already there. It needs <code>jq</code>, runs once (a second run says <code>hooks already wired</code>), and keeps a copy of the settings file as <code>settings.json.td-backup.&lt;time&gt;</code> beside it. <code>--uninstall</code> takes the entries out and removes the helper.<sup><a href="#s5">5</a></sup></p>
+<table>
+  <thead><tr><th>Event</th><th>What the bench gets</th></tr></thead>
+  <tbody>
+    <tr><td><code>UserPromptSubmit</code></td><td>your exact words</td></tr>
+    <tr><td><code>PreToolUse</code> on <code>AskUserQuestion</code></td><td>the whole round of questions, every option included, and the chance to answer it</td></tr>
+    <tr><td><code>PostToolUse</code> on <code>AskUserQuestion</code></td><td>Claude Code's own record of the answer</td></tr>
+    <tr><td><code>Stop</code></td><td>the agent's reply</td></tr>
+    <tr><td><code>Notification</code></td><td>Claude Code's notifications</td></tr>
+  </tbody>
+</table>
+<p>With the hooks on, a question reaches the bench whole and a press answers it directly; the agent never draws its own picker. The hook holds the question only while the bench is the face on screen. On the terminal face, or with no window of this build holding the pane, the picker draws in the terminal as before. It waits up to <code>TD_ASK_WAIT_S</code> seconds (540 by default) and then lets the picker draw. What the hooks write goes to <code>inbound.jsonl</code> in the pane's surfaces folder, which rolls over to <code>.1</code> at <code>TD_INBOUND_CAP</code> bytes (2 MiB by default). Hooks start working in agent sessions started after the install.</p>
+<div class="in-dev"><p>The installer keeps its backup of the settings file under <code>$XDG_STATE_HOME/terminal-delight/backups/</code>, readable only by you, instead of beside the file. It refuses a symlinked settings file and any option other than <code>--uninstall</code>, and records what it installed so the uninstaller removes only that.<sup><a href="#s6">6</a></sup></p></div>
+
+<h3>Questions</h3>
+<p>A question card shows its options as chips, and a digit answers the one on screen. A round of several questions is one card and one row on the rail. Across its top, under <code>QUESTIONS</code>, a tab names each question and ticks the answered ones; answering one moves you to the next. The last tab is <code>✔ SUBMIT</code>, which sends the round however much of it is answered, with no confirmation. It turns green once every question has an answer, and under it the card counts <code>2 of 3 answered</code>. A question left blank goes back to the agent as skipped and reads <code>left blank · the round was submitted without it</code>.<sup><a href="#s7">7</a></sup> The chip under each question says <code>NEXT</code> or <code>SUBMIT</code>, matching the word on the agent's own picker.</p>
+<p>A question that opens is drawn at the top of the bench and stays there. <kbd>Esc</kbd> never dismisses it; the way out of a pane that is waiting on you is the <code>TERM</code> chip. Claude Code's folder-trust prompt, <code>Do you trust the files in this folder?</code>, arrives as a question card too, with <code>Yes, I trust this folder</code> and <code>No, exit</code>.<sup><a href="#s8">8</a></sup></p>
+
+<h3>Responses</h3>
+<p>A reply card is a row of tabs over one body: <code>reading</code> · <code>evidence</code> · <code>steps</code> · <code>other</code>, and a reply that is only a short answer draws no tabs. Under <code>reading</code> the chips read <code>Plain brief</code> · <code>Technical brief</code> · <code>Brief</code>, and the card and the overview open on <code>Plain brief</code>. What an agent puts in each is on the <a href="/surface-protocol">surface protocol</a> page.</p>
+<p>A card has at most one loud thing on it: only an escalation the agent declared is drawn in the attention colour, and a <code>blocking</code> one is framed in the theme's red above the title. The size of the job reads as one sentence under the title, built from the weights the agent declared, for example <em>A big, fiddly job in request cache, where other components call it. Measured.</em> A surface that declares no weight says <code>Nobody said how big this is or how deep it goes.</code>, and a weight the agent left out is left out of the sentence.<sup><a href="#s9">9</a></sup></p>
+<table>
+  <thead><tr><th>Weight</th><th>Value</th><th>Reads</th></tr></thead>
+  <tbody>
+    <tr><td><code>effort</code></td><td>small · medium · large · epic</td><td>small · middling · big · huge</td></tr>
+    <tr><td><code>complexity</code></td><td>trivial · moderate · involved · hairy</td><td>straightforward · fiddly · involved · hairy</td></tr>
+    <tr><td><code>foundation.depth</code></td><td>leaf · component · subsystem · bedrock</td><td><code>nothing else depends on it</code> · <code>other components call it</code> · <code>several components depend on it</code> · <code>a mistake here is paid for by everything above it</code></td></tr>
+    <tr><td><code>confidence</code></td><td>measured · inferred · hunch · unknown</td><td><code>Measured</code> · <code>Inferred, not measured</code> · <code>A hunch</code> · <code>The agent looked and could not tell</code></td></tr>
+  </tbody>
+</table>
+<p>A provenance line says how the card got there:</p>
+<table>
+  <thead><tr><th>Line</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>arrived through this agent's own hooks · whole</code></td><td>Delivered by the hooks above.</td></tr>
+    <tr><td><code>read from this agent's own record</code></td><td>Read from the agent's transcript or its screen.</td></tr>
+    <tr><td><code>presented by this pane's agent · MCP · pid N</code></td><td>Sent over MCP by the process running in this pane.</td></tr>
+    <tr><td><code>presented over MCP by pid N — not this pane's agent</code></td><td>Sent over MCP by some other process.</td></tr>
+    <tr><td><code>dropped as a file · writer unknown</code></td><td>A file in the drop folder. Anything that can write there could have written it.</td></tr>
+    <tr><td><code>written here, by you</code></td><td>A comment.</td></tr>
+    <tr><td><code>origin unknown — no transport said</code></td><td>Nothing recorded how it arrived.</td></tr>
+  </tbody>
+</table>
 
 <h3>Surfaces</h3>
-<p>A surface is one JSON document in the Terminal Delight Surface Protocol, currently TDSP 0.4. The envelope carries <code>td</code>, <code>kind</code>, <code>op</code> (<code>present</code>, <code>update</code> or <code>retire</code>), <code>id</code>, <code>title</code> (up to 72 characters), <code>pane</code>, <code>weight</code>, <code>source</code>, <code>actions</code> and <code>model</code>. It arrives by one of four routes:</p>
+<p>Anything richer than a reply, such as a decision with options, a table or a page, reaches the bench as a surface: one JSON document in the Terminal Delight Surface Protocol, by one of four routes.</p>
 <ul>
-  <li>the <code>present_surface</code> MCP verb, which needs the server's writes toggle on;</li>
+  <li>the <code>present_surface</code> MCP tool, which needs the server's writes switch on;</li>
   <li>a <code>.json</code> file dropped into <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID/</code>, swept once a second, oldest first;</li>
   <li><code>terminal-delight surface [file]</code>, or a <code>```td</code> fenced block piped to it;</li>
-  <li>a <code>```td</code> fenced block in the agent's own reply, which the window reads from its transcript.</li>
+  <li>a <code>```td</code> fenced block in the agent's own reply, which the window reads from its transcript. Only Claude Code's transcript is read this way; a fence in a Codex reply reaches no bench, so a Codex agent uses one of the routes above.</li>
 </ul>
 <p>The <a href="/surface-protocol">surface protocol</a> page has every field, kind and rule.</p>
 
@@ -72,7 +123,7 @@
         <marker id="a1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
         <marker id="a2" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ahy" d="M0 0 10 5 0 10z"/></marker>
       </defs>
-      <rect class="box" x="10" y="10" width="200" height="44" rx="8"/><text class="t1" x="24" y="30">present_surface</text><text class="t2" x="24" y="46">MCP verb · writes toggle</text>
+      <rect class="box" x="10" y="10" width="200" height="44" rx="8"/><text class="t1" x="24" y="30">present_surface</text><text class="t2" x="24" y="46">MCP tool · writes switch</text>
       <rect class="box" x="10" y="64" width="200" height="44" rx="8"/><text class="t1" x="24" y="84">.json file drop</text><text class="t2" x="24" y="100">surfaces/&lt;session&gt;/&lt;pane&gt;/</text>
       <rect class="box" x="10" y="118" width="200" height="44" rx="8"/><text class="t1" x="24" y="138">terminal-delight surface</text><text class="t2" x="24" y="154">a file, or ```td piped in</text>
       <rect class="box" x="10" y="172" width="200" height="44" rx="8"/><text class="t1" x="24" y="192">```td in a reply</text><text class="t2" x="24" y="208">read from its transcript</text>
@@ -95,101 +146,99 @@
       <text class="t2" x="522" y="230">comments send nothing</text>
     </svg>
   </div>
-  <figcaption><b>Figure 1.</b> Four ways in, four shelves, and one way back. Acting on a surface types a signed line into the agent's own terminal. A comment has no way back at all.</figcaption>
+  <figcaption><b>Figure 1.</b> Four ways in, four shelves, and one way back. Acting on a surface types a signed line into the agent's own terminal. A comment has no way back at all. Drawn from the surface feed and the shelf table in <code>surface.rs</code>.</figcaption>
 </figure>
 
-<p>A minimal response, as a file dropped in the pane's directory:</p>
-<pre><code>{ "td": "0.4", "kind": "response", "title": "What this turn did",
-  "model": { "layman": "The whole reply, in plain English.",
-   "brief": "Two sentences, under fifty words.",
-   "technical": "…",
-   "doubts": [ { "claim": "…", "why": "…", "confidence": "hunch" } ] } }</code></pre>
-<p><code>terminal-delight surface --catalogue</code>, or the <code>surface_catalogue</code> MCP verb, prints the kinds the running build can draw. A kind it does not know is shown as unclassified rather than dropped.</p>
-
-<h3>Responses</h3>
-<p><code>model.layman</code> is required. <code>brief</code> is at most two sentences and under fifty words, and is drawn last. The optional keys are <code>technical</code>, <code>evidence</code>, <code>asks</code>, <code>next</code>, <code>escalation</code> and <code>doubts</code>; any other key is kept and shown as a section under its own name. The card's chips read <code>Plain brief</code> · <code>Technical brief</code> · <code>Brief</code>, and open on Plain brief. Its group tabs read <code>reading</code> · <code>evidence</code> · <code>steps</code> · <code>other</code>.</p>
-<p>Absence is kept distinct from a value. <code>escalation</code> is <code>blocking</code>, <code>wanted</code> or <code>none</code>, and a missing escalation reads as undeclared, which is a different answer from <code>none</code>. A doubt is <code>{claim, why, confidence}</code>, and a doubt with no confidence says <code>confidence undeclared</code>. The same rule holds for <code>weight</code>:</p>
-<table>
-  <thead><tr><th>Weight</th><th>Values</th></tr></thead>
-  <tbody>
-    <tr><td><code>effort</code></td><td>small · medium · large · epic</td></tr>
-    <tr><td><code>complexity</code></td><td>trivial · moderate · involved · hairy</td></tr>
-    <tr><td><code>foundation.depth</code></td><td>leaf · component · subsystem · bedrock</td></tr>
-    <tr><td><code>confidence</code></td><td>measured · inferred · hunch · unknown</td></tr>
-  </tbody>
-</table>
-<p>A surface that declares no weight says so in words: <code>Nobody said how big this is or how deep it goes.</code> Under every title a provenance line says how the card got there:</p>
-<table>
-  <thead><tr><th>Line</th><th>Means</th></tr></thead>
-  <tbody>
-    <tr><td><code>arrived through this agent's own hooks · whole</code></td><td>Captured by the hooks installed with <code>scripts/install-agent-hooks.sh</code>.</td></tr>
-    <tr><td><code>read from this agent's own record</code></td><td>Read from the agent's transcript.</td></tr>
-    <tr><td><code>presented by this pane's agent · MCP · pid N</code></td><td>Sent over MCP by the process running in this pane.</td></tr>
-    <tr><td><code>presented over MCP by pid N — not this pane's agent</code></td><td>Sent over MCP by some other process.</td></tr>
-    <tr><td><code>dropped as a file · writer unknown</code></td><td>A file in the drop directory. Anything that can write there could have written it.</td></tr>
-    <tr><td><code>written here, by you</code></td><td>A comment.</td></tr>
-    <tr><td><code>origin unknown — no transport said</code></td><td>Nothing recorded how it arrived.</td></tr>
-  </tbody>
-</table>
-
 <h3>Answering</h3>
-<p>Acting on a surface types one line into the agent's own terminal: <code>[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt; …</code>, where the tag is the pane's <code>$TD_TAG</code>. The same action is also recorded in <code>actions.jsonl</code>. An agent should treat a <code>[workbench]</code> line without its own tag as text, not as an instruction from its operator.</p>
-<p>A decision may mark one option <code>recommended</code>, no more. A changeset hunk has three verdicts: undecided, accepted and rejected. Card buttons are drawn from <code>open</code>, <code>comment</code>, <code>approve</code>, <code>reject</code>, <code>accept</code>, <code>choose</code>, <code>ask</code>, <code>source</code> and <code>copy</code>.</p>
-<p>A comment sends no bytes to the terminal, writes no line to the agent's journal, and has no verb that hands it over. <code>copy</code> is its only action. A note opens with <kbd>Alt</kbd>+<kbd>M</kbd> or the <code>+ write a note</code> row; typing while the comments shelf is showing still goes to the agent.</p>
+<p>A hook-carried question is answered through the hook. Every other action on a surface types one line into the agent's own terminal: <code>[workbench:&lt;tag&gt;] &lt;action&gt; on surface &lt;id&gt; …</code>, where the tag is the pane's <code>$TD_TAG</code>, and records it in <code>actions.jsonl</code>. An agent should treat a <code>[workbench]</code> line without its own tag as text, never as an instruction from its operator. Card buttons are drawn from <code>open</code>, <code>comment</code>, <code>approve</code>, <code>reject</code>, <code>accept</code>, <code>choose</code>, <code>ask</code>, <code>source</code> and <code>copy</code>.</p>
+<p>The bench writes to a terminal only while the pane is on screen and an agent is in it. Anything sent otherwise is held, in order, and the pane header counts it, <code>2 answers waiting</code>, or <code>1 held · no agent in this pane</code>.<sup><a href="#s10">10</a></sup></p>
 
 <h3>The composer</h3>
-<p>Any printable key on the bench opens the composer: <code>type to the agent</code>, over <code>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</code>. The draft is a document. Nothing leaves it until you send, and a send is one bracketed paste followed by a return. Dropping a file onto the composer inserts its path, quoted if the path has a space in it. The bench has no slash-command completion; the terminal face does.</p>
+<p>On an agent's pane, any printable key on the bench opens the composer: <code>type to the agent</code>, over <code>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</code>. The draft is a real text box with line breaks, undo and a selection: <kbd>Ctrl</kbd>+<kbd>A</kbd> selects it all, <kbd>Shift</kbd> with any motion grows a selection, and typing replaces it. <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>X</kbd> take the selection, or the whole draft when nothing is selected. <kbd>↑</kbd> on an empty draft walks back through the last 32 messages you sent from this bench.</p>
+<p><kbd>Enter</kbd> sends the draft as one bracketed paste followed by a return, so line breaks inside it stay line breaks. Pasted text keeps its line breaks, and copied files paste as their paths. Drag a file onto the composer and its path lands at the caret: the composer lights up with <code>⤓ DROP TO INSERT THE PATH</code>, several files arrive as several words, and a name with a space in it arrives quoted. A pasted picture is saved and its path goes straight to the agent's prompt, where Claude Code and Codex attach it as an image; the composer counts it, <code>🗎 1 IMAGE</code>, and your words follow it when you send.<sup><a href="#s11">11</a></sup> <kbd>Esc</kbd> closes the composer and drops the draft. The bench has no slash-command completion; the terminal face does.</p>
+<div class="in-dev"><p>The composer gains three deletion keys, each undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>: <kbd>Shift</kbd>+<kbd>Backspace</kbd> deletes the previous word, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> the whole current line, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> everything in the draft.<sup><a href="#s12">12</a></sup></p></div>
 
-<h3>Model, effort and the session</h3>
-<p>The strip across the top of the bench shows the agent's state as one word: <code>Working</code>, <code>Waiting on you</code>, <code>Reading your answer</code>, <code>Paused</code>, <code>Blocked</code>, <code>Finished</code>, <code>Exited</code> or <code>Idle</code>. To its right, in order: <code>PAUSE TURN</code> or <code>RESUME TURN</code>, the model and effort dials, then <code>END SESSION</code> or <code>⌁ LAUNCH AGENT</code>.</p>
-<p>The dials type <code>/model</code> and <code>/effort</code> into the agent. Claude offers <code>opus</code>, <code>sonnet</code> and <code>haiku</code>; Codex offers <code>gpt-5-codex</code> and <code>gpt-5</code>. Effort runs <code>low</code>, <code>medium</code>, <code>high</code>, <code>xhigh</code> and, for Claude only, <code>max</code>; it defaults to high for Claude and medium for Codex. <code>END SESSION</code> sends two <code>0x03</code> bytes, the same as pressing <kbd>Ctrl</kbd>+<kbd>C</kbd> twice, and sends no signal. When the agent leaves, the bench on screen clears and what was saved to disk stays.</p>
+<h3>The strip</h3>
+<p>The strip across the top of the bench names the agent's state in a word: <code>Working</code>, <code>Waiting on you</code>, <code>Reading your answer</code>, <code>Paused</code>, <code>Blocked</code>, <code>Finished</code>, <code>Exited</code> or <code>Idle</code>. To its right, in order: <code>PAUSE TURN</code> or <code>RESUME TURN</code>, the model and effort dials, then <code>END SESSION</code> or <code>⌁ LAUNCH AGENT</code>.</p>
+<table>
+  <thead><tr><th>Control</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><code>PAUSE TURN</code></td><td>Shown while the agent works. Sends one <code>0x03</code>, the same as one <kbd>Ctrl</kbd>+<kbd>C</kbd>, which stops the turn and leaves the agent running. <kbd>Ctrl</kbd>+<kbd>G</kbd> in the composer does the same.</td></tr>
+    <tr><td><code>RESUME TURN</code></td><td>Shown once paused. Sends <code>Proceed with the turn.</code> as an ordinary message. Any message you send also ends the pause.</td></tr>
+    <tr><td>model and effort dials</td><td>Each opens a list under it with the current value lit, and a pick types <code>/model</code> or <code>/effort</code> into the agent, confirms its picker, and types your half-written draft back. The lists come from the installed agent itself, starting with <code>Agent default</code>; while it is being asked the list reads <code>Loading models… · retry</code>, and if it cannot answer, <code>Models unavailable · </code> and the reason. The dials can't be pressed mid-turn: pause, change them, resume.<sup><a href="#s13">13</a></sup></td></tr>
+    <tr><td><code>END SESSION</code></td><td>Sends two <code>0x03</code> bytes at once, the same as pressing <kbd>Ctrl</kbd>+<kbd>C</kbd> twice, and sends no signal. A wedged agent that ignores it needs the terminal.</td></tr>
+    <tr><td><code>⌁ LAUNCH AGENT</code></td><td>Shown once the agent has gone. Opens the launcher; so does <kbd>Enter</kbd> on a bench offering one, unless a card is open. See <a href="/launching">Launching an agent</a>.</td></tr>
+  </tbody>
+</table>
+
+<h3>History</h3>
+<p>What you said, every card, each round of questions with its answer, and where the conversation was compacted or resumed are appended as they happen to <code>$XDG_STATE_HOME/terminal-delight/conversations/&lt;id&gt;.ws</code>, one file per conversation. A pane that picks the conversation back up, after a restart or in another window, shows what it already had. To read one without a window:</p>
+<pre class="cmd"><code>terminal-delight conversation &lt;id&gt;</code></pre>
+<p>Each pane reads only its own conversation. A pane that cannot be matched to its conversation for certain shows nothing rather than a neighbour's work.<sup><a href="#s14">14</a></sup></p>
+
+<h3>Selecting and copying</h3>
+<p>Drag across a card or the rail beside it to select text. Letting go fills the primary selection, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> or the right-click tray copies it to the clipboard.</p>
 
 <h3>Keys</h3>
-<table>
+<table class="keys">
   <thead><tr><th>Key</th><th>On the bench</th></tr></thead>
   <tbody>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>Flip between TERM and BENCH</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, <kbd>Tab</kbd></td><td>Jump to a shelf, or cycle through them</td></tr>
     <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move between rows</td></tr>
-    <tr><td><kbd>Enter</kbd></td><td>Run the card's first verb; on an empty bench, open the launcher</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Run the card's first action; on a bench offering an agent, open the launcher</td></tr>
     <tr><td>a digit</td><td>Answer the question that is waiting</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>Back out one layer: dial, then composer, then card. Never dismisses a waiting question.</td></tr>
-    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd></td><td>Write a note</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Back out one layer: dial, then composer, then card. Never dismisses a waiting question, never leaves the bench.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd></td><td>Write a comment</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>Copy the selected text</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>Size the bench's type on its own dial</td></tr>
-    <tr><td><kbd>Alt</kbd>+click</td><td>On a path, a link, a Markdown link's words or an artifact: open the document — Markdown, HTML, a picture, a video or a PDF — in a floating square over the bench, as on the terminal. The card stays open underneath.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>Size the bench's type on its own dial, <code>bench_size</code>; until you turn it, the bench follows the terminal's size</td></tr>
+    <tr><td><kbd>Alt</kbd>+click</td><td>On a path, a link, a Markdown link's words or an artifact: open the document (Markdown, HTML, a picture, a video or a PDF) in a floating square over the bench, as on the terminal. The card stays open underneath.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click</td><td>The same, in a pane beside this one</td></tr>
     <tr><td><kbd>Ctrl</kbd>+click</td><td>The same, with your desktop's own app</td></tr>
+    <tr><td><kbd>Shift</kbd>+click</td><td>On a local path: show it in the file manager</td></tr>
   </tbody>
 </table>
-<table>
+<table class="keys">
   <thead><tr><th>Key</th><th>In the composer</th></tr></thead>
   <tbody>
     <tr><td><kbd>Enter</kbd></td><td>Send</td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>New line</td></tr>
-    <tr><td><kbd>↑</kbd> on an empty draft</td><td>Recall what you sent before</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd> on an empty draft</td><td>Walk through what you sent before</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Pause the turn</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Undo, select all</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd> <kbd>Ctrl</kbd>+<kbd>U</kbd> <kbd>Ctrl</kbd>+<kbd>K</kbd> <kbd>Alt</kbd>+<kbd>D</kbd></td><td>Delete a word back, to line start, to line end, a word forward</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Copy, cut, paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Delete</kbd></td><td>Delete a word back, a word forward</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> <span class="dev-tag">0.5.0 dev</span></td><td>Delete the previous word, the current line, the whole draft</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>Copy, cut, paste</td></tr>
   </tbody>
 </table>
 
 <h3>Limits</h3>
 <ul>
-  <li>Each pane keeps 64 surfaces in memory and 512 on disk. Surfaces from sessions that ended are pruned after 30 days.</li>
-  <li>Surfaces presented over MCP are written to disk and survive a restart.</li>
-  <li>The hooks wait up to <code>TD_ASK_WAIT_S</code> seconds (540 by default) for an answer, and cap the inbound record at <code>TD_INBOUND_CAP</code> (2 MiB).</li>
-  <li>The bench is keyed to the pane. Keying it to the conversation instead is open work<sup><a href="#s2">2</a></sup>, and so are hook adapters for Codex and Gemini.</li>
+  <li>Each pane keeps 64 surfaces in memory and 512 on disk. Surfaces from sessions that ended are pruned after 30 days. Surfaces presented over MCP are written to disk and survive a restart.</li>
+  <li>The hooks are Claude Code's. A Codex pane, or a Claude pane without them, has its questions read from the screen and answered by typed keys.</li>
+  <li>The bench and its open questions belong to the pane, while the history is filed by conversation. Moving the bench itself onto the conversation is open work.<sup><a href="#s15">15</a></sup></li>
 </ul>
 
 <h3>What would prove this wrong</h3>
-<p>This page claims that the bench is enough to follow an agent without reading its terminal. If you flip back to TERM to find out what an agent did or what it wants from you, the bench failed to carry something it should have. That is a bug. Open an issue with the terminal and the bench side by side.<sup><a href="#s3">3</a></sup></p>
+<p>This page claims that the bench is enough to follow an agent without reading its terminal. If you flip back to TERM to find out what an agent did or what it wants from you, the bench failed to carry something it should have. That is a bug. Open an issue with the terminal and the bench side by side.<sup><a href="#s16">16</a></sup></p>
 </section>
 
 <ol data-sources>
 <li id="s1">The agent-native output surface research brief, 2026-09-12. Five sampled transcripts: prose a person reads 1.0% to 2.9%, tool results 51% to 59%, all machine payload 83% to 92%.</li>
-<li id="s2"><a href="https://github.com/parker-brown-family/terminal-delight/issues/629">Move the bench off the pane, keyed by conversation</a>.</li>
-<li id="s3"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
-<li>The code this page was checked against: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>, and the specs for the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-surface-protocol.md">surface protocol</a> and the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-agent-channel.md">agent channel</a>.</li>
+<li id="s2">Escape and the faces: <code>peel</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>; the bench's keys: <code>bench_key</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>.</li>
+<li id="s3">The empty card and the shelf labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
+<li id="s4">The turn card's words: <code>live_says</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>; the rail's words: <code>lane_word</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>.</li>
+<li id="s5"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-hooks">td-agent-hooks</a>, whose header lists the five events, the 540-second wait and the 2 MiB rollover.</li>
+<li id="s6">The 0.5.0 installer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/install-agent-hooks.sh">install-agent-hooks.sh on dev/0.5.0</a>.</li>
+<li id="s7">The round's tabs and submit: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>; sending a round: <code>bench_submit_round</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a>.</li>
+<li id="s8">The folder-trust dialog read as a question: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/screenread.rs">screenread.rs</a>.</li>
+<li id="s9">The weight sentence: <code>weight_line</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>; the tabs and readings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>.</li>
+<li id="s10">Held writes: <code>bench_deliver</code> and <code>bench_drain</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>.</li>
+<li id="s11">Sending, pasting and dropping: <code>bench_send</code>, <code>bench_paste</code> and <code>bench_drop</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; the 32 recalled messages: <code>HISTORY_KEPT</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a>.</li>
+<li id="s12">The 0.5.0 deletion keys: <code>line_edit</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/workbench.rs">workbench.rs on dev/0.5.0</a>.</li>
+<li id="s13">The dials: <code>strip_trailing</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>, <code>dials_live</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>, and the agent's own model list in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/model_catalog.rs">model_catalog.rs</a>.</li>
+<li id="s14">The conversation record: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>.</li>
+<li id="s15"><a href="https://github.com/parker-brown-family/terminal-delight/issues/629">Move the bench and the channel state off the pane together, keyed by the conversation</a>.</li>
+<li id="s16"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
 </ol>

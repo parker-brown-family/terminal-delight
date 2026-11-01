@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "Sticky notes",
-  "description": "A sticky note is a handwritten sheet on one pane's glass saying why the pane exists or what you want done. Alt+S writes one, right-click pins it, and a pinned note shows 📌 on its tab. Agents can leave notes too, over MCP.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "A sticky note is a handwritten sheet on one pane's glass saying why the pane exists or what you want done. Alt+S writes one, right-click pins it, a pinned note shows 📌 on its tab, and Alt+L finds a note by its words. The paper takes one of the theme's own colours. Agents can leave notes too, over MCP.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "A note on a pane's glass, read first"
 }
 </script>
@@ -11,12 +11,12 @@
 <section data-register="brief">
 <p class="lede">A sticky note is a small handwritten sheet stuck to the top-right corner of one pane. It says what nothing else on screen can: why this pane exists, or what you want done in it. It's the first thing you read when you come back to a wall of panes.</p>
 <p>Press <kbd>Alt</kbd>+<kbd>S</kbd> in a pane, type, and press <kbd>Enter</kbd>. Click the paper to edit it. <kbd>Alt</kbd>+<kbd>Backspace</kbd> peels it off, and <kbd>Alt</kbd>+<kbd>S</kbd> right after brings the words back. Right-click the paper to push a pin through it: a pinned note puts <code>📌</code> on its tab and on its row in the left bar, so it can call you back to a tab you aren't looking at.</p>
-<p>Each pane holds one note, and notes survive a restart. An agent can leave one on its own pane through the MCP tool <code>leave_note</code>, with a title and up to ten words. The house rule for both: ten words, a shouty title, pinned only when it needs eyes.</p>
-<p class="invite">Technical has the keys, the limits, the agent's side, and where notes are saved.</p>
+<p>Each pane holds one note, and notes survive a restart. The paper is one of the theme's own colours, and <kbd>Alt</kbd>+<kbd>L</kbd> finds a note by its words anywhere in the window. An agent can leave a note on its own pane through the MCP tool <code>leave_note</code>, with a title and up to ten words. The house rule for both: ten words, a shouty title, pinned only when it needs eyes.</p>
+<p class="invite">Technical has the keys, the colours, the agent's side, and where notes are saved.</p>
 </section>
 
 <section data-register="technical" data-headline="Notes">
-<p>A note has optional <code>title</code>, <code>text</code>, a saved tilt and a <code>pinned</code> flag. Only agents write titles; a note you write is one piece of handwriting. Posting to a pane that already has a note replaces its words on the same paper.<sup><a href="#s1">1</a></sup></p>
+<p>A note has an optional <code>title</code>, its <code>text</code>, a saved tilt and a <code>pinned</code> flag. A note you write is one piece of handwriting; titles come from agents, and from the one note Terminal Delight writes itself. Posting to a pane that already has a note replaces its words on the same paper.<sup><a href="#s1">1</a></sup></p>
 
 <h3>Keys</h3>
 <table class="keys">
@@ -25,45 +25,78 @@
     <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>Start a note, or pick the pen up on the one that's there. Pressed while writing, it posts. It never deletes.</td></tr>
     <tr><td><kbd>Enter</kbd>, or a click off the paper</td><td>Post. Posting an empty note removes it. A click away also reaches the terminal underneath.</td></tr>
     <tr><td><kbd>Esc</kbd> while writing</td><td>Put the old text back, or drop a new blank note. The terminal never sees it.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> or <kbd>Shift</kbd>+<kbd>Insert</kbd> while writing</td><td>Paste into the note, as one line, up to the 160 characters it holds. Nothing reaches the shell underneath.</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>Peel the note off. Only while a note is on the pane; otherwise it stays the shell's delete-word.</td></tr>
     <tr><td>click the lifted bottom-left corner</td><td>Peel it off.</td></tr>
     <tr><td>right-click the paper</td><td>Pin or unpin. A right-click beside the paper opens the pane's usual menu.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>Find a note, or a project, group, tab or pane, by name.</td></tr>
   </tbody>
 </table>
-<p>While you're writing, the note takes every key. Once it's posted it takes none, and <kbd>Esc</kbd> reaches the program in the pane as usual. A peeled note's words are kept: the next <kbd>Alt</kbd>+<kbd>S</kbd> opens them selected, so typing replaces them. The note holds 160 characters. A note half-written when the window closes is saved as far as you got. <kbd>Alt</kbd>+<kbd>S</kbd> is taken by the pane, so the shell underneath never receives it.</p>
+<p>While you're writing, the note takes every key. Once it's posted it takes none, and <kbd>Esc</kbd> reaches the program in the pane as usual. A peeled note's words are kept: the next <kbd>Alt</kbd>+<kbd>S</kbd> opens them selected, so typing replaces them. The note holds 160 characters. A note half-written when the window closes is saved as far as you got. <kbd>Alt</kbd>+<kbd>S</kbd> is taken by the pane, so the shell underneath never receives it.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Finding a note</h3>
+<p><kbd>Alt</kbd>+<kbd>L</kbd> opens <code>LOOKUP</code>, one list of every name in the window: projects, groups and tabs from the left bar, panes by their header title, and sticky notes by their words, headline first, each marked <code>NOTE</code> with where it sits written underneath. Type to narrow it, <kbd>↑</kbd> <kbd>↓</kbd> or <kbd>Tab</kbd> to move, and <kbd>Enter</kbd> to go to the pane the note is on. <kbd>Esc</kbd> or a second <kbd>Alt</kbd>+<kbd>L</kbd> closes it. When two rows match equally well, the wider thing comes first, so a project's name lands on the project.<sup><a href="#s2">2</a></sup></p>
 
 <h3>Pins</h3>
-<p>Only right-click sets or clears a pin, and posting or editing leaves it alone. A pinned note shows <code>📌</code> on its tab, or <code>📌2</code> when several panes in the tab have pinned notes, placed before the agent badges so it keeps its spot. The left bar shows <code>📌</code> on the task row, and a folded branch rolls it up.</p>
+<p>Only right-click sets or clears a pin, and posting or editing leaves it alone. A pinned note shows <code>📌</code> on its tab, or <code>📌2</code> when several panes in the tab have pinned notes, placed before the agent badges so it keeps its spot. The left bar shows <code>📌</code> on the task row, and a folded branch rolls it up.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Colours</h3>
+<p>The paper is one of the theme's own colours, picked on the <code>STICKY NOTE</code> row in the <code>THEME</code> area of the painter (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> on a pane, or <code>🎨</code> for the window; see <a href="/themes#technical-paint">Themes</a>). The row shows three small notes in the colours they would be.<sup><a href="#s3">3</a></sup></p>
+<table>
+  <thead><tr><th>Choice</th><th>The paper</th></tr></thead>
+  <tbody>
+    <tr><td><code>contrast</code> (the default)</td><td>The theme's named hue farthest from its accent, weighted by how vivid it is, so a faint hue can't win on distance alone.</td></tr>
+    <tr><td><code>accent</code></td><td>The theme's accent. When the accent is a grey, or only the text colour, the named hue nearest the theme's surface tint stands in.</td></tr>
+    <tr><td><code>mute</code></td><td>The theme's text colour on a dark screen, its surface colour on a light one.</td></tr>
+  </tbody>
+</table>
+<p>The paper is the theme's exact colour unless the theme's own ink, its background or its text, can't be read on it at 4.5:1, or it would vanish into the screen. Only then does it move, to its bright twin or else to the nearest lightness that reads, keeping its hue. The pin is the theme's red, or its accent when the paper is reddish. A pane or window with no note colour saved reads as <code>contrast</code>, so notes look different after upgrading from 0.3.0.<sup><a href="#s3">3</a></sup></p>
 
 <h3>How it looks</h3>
 <ul>
-  <li>Handwriting in Caveat, on paper coloured from the pane theme's text hue, never square: each note leans between 2.4° and 5.8°, and keeps its lean through restarts.</li>
-  <li>28 % of the pane's width, between 128 and 200 px, up to four rows before the text shrinks.</li>
+  <li>Handwriting in Caveat, on slightly see-through paper, never square: each note leans between 2.4° and 5.8°, and keeps its lean through restarts.</li>
+  <li>28% of the pane's width, between 128 and 200 px, up to four rows before the text shrinks.</li>
   <li>Drawn through the pane's barrel curve, so it sits flat on the curved glass.</li>
   <li>Panes smaller than 250 × 190 px don't show a note, since it would cover the terminal.</li>
 </ul>
+<p>With the Chalk <a href="/skins">skin</a>, a note is cut paper: a deckled edge, faint fibres, a strip of tape across the top, and a small five-petal flower on the curled corner in the pin's colour. A <code>contrast</code> note on Chalk is drawn on Chalk's own paper, faintly tinted with the accent, in the theme's text colour with a red pin; <code>accent</code> and <code>mute</code> keep their colours. A skin file asks for the same under <code>[note]</code> with <code>decoration = "flower"</code> and <code>stock = true</code>, and a skin whose material is <code>paper</code> gets both unless it says otherwise.<sup><a href="#s4">4</a></sup></p>
+<div class="in-dev">
+<p>Under TERMINIMALIST, and any skin with text controls and no boundaries, a note sits square, with no lean, still in handwriting and with the same gestures. Pinning it lifts it 4 px and tints it with the theme's complementary colour, and the pin mark reads <code>pinned</code> where other skins draw <code>📌</code>. <a href="/ui-config">UI CONFIG</a>'s <code>sticky notes</code> switch hides every note.<sup><a href="#s5">5</a></sup></p>
+</div>
 
 <h3>Notes from agents</h3>
-<p>An agent posts with the MCP tool <code>leave_note</code>. The server must be on with writes allowed: the Writes switch in the Threshing Floor, or <code>TD_MCP_WRITE</code> at launch. See <a href="/mcp">MCP server</a>.</p>
+<p>An agent posts with the MCP tool <code>leave_note</code>. The server must be on with writes allowed: the <code>writes on · agents can restyle</code> switch in the <code>MCP SERVER</code> group at the top of the <a href="/agent-wall">agent wall</a> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>, or the agent counter), or <code>TD_MCP_WRITE</code> at launch alongside <code>TD_MCP</code>. See <a href="/mcp#technical-the-switches">MCP server</a>.<sup><a href="#s1">1</a></sup></p>
+<p class="in-dev">The agent counter opens the <a href="/threshing-floor">Threshing Floor</a> instead, and its switches include the same one, labelled <code>writes</code>. The agent wall, now on <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> only, keeps its <code>MCP SERVER</code> group.<sup><a href="#s5">5</a></sup></p>
 <table>
   <thead><tr><th>Argument</th><th>Meaning</th></tr></thead>
   <tbody>
     <tr><td><code>pid</code></td><td>The pane to note. Leave it out for your own pane.</td></tr>
-    <tr><td><code>title</code></td><td>Under 40 characters. <code>GET MILK!</code>, <code>NEEDS EYES</code>, <code>DONE ✓</code>.</td></tr>
+    <tr><td><code>title</code></td><td>Up to 40 characters, drawn bigger and bolder. <code>GET MILK!</code>, <code>NEEDS EYES</code>, <code>DONE ✓</code>.</td></tr>
     <tr><td><code>text</code></td><td>Ten words or fewer.</td></tr>
     <tr><td><code>pin</code></td><td>Pin it. Default false.</td></tr>
     <tr><td><code>clear</code></td><td>Peel the note off. An empty title and text does the same.</td></tr>
   </tbody>
 </table>
-<p>Too long is refused, with the count: <code>note is 14 words; a sticky holds 10 or fewer — say what happened or what you need, not how it went</code>. Success reads <code>posted — the note is on pane 4121's glass</code>. An agent's note is an ordinary note once posted: you can edit, pin or peel it, and a note the agent cleared comes back with <kbd>Alt</kbd>+<kbd>S</kbd>. <code>list_panes</code> reads every note back, on each pane's line as <code> · 📝 title — text</code> and in its <code>note</code> field.</p>
+<p>Too long is refused, with the count: <code>note is 14 words; a sticky holds 10 or fewer — say what happened or what you need, not how it went</code>. A title and text that together pass the paper's 160 characters are refused too: <code>note is 171 characters; the paper holds 160</code>. Success reads <code>posted — the note is on pane 4121's glass</code>. An agent's note is an ordinary note once posted: you can edit, pin or peel it, and a note the agent cleared comes back with <kbd>Alt</kbd>+<kbd>S</kbd>. <code>list_panes</code> reads every note back, on each pane's line as <code> · 📝 title — text</code> and in its <code>note</code> field.<sup><a href="#s1">1</a></sup></p>
+<div class="in-dev">
+<p>A note an agent wrote wears Terminal Delight's robot as an ink stamp in its bottom-right corner, so you can tell a note you wrote from one written for you. Changing its words makes it yours and the stamp comes off; opening it and posting it back unchanged leaves it the agent's. Every note records who wrote it, saved as <code>by = "agent"</code> or <code>by = "person"</code>, and <code>list_panes</code> reports the same as <code>by</code> in the <code>note</code> field. A note from before this, which nobody can attribute, has no <code>by</code> and no stamp.<sup><a href="#s5">5</a></sup></p>
+</div>
+
+<h3>The note Terminal Delight writes</h3>
+<p>When a restore finds two tabs naming one conversation, the first keeps it and the second starts a fresh shell, which gets a note titled <code>DUPLICATE TAB</code>: <code>Two tabs named one conversation. The first kept it; this is a fresh shell.</code> A pane that already has a note keeps its own. See <a href="/sessions">Sessions and restarts</a>.<sup><a href="#s6">6</a></sup></p>
 
 <h3>Where notes are saved</h3>
-<p>On the pane's entry in the session layout, <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>, beside its working directory: <code>note = { title, text, seed, pinned }</code>. Posting, peeling and pinning each save it.</p>
+<p>On the pane's entry in the session layout, <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>, beside its working directory: <code>note = { title, text, seed, pinned }</code>. Posting, peeling and pinning each save it.<sup><a href="#s6">6</a></sup></p>
 
 <h3>What would prove this wrong</h3>
-<p>A posted note that swallows <kbd>Esc</kbd>, or any other key, breaks the rule the feature is built on: once it's on the glass it annotates the pane and never gets in the way of what runs in it.</p>
+<p>A posted note that swallows <kbd>Esc</kbd>, or any other key, breaks the rule the feature is built on: once it's on the glass it annotates the pane and never gets in the way of what runs in it. A paper colour whose ink reads below 4.5:1 on some theme breaks the colour rule.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The note, its keys, look and saving: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/sticky.rs">sticky.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; <code>leave_note</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>; the feature notes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/10-sticky-notes.md">10-sticky-notes.md</a>.</li>
+  <li id="s1">The note, its keys, look and saving: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/sticky.rs">sticky.rs</a> (<code>MAX_CHARS</code>, <code>tilt</code>, <code>layout</code>, <code>MIN_PANE</code>, <code>press</code>) and <code>sticky_key</code>, with the paste, in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; pins on tabs and the left bar, and the agent wall's <code>MCP SERVER</code> group with its writes switch: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; <code>leave_note</code> and <code>list_panes</code>: <code>validate_note</code> and the tool list in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
+  <li id="s2"><code>LOOKUP</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lookup.rs">lookup.rs</a> (rows, ranking, <code>note_line</code>), and <code>open_lookup</code> and its keys in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s3">The three papers and the 4.5:1 rule: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/notepaper.rs">notepaper.rs</a>; the choice: <code>NotePaper</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the <code>STICKY NOTE</code> row: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>, its labels in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>.</li>
+  <li id="s4">Chalk's notes: the <code>paper_stock</code> branch of <code>paint</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/sticky.rs">sticky.rs</a>, <code>note_decoration</code>, <code>note_stock</code> and <code>note_palette</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>, and <code>material = "paper"</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skins/chalk.toml">skins/chalk.toml</a>.</li>
+  <li id="s5">0.5.0: <code>Author</code>, <code>author_after_edit</code>, <code>stamp</code> and the flat <code>tilt</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/sticky.rs">sticky.rs on dev/0.5.0</a>; <code>marked_note_palette</code> and <code>unboxed</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs on dev/0.5.0</a>; the saved and reported writer, <code>SavedNote</code> and its tests, and the Threshing Floor's <code>writes</code> switch (<code>floor_sw_writes</code>): <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs on dev/0.5.0</a>; the switch: <code>PaneNotes</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs on dev/0.5.0</a>.</li>
+  <li id="s6">The saved note and the duplicate-tab note: <code>SavedNote</code>, <code>duplicate_leaf_note</code> and <code>note_on_reattach</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>, its words in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
 </ol>

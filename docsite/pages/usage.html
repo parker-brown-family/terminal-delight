@@ -1,39 +1,49 @@
 <script type="application/json" data-page>
 {
   "title": "Usage and vitals",
-  "description": "The foot of the left bar shows how much of each AI subscription is left, from records written by small per-vendor collectors. With no reading, a rail is hatched and says —, never 0%. The usage card has the detail.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
-  "summary": "How much of each plan is left"
+  "description": "The foot of the left bar shows how much of each AI subscription is left, from records written by small per-vendor collectors, and tints each provider's mark by whether the week is on pace. With no reading, a rail is hatched and says —, never 0%. The usage card has the detail.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "How much of each plan is left, and whether the week is on pace"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">At the foot of the <a href="/left-bar">left bar</a>, each AI subscription you use gets a row: Claude Code, Codex, Fireworks. A solid rail is the long window, usually the week. A notched rail is the short one, usually five hours. The number is how much of the week is left.</p>
-<p>Terminal Delight doesn't measure this itself. A small collector for each vendor asks it and writes down the answer, and the rows read what was written. When there's no answer (no collector, an expired sign-in, a window that vendor doesn't have) the rail is hatched and the number reads <code>—</code>. It never reads 0%, because an empty bar would tell you that you've run out.</p>
-<p>Click a row, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, for the usage card: every limit with when it resets, today's use, the last seven days, and which models it went to. Each agent's own health is on the <a href="/agent-wall">agent wall</a>.</p>
-<p class="invite">Technical has the collectors, the record format and how a reading goes stale.</p>
+<p class="lede">At the foot of the <a href="/left-bar">left bar</a>, each AI subscription you use gets a row: Claude Code, Codex, Fireworks, Grok. A solid rail is the long window, usually the week. A notched rail is the short one, usually five hours. The number is how much of the week is left.</p>
+<p>The provider's mark at the start of the row is tinted by pace: green while you spend the week about as fast as it passes, red when you spend faster, blue when you have room banked.</p>
+<p>Terminal Delight doesn't measure any of this itself. A small collector for each vendor asks it and writes down the answer, and the rows read what was written. When there's no answer (no collector, an expired sign-in, a window that vendor doesn't have) the rail is hatched and the number reads <code>—</code>. It never reads 0%, because an empty bar would tell you that you've run out.</p>
+<p>Click a row, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, for the usage card: every limit with when it resets, a <b>TOKEN USAGE PACE</b> line for the week, and today's use, the last seven days and which models it went to, folded underneath.</p>
+<p class="invite">Technical has the collectors, the pace rule, the record format and how a reading goes stale.</p>
 </section>
 
 <section data-register="technical" data-headline="Readings">
 <h3>Where the numbers come from</h3>
-<p>One JSON record per subscription, read from two folders; if both have the same subscription, the newer record wins:</p>
+<p>One JSON record per subscription, read from two folders; if both have the same subscription, the newer record wins:<sup><a href="#s1">1</a></sup></p>
 <ul>
   <li><code>~/.local/state/omarchy/agents/usage/</code>, where Omarchy's own collectors write</li>
   <li><code>~/.local/state/terminal-delight/agents/usage/</code>, where Terminal Delight writes</li>
 </ul>
-<p>The collectors are Omarchy's scripts, included unedited and built into the binary: <code>claude</code> reads Claude Code's transcripts and Anthropic's usage endpoint, <code>codex</code> asks Codex's app server, <code>fireworks</code> asks Fireworks' billing API. They need <code>python3</code>.</p>
+<p>The collectors are Omarchy's scripts, included unedited and built into the binary. They need <code>python3</code>.</p>
+<table>
+  <thead><tr><th>Collector</th><th>Asks</th></tr></thead>
+  <tbody>
+    <tr><td><code>claude</code></td><td>Claude Code's transcripts and Anthropic's usage endpoint</td></tr>
+    <tr><td><code>codex</code></td><td>Codex's app server</td></tr>
+    <tr><td><code>fireworks</code></td><td>Fireworks' billing API</td></tr>
+    <tr><td><code>grok</code></td><td>the plan Grok caches, the credits endpoint the Grok CLI reads for its own usage view, and Grok's local session and token ledger. Not signed in, it says <code>Waiting for auth</code> and <code>Start Grok, or run `grok login`, to sign in.</code><sup><a href="#s5">5</a></sup></td></tr>
+  </tbody>
+</table>
 <pre class="cmd"><code>terminal-delight agent-usage update</code></pre>
-<p><code>update</code> runs every collector and writes a record for each that answers; <code>--only claude</code> runs one; <code>list</code> names them; <code>where</code> prints the folders. It exits 1 only if every collector failed. The rows refresh when the window opens, five seconds later, every five minutes after that, and each time the card opens. <code>↻ refresh</code> on the card runs <code>omarchy-agent-usage-update</code> if you have it, and this binary's own collectors if not.</p>
+<p><code>update</code> runs every collector and writes a record for each that answers; <code>--only grok</code> runs one; <code>list</code> names them; <code>where</code> prints the folders. It exits 1 only if every collector failed. The rows refresh when the window opens, five seconds later, every five minutes after that, and each time the card opens.<sup><a href="#s3">3</a></sup> <code>↻ refresh</code> on the card runs the first of these it finds: <code>omarchy-agent-usage-update</code>, a <code>td-agent-usage</code> on your <code>PATH</code> or in <code>~/.local/bin</code>, then this binary's own collectors.<sup><a href="#s1">1</a></sup></p>
 
 <h3>A row</h3>
 <dl class="defs">
-  <dt>mark</dt><dd>The provider's logo from <code>~/.config/terminal-delight/marks/&lt;id&gt;.svg</code>, drawn in one colour, or two initials.</dd>
+  <dt>mark</dt><dd>The provider's logo from <code>~/.config/terminal-delight/marks/&lt;id&gt;.svg</code>, drawn in one colour, or two initials. Its colour and glow are the week's pace, below; with no weekly reading to judge it by, it stays the plain text colour with no glow.</dd>
   <dt>solid rail</dt><dd>The long window. A limit whose label says week, day or month.</dd>
-  <dt>notched rail</dt><dd>The short window, with one notch per unit its label names: five for <code>Session (5-hour)</code>. A label with session, hour or current in it.</dd>
+  <dt>notched rail</dt><dd>The short window, with one notch per unit its label names: five for <code>Session (5-hour)</code>. A label with session, hour or current in it. Grok publishes one window, so its notched rail is hatched.</dd>
   <dt>number</dt><dd>The long window. <code>NN%</code> when fresh, its age (<code>45m</code>, <code>6h</code>, <code>2d</code>) when stale, <code>—</code> with no reading. Dropped when the bar is narrower than 190 px.</dd>
 </dl>
-<p>A limit whose label names neither is placed by order: first short, then long. Rail length shows what's left, or what's spent if you flip the card's <code>bar · what's left</code> chip. Rail colour always shows what's spent: green, amber from 66%, red from 85%. Any use at all draws at least a sliver. Hover a row for the vendor's own names and figures: <code>Weekly (7-day): 41% spent</code>, or <code>…: no reading</code>.</p>
+<p>A limit whose label names neither is placed by order: first short, then long. Rail length shows what's left, or what's spent if you flip the card's <code>bar · what's left</code> chip to <code>bar · what's spent</code>. Rail colour always shows what's spent: green, amber from 66%, red from 85%. Any use at all draws at least a sliver. Under a <a href="/skins#technical-shape">skin</a> whose gauge is pips, both rails are rows of pips you can count, hollow where there's no reading. Hover a row for the vendor's own names and figures: <code>Weekly (7-day): 41% spent</code>, <code>…: 41% spent, 6h old</code>, or <code>…: no reading</code>.<sup><a href="#s2">2</a></sup><sup><a href="#s4">4</a></sup></p>
 
 <h3>Fresh, stale, unknown</h3>
 <table>
@@ -41,13 +51,43 @@
   <tbody>
     <tr><td>fresh</td><td>recent enough for the window it describes</td><td><code>NN%</code></td></tr>
     <tr><td>stale</td><td>true, but older than the window it describes; a record with no time on it counts as stale, age <code>?</code></td><td>dimmed, with its age</td></tr>
-    <tr><td>unknown</td><td>no collector, the collector said it isn't ready, a sign-in has expired, or the vendor has no such window</td><td>hatched rail, <code>—</code></td></tr>
+    <tr><td>unknown</td><td>no collector, the collector said it isn't ready, the vendor reported a problem such as an expired sign-in, or the vendor has no such window</td><td>hatched rail, <code>—</code></td></tr>
   </tbody>
 </table>
-<p>One gap: a limit that arrives with a label but no <code>percent</code> is currently read as 0% spent, so it draws as full rather than unknown (<a href="https://github.com/parker-brown-family/terminal-delight/issues/799">issue 799</a>).</p>
+<p>One gap: a limit that arrives with a label but no <code>percent</code> is currently read as 0% spent, so it draws as full rather than unknown (<a href="https://github.com/parker-brown-family/terminal-delight/issues/799">issue 799</a>).<sup><a href="#s1">1</a></sup></p>
+
+<h3>Pace</h3>
+<p>Pace compares two numbers for the weekly limit: how much of it is spent, and how far through the week the clock is. The week starts seven days before its <code>resetsAt</code>. Only a limit labelled with <code>7-day</code>, or exactly <code>Weekly</code>, gets a pace; a five-hour window resets too often for one to mean anything. With no such limit, or no <code>resetsAt</code>, there's no pace at all rather than a guessed one.<sup><a href="#s1">1</a></sup><sup><a href="#s3">3</a></sup></p>
+<table>
+  <thead><tr><th>Spent minus elapsed</th><th>Verdict</th><th>Line under it</th></tr></thead>
+  <tbody>
+    <tr><td>within 5 points either way</td><td><code>ON PACE</code></td><td><code>even with the week's clock</code></td></tr>
+    <tr><td>more than 5 points under</td><td><code>BANKED</code></td><td><code>12 points banked</code></td></tr>
+    <tr><td>5 to 20 points over</td><td><code>BEHIND</code></td><td><code>9 points over pace</code></td></tr>
+    <tr><td>more than 20 points over</td><td><code>WAY OVER</code></td><td><code>27 points over pace</code></td></tr>
+  </tbody>
+</table>
+<p>Under the verdict is a bar with a flame in the middle. Its width is the room you have left to adjust: whichever is smaller, the share of the week still to run or the share of the plan still unspent. It's drawn from the centre outwards, so a narrow bar means little room either way. Its colour uses wider bands than the verdict: blue more than 15 points under, red more than 15 over, green between.<sup><a href="#s3">3</a></sup></p>
+<p>The left bar's mark uses the same arithmetic on a continuous scale instead of three bands: red at 30 points over, yellow at 15 over, green on pace, blue-green at 15 under, blue at 30 under, blended between.<sup><a href="#s3">3</a></sup></p>
+<p>Pace is the one number on this page that Terminal Delight works out itself; the collectors report only what's spent. It's a snapshot comparison, so it never predicts when you'll run out.</p>
 
 <h3>The usage card</h3>
-<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> where an input method takes the U; <code>Σ usage</code> on the agent wall; or a row. At the top is <b>LAUNCH AGENT CONFIG</b>, the <a href="/launching#technical-defaults">launcher's defaults</a>. Then one section per subscription: the vendor's status and what to do about it, each limit as <code>&lt;label&gt;  NN%  resets in &lt;time&gt;</code>, prepaid balances as <code>left</code> and <code>spent of … funded</code>, and <code>TODAY</code>, <code>LAST 7 DAYS</code> and <code>BY MODEL</code>. With no records yet: <code>nothing collected yet — press refresh</code>, and the folders it looked in.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>U</kbd>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Y</kbd> where an input method takes the U; <code>Σ usage</code> on the <a href="/agent-wall">agent wall</a>; or a row, which opens the card on that row's subscription.<sup><a href="#s3">3</a></sup></p>
+<p>The header reads <code>Σ Subscription usage</code> and <code>what each plan has left</code>, with the <code>bar · what's left</code> chip and two tabs, <code>savings</code> (lean-ctx's token savings) and <code>usage</code>. From the top:<sup><a href="#s4">4</a></sup></p>
+<ol>
+  <li><b>LAUNCH AGENT CONFIG</b>, folded, the <a href="/launching">launcher's defaults</a>. It's there even before any collector has written a record.</li>
+  <li>One chip per subscription that has something to show, with its plan (<code>Max 20x</code>, <code>Pro</code>) and a dot in the colour of its fullest limit.</li>
+  <li>The vendor's status and what to do about it, when there's a problem.</li>
+  <li>Each limit as <code>&lt;label&gt;  NN%  resets in &lt;time&gt;</code>, with a bar.</li>
+  <li><code>TOKEN USAGE PACE</code>, as above.</li>
+  <li>Prepaid balances as <code>left</code> (or <code>left (estimated)</code>) and <code>&lt;spent&gt; spent of &lt;funded&gt; funded</code>.</li>
+  <li><code>▸ today, the week, by model</code>, folded by default: <code>TODAY</code>, <code>LAST 7 DAYS</code> and <code>BY MODEL</code> (the six heaviest models, then the input, output and cache tokens summed across all of them).</li>
+  <li><code>collected 4m ago</code>, prompt and session totals when the collector reports them, and <code>↻ refresh</code>.</li>
+</ol>
+<p>With no records yet: <code>nothing collected yet — press refresh</code>, a line on where records come from, and the folders it looked in.</p>
+<div class="in-dev">
+<p>The rails are a switch, <code>allowance</code>, in <a href="/ui-config">UI CONFIG</a>. Clean, the design a first launch opens in, hides them along with the left bar. While they're hidden or the left bar is closed, the <code>…</code> menu (<code>CONFIG ▾</code> when the corner's glyphs are put away) carries a <code>▥ Allowance…</code> row that opens this card.<sup><a href="#s6">6</a></sup></p>
+</div>
 
 <h3>The record</h3>
 <pre><code>{
@@ -60,12 +100,20 @@
   ],
   "updatedAt": "2026-09-25T11:02:00Z"
 }</code></pre>
-<p><code>id</code> is required. <code>percent</code> is a fraction from 0 to 1, spent. Also read: <code>tierLabel</code>, <code>usageStatusText</code>, <code>authHelpText</code>, <code>balance</code> (<code>remaining</code>, <code>funded</code>, <code>spent</code>, <code>currency</code>, <code>estimated</code>), <code>todayPrompts</code>, <code>todaySessions</code>, <code>todayTotalTokens</code>, <code>recentDays</code>, <code>modelUsage</code>, <code>totalPrompts</code>, <code>totalSessions</code>, <code>activeDays</code>. Anything that can write this file can put a subscription in the bar.</p>
+<p><code>id</code> is required. <code>percent</code> is a fraction from 0 to 1, spent. Also read: <code>tierLabel</code>, <code>usageStatusText</code>, <code>authHelpText</code>, <code>hasPromptStats</code> (false for a collector that sees only tokens, so today's line drops the prompt and session counts), <code>balance</code> (<code>remaining</code>, <code>funded</code>, <code>spent</code>, <code>currency</code>, <code>estimated</code>), <code>todayPrompts</code>, <code>todaySessions</code>, <code>todayTotalTokens</code>, <code>recentDays</code>, <code>modelUsage</code>, <code>totalPrompts</code>, <code>totalSessions</code>, <code>activeDays</code>. Anything that can write this file can put a subscription in the bar.<sup><a href="#s1">1</a></sup></p>
 
 <h3>Keepalive</h3>
-<p>Earlier builds could type into idle agents on a timer to keep their prompt cache warm. That was removed, along with the AWAY screen that went with it: Terminal Delight never types into a terminal by itself.</p>
+<p>Earlier builds could type into idle agents on a timer to keep their prompt cache warm. That was removed, along with the AWAY screen that went with it.</p>
+
+<h3>What would prove this wrong</h3>
+<p>If a row ever draws a full or empty rail for a subscription whose record has no limits, or a pace for a limit with no <code>resetsAt</code>, the absence rule above has failed. Issue 799 is the one known case where it does.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">Records, collectors and <code>agent-usage</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>; rails and readings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/slot.rs">slot.rs</a>; the card: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s1">Records, collectors, <code>agent-usage</code>, the refresh order and the pace rule: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>.</li>
+  <li id="s2">Rails, readings, staleness and the 190 px floor: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/slot.rs">slot.rs</a>.</li>
+  <li id="s3">The row, the mark's tint, the refresh timer, the card and its routes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>render_bar_slot</code>, <code>render_usage_body</code>, <code>pace_band</code>, <code>pace_ramp</code>); the keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s4">The card's and the hover's words: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
+  <li id="s5">The Grok collector: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vendor/omarchy-agent-usage-grok">vendor/omarchy-agent-usage-grok</a>.</li>
+  <li id="s6">0.5.0: the <code>allowance</code> switch in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">ui/clean.toml</a>; the <code>Allowance…</code> row in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
 </ol>

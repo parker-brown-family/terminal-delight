@@ -1,0 +1,156 @@
+<script type="application/json" data-page>
+{
+  "title": "Uninstall",
+  "description": "CONFIG › ⚙ ADMIN exports your settings, removes old builds, and uninstalls Terminal Delight from a plan you read first, keeping your records unless you choose otherwise. The same plan from the command line with terminal-delight uninstall preview. What is removed, what is kept, when it refuses, and the manual steps on 0.4.0.",
+  "updated": "2026-11-01",
+  "trueOf": "dev/0.5.0 at d9aa472d",
+  "summary": "Remove it from a plan you read first"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Open <code>CONFIG ▾</code> at the right end of the bottom bar and choose <code>⚙ ADMIN</code>. A panel opens in the middle of the window with three jobs: export your settings, remove old builds, and uninstall Terminal Delight. Nothing is removed on a first click.</p>
+<p>To uninstall, pick what happens to your records: <code>Keep records</code>, the default, <code>Export, then remove records</code>, or <code>Remove records</code>. Click <code>Review the plan</code> and read the page it opens, which lists every step in order and everything it will leave for you. Then click <code>Uninstall Terminal Delight</code> twice. Terminal Delight closes, a background worker removes only the files it can prove Terminal Delight installed, and it writes a receipt saying what it removed and what it left.</p>
+<p>The same plan is available without a window: <code>terminal-delight uninstall preview</code> prints it and changes nothing. A machine you have protected with <code>terminal-delight admin protect</code> refuses to uninstall.</p>
+<p class="invite">Technical has the panel row by row, the worker's steps, the protection marker, the commands, and the manual removal for 0.4.0.</p>
+</section>
+
+<section data-register="technical" data-headline="ADMIN and removal">
+<h3>Opening ADMIN</h3>
+<p><code>⚙ ADMIN</code> is in the CONFIG menu, beside <code>Report a bug</code> and <code>Plugins</code>. <code>CONFIG ▾</code> appears at the right end of the bottom bar whenever any of the controls there is hidden, which is true of Clean, the UI set a new window starts in, and of Standard. When nothing is hidden, as in the <code>all</code> set, those controls fold into <code>…</code> only in a window narrower than 720 pixels (1,000 under a skin that draws controls as words), and <code>…</code> opens the same menu. A wide window with every control showing has neither, so narrow it or hide one control in <a href="/ui-config">UI CONFIG</a>. The commands further down do the same jobs without a window.<sup><a href="#s1">1</a></sup></p>
+<p>The panel is 500 pixels wide, centred over a dimmed window, and headed <code>⚙ ADMIN</code>: <q>Export your settings, clear out old builds, or remove Terminal Delight. Nothing is removed on a first click.</q> <kbd>Esc</kbd> or a click outside closes it, and closing it disarms any row waiting for its second click.</p>
+
+<h3>EXPORT</h3>
+<table>
+  <thead><tr><th>Row</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><code>📦 Export settings</code></td><td>Copies <code>~/.config/terminal-delight</code> (your settings, layouts and sessions) into a new folder, <code>~/terminal-delight-export-&lt;YYYYMMDD-HHMMSS&gt;</code>, stamped in UTC.</td></tr>
+    <tr><td><code>🗃 Export settings and records</code></td><td>Also copies <code>~/.local/state/terminal-delight</code>: notes, conversations, the lines that resume sleeping agents, and the rest of the records. The row shows how much that is.</td></tr>
+  </tbody>
+</table>
+<p>One click starts either. The copy is made in a hidden folder beside the destination, every file is read back and compared by size, SHA-256 and mode, a <code>manifest.json</code> listing each file is written last, and only then is the folder renamed into place. If anything fails, including one unreadable file, the half-made folder is deleted and the row says <code>Failed:</code> with the reason. Success reads <code>Exported to</code> and the path.<sup><a href="#s3">3</a></sup></p>
+<p>Left out, each with its reason in the manifest: a credential, older copies of session files, copies of other programs' settings that installers kept as backups, files bound to this machine (the GNOME shortcut's undo files, the protection marker and the default-terminal journal), lock files, temporary files, and anything that is not a regular file. Links are recorded, never followed.</p>
+
+<h3>OLD BUILDS</h3>
+<p>Each install from source leaves a build in <code>~/.local/lib/terminal-delight</code>, named <code>td-&lt;commit&gt;-&lt;label&gt;</code>. <code>🧹 Remove old builds</code> counts them and says what it would free: <q>&lt;n&gt; builds, &lt;size&gt;; &lt;used&gt; in use. Removes the &lt;free&gt; that nothing runs (&lt;free size&gt;) and keeps the launcher's build, running builds and the newest three.</q> The first click asks <q>Click again to remove &lt;free&gt; builds (&lt;free size&gt;).</q> The second removes them and says <q>Removed &lt;n&gt; builds and freed &lt;size&gt;.</q><sup><a href="#s4">4</a></sup></p>
+<ul>
+  <li>It keeps the build <code>~/.local/bin/terminal-delight</code> points at, every build a process is running, and the newest three.</li>
+  <li>It only ever touches <code>td-*</code> programs in that folder. An AppImage, a link or any other file there stays.</li>
+  <li>It checks each build again just before removing it, and keeps one that changed, started running or became the launcher's.</li>
+  <li>It removes nothing while a process that might be Terminal Delight cannot be read, or when the folder or the launcher cannot be read in full.</li>
+</ul>
+<p>The panel shows totals. <code>terminal-delight admin builds</code> lists every build with its size and why it is kept.</p>
+
+<h3>UNINSTALL</h3>
+<ol>
+  <li>Pick a chip: <code>Keep records</code> (the default), <code>Export, then remove records</code> or <code>Remove records</code>.</li>
+  <li><code>📄 Review the plan</code> writes <code>~/.cache/terminal-delight/admin/uninstall-plan-&lt;stamp&gt;-&lt;choice&gt;.md</code> and a <code>.json</code> beside it, and opens the Markdown in the window. Until you have reviewed a plan for the chip that is selected, the next row says <code>Review the plan first.</code></li>
+  <li><code>🗑 Uninstall Terminal Delight</code>: the first click asks <code>Click again: Terminal Delight closes and is removed as the plan says.</code> The second starts the worker on the exact plan file you reviewed. If that file changed since, it refuses: <code>the plan file changed after it was reviewed; review it again</code>.</li>
+  <li>The row then reads <code>Removal started. Its receipt will be</code> and the receipt's path, and Terminal Delight closes.</li>
+</ol>
+<p><code>🤖 Agent handoff</code>, always last, writes <code>uninstall-handoff-&lt;stamp&gt;.md</code> beside the plan: a brief an agent of your choice can use to walk you through the removal. It is optional.<sup><a href="#s2">2</a></sup></p>
+
+<h3>What the worker does</h3>
+<p>The worker is a copy of the program placed in the removal folder and started apart from Terminal Delight, so closing every window, or an AppImage unmounting, cannot stop it halfway. Before it changes anything it makes the plan again and compares: if any of Terminal Delight's files changed since you reviewed it, it stops with <code>Refused: TD's files changed since the plan was made. Review a fresh plan.</code> Then, in order:<sup><a href="#s2">2</a></sup></p>
+<ol>
+  <li>If <code>default-terminal on</code> made Terminal Delight your default terminal, it restores the previous list from its journal.</li>
+  <li>From Claude Code's <code>settings.json</code> it removes only Terminal Delight's own hooks (the exact commands its installers recorded, and the briefing hook) and the <code>mcp__terminal-delight</code> permission entries. Other hooks stay. A file whose formatting it cannot write back byte for byte is left alone and reported.</li>
+  <li>It removes the <code>terminal-delight</code> MCP registration from Claude Code, Codex and Gemini, using each one's own <code>mcp remove</code>, but only an entry whose command resolves to a Terminal Delight program on this machine. It reads the entry again just before, and leaves one that changed. An entry that only looks like Terminal Delight's is reported with the command to remove it yourself.</li>
+  <li>It takes out the key-sheet block from Hyprland's <code>bindings.lua</code>, only if the block is exactly as installed.</li>
+  <li>It asks each session host to save and close, stops Terminal Delight's windows and MCP relays (matched by the program they run, never by name), and wakes any frozen panes.</li>
+  <li>With <code>Export, then remove records</code>, it makes the same checked export as the panel, to <code>~/terminal-delight-export-&lt;stamp&gt;</code>.</li>
+  <li>It removes the helper scripts, the key sheet, the desktop entry and icons, the cache, the runtime folders, Terminal Delight's own files in <code>~/.local/share/terminal-delight</code>, the builds, and the launcher. Each file goes only if its content matches what an installer recorded or a version Terminal Delight shipped. One that doesn't is left and reported.</li>
+  <li>With records kept, it deletes the install receipts of the parts it removed. With records exported or removed, it removes <code>~/.config/terminal-delight</code> and <code>~/.local/state/terminal-delight</code> last, and only if every step before finished. If the export failed, the records stay and the receipt says so.</li>
+</ol>
+<p>A step that fails holds back only the steps that depend on it. One case to know: if Terminal Delight is still your default terminal when the worker checks, it leaves the program in place, because your desktop would otherwise have no terminal, and the receipt says the removal was partial.</p>
+
+<h3>What it leaves for you</h3>
+<ul>
+  <li>The AppImage. The plan names it, and the worker never deletes it, because nothing on disk proves which file was mounted.</li>
+  <li>A GNOME <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> shortcut. It is reported with the command that removes it, <code>scripts/install-hotkey.sh --uninstall</code> from a source checkout. Run that first if you plan to export or remove records, because the files it needs to restore your old shortcut live in the settings folder.</li>
+  <li>Companion tools and their services, Omarchy themes and hooks, the agent-usage cache, Context Delight packages, MCP entries in a project's own <code>.mcp.json</code>, and anything it found but could not prove was Terminal Delight's. Each is listed under <code>## What it will leave for you</code> in the plan and <code>## Left for you</code> in the receipt.</li>
+</ul>
+
+<h3>The receipt</h3>
+<p>Everything the worker writes goes in <code>~/.local/state/terminal-delight-removal/&lt;stamp&gt;/</code>, beside Terminal Delight's state and outside every folder it removes: <code>receipt.md</code> and <code>receipt.json</code>, the reviewed plan, <code>journal.jsonl</code> with one line per step, <code>worker.log</code>, and in <code>before/</code> a copy of each shared file it edited, such as Claude Code's settings. The receipt opens with <code>Terminal Delight was removed</code>, <code>…was removed in part</code> or <code>…was not removed</code>.<sup><a href="#s2">2</a></sup></p>
+
+<h3>Protecting a machine</h3>
+<p>A machine you never want removed, such as the one you develop on, can carry a marker:<sup><a href="#s5">5</a></sup></p>
+<pre class="cmd"><code>terminal-delight admin protect --reason "my development machine"</code></pre>
+<p>That writes <code>~/.config/terminal-delight/protected</code> and prints <code>This machine is now protected. To lift it, delete</code> and the path. The file names this machine by its <code>/etc/machine-id</code>, so a settings folder copied to another computer doesn't carry the protection with it:</p>
+<pre><code># Terminal Delight will not uninstall itself on this machine.
+# The marker names /etc/machine-id, so a copied config does not carry it.
+# To lift the protection, delete this file by hand.
+machine-id = "…"
+hostname = "…"
+since = "20261101"
+reason = "my development machine"</code></pre>
+<p>On a protected machine the UNINSTALL section shows <q>This machine (&lt;host&gt;) is protected, so removal refuses here. To lift it, delete &lt;path&gt; by hand.</q> with <code>Preview the removal</code> beneath it, and the worker refuses. A marker that can't be read, or that names no machine, counts as protected. A marker naming a different machine is reported and ignored. Export and Remove old builds still work. <code>terminal-delight admin guard</code> says which of these applies.</p>
+
+<h3>From the command line</h3>
+<table>
+  <thead><tr><th>Command</th><th>Does</th><th>Exit</th></tr></thead>
+  <tbody>
+    <tr><td><code>uninstall preview [--json|--handoff] [--retention keep|export|delete]</code></td><td>Prints the plan and changes nothing. <code>--json</code> prints it as data; <code>--handoff</code> prints the agent brief.</td><td>0; 2 usage</td></tr>
+    <tr><td><code>uninstall plan [--retention keep|export|delete]</code></td><td>Writes the plan for review and prints both paths.</td><td>0; 2 usage</td></tr>
+    <tr><td><code>uninstall run --plan FILE [--now]</code></td><td>Starts the worker on a reviewed plan and prints where the receipt will be. <code>--now</code> runs it in the foreground.</td><td>0 done; 1 done in part; 3 refused; 2 usage</td></tr>
+    <tr><td><code>admin export [--records] [--to DIR] [--json]</code></td><td>The panel's export. <code>--to</code> names a new folder.</td><td>0; 1 failed; 2 usage</td></tr>
+    <tr><td><code>admin builds [--json]</code>, <code>admin builds prune [--keep N] [--dry-run] [--json]</code></td><td>Lists builds, or removes old ones keeping the newest <code>N</code> (default 3, at least 1).</td><td>0; 1 failed; 2 refused or usage</td></tr>
+    <tr><td><code>admin guard</code></td><td>Says whether this machine refuses removal.</td><td>0</td></tr>
+    <tr><td><code>admin protect [--reason TEXT]</code></td><td>Writes the protection marker. It never replaces one already there.</td><td>0; 1 could not write; 2 usage</td></tr>
+  </tbody>
+</table>
+<p>Each is <code>terminal-delight</code> followed by the words shown. The plan files carry this machine's full id and your local paths, so read one before sharing it.<sup><a href="#s2">2</a></sup></p>
+<pre class="cmd"><code>terminal-delight uninstall preview</code></pre>
+
+<h3>When it refuses</h3>
+<p>The worker refuses before writing anything, and says <code>Nothing was changed.</code>, when:</p>
+<ul>
+  <li>the machine is protected, or its marker can't be read;</li>
+  <li>the plan was made on another machine, or for another home folder;</li>
+  <li>Terminal Delight's files changed since the plan was made;</li>
+  <li>two of Terminal Delight's folders overlap, so removing one would take the other;</li>
+  <li>the removal folder would sit inside something the removal deletes;</li>
+  <li>it is running under a home folder that isn't the account's own, and a path leads outside it.</li>
+</ul>
+<p>Later, a single step is left undone, with its reason in the receipt, when its file changed since the plan, is now a link, or is no longer what the plan said: <code>changed since the plan; left</code>, <code>is a link; left</code>, <code>no longer a build; left</code>. Another running Terminal Delight that the plan didn't cover is left alone and named.</p>
+
+<h3>Ownership records from the installers</h3>
+<p>The source installers record what they put on disk, in <code>~/.local/state/terminal-delight/receipts/&lt;component&gt;.receipt</code>: each file's path and SHA-256, each hook's settings file and exact command, and each block's file and marker. The worker trusts a receipt only if you own it and no one else can write to it. Each installer also takes <code>--uninstall</code>, which uses the same records: <code>install-agent-hooks.sh</code>, <code>install-recovery-hook.sh</code>, <code>install-desktop.sh</code>, <code>install-plugins.sh</code> and <code>install-keys-hotkey.sh</code>. When an installer edits a shared file it keeps the original in <code>~/.local/state/terminal-delight/backups/</code> and prints the path.<sup><a href="#s6">6</a></sup></p>
+<p>The GNOME installer, <code>install-hotkey.sh</code>, records the three shortcut values it set. Its <code>--uninstall</code> compares all three with what GNOME holds now and refuses if any changed; it puts back your old <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> choice only if nothing else has taken that key since. An install from before these records existed needs the review it prints.</p>
+
+<h3>What is not covered yet</h3>
+<p>The worker reports a GNOME shortcut and does not remove it. Each check runs just before its change, but the check and the change are separate steps, so a program swapping a path at that exact moment could get past it (<a href="https://github.com/parker-brown-family/terminal-delight/issues/1222">issue 1222</a>). An MCP entry registered by a bare command name, with no path, is resolved on the remover's own <code>PATH</code>. The plan says when either applies.</p>
+
+<h3>On 0.4.0</h3>
+<p>0.4.0 has no ADMIN panel and no <code>uninstall</code> verb. Remove it by hand, in this order, from another terminal.</p>
+<ol>
+  <li>While the program still exists, undo what it changed outside its own folders:
+<pre class="cmd"><code>terminal-delight default-terminal off
+terminal-delight briefing hook off</code></pre></li>
+  <li>Remove any MCP registrations you added:
+<pre class="cmd"><code>claude mcp remove --scope user terminal-delight
+codex mcp remove terminal-delight
+gemini mcp remove --scope user terminal-delight</code></pre></li>
+  <li>If you ran any installer from a source checkout, run its uninstaller from the same checkout. On 0.4.0 these remove every hook group that mentions the helper, including unrelated hooks in the same group, and leave a copy of the settings file as <code>settings.json.td-backup.&lt;seconds&gt;</code>:
+<pre class="cmd"><code>scripts/install-agent-hooks.sh --uninstall
+scripts/install-recovery-hook.sh --uninstall
+scripts/install-keys-hotkey.sh --uninstall
+scripts/install-hotkey.sh --uninstall</code></pre>
+  <code>install-desktop.sh</code> and <code>install-plugins.sh</code> have no <code>--uninstall</code> on 0.4.0; remove what they installed in the next step.</li>
+  <li>Delete the AppImage you downloaded, or <code>~/.local/bin/terminal-delight</code> if you moved it there, and the files the installers left: <code>~/.local/share/applications/terminal-delight.desktop</code>, <code>terminal-delight.svg</code> and <code>terminal-delight.png</code> under <code>~/.local/share/icons/hicolor/</code>, and <code>leanctx-mcp</code> and <code>td-send-mcp</code> in <code>~/.local/bin</code>.</li>
+  <li>Delete Terminal Delight's own folders, keeping the first two if you want your settings and records: <code>~/.config/terminal-delight</code>, <code>~/.local/state/terminal-delight</code>, <code>~/.cache/terminal-delight</code> and <code>~/.local/share/terminal-delight</code>. The runtime folder in <code>$XDG_RUNTIME_DIR</code> goes when you log out.</li>
+</ol>
+
+<h3>What would prove this wrong</h3>
+<p>A file the worker removed that the plan you reviewed did not list, or one it removed without proof that Terminal Delight put it there. Either would break the rule the whole feature is built on: a second click runs exactly the plan you read.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The CONFIG menu and its ADMIN entry: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a> (<code>config_in_corner</code>); the panel: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/admin_view.rs">admin_view.rs</a>; its strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">lang/chrome.rs</a> (<code>admin_*</code>).</li>
+  <li id="s2">The commands, the plan, the worker and the receipt: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall.rs">uninstall.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/plan.rs">uninstall/plan.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/apply.rs">uninstall/apply.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/settings.rs">uninstall/settings.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/mcp.rs">uninstall/mcp.rs</a>.</li>
+  <li id="s3">The export: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/export.rs">uninstall/export.rs</a>.</li>
+  <li id="s4">Old builds: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/builds.rs">uninstall/builds.rs</a>.</li>
+  <li id="s5">The protection marker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/guard.rs">uninstall/guard.rs</a>.</li>
+  <li id="s6">Installer records: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/lib/uninstall.sh">scripts/lib/uninstall.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/install-hotkey.sh">scripts/install-hotkey.sh</a>; the 0.4.0 uninstallers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">scripts/install-agent-hooks.sh</a> and its siblings on main.</li>
+</ol>

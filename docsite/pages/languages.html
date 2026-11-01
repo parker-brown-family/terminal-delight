@@ -1,18 +1,18 @@
 <script type="application/json" data-page>
 {
   "title": "Languages",
-  "description": "Terminal Delight's menus, buttons and labels come in nine languages. Press F1 and pick one; the choice is saved with the session.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "Terminal Delight's menus, buttons and labels come in nine languages. Press F1, click the 🌐 pill and pick one; the choice is saved with the session. What is translated, what stays English, and how a language is added.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Nine languages, one table each"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Every menu, button and label in Terminal Delight comes in nine languages: English, Español, Deutsch, Français, Русский, 中文, 日本語, 한국어 and हिन्दी.</p>
-<p>Press <kbd>F1</kbd>, click <code>🌐 English ▾</code>, and type to filter: the language's own name, its English name or its code all work. The window changes at once, and the choice is saved with the session.</p>
-<p>Key names like <kbd>Ctrl</kbd>+<kbd>T</kbd>, symbols, and names like FOCUS, MCP, claude and codex stay as they are in every language, and so does anything your programs print.</p>
-<p class="invite">Technical has the codes and how a language is added.</p>
+<p>Press <kbd>F1</kbd> to open help, click <code>🌐 English ▾</code> at its top, and type to filter: the language's own name, its English name or its two-letter code all work. <kbd>Enter</kbd> picks the highlighted one, the window changes at once, and the choice is saved with the session, so two windows on two sessions can show two languages.</p>
+<p>Key names like <kbd>Ctrl</kbd>+<kbd>T</kbd>, symbols, and names like FOCUS, MCP, claude and codex stay as they are in every language. So does anything a program reads: MCP answers, the command line and logs are always English, and so is anything your programs print.</p>
+<p class="invite">Technical has the codes, the picker's keys, what is counted, and how a language is added.</p>
 </section>
 
 <section data-register="technical" data-headline="Codes and strings">
@@ -30,14 +30,40 @@
     <tr><td><code>hi</code></td><td>हिन्दी</td><td>Hindi</td></tr>
   </tbody>
 </table>
-<p>The choice is the <code>lang</code> field of the session file, <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>, written in lowercase: <code>lang = "zh"</code>. With no field, the language is English. Because it belongs to the session, two windows on two sessions can show two languages. Use one of the nine codes exactly when editing the file by hand.</p>
+<p>That is also the picker's order.<sup><a href="#s1">1</a></sup></p>
 
-<h3>How it's built</h3>
-<p>Every piece of text is a field of one table, <code>Strings</code>, with 215 fields and one complete copy per language. English is the source. A language that leaves a field out doesn't compile, so a half-translated build can't ship. Adding a language means adding it to the list and writing its table; the compiler names every field still missing.</p>
-<p>Pane labels follow the same rule: <code>SHELL</code> and <code>REMOTE</code> are translated, while <code>CLAUDE</code>, <code>CODEX</code> and program names are not. The labels the MCP server reports stay in English whatever the window shows, so a script reads the same words in any language.</p>
-<p>The translations were written in-house. Each one wants a pass by a native speaker before it's advertised as supported.</p>
+<h3>The picker</h3>
+<p>The pill sits in the help panel's header and shows the current language's own name. Clicking it opens a list headed <code>🌐  LANGUAGE</code> with a count such as <code>9/9</code>, which drops as you type. While the list is open it takes the keyboard:<sup><a href="#s2">2</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td>any letter</td><td>Filter. <code>german</code>, <code>deu</code> and <code>de</code> all find Deutsch.</td></tr>
+    <tr><td><kbd>↓</kbd> or <kbd>Tab</kbd>, <kbd>↑</kbd></td><td>Move the highlight.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Switch to the highlighted language and save it.</td></tr>
+    <tr><td><kbd>Esc</kbd>, or a click outside</td><td>Close without changing anything.</td></tr>
+  </tbody>
+</table>
+
+<h3>Where the choice is saved</h3>
+<p>In the <code>lang</code> field of the session file, <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>, in lowercase: <code>lang = "zh"</code>. A file with no <code>lang</code> field opens in English. When editing the file by hand, use one of the nine codes exactly: the file is read strictly, and a value that isn't one of them stops the whole file from loading.<sup><a href="#s2">2</a></sup></p>
+
+<h3>What is translated</h3>
+<p>Every piece of text a person reads on screen is a field in one of four tables: the help menu and shared labels, the window's own chrome (menus, trays, dialogs, panels, the left bar), everything the panes, workbench and document viewer draw, and the Git overlay. Each language carries a complete copy of all four. On 0.4.0 that is 1,372 entries per language. <span class="dev-tag">0.5.0 dev</span> has 1,627, mostly from the Threshing Floor, UI CONFIG and the ADMIN panel.<sup><a href="#s1">1</a></sup></p>
+<p>Pane labels follow the same rule: <code>SHELL</code> and <code>REMOTE</code> are translated (<code>CONSOLA</code>, <code>ОБОЛОЧКА</code>, <code>シェル</code>), while <code>CLAUDE</code>, <code>CODEX</code> and program names are not. The labels the MCP server reports stay in English whatever the window shows, so a script reads the same words in any language.</p>
+<p>Forty-five of the entries are counted phrases, such as a number of panes. Each holds four forms, and the language picks one: Russian uses three (1, 2 to 4, 5 and up, by the last two digits), French and Hindi treat zero as singular, and Chinese, Japanese and Korean use the same words for every number.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Adding a language or a string</h3>
+<p>English is the source. A language that leaves out a field doesn't compile, so a half-translated build can't ship; adding a language means adding it to the list and writing its four tables, and the compiler names every field still missing. A test also fails when a translation is left identical to its English, unless the word is on a short list of cognates such as CRT and Plugins.</p>
+<p>Every pull request runs a check called Translation suggestions, which marks on-screen English the change adds without a translation. It never fails a build. The how-to is <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/TRANSLATING.md">docs/TRANSLATING.md</a>.<sup><a href="#s3">3</a></sup></p>
+<p class="in-dev">On 0.5.0 the chrome table's fields are private to the app, so a string the app no longer draws fails the build as unused.</p>
+<p>The tables were first generated with a machine translation that worked from the meaning of each English line, and are edited by hand since. None has had a pass by a native speaker yet.</p>
+
+<h3>What would prove this wrong</h3>
+<p>A label that stays in English after you switch language, outside the exceptions above. Every on-screen string is supposed to come from the tables, so one that doesn't is a missing entry.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The table, the nine languages and their tests: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>; the picker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s1">The nine languages, the four tables, plural forms and their tests: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/coord.rs">lang/coord.rs</a>. Entry counts are the fields of the four structs; 0.5.0's from <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">dev/0.5.0 lang/chrome.rs</a> and its siblings.</li>
+  <li id="s2">The picker, its keys, and the session file's <code>lang</code> field: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>LangPicker</code>, <code>filtered_langs</code>, <code>StateFile</code>, <code>load_state</code>).</li>
+  <li id="s3">The suggestion check: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/translation-suggest.py">scripts/translation-suggest.py</a>, run from <code>.github/workflows/ci.yml</code>.</li>
 </ol>

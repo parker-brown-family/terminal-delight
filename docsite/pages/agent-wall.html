@@ -1,17 +1,18 @@
 <script type="application/json" data-page>
 {
   "title": "Agent wall",
-  "description": "The agent wall shows every pane in the window as a card: which agent, where, what it's doing, and three bars read from its own transcript that say whether it should keep going, compact, hand off or stop.",
-  "updated": "2026-10-22",
-  "trueOf": "feat/war-room at 0e93aaa3: the counter opens the Threshing Floor, the wall is Ctrl+Shift+A",
+  "description": "The agent wall shows every pane in the window as a card: which agent, where, which model at which effort, what it's doing, and three bars read from its own transcript that say whether it should keep going, compact, hand off or stop.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Every agent as a card, with three health bars"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">The agent wall shows every pane in the window as a card. Open it with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. Click a card and you're in that pane.</p>
-<p>Each card names the agent, the directory it's in, the model it's running and what it's doing right now. Cards are grouped the way your tabs are, and the chips across the top narrow them by group, by program and by state, so twelve agents can come down to the two that are blocked.</p>
+<p class="lede">The agent wall shows every pane in the window as a card. Click the agent counter in the top right of the window, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. Click a card and you're in that pane.</p>
+<p>Each card names the agent, the directory it's in, the model and effort it's running, such as <code>OPUS 5.5 · MAX</code>, and what it's doing right now. Cards are grouped the way your tabs are, and the chips across the top narrow them by group, by program and by state, so twelve agents can come down to the two that are blocked.</p>
 <p>A Claude agent's card also carries three bars, read from its own transcript: how full its context is, how worn it is, and how much of what it's holding is still about the task. When those add up to <b>STOP</b> or <b>HAND OFF</b>, the card turns up a red <code>CALL</code> chip and a <code>⚠</code>, because those two need a person to decide.</p>
+<p class="in-dev">The counter opens the <a href="/threshing-floor">Threshing Floor</a> instead, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the wall's only door.</p>
 <p class="invite">Story explains the three bars. Technical has how each is computed.</p>
 </section>
 
@@ -25,13 +26,28 @@
 <section data-register="technical" data-headline="Cards, bars and the call">
 <h3>Opening it</h3>
 <ul>
-  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> from any pane. That is the only door now.</li>
+  <li>The agent counter in the top right of the window.<sup><a href="#s1">1</a></sup></li>
+  <li><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> from any pane. The F1 help lists it as <code>MCP — read-only agent-watch surface</code>.</li>
+  <li><code>AGENTS · MCP</code> in the <code>…</code> menu.</li>
 </ul>
-<p>The agent counter in the top right of the window opens the <a href="/mcp">Threshing Floor</a> instead, and so does <code>THRESHING FLOOR</code> in the <code>…</code> menu. The counter counts <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown, and fills a cell only when that state needs you.</p>
-<p>Click outside the panel to close it. Clicking a card focuses that pane, switches to its tab and closes the wall.</p>
+<p>The counter is a robot followed by six cells: <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown. A cell lights when its count isn't zero, and only blocked and error get a filled background, because those two need you.<sup><a href="#s3">3</a></sup></p>
+<p><kbd>Esc</kbd> or a click outside the panel closes it. If something is open on top of the wall, such as the usage card or the <a href="/graveyard">graveyard</a>, the first <kbd>Esc</kbd> closes that and the second closes the wall. Clicking a card focuses that pane, switches to its tab and closes the wall.</p>
+<div class="in-dev">
+<p>The agent counter opens the <a href="/threshing-floor">Threshing Floor</a>, and so does <code>THRESHING FLOOR</code> in the <code>…</code> menu. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the only way to the wall, and the F1 help no longer lists it.<sup><a href="#s4">4</a></sup></p>
+<p>The counter has eight cells: resting and asleep sit between idle and unknown, for agents that have been <a href="/rest">put to rest</a>. Hovering it shows <a href="/rest#technical-memory">how much memory</a> awake, resting and sleeping panes hold.</p>
+</div>
 
 <h3>The header</h3>
-<p><code>AGENT WALL</code>, then <code>Δ</code> (tokens this turn) and <code>Σ</code> (tokens this session) for the whole fleet, and two buttons: <code>&lt;/&gt; savings</code> for lean-ctx's token savings and <code>Σ usage</code> for the <a href="/usage">usage card</a>. Below them, the <a href="/mcp">MCP server</a>'s switches (on or off, which panes to expose, tool-call events, writes) and the card-size slider, which scales every card from 0.7 to 1.6 and applies to the <a href="/graveyard">graveyard</a> too.</p>
+<p><code>AGENT WALL</code>, then <code>Δ</code> (tokens this turn) and <code>Σ</code> (tokens this session) for the whole fleet, and two buttons: <code>&lt;/&gt; savings</code> for lean-ctx's token savings and <code>Σ usage</code> for the <a href="/usage">usage card</a>. Under them, <code>MCP CONTROL — READ ONLY</code>, or <code>READ + WRITE</code> when writes are on.<sup><a href="#s1">1</a></sup></p>
+<p>Then two groups of controls:</p>
+<table>
+  <thead><tr><th>Group</th><th>Controls</th></tr></thead>
+  <tbody>
+    <tr><td><code>MCP SERVER</code></td><td>The <a href="/mcp">MCP server</a>'s switches: <code>server enabled</code> or <code>server disabled</code>; <code>expose: agents only</code> or <code>expose: all panes</code>; <code>stream tool-call events</code> or <code>events off</code>; <code>writes on · agents can restyle</code> or <code>writes off · read-only</code>. Under them, a count such as <code>5/9 pane(s) exposed</code>.</td></tr>
+    <tr><td><code>CARDS</code></td><td><code>◉ images on</code> or <code>○ images off</code>, and the card-size slider, which scales every card from 0.7 to 1.6 and applies to the <a href="/graveyard">graveyard</a> too.</td></tr>
+  </tbody>
+</table>
+<p>The IMAGES switch takes the picture out of every card, which makes each card shorter so more fit on screen. Its setting is saved with the window; a window where nobody has pressed it shows pictures. The card size goes back to 1 each time the window opens.</p>
 
 <h3>Filters</h3>
 <table>
@@ -39,32 +55,34 @@
   <tbody>
     <tr><td>Group</td><td><code>ALL</code>, one per tab group, <code>Ungrouped</code></td></tr>
     <tr><td>Program</td><td><code>ANY PROGRAM</code>, then one per program present: <code>CLAUDE</code>, <code>CODEX</code>, <code>SHELL</code>, <code>REMOTE</code>, or the program's name</td></tr>
-    <tr><td>State</td><td><code>ANY STATE</code>, then <code>▶ WORKING</code>, <code>⏸ BLOCKED</code>, <code>✕ ERROR</code>, <code>✓ DONE</code>, <code>· IDLE</code>, <code>? UNKNOWN</code>; a state with no agents gets no chip</td></tr>
+    <tr><td><code>AGENT STATE</code></td><td><code>ANY STATE</code>, then <code>▶ WORKING</code>, <code>⏸ BLOCKED</code>, <code>✕ ERROR</code>, <code>✓ DONE</code>, <code>· IDLE</code>, <code>? UNKNOWN</code>; a state with no agents gets no chip</td></tr>
   </tbody>
 </table>
-<p>State comes from the agent's own status line on screen. Blocked and error need you. Unknown means the screen matched no rule, and it's counted apart from idle rather than guessed into it.</p>
+<p>Each chip carries its count. The state chips count only the agents the group and program chips leave in view, and they're the wall's only state tally.<sup><a href="#s1">1</a></sup> State comes from the agent's own status line on screen. Blocked and error need you. Unknown means the screen matched no rule, and it's counted apart from idle rather than guessed into it.</p>
+<p class="in-dev">The state row gains <code>☾ RESTING</code> and <code>z ASLEEP</code>, between idle and unknown.<sup><a href="#s4">4</a></sup></p>
 
 <h3>A card</h3>
 <dl class="defs">
   <dt>title</dt><dd><code>◈</code> if the pane is exposed to MCP, <code>◇</code> if not; a red <code>⚠</code> when it needs you; the pane's name, else its terminal title; the program.</dd>
   <dt>directory</dt><dd>The last part of its working directory, as <code>project/</code>.</dd>
-  <dt>picture</dt><dd>The directory's logo, or a small scene of the tool the agent is using right now, with a caption. With neither, the name's initials over the group colour. The picture is warped like a tiny CRT.</dd>
-  <dt>agent chip</dt><dd>Model family and effort, e.g. <code>OPUS · MAX</code>, from the transcript; else the <code>--model</code> it was started with. A shell shows <code>SERVICE</code>.</dd>
-  <dt>middle</dt><dd>The three bars, when there are any. Otherwise the agent's latest lines, or a shell's directory.</dd>
+  <dt>picture</dt><dd>The pane's logo, or a small scene of the tool the agent is using right now with a caption, or the directory's logo. With none of those, the name's initials over the group colour, with the program and its state. Gone while IMAGES is off. With <code>TD_WALL_THEME=1</code> set when the window starts, each card wears its pane's own theme and the picture is warped like a tiny CRT.</dd>
+  <dt>agent chip</dt><dd><code>AGENT</code> and the model and effort the transcript names, e.g. <code>OPUS 5.5 · MAX</code>. Known model families are shortened to the family and version; a name Terminal Delight doesn't know is shown whole.<sup><a href="#s5">5</a></sup> Without a transcript reading, the <code>--model</code> the agent was started with, else the program's name. A shell shows <code>SERVICE</code> and its program.</dd>
+  <dt>middle</dt><dd>The three bars, when there are any. Otherwise the agent's latest lines (for an idle agent, the last thing you asked it, marked <code>❯</code>), or a shell's directory.</dd>
   <dt>corner</dt><dd><code>Δ</code> and <code>Σ</code> tokens, read from the agent's status line, and the state. When the status line shows no count, <code>Δ</code> currently reads <code>Δ0</code> rather than unknown (<a href="https://github.com/parker-brown-family/terminal-delight/issues/800">issue 800</a>).</dd>
 </dl>
 
 <h3>The bars</h3>
-<p>Each bar's length is its number; its colour only says which end is bad. Every one is read from the whole transcript, not the tail.</p>
+<p>Each bar's length is its number; its colour only says which end is bad. Every one is read from the whole transcript, not the tail.<sup><a href="#s2">2</a></sup></p>
 <table>
   <thead><tr><th>Bar</th><th>Measures</th><th>Turns red</th></tr></thead>
   <tbody>
-    <tr><td><code>CTX WINDOW</code></td><td>Tokens in the context on the latest turn (input plus cache writes plus cache reads) over the model's limit: 1,000,000 for a <code>[1m]</code> model, otherwise 200,000.</td><td>from 60%, fully at 98%</td></tr>
-    <tr><td><code>FATIGUE</code></td><td>A weighted sum: compactions and what they dropped (0.28), tool errors climbing (0.18), repeated calls (0.18), slowing turns (0.14), rereading what it already had (0.12), hours on the clock (0.10). The heaviest part is the reason given.</td><td>from 55%, fully at 78%; healthy agents read 14 to 25%</td></tr>
+    <tr><td><code>CTX WINDOW</code></td><td>Tokens in the context on the latest turn (input plus cache writes plus cache reads) over the model's limit: 1,000,000 for a <code>[1m]</code> model or a session that has already held more than 200,000, otherwise 200,000.</td><td>from 60%, fully at 98%</td></tr>
+    <tr><td><code>FATIGUE</code></td><td>A weighted sum: compactions and what they dropped (0.28), tool errors climbing (0.18), repeated calls (0.18), slowing turns (0.14), rereading what it already had (0.12), hours on the clock (0.10). The heaviest part is the reason given.</td><td>from 55%, fully at 78%</td></tr>
     <tr><td><code>RELEVANCE</code></td><td>Of the tool results still in the context, the share about files touched since you last typed. Off-topic results count at 0.35; results superseded by a later read or that errored count at nothing.</td><td>at 45% and below; green at 65% and above</td></tr>
   </tbody>
 </table>
 <p>Relevance is a proxy, and it's labelled as one. A transcript with no answer from the agent yet draws no bars at all, rather than three empty ones.</p>
+<p>A session whose turns carry no context figure hasn't been measured. Its <code>CTX WINDOW</code> and <code>RELEVANCE</code> draw as a full-width grey track captioned <code>—</code>, which matches no real reading, and its call is <code>NO READING</code>. <code>FATIGUE</code> still draws, because it counts events that are in the transcript either way.<sup><a href="#s2">2</a></sup></p>
 
 <h3>The call</h3>
 <p>Checked in order; the first that matches wins.</p>
@@ -72,16 +90,18 @@
   <thead><tr><th>When</th><th>Call</th></tr></thead>
   <tbody>
     <tr><td>fatigue ≥ 70%</td><td><code>STOP</code></td></tr>
+    <tr><td>no turn carries a context figure</td><td><code>NO READING</code></td></tr>
     <tr><td>window ≥ 85% and relevance ≥ 65%</td><td><code>HAND OFF</code></td></tr>
     <tr><td>window ≥ 85%</td><td><code>COMPACT</code></td></tr>
     <tr><td>window ≥ 60% and relevance &lt; 45%</td><td><code>COMPACT</code></td></tr>
     <tr><td>off-task context ≥ 120k tokens, or a quarter of the limit if that's more</td><td><code>COMPACT</code></td></tr>
+    <tr><td>window ≥ 85% with no tool results to judge it by</td><td><code>WATCH</code></td></tr>
     <tr><td>ten turns or fewer before 92% full, at its recent rate</td><td><code>WATCH</code></td></tr>
     <tr><td>window ≥ 60% or fatigue ≥ 45%</td><td><code>WATCH</code></td></tr>
     <tr><td>otherwise</td><td><code>RUN</code></td></tr>
   </tbody>
 </table>
-<p>Only <code>STOP</code> and <code>HAND OFF</code> show on the card, as a red <code>CALL</code>. 92% is where Claude Code starts compacting on its own. <code>terminal-delight agent-vitals &lt;transcript.jsonl&gt;</code> prints all of it as JSON, with the one-line reason for the call.</p>
+<p>The <code>HAND OFF</code> and <code>COMPACT</code> rows need relevance, so they're skipped while the context holds no tool results. Only <code>STOP</code> and <code>HAND OFF</code> show on the card, as a red <code>CALL</code>. 92% is where Claude Code starts compacting on its own. <code>terminal-delight agent-vitals &lt;transcript.jsonl&gt;</code> prints all of it as JSON, with the one-line reason for the call.</p>
 
 <h3>When bars don't draw</h3>
 <ul>
@@ -89,11 +109,16 @@
   <li>A pane draws bars only when Terminal Delight is sure which conversation it's in: the agent said so, or its process started with it, or it's the only one in that directory. A pane matched by a weaker guess shows its latest lines instead.</li>
   <li>Codex panes have no bars yet.</li>
 </ul>
+<p class="in-dev">The same reading also runs once a minute while the wall is closed, so each pane's header can lead with its agent's model and effort. The wall keeps its ten seconds.<sup><a href="#s4">4</a></sup></p>
 
 <h3>What would prove this wrong</h3>
-<p>If a card ever draws bars from a conversation other than the one in its pane, the binding rule above has failed. The wall watches panes and never writes to a terminal, as its own footer says.</p>
+<p>If a card ever draws bars from a conversation other than the one in its pane, the binding rule above has failed. If an unmeasured session ever draws a short or empty <code>CTX WINDOW</code> instead of the grey track, the unknown has been read as zero. The wall watches panes and never writes to a terminal, as its own footer says: <code>watches agent panes · never writes to a PTY</code>.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The wall and its cards: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; the bars and the call: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vitals.rs">vitals.rs</a>, ported from <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-vitals.mjs">td-agent-vitals.mjs</a>; agent states: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hud.rs">hud.rs</a>.</li>
+  <li id="s1">The wall, its doors, header, controls and cards: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
+  <li id="s2">The bars, the call and <code>NO READING</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vitals.rs">vitals.rs</a>, ported from <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-vitals.mjs">td-agent-vitals.mjs</a>; the bar and call labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
+  <li id="s3">Agent states and which ones need you: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hud.rs">hud.rs</a>.</li>
+  <li id="s4">0.5.0: the counter as the Threshing Floor's door, the resting and asleep states and the once-a-minute reading: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/hud.rs">hud.rs</a> on dev/0.5.0.</li>
+  <li id="s5">Model names: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/model_catalog.rs">model_catalog.rs</a>.</li>
 </ol>
