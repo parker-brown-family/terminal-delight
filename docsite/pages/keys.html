@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "Keys",
-  "description": "Every key and chord in Terminal Delight: panes and tabs, the left bar, the terminal, clipboard, find, panels, the workbench, documents, the paint overlay and the mouse. How a keystroke decides where it goes.",
-  "updated": "2026-10-13",
-  "trueOf": "main at 8659826",
+  "description": "Every key and chord in Terminal Delight: panes and tabs, the left bar, the terminal, your own messages in an agent pane, clipboard, find, panels, Git coordination, the workbench, documents, the paint overlay, the mouse and the desktop. How a keystroke decides where it goes.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Every chord, and where a keystroke goes"
 }
 </script>
@@ -16,25 +16,29 @@
   <tbody>
     <tr><td><kbd>F1</kbd></td><td>help: every shortcut, and the language</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>terminal ⇄ workbench</td></tr>
-    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>launch an agent through the shared picker</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>start an agent in this pane</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>look up a project, group, tab, pane or sticky note by name</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>V</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>split beside / below</td></tr>
     <tr><td><kbd>Alt</kbd>+arrows</td><td>move between panes</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></td><td>your previous / next message, in a Claude Code or Codex pane</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>W</kbd> / <kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>close a pane / a tab</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>bring back what you closed</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>new tab</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> / <kbd>V</kbd></td><td>copy / paste</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>which agent needs you</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>read this pane big</td></tr>
   </tbody>
 </table>
+<p class="in-dev">In 0.5.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the document floating over the pane, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> closes the tab.</p>
 <p>None of it can be rebound: there's no keymap file.</p>
 <p class="invite">Technical lists every key, surface by surface.</p>
 </section>
 
 <section data-register="technical" data-headline="Every key">
 <h3>Where a keystroke goes</h3>
-<p>Checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal. Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>L</kbd>. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>M</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>, plus <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd>, <kbd>Ctrl</kbd>+<kbd>X</kbd> and <kbd>Alt</kbd>+<kbd>A</kbd> / <kbd>Alt</kbd>+<kbd>S</kbd>. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline.</p>
+<p>A window-wide panel gets first look: <kbd>Esc</kbd> closes the popup on top, and while the Git coordination inspector or the attention queue is open it keeps the keys it uses. After that, a keystroke is checked in this order, and the first taker keeps it: <kbd>F1</kbd>, then <kbd>Alt</kbd>+<kbd>K</kbd>, then window chords, the paint overlay, open menus, the <a href="/focus-reader">focus reader</a>, pane chords, a sticky note being written, a rename box, a floating document, the document face, the workbench, and last the terminal.<sup><a href="#s1">1</a></sup></p>
+<p>Window chords are <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+anything, and <kbd>Alt</kbd> with an arrow or <kbd>R</kbd> <kbd>V</kbd> <kbd>H</kbd> <kbd>W</kbd> <kbd>K</kbd> <kbd>L</kbd> <kbd>G</kbd>. <kbd>Ctrl</kbd>+<kbd>↑</kbd> and <kbd>Ctrl</kbd>+<kbd>↓</kbd> are the window's too, but only on a Claude Code or Codex terminal with no box being written in and no document or workbench showing; everywhere else they reach the program. Pane chords are <kbd>Ctrl</kbd>+<kbd>Shift</kbd> with <kbd>T</kbd> <kbd>C</kbd> <kbd>V</kbd> <kbd>K</kbd> <kbd>A</kbd> <kbd>B</kbd> <kbd>N</kbd> <kbd>M</kbd> <kbd>Z</kbd> <kbd>U</kbd> <kbd>Y</kbd> <kbd>D</kbd> <kbd>G</kbd> <kbd>F</kbd>; <kbd>Ctrl</kbd>+<kbd>W</kbd>, <kbd>Ctrl</kbd>+<kbd>F</kbd> and <kbd>Ctrl</kbd>+<kbd>X</kbd>; <kbd>Ctrl</kbd>+<kbd>Insert</kbd> and <kbd>Shift</kbd>+<kbd>Insert</kbd>; the four size chords; and <kbd>Alt</kbd>+<kbd>A</kbd>, <kbd>Alt</kbd>+<kbd>S</kbd>, and <kbd>Alt</kbd>+<kbd>Backspace</kbd> while a note is stuck on the pane. <kbd>Alt</kbd>+<kbd>B</kbd> and <kbd>Alt</kbd>+<kbd>F</kbd> stay with readline. A box with a caret over the terminal (a note in a document, a sticky note, a rename) keeps the paste chords for itself.</p>
+<div class="in-dev">
+<p>In 0.5.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> is a pane chord only while a document floats over the pane, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> joins the pane chords. A floating document also claims <kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, so while one is up the shell doesn't get them. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> is the one <kbd>Ctrl</kbd>+<kbd>Alt</kbd> chord the window leaves alone: it goes to the line you're typing.<sup><a href="#s2">2</a></sup></p>
+</div>
 
 <h3>Panes and tabs</h3>
 <table class="keys">
@@ -44,6 +48,8 @@
     <tr><td><kbd>Alt</kbd>+<kbd>H</kbd>, <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>D</kbd></td><td>split, new pane below</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>W</kbd></td><td>close the pane, into the bay</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>close the tab; always asks <code>CLOSE TAB?</code></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd>, with a document floating over the pane</td><td>close the document on top, one per press; with none up, the shell gets <code>^W</code> (delete a word) <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd></td><td>close the tab; always asks <code>CLOSE TAB?</code> <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>new tab, with its name box open</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>previous / next tab</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>move the tab left / right, within its group</td></tr>
@@ -51,6 +57,7 @@
   </tbody>
 </table>
 <p>A tab holds up to four panes. Tab names are up to 18 characters, pane names up to 24.</p>
+<p class="in-dev">0.5.0 moves closing the tab from <kbd>Ctrl</kbd>+<kbd>W</kbd> to <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd>, so a stray <kbd>Ctrl</kbd>+<kbd>W</kbd> deletes a word instead of offering to end a tab of live shells.</p>
 
 <h3>Left bar</h3>
 <table class="keys">
@@ -65,6 +72,7 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>make the next carry jump a whole group, then a whole project / back to a slot at a time</td></tr>
   </tbody>
 </table>
+<p>The walk keys work while the bar is open. <kbd>Esc</kbd> drops a carry.</p>
 
 <h3>Terminal</h3>
 <table class="keys">
@@ -74,25 +82,50 @@
     <tr><td><kbd>Ctrl</kbd>+letter</td><td>the control character, as in any terminal</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>word left / right in the shell</td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>←</kbd> / <kbd>→</kbd></td><td>extend the selection a character; with <kbd>Ctrl</kbd>, a word</td></tr>
+    <tr><td><kbd>Backspace</kbd>, <kbd>Delete</kbd> over a selection on the line you're typing</td><td>erase the whole selection</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete the word before the cursor <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete the whole line you're typing, however many rows it wraps over <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>clear everything you've typed, line breaks included, without pressing Enter <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>PgUp</kbd> / <kbd>PgDn</kbd></td><td>scroll back, in agent panes; in a shell they go to the shell</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Home</kbd> / <kbd>End</kbd></td><td>oldest / newest line, in every pane</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>K</kbd></td><td>clear the scrollback</td></tr>
   </tbody>
 </table>
-<p>Programs that manage their own screen, such as <code>less</code>, <code>vim</code> and <code>tmux</code>, get the paging keys themselves.</p>
+<p>Programs that manage their own screen, such as <code>less</code>, <code>vim</code> and <code>tmux</code>, get the paging keys themselves. The three 0.5.0 delete keys work in a shell or an agent pane scrolled to the bottom, and type readline's own edits; a full-screen editor keeps its keys.</p>
+
+<h3>Your messages to an agent</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd></td><td>in a Claude Code or Codex pane, open <code>CHAT HISTORY</code> over the pane at the last thing you typed; again for the one before</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↓</kbd></td><td>your next message; past the newest, back to the live chat</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close <code>CHAT HISTORY</code></td></tr>
+  </tbody>
+</table>
+<p>It reads the conversation from the agent's transcript, with its replies in view, and sends nothing to the agent. In any other program <kbd>Ctrl</kbd>+<kbd>↑</kbd> and <kbd>Ctrl</kbd>+<kbd>↓</kbd> reach the program as usual. With the <a href="/focus-reader">focus reader</a> open on an agent's pane, the same keys step through your messages there.</p>
 
 <h3>Clipboard and find</h3>
 <table class="keys">
   <tbody>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd></td><td>copy, also to the primary selection</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>paste</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Insert</kbd> / <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>copy / paste; what Omarchy's <kbd>Super</kbd>+<kbd>C</kbd> and <kbd>Super</kbd>+<kbd>V</kbd> send a window it counts as a terminal</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>cut: copies the selection, and erases it if it's what you just typed; with nothing selected, the shell gets <code>^X</code></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>F</kbd></td><td>find in this pane</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>F</kbd></td><td>find in every pane</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>look a thing up by its name rather than by what it printed: a project, group or tab in the left bar, a pane by its title, a sticky note by its words. Folded branches are searched too</td></tr>
   </tbody>
 </table>
-<p>In find and the lookup, <kbd>↓</kbd> <kbd>Tab</kbd> and <kbd>↑</kbd> move between hits, <kbd>Enter</kbd> jumps to one, <kbd>Esc</kbd> closes. <kbd>Alt</kbd>+<kbd>L</kbd> again also closes the lookup.</p>
+<p><a href="/omarchy">Omarchy</a> has the one line that makes <kbd>Super</kbd>+<kbd>C</kbd> and <kbd>Super</kbd>+<kbd>V</kbd> arrive that way.</p>
+
+<h3>Find and lookup</h3>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>↓</kbd>, <kbd>Tab</kbd></td><td>next hit</td></tr>
+    <tr><td><kbd>↑</kbd></td><td>previous hit; in the lookup, <kbd>Shift</kbd>+<kbd>Tab</kbd> too</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>go to the hit</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>close; in the lookup, <kbd>Alt</kbd>+<kbd>L</kbd> again does too</td></tr>
+  </tbody>
+</table>
 
 <h3>Panels</h3>
 <table class="keys">
@@ -103,14 +136,30 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd></td><td>this pane's GAUGES tray: <a href="/crt">grade, warp</a> and <a href="/text-crawl">crawl</a></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd></td><td>the <a href="/attention">attention</a> queue</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd></td><td>everything this pane's agent handed over, newest first</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>the <a href="/git-signal">Git coordination</a> inspector; again to close it</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>the <a href="/focus-reader">focus reader</a></td></tr>
-    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>open the agent launcher for this pane, also available as ⌁ AGENT in its header</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td>start an agent in this pane: the launcher, also ⌁ AGENT in the pane's header</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>S</kbd></td><td>stick a <a href="/sticky-notes">note</a> on the pane; while writing, post it</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>peel the note off, while there is one</td></tr>
+    <tr><td><kbd>↑</kbd> / <kbd>↓</kbd>, <kbd>Enter</kbd>, with the 📜 rail open</td><td>walk the cards / open a card's artifact in its own pane <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Esc</kbd></td><td>close the popup on top</td></tr>
   </tbody>
 </table>
-<p>The attention queue and the focus reader have keys of their own, on their pages.</p>
+<p>The attention queue and the focus reader have keys of their own, on their pages. The agent counter at the top right opens the agent wall too.</p>
+<p class="in-dev"><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the only key for the agent wall in 0.5.0: the agent counter opens the <a href="/threshing-floor">Threshing Floor</a> instead, and the F1 sheet lists the counter where it listed <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. The 📜 artifact rail is on <a href="/artifacts">Artifacts</a>.</p>
+
+<h3>Git coordination</h3>
+<p>While the inspector is open it keeps the keyboard, so nothing typed reaches a terminal.<sup><a href="#s3">3</a></sup></p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>the previous / next row you can act on</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>act on the row</td></tr>
+    <tr><td><kbd>→</kbd> / <kbd>←</kbd></td><td>open / fold a row's detail</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>copy what the inspector is showing</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>back a level; at the top, close</td></tr>
+    <tr><td>mouse Back / Forward</td><td>back a level / forward again</td></tr>
+  </tbody>
+</table>
 
 <h3>Workbench, reading</h3>
 <table class="keys">
@@ -128,18 +177,23 @@
 </table>
 
 <h3>Workbench, writing</h3>
-<p>Nothing reaches the agent until you send.</p>
+<p>Nothing reaches the agent until you send.<sup><a href="#s4">4</a></sup></p>
 <table class="keys">
   <tbody>
     <tr><td><kbd>Enter</kbd></td><td>send</td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>new line</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>pause the agent's turn</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>copy the selection, or the whole draft</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>cut the selection, or the whole draft</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste, images too</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>select the whole draft</td></tr>
+    <tr><td><kbd>Shift</kbd>+arrows, <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd></td><td>select as you move</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>undo</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>delete to the start / end</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd> / <kbd>Alt</kbd>+<kbd>D</kbd></td><td>delete a word left / right</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>Alt</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Delete</kbd></td><td>delete a word left / right</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete a word left; undo brings it back <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete the line the caret is on <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>delete the whole draft <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>↑</kbd> / <kbd>↓</kbd></td><td>move between lines; on an empty draft, recall what you sent</td></tr>
     <tr><td><kbd>Esc</kbd></td><td>close, dropping the draft</td></tr>
   </tbody>
@@ -149,18 +203,37 @@
 <h3>Documents</h3>
 <table class="keys">
   <tbody>
-    <tr><td><kbd>0</kbd> / <kbd>1</kbd></td><td>fit / actual size</td></tr>
-    <tr><td><kbd>+</kbd> <kbd>=</kbd> / <kbd>-</kbd></td><td>zoom in / out</td></tr>
-    <tr><td>arrows, <kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>pan, or most of a screen</td></tr>
+    <tr><td><kbd>0</kbd> / <kbd>1</kbd></td><td>fit / actual size, on the document face</td></tr>
+    <tr><td><kbd>+</kbd> <kbd>=</kbd> / <kbd>-</kbd></td><td>zoom in / out, on the document face</td></tr>
+    <tr><td>arrows, <kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>pan, or most of a screen, on the document face</td></tr>
+    <tr><td><kbd>Space</kbd>, <kbd>←</kbd> / <kbd>→</kbd>, <kbd>M</kbd></td><td>a video on the document face: pause, five seconds back / on, mute</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>back to the terminal</td></tr>
-    <tr><td><kbd>Esc</kbd>, over a floating document</td><td>close it</td></tr>
+    <tr><td><kbd>Esc</kbd>, over a floating document</td><td>close it; a brief with notes not yet saved says so once first</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, over a floating brief</td><td>↪ send its notes to the agent beside it</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd>, while writing a note</td><td>add the note; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> does the same while the box is open</td></tr>
+    <tr><td><kbd>Enter</kbd>, while writing a note</td><td>a new line in the note</td></tr>
+    <tr><td><kbd>Esc</kbd>, while writing a note</td><td>close the note box, before the document</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste into the note being written</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></td><td>step a floating document, or the document face, a line up / down <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd></td><td>page it up / down <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, <kbd>PgUp</kbd> <kbd>PgDn</kbd>, with the note box open</td><td>turn the notes instead <span class="dev-tag">0.5.0 dev</span></td></tr>
   </tbody>
 </table>
+<p>A floating document takes only <kbd>Esc</kbd> and ↪; every other key reaches the shell under it. The document face takes every key the window and pane chords leave, so nothing is typed into the shell it hides. A video plays its keys only on the document face. Over a square, they belong to the prompt.<sup><a href="#s5">5</a></sup></p>
 
 <h3>Paint overlay</h3>
-<p>Raised by <code>terminal-delight ctl paint on</code>. A set's first letter paints it; arrows walk the panes; <kbd>d</kbd> hands the pane back; <kbd>z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd> turn the shelf; <kbd>f</kbd> jumps to favourites and <kbd>Shift</kbd>+<kbd>F</kbd> stars; <kbd>Esc</kbd> folds it. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
+<p>Raised by <code>terminal-delight ctl paint on</code> or <code>toggle</code>; on Omarchy, bind that to <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
+<table class="keys">
+  <tbody>
+    <tr><td>a theme's first letter</td><td>paint the pane, or the outer, that's aimed at; again for the next theme with that letter</td></tr>
+    <tr><td>arrows</td><td>walk the panes; up from the top pane aims the outer</td></tr>
+    <tr><td><kbd>d</kbd></td><td>hand the pane back to the window's look; on the outer, back to the house look</td></tr>
+    <tr><td><kbd>z</kbd> / <kbd>Shift</kbd>+<kbd>Z</kbd></td><td>turn the shelf on / back</td></tr>
+    <tr><td><kbd>f</kbd></td><td>jump to <code>FAVOURITES</code></td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>F</kbd></td><td>star, or unstar, what's aimed at</td></tr>
+    <tr><td><kbd>Enter</kbd>, <kbd>Esc</kbd></td><td>fold the overlay, in every window on the workspace</td></tr>
+  </tbody>
+</table>
 
 <h3>Size</h3>
 <table class="keys">
@@ -176,27 +249,56 @@
   <tbody>
     <tr><td>double / triple click</td><td>select a word / a line</td></tr>
     <tr><td>right-click</td><td><code>Open here · Copy link · Copy · Paste · Clear</code></td></tr>
-    <tr><td><kbd>Ctrl</kbd>+click a link or path</td><td>open it</td></tr>
-    <tr><td><kbd>Shift</kbd>+click a file</td><td>show it in the file manager</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+click a link or path</td><td>open it with the desktop</td></tr>
+    <tr><td><kbd>Shift</kbd>+click a file</td><td>show it in the file manager; on a web link, open it</td></tr>
+    <tr><td><kbd>Super</kbd>+<kbd>Ctrl</kbd>+click a file</td><td>show it in the file manager</td></tr>
     <tr><td><kbd>Alt</kbd>+click a document</td><td>float it over the pane; again to make it a split</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click a document</td><td>open it in a pane beside</td></tr>
     <tr><td><kbd>Alt</kbd>+click a command</td><td>copy the line</td></tr>
     <tr><td>right-click a name</td><td>rename; <kbd>Ctrl</kbd>+click for colour and group</td></tr>
+    <tr><td>double-click a pane's title</td><td>rename the pane</td></tr>
+    <tr><td>right-click a pane's title, when its header controls are folded away</td><td>the pane's actions <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Ctrl</kbd>+wheel</td><td>size what's under the pointer: text, bench, chrome, or a document's zoom</td></tr>
     <tr><td>drop a file</td><td>on the bench, its path; on the terminal, pasted</td></tr>
   </tbody>
 </table>
+<p>The modified clicks work the same on a line in the focus reader and in <code>CHAT HISTORY</code>, and on a path an agent wrapped inside a table cell. A document opened from a reader closes the reader, so the square isn't hidden behind it.<sup><a href="#s5">5</a></sup></p>
+
+<h3>Threshing Floor <span class="dev-tag">0.5.0 dev</span></h3>
+<p>The <a href="/threshing-floor">Threshing Floor</a> opens from the agent counter at the top right, and keeps the keyboard while it's open.<sup><a href="#s6">6</a></sup></p>
+<table class="keys">
+  <tbody>
+    <tr><td>typing</td><td>search the pane pool; <code>project:tab:pane</code> searches each field</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>cancel a drag, close a menu or the settings, clear the search; then close the Floor</td></tr>
+    <tr><td><kbd>Delete</kbd></td><td>take the picked agent off its seat</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>save the org name or the line being edited</td></tr>
+    <tr><td>mouse Back</td><td>from an org, out to the System Map, centred on that org</td></tr>
+    <tr><td>mouse Forward</td><td>from the System Map, back into the org you came from</td></tr>
+  </tbody>
+</table>
 
 <h3>On the desktop</h3>
-<ul>
-  <li><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on GNOME opens Terminal Delight, once <code>scripts/install-hotkey.sh</code> has bound it. The app itself does nothing with that chord.</li>
-  <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> on Omarchy shows every key on this page in Omarchy's own searchable key menu, beside <kbd>Super</kbd>+<kbd>K</kbd> for Omarchy's own keys, once <code>scripts/install-keys-hotkey.sh</code> has bound it.</li>
-  <li><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> on Omarchy raises the <a href="/themes#technical-paint">paint overlay</a> in every Terminal Delight window on the workspace, once you have bound it to <code>terminal-delight ctl paint toggle</code>. A second press folds them all. The app itself does not bind that chord.</li>
-  <li><kbd>Super</kbd>+<kbd>W</kbd> on Omarchy closes the whole window: that's the desktop's key, not Terminal Delight's.</li>
-</ul>
-<p><code>TD_KEYDEBUG=1</code> prints where each keystroke went.</p>
+<p>These keys belong to the desktop, and reach Terminal Delight once something on the desktop binds them.</p>
+<table class="keys">
+  <tbody>
+    <tr><td><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></td><td>on Omarchy, every key on this page in Omarchy's searchable key menu, once <code>scripts/install-keys-hotkey.sh</code> has bound it</td></tr>
+    <tr><td><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd></td><td>on Omarchy, the paint overlay in every Terminal Delight window on the workspace, once you bind it to <code>terminal-delight ctl paint toggle</code>; again to fold them all</td></tr>
+    <tr><td><kbd>Super</kbd>+<kbd>C</kbd> / <kbd>Super</kbd>+<kbd>V</kbd></td><td>on Omarchy, copy / paste in a pane, once <code>hyprland.lua</code> tags Terminal Delight as a terminal</td></tr>
+    <tr><td><kbd>Super</kbd>+<kbd>W</kbd></td><td>on Omarchy, close the whole window: the desktop's key</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd></td><td>on GNOME, open Terminal Delight, once <code>scripts/install-hotkey.sh</code> has bound it; the app does nothing with the chord</td></tr>
+  </tbody>
+</table>
+<p><a href="/omarchy">Omarchy</a> has the installers and the lines to add. <code>TD_KEYDEBUG=1</code> prints where each keystroke went.</p>
+
+<h3>What would prove this wrong</h3>
+<p>Every row in a table here is read by the Omarchy key sheet, so a key that does something other than its row says is wrong in two places. The claim this page rests on: a window chord does the same thing on the terminal and on the workbench, and a shell never receives it.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The routing order and chord sets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a>; window keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; pane keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; the workbench: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; documents: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>.</li>
+  <li id="s1">The routing order and chord sets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a>; window keys and <code>CHAT HISTORY</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>on_key</code>, <code>jump_human_turn</code>); pane keys, the paint overlay and selection erase: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> (<code>pane_chord_key</code>, <code>paint_key</code>).</li>
+  <li id="s2">0.5.0's chords: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/keylayer.rs">keylayer.rs</a> (<code>glow_chord</code>, <code>pane_chord</code>, <code>window_chord</code>) and the delete keys in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane.rs">pane.rs</a>; the agent wall's key: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> (<code>OpenAgentPanel</code>); the 📜 rail's keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/artifact_rail.rs">artifact_rail.rs</a> (<code>art_key</code>).</li>
+  <li id="s3">Git coordination: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination_view.rs">coordination_view.rs</a> (<code>coordination_capture_key</code>, <code>coordination_keypress</code>).</li>
+  <li id="s4">The workbench: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a> (<code>line_edit</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; 0.5.0's composer deletes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/workbench.rs">workbench.rs</a>.</li>
+  <li id="s5">Documents and clicks: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a> (<code>doc_face_key</code>, <code>click_intent</code>); notes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>; video: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/video.rs">docview/video.rs</a>; 0.5.0's stepping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane/doc.rs">pane/doc.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>.</li>
+  <li id="s6">The Threshing Floor: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a> (<code>threshing_floor_capture_key</code>, the mouse Back and Forward handlers).</li>
 </ol>

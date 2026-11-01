@@ -1,42 +1,105 @@
 <script type="application/json" data-page>
 {
   "title": "Themes",
-  "description": "A Terminal Delight theme is a TOML file that sets colours, CRT texture and font. Five are built in, and your own theme.toml reloads as you save it. The window has a theme, each pane follows it or wears its own, and saved colour sets and Omarchy palettes layer on top.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
-  "summary": "Colours, texture and font, per window or per pane"
+  "description": "Terminal Delight takes its colours from your Omarchy themes: the painter (Ctrl+Shift+D on a pane, 🎨 for the window) shows one tile per theme Omarchy offers, and INHERIT follows the desktop's theme as it changes. The DESIGN row sets the finish: CRT texture, glow and font. A fresh install opens flat in the Terminal Delight palette.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "Colours from Omarchy, a design for the finish"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">A theme is a small TOML file with three parts: the colours, the <a href="/crt">CRT texture</a>, and the font. Five come built in, from the phosphor-green <code>hacker</code> to the calm, light <code>quiet-command</code>. The sixth is yours: <code>~/.config/terminal-delight/theme.toml</code>, which the running window picks up within a third of a second of each save.</p>
-<p>The window wears a theme, and every pane follows it until you give that pane its own. Open a pane's DESIGN tray with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> to pick one, and switch <b>follow outer</b> back on to return it to the window's.</p>
-<p>On top of any theme you can borrow the colours of an installed Omarchy theme or invert the lot. The texture stays the theme's through all of it.</p>
-<p class="invite">Technical has the file format, the built-ins and the order the layers apply in.</p>
+<p class="lede">Terminal Delight takes its colours from your desktop. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> on a pane, or click <code>🎨</code> at the bottom right for the whole window, and the painter opens in three areas: <b>Theme</b>, <b>Style</b> and <b>Rules</b>.</p>
+<p>THEME shows one tile for every theme Omarchy's own picker shows, drawn in that theme's colours. Click one and the pane or the window wears it. Switch on <code>INHERIT</code> under Rules instead, and the window follows whatever theme the desktop is wearing, repainting when you change it there.</p>
+<p>Style holds the <code>DESIGN</code> row, which sets the finish rather than the hue: how much <a href="/crt">CRT</a> texture and glow, and which font. Five designs are built in, from the light <code>quiet</code> to the loud <code>intrusive</code>. The sixth, <code>custom</code>, is your own <code>theme.toml</code>, reloaded as you save it.</p>
+<p>A fresh install opens flat, in the Terminal Delight palette, with the CRT off.</p>
+<p class="in-dev">A first launch opens in the Clean design instead, with no tube and no light anywhere. Design and <a href="/skins">skin</a> move independently, and each design remembers how you tuned it.</p>
+<p class="invite">Technical has the painter area by area, the designs, the paint overlay and the theme file.</p>
 </section>
 
-<section data-register="technical" data-headline="The theme file">
-<h3>Built in</h3>
+<section data-register="technical" data-headline="The painter">
+<p>A pane's painter opens from <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> and paints that pane. The window's opens from <code>🎨</code> at the bottom right and paints the outer, the frame the panes sit in, along with every pane that follows it. Hovering any choice explains it.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Three areas</h3>
 <table>
-  <thead><tr><th>Theme</th><th>Icon</th><th>Look</th></tr></thead>
+  <thead><tr><th>Area</th><th>Holds</th></tr></thead>
   <tbody>
-    <tr><td><code>quiet-command</code></td><td><code>☀</code></td><td>Light, blue accent, every effect off.</td></tr>
-    <tr><td><code>tactical-overdrive</code></td><td><code>★</code></td><td>Cyan command deck: lit edges, quiet glow, and it asks for the <code>ops</code> <a href="/skins">skin</a>.</td></tr>
-    <tr><td><code>intrusive</code></td><td><code>◉</code></td><td>The CRT turned all the way up: scan lines over the text and phosphor glow bleeding off every letter. Asks for no skin, so it mixes with any.</td></tr>
-    <tr><td><code>deco</code></td><td><code>◈</code></td><td>Brass, ivory and jade on near-black, almost no effects, and it asks for the <code>deco</code> <a href="/skins">skin</a>.</td></tr>
-    <tr><td><code>hacker</code></td><td><code>&gt;_</code></td><td>Phosphor green, every effect on: scanlines, glow, bloom, a band every 16 seconds, flicker, jiggle, glare.</td></tr>
-    <tr><td><code>custom</code></td><td>yours</td><td>Your <code>theme.toml</code>. On first run it's written as a copy of <code>hacker</code>.</td></tr>
+    <tr><td><code>THEME</code></td><td>One tile per offered theme, in its own colours, then the <code>STICKY NOTE</code> row: <code>contrast</code>, <code>accent</code> or <code>mute</code> paper for <a href="/sticky-notes">sticky notes</a>.</td></tr>
+    <tr><td><code>STYLE</code></td><td><code>DESIGN</code>; <code>SKIN</code>, on the window's painter only; <code>PROGRAM COLOUR</code>: <code>ansi</code>, <code>mono</code> or <code>theme</code>; <code>SYNTAX</code>: <code>off</code>, <code>code</code>, <code>agentic</code>, <code>logs</code> or <code>mark</code>.</td></tr>
+    <tr><td><code>RULES</code></td><td><code>INVERT</code> and <code>INHERIT</code>. On the window: <code>TERMINAL STATE</code>, <code>ANCHOR</code> and <code>⤓ pass theme down</code>. On a pane: <code>follow outer</code>.</td></tr>
   </tbody>
 </table>
-<p>A fresh window wears <code>custom</code> tinted with a warm amber seed, <code>#e0913a</code>. To start your own from a built-in, copy its file from <code>app/themes/</code> in the repository over your <code>theme.toml</code>.</p>
+<dl class="defs">
+  <dt>sticky note</dt><dd>The paper comes from the theme. <code>contrast</code> is a vivid hue apart from the accent, and the default; <code>accent</code> is the theme's accent; <code>mute</code> is neutral paper from the text and surface colours. The ink stays readable at 4.5:1 or better on every theme.</dd>
+  <dt>program colour</dt><dd><code>ansi</code> keeps the colours programs send. <code>mono</code> draws them as shades of the text colour. <code>theme</code> keeps their hues but turns them around the accent.</dd>
+  <dt>syntax</dt><dd>Colours text the program left plain: keywords and paths for <code>code</code>, callouts, tool calls and links for <code>agentic</code>, levels and timestamps for <code>logs</code>, headings and emphasis for <code>mark</code>down.</dd>
+  <dt>invert</dt><dd>A photographic negative of every colour, the sixteen ANSI ones included. Effects stay as they are.</dd>
+  <dt>inherit</dt><dd>Follow Omarchy's selected theme; see below.</dd>
+  <dt>terminal state</dt><dd><code>▣ USES PRESETS</code> colours each pane that follows the window by what it runs: SSH, Claude Code, Codex, local agents, other agent programs, editors, system monitors and consoles each get their own. Shells, programs it doesn't recognise and panes you painted by hand keep theirs. <code>▣ FOLLOWS OUTER</code> turns it off. It was called AGENT THEME before 0.4.0.</dd>
+  <dt>anchor</dt><dd><code>⚓ TOP ▲</code> or <code>⚓ BOTTOM ▼</code>: which edge the content keeps against.</dd>
+  <dt>pass theme down</dt><dd>Puts every pane back on the window's theme, keeping their saved choices and gauges. A count, <code>⤓ pass theme down (3)</code>, says how many panes are off it.</dd>
+</dl>
+<div class="in-dev">
+<p>The window's painter gains a fourth area, <a href="/ui-config">UI CONFIG</a>, which hides pieces of the chrome. With its <code>every option</code> switch off, each row of the painter shows only its selection until you hover it for about three-quarters of a second or click it.<sup><a href="#s4">4</a></sup></p>
+<p>The tile of the theme actually being worn gets a thicker border and a faint phosphor glow, and under Chalk more depth. It follows the theme the pane or window is drawing, so it marks the desktop's theme while INHERIT is on.</p>
+</div>
 
-<h3>Reloading</h3>
-<p>The file is checked every 300 ms. A change reloads it; a file that no longer parses prints <code>theme reload error (keeping current): …</code> and the current theme stays. <code>TD_THEME</code> points at a different file, and then nothing is written on first run. Hovering <code>custom</code> in the tray shows the file's path and <b>▸ Open in editor</b>.</p>
+<h3>Themes</h3>
+<p>The THEME tiles, and the paint overlay's <code>OMARCHY THEMES</code> shelf, offer exactly the list Omarchy's picker shows: every theme installed under <code>/usr/share/omarchy/themes</code>, <code>$OMARCHY_PATH/themes</code>, <code>~/.local/share/omarchy/themes</code> and <code>~/.config/omarchy/themes</code>, a later folder shadowing an earlier one of the same name, minus any named in <code>~/.config/omarchy/hidden-themes</code>. Installing, hiding, removing or editing a theme shows up within a second. A theme that ships only an <code>alacritty.toml</code> loads too. <code>TD_OMARCHY_THEMES</code> replaces the folder list.<sup><a href="#s2">2</a></sup></p>
+<p>A theme's colours are converted the way Omarchy converts them for its terminals, so a pane painted <code>tokyo-night</code> shows ANSI colours exactly as every other tokyo-night window does. Painting one replaces the design's colours and keeps its texture. On a machine without Omarchy, Terminal Delight offers its own copies of Omarchy's 22 stock themes and of the Terminal Delight palette. A pane wearing a theme that has since been uninstalled keeps it if Terminal Delight carries a copy, and otherwise goes back to its design's colours.</p>
 
-<h3>Keys</h3>
+<h3>INHERIT</h3>
+<p>On the window, <code>INHERIT</code> links the outer and every pane following it to the theme Omarchy has selected, and repaints them when the desktop switches theme. It reads <code>~/.local/state/omarchy/current/theme/colors.toml</code>, or <code>~/.config/omarchy/current/</code> on an older Omarchy. While it is on, colours you set by hand are set aside; turning it off puts them back. Where nothing can be read it shows <code>INHERIT · unavailable</code>.<sup><a href="#s2">2</a></sup></p>
+
+<h3>Designs</h3>
+<p>A design is a theme file: colours, the CRT <code>[effects]</code> and a font. The texture only shows while the <a href="/crt">CRT</a> switch is on.</p>
+<table>
+  <thead><tr><th>Design</th><th>Icon</th><th>Hover text</th><th>Skin it asks for</th></tr></thead>
+  <tbody>
+    <tr><td><code>quiet</code></td><td><code>☀</code></td><td>Light screen; no scanlines, glow, or flicker.</td><td>none</td></tr>
+    <tr><td><code>tactical</code></td><td><code>★</code></td><td>Command deck: lit edges, quiet glow; brings the OPS trim.</td><td><code>ops</code></td></tr>
+    <tr><td><code>deco</code></td><td><code>◈</code></td><td>Minimal CRT texture; may request matching trim.</td><td><code>deco</code></td></tr>
+    <tr><td><code>hacker</code></td><td><code>&gt;_</code></td><td>Green phosphor, scanlines, glow, tracking, flicker, jiggle.</td><td>none</td></tr>
+    <tr><td><code>intrusive</code></td><td><code>◉</code></td><td>Scanlines and glow over the text. Loud on purpose.</td><td>none</td></tr>
+    <tr><td><code>custom</code></td><td>yours</td><td>Edit the live theme file.</td><td>whatever it names</td></tr>
+  </tbody>
+</table>
+<p>A design that asks for a skin brings it only while you haven't picked one from the <code>SKIN</code> row; see <a href="/skins">Skins</a>. Two designs are gone in 0.4.0: a pane saved on Field opens on Tactical, keeping its palette and gauges, and one saved on Gamba opens on <code>custom</code>.<sup><a href="#s1">1</a></sup></p>
+<div class="in-dev">
+<p>The DESIGN row is <code>clean</code> <code>○</code>, <code>deco</code>, <code>hacker</code> and <code>intrusive</code>. Clean replaced Quiet, and Tactical is retired: a saved Quiet opens as Clean, a saved Tactical as Hacker. <code>custom</code> is no longer offered, though <code>theme.toml</code> still loads and a window already wearing it still shows its tile.<sup><a href="#s4">4</a></sup></p>
+<p>Every design except Clean asks for the <code>ops</code> skin and the Standard <a href="/ui-config">UI set</a>; Clean asks for the <code>clean</code> skin and the Clean set. Picking a design, resetting one or painting the desktop never changes the skin: a window that never picked one keeps the skin it was drawing. A right-click on a design offers <code>Reset … to as designed</code> and <code>Undo</code>.</p>
+</div>
+
+<h3>A fresh window</h3>
+<p>A new install's window wears <code>custom</code> under the Terminal Delight palette, with the CRT off, <code>theme</code> program colour, <code>agentic</code> syntax and <code>contrast</code> sticky notes. Its gauges open at brightness −24, contrast +25, colour +50, menu bar 85% and text size 74%. Your <code>theme.toml</code> starts as a copy of <code>hacker</code>, so switching the CRT on gives that design's tube. An install upgraded from an earlier version keeps its look and its tube. Every new pane follows the window.<sup><a href="#s1">1</a></sup></p>
+<p class="in-dev">A new window opens in Clean, with <code>ansi</code> program colour, <code>mark</code> syntax and INHERIT on. UI CONFIG's <code>use this window</code> makes the window you're in the template for new ones instead.<sup><a href="#s4">4</a></sup></p>
+
+<div class="in-dev">
+<h3>Looks that remember</h3>
+<p>Each design keeps the changes you make while wearing it. Trying another design never writes to it, and picking it again brings it back as you left it. A dot on a design's button means it carries changes.<sup><a href="#s4">4</a></sup></p>
+<p>What a design remembers is its look dials (the CRT switch, warp, glare, roll, crawl and its angle and depth, phosphor, letter glow, the inactive-terminal dials and the linger times) and, for the window, its UI CONFIG choice. Sizes, the picture gauges, the palette, program colour, syntax, sticky-note paper and the skin are yours in every design. In the window's GAUGES, a dot beside a dial's label means it differs from the design, and clicking the dot sets it back. Right-click the label to pin the dial to every design, and again to remember it per design. A design you never touched looks as designed. The memory is saved with the window as <code>[looks]</code>.</p>
+</div>
+
+<h3>Paint</h3>
+<p><code>terminal-delight ctl paint on</code> raises a paint overlay over every pane, with a card hanging from the top edge for the outer, in every Terminal Delight window on the Hyprland workspace; <code>off</code> and <code>toggle</code> do what they say. The app binds no key for it; bind the command in your desktop.<sup><a href="#s3">3</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td>a letter</td><td>Paints the theme with that initial onto whatever is aimed at; pressed again, the next theme with that initial</td></tr>
+    <tr><td>arrows</td><td>Walk the panes and the tiles; <kbd>↑</kbd> from the top pane aims the outer, <kbd>↓</kbd> comes back</td></tr>
+    <tr><td><kbd>d</kbd></td><td>On a pane, <code>DESKTOP</code>: follow the outer again. On the outer, <code>DEFAULT</code>: back to the house look</td></tr>
+    <tr><td><kbd>z</kbd></td><td>The other shelf: <code>FAVOURITES</code> or <code>OMARCHY THEMES</code></td></tr>
+    <tr><td><kbd>f</kbd> / <kbd>Shift</kbd>+<kbd>F</kbd></td><td>Jump to <code>FAVOURITES</code> / star or unstar what's aimed at</td></tr>
+    <tr><td><kbd>Enter</kbd> or <kbd>Esc</kbd></td><td>Finish. Folding the overlay in one window folds it in every window on the workspace</td></tr>
+  </tbody>
+</table>
+<p>While the overlay is up, <kbd>Enter</kbd> never reaches the pane, and <kbd>Tab</kbd>, <kbd>Space</kbd>, <kbd>Backspace</kbd> and <kbd>Delete</kbd> are ignored. The legend under each card names only the keys that work on this desktop. Stars are kept in <code>favourites.toml</code>.</p>
+
+<h3>The theme file</h3>
+<p><code>~/.config/terminal-delight/theme.toml</code> is the <code>custom</code> design. It is written as a copy of <code>hacker</code> on first run, checked every 300 ms, and reloaded on change; a file that no longer parses prints <code>theme reload error (keeping current): …</code> and the current theme stays. <code>TD_THEME</code> points at a different file, and then nothing is written on first run. Hovering <code>custom</code> in the painter shows the path and <code>▸ Open in editor</code>. The built-in designs' files are in <code>app/themes/</code> in the repository.<sup><a href="#s1">1</a></sup></p>
 <pre><code>name = "mine"
 icon = "▲"
-skin = "deco"            # optional: the chrome skin this theme asks for
+skin = "deco"            # optional: the skin this design asks for
 
 [colors]
 bg      = "#03100a"
@@ -56,34 +119,20 @@ scanline_opacity = 0.22  # the CRT page lists every key
 family = "JetBrains Mono"  # optional, defaults to the desktop's monospace
 size = 14                  # 8–32
 cell_height = 20           # 10–48</code></pre>
-<p>Colours are six-digit hex, with or without <code>#</code>. <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>faint</code> and all sixteen <code>ansi</code> entries are required. Left out, <code>human</code> is the accent's opposite hue, kept light. <code>[effects]</code> is described on the <a href="/crt#technical-effects">CRT page</a>.</p>
-
-<h3>The palette</h3>
-<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> on a pane, or <code>🎨</code> in the window's footer for the window. It holds the theme row, the <code>SKIN</code> row (window only), <code>PROGRAM COLOUR</code>, <code>SYNTAX</code>, and the <code>RULES</code> area. Theme and Sticky Note share <code>THEME</code>; Design, Skin, Program Colour and Syntax share <code>STYLE</code>.</p>
-<dl class="defs">
-  <dt>program colour</dt><dd><code>mono</code> draws programs' colours as shades of the theme's phosphor. <code>ansi</code> shows their real colours, and is what a fresh window starts on. <code>theme</code> keeps their hues but turns them around the theme's seed.</dd>
-  <dt>syntax</dt><dd>Colours text the program left uncoloured, by what it looks like: <code>code</code>, <code>agentic</code>, <code>logs</code> or <code>mark</code>down, or <code>off</code>.</dd>
-  <dt>invert</dt><dd>A photographic negative of every colour, including the sixteen ANSI ones. Effects stay as they are.</dd>
-</dl>
-<p>On the window's tray, <code>⤓ pass theme down (n)</code> puts every pane back on the window's theme, where <code>n</code> is how many would change. <code>TERMINAL STATE</code> enables presets for SSH, agents, editors, monitors and consoles.</p>
-
-<h3>Colour sets</h3>
-<p>A colour set changes the palette and leaves the texture alone: <code>army</code> 🪖, <code>badger</code> 🦡, <code>cherry</code> 🍒, <code>ember</code> 🔥, <code>glacier</code> ❄, <code>nuclear</code> ☢, <code>pineapple</code> 🍍, <code>retro</code> 🌆, <code>tide</code> 🌊, <code>violet</code> 🦇, <code>wood</code> 🪵. They're the same eleven variants the Omarchy Terminal Delight theme ships. Sets from older builds still load but aren't offered.</p>
-
-<h3>Paint</h3>
-<p><code>terminal-delight ctl paint on</code>, or the Omarchy bar's 🎨, raises a paint overlay over every pane, and hangs a card from the top edge of the window for the outer: the cabinet the panes sit in, with its mother bar, left bar, status bar and bezel. Arrow up from the top pane to aim the outer, and down to come back to the panes. The first letter of a set paints whichever is aimed at; the arrows walk the shelves; <kbd>z</kbd> and <kbd>Shift</kbd>+<kbd>Z</kbd> turn to the next shelf; <kbd>f</kbd> jumps to <code>FAVOURITES</code> and <kbd>Shift</kbd>+<kbd>F</kbd> stars what's aimed at; <kbd>d</kbd> hands a pane back to the window, and the outer back to the house look; <kbd>Esc</kbd> folds it away. The shelves are <code>FAVOURITES</code>, <code>COLOUR SETS</code> and <code>DESKTOP PALETTES</code>. Stars are kept in <code>favourites.toml</code>.</p>
-
-<h3>Omarchy</h3>
-<ul>
-  <li><b>Desktop palettes.</b> Every installed Omarchy theme's <code>colors.toml</code> is offered on the <code>DESKTOP PALETTES</code> shelf, converted the way Omarchy converts it for terminals. Painting one replaces the colours and keeps the texture. They're found once, at start, under <code>/usr/share/omarchy/themes</code>, <code>$OMARCHY_PATH/themes</code>, <code>~/.local/share/omarchy/themes</code> and <code>~/.config/omarchy/themes</code>; <code>TD_OMARCHY_THEMES</code> replaces that list.</li>
-  <li><b><code>TD_PALETTE</code>.</b> A second file holding only <code>[colors]</code>, laid over <code>custom</code>. It lets an outside theme switcher rewrite the colours without resetting your effects. Named but missing is fine; present but broken keeps the current theme.</li>
-  <li><b>Font.</b> A theme with no <code>family</code> uses the desktop's <code>monospace</code>, which Omarchy sets.</li>
-</ul>
+<p>Colours are six-digit hex, with or without <code>#</code>. <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>faint</code> and all sixteen <code>ansi</code> entries are required. Left out, <code>human</code> is the accent's opposite hue, kept light. <code>[effects]</code> is described on the <a href="/crt#technical-effects">CRT page</a>. A design with no font <code>family</code> uses the desktop's <code>monospace</code>, which Omarchy sets.</p>
+<p>A second file named by <code>TD_PALETTE</code>, holding only <code>[colors]</code>, is laid over <code>custom</code>, so an outside theme switcher can rewrite the colours without touching your effects. Named but missing is fine; present but broken keeps the current theme.</p>
+<p class="in-dev">A design file can also say <code>ui = "clean"</code>, the <a href="/ui-config">UI set</a> it asks for, and carry a <code>[look]</code> table of the look dials it starts from, such as <code>crt = true</code>. A file that names no skin or set asks for <code>ops</code> and <code>standard</code>.<sup><a href="#s4">4</a></sup></p>
 
 <h3>Order of layers</h3>
-<p>Desktop palette, then the theme's seed, then the colour set, then the wheel's text, complement and input colours, then invert, last. A pane that follows the window re-reads it on every frame; turning <b>follow outer</b> off and on again keeps whatever the pane had of its own.</p>
+<p>The painted Omarchy theme, or the desktop's while INHERIT is on, replaces the design's colours first. Colours chosen with the colour sets and wheel of builds before 0.4.0 are still applied over it, though neither can be picked any more. Invert comes last. A pane that follows the window re-reads it on every frame; turning <code>follow outer</code> off and on again keeps whatever the pane had of its own.<sup><a href="#s1">1</a></sup></p>
+
+<h3>What would prove this wrong</h3>
+<p>Hide a theme in Omarchy's own picker. If its tile is still in the painter a second later, or a theme the painter offers is missing from Omarchy's list, the painter and Omarchy's picker disagree, and the THEME area exists to keep them the same.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The registry, the file format, layering and reload: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the built-in files: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/themes">app/themes/</a>; Omarchy palettes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette.rs">palette.rs</a>; the paint keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s1">Designs, the file format, the fresh window, layering and reload: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the design files: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/themes">app/themes/</a>; the painter's areas: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its labels and hover text: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>; terminal state: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/terminal_state.rs">terminal_state.rs</a>.</li>
+  <li id="s2">Omarchy themes, the offered list, the stock copies and INHERIT's source: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette.rs">palette.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette/current.rs">palette/current.rs</a>.</li>
+  <li id="s3">The paint overlay: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/paint.rs">paint.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
+  <li id="s4">0.5.0: the Clean design and the retired ones, design and skin defaults, the fresh window and the painter's selection marker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/tree/dev/0.5.0/app/themes">app/themes/</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; per-design memory: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/looks.rs">looks.rs</a>; skins that hold still: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs</a>; new windows: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>; all on dev/0.5.0.</li>
 </ol>

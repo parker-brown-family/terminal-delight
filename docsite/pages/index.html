@@ -1,17 +1,17 @@
 <script type="application/json" data-page>
 {
   "title": "Introduction",
-  "description": "Terminal Delight is a style-first native terminal for Linux and Omarchy. Its sessions and half-written prompts outlive the window; its Workbench reads coding agents' own transcripts.",
-  "updated": "2026-09-25",
-  "trueOf": "main at 1e2eb6c",
+  "description": "Terminal Delight is a native terminal for Linux and Omarchy, for running many shells and coding agents in one window. Its sessions and half-written prompts outlive the window, and its workbench reads coding agents' own transcripts.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "A native Omarchy terminal whose work outlives its window"
 }
 </script>
 
 <div class="lede">
   <p>Close Terminal Delight halfway through a prompt. Reopen it, and every word already typed is still there, with the cursor waiting after the last one. If an agent was working, it never stopped. Shells, agents, servers, scrollback and the unfinished prompt live in a background session host; the window can close, crash or relaunch without taking any of them with it.</p>
-  <p>Built for Linux, and for Omarchy in particular, Terminal Delight is a style-first native app written in Rust on gpui and built on rio-vt, the terminal core from Rio. Every Omarchy theme installed on the machine is already inside it. It tiles panes and tabs, draws pictures from terminal programs, and lets the CRT look run from clean glass to old tube.</p>
-  <p>Agent panes have a second face. TERM is the whole terminal. BENCH holds the replies, decisions and artifacts meant for you, read from the agent's own transcript. The processes stay with the session host while the interface moves around them — between terminal and Workbench today, and eventually to another device.</p>
+  <p>Terminal Delight is a native terminal for Linux, built on Omarchy and for it, written in Rust on gpui and built on rio-vt, the terminal core from Rio. It tiles panes and tabs, opens pictures, PDFs, web pages and video beside the line that named them, and runs from a flat screen to an old curved tube. Every Omarchy theme installed on the machine is already inside it.</p>
+  <p>Agent panes have a second face. TERM is the whole terminal. BENCH holds the replies, decisions and artifacts meant for you, read from the agent's own transcript. The agent wall shows every agent in the window as a card, and the tab strip says which ones need you.</p>
 </div>
 
 <figure class="reel" data-reel data-reel-themes="praus tokyo-night ethereal everforest gruvbox last-voyage miasma osaka-jade retro-82" aria-label="A screen recording of Terminal Delight playing a thirty-second tour of itself in one of its panes">
@@ -28,22 +28,33 @@
 
 <div class="room">
   <div class="cards">
-    <a class="glass card" href="/install"><span class="h">01 · Install</span><b>AppImage and first launch →</b></a>
+    <a class="glass card" href="/install"><span class="h">01 · Install</span><b>One AppImage, three commands →</b></a>
     <a class="glass card" href="/panes-and-tabs"><span class="h">02 · Open</span><b>Panes, tabs and sessions →</b></a>
     <a class="glass card" href="/agent-wall"><span class="h">03 · Watch</span><b>The agent wall and attention →</b></a>
   </div>
   <div class="glass start">
-    <span class="h">Start here · 3</span>
-    <span class="path"><a href="/install">Install</a> → <a href="/first-launch">First launch</a> → <a href="/workbench">Workbench</a></span>
+    <span class="h">Start here · 4</span>
+    <span class="path"><a href="/install">Install</a> → <a href="/first-launch">First launch</a> → <a href="/keys">Keys</a> → <a href="/workbench">Workbench</a></span>
     <small>read in this order · <kbd>]</kbd> next page</small>
   </div>
 </div>
 
 <h2>On Omarchy</h2>
-<p>Every <a href="https://omarchy.org">Omarchy</a> theme installed on your machine is already in Terminal Delight. Press <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> and a paint overlay rises over the window with all of them on it. One letter paints the outer shell, or just the terminal you're in, so each pane can wear a different theme from its neighbours.</p>
+<p>Terminal Delight can be the terminal <a href="https://omarchy.org">Omarchy</a> opens, so <kbd>Super</kbd>+<kbd>Return</kbd> and the TUI launchers land in it, and one command puts the old terminal back. INHERIT keeps it wearing the desktop's theme as you change it. <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> lists every Terminal Delight key in Omarchy's own key menu, and <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> raises a paint overlay where one letter paints the outer shell, or just the terminal you're in.</p>
 <div class="omarchy-row">
-  <a class="glass card" href="https://terminal-delight.brownfamilysports.com/omarchy#paint"><span class="h">Omarchy · Super + Alt + P</span><b>Paint the shell and every terminal in your own themes →</b></a>
-  <p class="aside">Bind the chord to <code>terminal-delight ctl paint toggle</code> in your Hyprland bindings; the app does not bind it for you. <a href="/themes#technical-paint">Themes</a> has every key.</p>
+  <a class="glass card" href="/omarchy"><span class="h">Desktop · Omarchy</span><b>Default terminal, themes and the desktop keys →</b></a>
+  <p class="aside">Each of those takes one step from you, and <a href="/omarchy">Omarchy</a> has the commands and the lines to add. The paint overlay's keys are on <a href="/keys">Keys</a>.</p>
+</div>
+
+<h2 id="next-release">In development</h2>
+<div class="in-dev">
+<p>0.5.0 is being built on the <code>dev/0.5.0</code> branch, with its candidate planned for 13 November 2026 and stable for 20 November. No build is published yet. Three changes lead it:</p>
+<ul>
+  <li>The <a href="/threshing-floor">Threshing Floor</a> decides which agents may reach which. You seat agents in orgs and draw a line from one to another; the line says whether it may see, read, ask or prompt the other. The agent counter opens it.</li>
+  <li><a href="/rest">Resting agents</a>: an agent pane nobody has touched for ten minutes is frozen until you look at it, and after two hours a Claude agent is ended with its conversation kept, so a key starts it again.</li>
+  <li>A new Clean design turns the tube and every light off, and a new window opens in it. <a href="/ui-config">UI CONFIG</a> hides any piece of chrome you don't want.</li>
+</ul>
+<p>Pages that describe it mark it in amber, as this block is. <a href="/uninstall">Uninstall</a>, <a href="/restricted">Restricted commands</a> and the <a href="/artifacts">artifact rail</a> are new in it too.</p>
 </div>
 
 <h2 id="underneath">Underneath</h2>
@@ -66,6 +77,7 @@
   <div class="box"><span class="h story">Story</span>The same idea told through an analogy, for when you want to know why it exists.</div>
   <div class="box"><span class="h technical">Technical</span>The keys, the files, the protocol and the limits, with links to the code.</div>
 </div>
+<p>Every page describes 0.4.0, the release you can download, and says under its title which commit it was checked against. A part that is true only of 0.5.0 carries an amber <span class="dev-tag">0.5.0 dev</span> mark, and a page that is all 0.5.0 says so under its title.</p>
 <p>Search covers every page, every version, down to the table rows: press <kbd>Ctrl K</kbd> or <kbd>/</kbd>. Everything else here has a key too: press <kbd>?</kbd>.</p>
 
 <h2>Every chapter</h2>

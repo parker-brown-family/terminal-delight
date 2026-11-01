@@ -1,0 +1,115 @@
+<script type="application/json" data-page>
+{
+  "title": "Omarchy",
+  "description": "On Omarchy, Terminal Delight can be the terminal Super+Return opens: scripts/install-desktop.sh, then terminal-delight default-terminal on, and off puts the old one back. Every Omarchy theme is in its pickers and INHERIT follows the desktop's. Super+Alt+T lists every key, Super+Alt+P paints, and one hyprland.lua line makes Super+C and Super+V copy and paste.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "Default terminal, themes, and the desktop keys"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">On Omarchy, Terminal Delight can be the terminal the desktop opens. From a checkout of the repository, run <code>scripts/install-desktop.sh</code>, then <code>terminal-delight default-terminal on</code>. <kbd>Super</kbd>+<kbd>Return</kbd> and Omarchy's TUI launchers then open in Terminal Delight, and <code>terminal-delight default-terminal off</code> puts back the terminal you had.</p>
+<p>It already wears your desktop. Every Omarchy theme on the machine is in its theme pickers, drawn in its own colours, and the INHERIT switch keeps the window in step when you change the desktop theme.</p>
+<p>Three desktop keys take one step each. <code>scripts/install-keys-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to a searchable list of every Terminal Delight key. A line in <code>bindings.lua</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd> to the paint overlay. A line in <code>hyprland.lua</code> makes <kbd>Super</kbd>+<kbd>C</kbd> and <kbd>Super</kbd>+<kbd>V</kbd> copy and paste in a pane instead of interrupting it.</p>
+<p class="invite">Technical has the commands, what each one writes, how to undo it, moving an open terminal across with <code>td-send</code>, and the two sibling repos.</p>
+</section>
+
+<section data-register="technical" data-headline="Terminal Delight on Omarchy">
+<h3>The default terminal</h3>
+<p>Omarchy opens every terminal through <code>xdg-terminal-exec</code>: <kbd>Super</kbd>+<kbd>Return</kbd>, its TUI launchers, and the agents its Local AI plugin starts. Which terminal answers is one file, <code>~/.config/xdg-terminals.list</code>.<sup><a href="#s1">1</a></sup> Two steps make it Terminal Delight:</p>
+<pre class="cmd"><code># from a checkout of the terminal-delight repository
+bash scripts/install-desktop.sh
+terminal-delight default-terminal on</code></pre>
+<p><code>install-desktop.sh</code> puts the desktop entry in <code>~/.local/share/applications/terminal-delight.desktop</code> and the icon in <code>~/.local/share/icons/hicolor/</code>, as an SVG and, when <code>rsvg-convert</code> is installed, as 48, 64, 128 and 256 pixel PNGs. The entry runs <code>terminal-delight</code>, so that command has to be on your PATH: <a href="/install">Install</a> shows the move.<sup><a href="#s2">2</a></sup></p>
+<p><code>on</code> refuses until that entry is installed and carries the four keys <code>xdg-terminal-exec</code> reads. Then it writes a journal of what the list held, including "there was no list", to <code>~/.local/state/terminal-delight/default-terminal.journal</code>, and rewrites the list with <code>terminal-delight.desktop</code> first and every entry that was there after it. It writes nothing else.</p>
+<table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>terminal-delight default-terminal on</code></td><td>Says which terminal it replaced, for example <code>Terminal Delight is now the default terminal; it was foot.desktop.</code>, or that there was no list.</td></tr>
+    <tr><td><code>terminal-delight default-terminal off</code></td><td>Puts the list back byte for byte, or removes it if there was none, and says <code>Put back: the default terminal is foot.desktop again.</code> If the list changed after <code>on</code> wrote it, by <code>omarchy default terminal</code> or by hand, it leaves the newer choice alone and says so.</td></tr>
+    <tr><td><code>terminal-delight default-terminal status</code></td><td>Four lines: the default terminal, whether it is Terminal Delight, the desktop entry it found, and the journal.</td></tr>
+  </tbody>
+</table>
+<p>A terminal opened this way is a quick window. It takes the four flags foot takes (<code>--app-id=</code>, <code>--title=</code>, <code>--working-directory=</code> and <code>-e</code>), runs the program after <code>-e</code> directly in that directory, and never claims a session or starts a session host, so it can't disturb the window you work in. <kbd>Super</kbd>+<kbd>Return</kbd> therefore gives you a fresh window with a shell; your session opens when you start <code>terminal-delight</code> itself. A pane the Local AI plugin opens wears a <code>LOCAL MODEL</code> mark.<sup><a href="#s3">3</a></sup></p>
+<div class="in-dev">
+<p><code>scripts/install-desktop.sh --uninstall</code> removes the entry and icons it installed, if they're unchanged. 0.5.0's <a href="/uninstall">Uninstall</a> runs <code>default-terminal off</code> for you before it removes anything.</p>
+</div>
+
+<h3>Themes</h3>
+<p>The painter, from 🎨 at the bottom right, shows one tile per Omarchy theme, drawn in that theme's colours. The list is the one Omarchy's own picker shows, hidden themes left out, and it is re-read twice a second, so a theme you install, remove, edit or hide appears in the painter within a second. A theme that ships only an <code>alacritty.toml</code> loads too. On a machine without Omarchy, the stock Omarchy themes come from a copy Terminal Delight carries. The paint overlay's shelves are <code>FAVOURITES</code> and <code>OMARCHY THEMES</code>.<sup><a href="#s4">4</a></sup></p>
+<p><code>INHERIT</code>, under <code>RULES</code> in the window's painter, follows Omarchy's selected theme. Every 300 ms it reads <code>~/.local/state/omarchy/current/theme/colors.toml</code> (<code>~/.config/omarchy/current/</code> on older installs), and when the desktop theme changes it repaints the window and every pane that follows the window. Painting a theme or picking a colour by hand turns it off, and turning it off brings back the colours you had set. If the file goes missing or can't be read, the window keeps the last colours it read and the switch says <code>INHERIT · unavailable</code>. A pane's own painter has no INHERIT; a pane follows the window or wears its own theme. <a href="/themes">Themes</a> has the rest.</p>
+<p class="in-dev">A new window has INHERIT on. The TERMINIMALIST skin draws flat, square chrome in the selected Omarchy palette; see <a href="/skins">Skins</a>.</p>
+
+<h3>The key sheet: Super+Alt+T</h3>
+<pre class="cmd"><code>bash scripts/install-keys-hotkey.sh</code></pre>
+<p>The installer puts <code>td-keybindings</code> in <code>~/.local/bin</code>, copies this site's <a href="/keys">Keys</a> page to <code>~/.local/share/terminal-delight/keys.html</code>, prints how many keys it read, and adds this line between marker comments in <code>~/.config/hypr/bindings.lua</code>, with the script's full path, then reloads Hyprland:</p>
+<pre><code>o.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/home/you/.local/bin/td-keybindings")</code></pre>
+<p><kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> then opens Omarchy's searchable key menu, the one <kbd>Super</kbd>+<kbd>K</kbd> opens for Omarchy's keys, with one line per row of the Keys page's tables, led by the heading it sits under. The sheet reads the copy, so run the installer again after the Keys page changes. <code>HYPR_BINDINGS</code>, <code>DEST</code> and <code>DATA</code> move the three files.<sup><a href="#s5">5</a></sup></p>
+<table>
+  <thead><tr><th>Command</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>td-keybindings</code></td><td>Opens the menu, 960 pixels wide and 40% of the focused monitor's height.</td></tr>
+    <tr><td><code>td-keybindings --print</code></td><td>Prints the lines instead. <code>--page &lt;file&gt;</code> or <code>TD_KEYS_PAGE</code> reads another copy of the page.</td></tr>
+    <tr><td><code>scripts/install-keys-hotkey.sh --uninstall</code></td><td>Takes the binding out of <code>bindings.lua</code>, removes the script and the page copy, and reloads Hyprland.</td></tr>
+  </tbody>
+</table>
+<p>That chord used to belong to <code>td-send</code>. If <code>bindings.lua</code> still has a block between <code>-- &gt;&gt;&gt; td-send hotkey &gt;&gt;&gt;</code> and <code>-- &lt;&lt;&lt; td-send hotkey &lt;&lt;&lt;</code>, the installer removes it and prints <code>took SUPER+ALT+T back from the retired td-send hotkey</code>.</p>
+<p class="in-dev">The 0.5.0 installer leaves a legacy <code>td-send</code> block where it is, installs nothing, prints <code>Legacy td-send block retained. No files installed.</code> with the steps to remove it by hand, and asks you to run it again.</p>
+
+<h3>The paint overlay: Super+Alt+P</h3>
+<p><code>terminal-delight ctl paint toggle</code> raises the paint overlay in every Terminal Delight window on the active workspace, and folds them all on the next run. It finds those windows through Hyprland's own socket, so it needs no plugin and no <code>hyprctl</code>. Terminal Delight doesn't bind it for you; add a line like this to <code>~/.config/hypr/bindings.lua</code>:<sup><a href="#s6">6</a></sup></p>
+<pre><code>o.bind("SUPER + ALT + P", "Paint terminals", "terminal-delight ctl paint toggle")</code></pre>
+<p>The overlay's keys are on <a href="/keys">Keys</a>.</p>
+
+<h3>Super+C and Super+V</h3>
+<p>Omarchy's universal copy and paste send <kbd>Ctrl</kbd>+<kbd>Insert</kbd> and <kbd>Shift</kbd>+<kbd>Insert</kbd> to a window it has tagged as a terminal, and <kbd>Ctrl</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>V</kbd> to any other. Terminal Delight takes the first pair as copy and paste. Omarchy's own list doesn't name Terminal Delight, so add this line to <code>~/.config/hypr/hyprland.lua</code>:<sup><a href="#s7">7</a></sup></p>
+<pre><code>o.window("terminal-delight", { tag = "+terminal" })</code></pre>
+<p>Without it, <kbd>Super</kbd>+<kbd>C</kbd> reaches the pane as <kbd>Ctrl</kbd>+<kbd>C</kbd> and interrupts whatever runs there, and <kbd>Super</kbd>+<kbd>V</kbd> types <code>^V</code>. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>C</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> work either way.</p>
+
+<h3>Moving a terminal across: td-send</h3>
+<p><code>scripts/td-send</code>, run by hand from a checkout, moves the focused terminal tile into a Terminal Delight pane. It takes foot, Alacritty, kitty, Ghostty and Omarchy's own <code>org.omarchy.*</code> windows.<sup><a href="#s8">8</a></sup></p>
+<table>
+  <thead><tr><th>In the tile</th><th>What happens</th></tr></thead>
+  <tbody>
+    <tr><td>an idle shell</td><td>A pane opens at the same directory, and the tile closes after Terminal Delight has taken it.</td></tr>
+    <tr><td><code>claude</code> or <code>codex</code></td><td>The tile closes first, so the conversation never runs twice, then a pane resumes it by session id.</td></tr>
+    <tr><td><code>tmux attach</code>, <code>tmux new -A</code></td><td>The tile closes, then a pane runs the attach again.</td></tr>
+    <tr><td>anything else</td><td>Refused with a notification. Nothing is closed.</td></tr>
+  </tbody>
+</table>
+<p>The pane goes to a Terminal Delight window on the active workspace, else any window, else a new one. If Terminal Delight refuses after the tile has closed, the session reopens in a fallback terminal, so it always lands somewhere you can see. <code>--dry-run</code> prints the plan as JSON and changes nothing; <code>--address &lt;0xhex&gt;</code> picks a tile other than the focused one; <code>TD_BIN</code> names the binary when <code>terminal-delight</code> isn't on PATH.</p>
+<pre class="cmd"><code>scripts/td-send --dry-run</code></pre>
+
+<h3>What the scripts need</h3>
+<table>
+  <thead><tr><th>Script</th><th>Needs</th></tr></thead>
+  <tbody>
+    <tr><td><code>td-send</code></td><td><code>hyprctl</code>, <code>jq</code> and <code>terminal-delight</code>; it stops with a message when one is missing</td></tr>
+    <tr><td><code>td-keybindings</code></td><td><code>omarchy-menu-select</code> for the menu; <code>hyprctl</code> and <code>jq</code> to size it, else it assumes a 900-pixel monitor</td></tr>
+    <tr><td><code>install-keys-hotkey.sh</code></td><td><code>hyprctl reload</code> to apply the binding; the files are written either way</td></tr>
+    <tr><td><code>install-desktop.sh</code></td><td>nothing beyond coreutils; <code>rsvg-convert</code> for the PNG icons</td></tr>
+  </tbody>
+</table>
+
+<h3>The sibling repos</h3>
+<p>Two more repositories carry the desktop half, and each works without the other.</p>
+<ul>
+  <li><a href="https://github.com/parker-brown-family/omarchy-terminal-delight-theme">omarchy-terminal-delight-theme</a> is an ordinary Omarchy theme in Terminal Delight's own colours, phosphor green on black, with no code in it. <code>omarchy theme install</code> with the repository's address installs it.</li>
+  <li><a href="https://github.com/parker-brown-family/omarchy-terminal-delight-tools">omarchy-terminal-delight-tools</a> holds what a theme can't: a compositor curve that bows every window like a tube, eleven palettes, and <code>td-tint</code>. <code>td-tint</code> writes a palette down another terminal's tty as OSC colours and sets that window's border to match, so foot, Alacritty, kitty and Ghostty can each wear their own colours. <code>td-tint cherry</code> paints the terminal you type it in, and <code>td-tint --theme osaka-jade</code> paints it in an Omarchy theme. The curve is still in development; its README says what to expect.</li>
+</ul>
+
+<h3>What would prove this wrong</h3>
+<p><code>default-terminal off</code> after <code>on</code> should leave <code>~/.config/xdg-terminals.list</code> byte for byte as it was, or absent if it was absent. A list that comes back different, with nobody having changed it in between, is a bug in the journal.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The switch, its journal and its messages: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>.</li>
+  <li id="s2">The installer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-desktop.sh">install-desktop.sh</a>; the entry: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/packaging/terminal-delight.desktop">packaging/terminal-delight.desktop</a>; 0.5.0's removal: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/install-desktop.sh">install-desktop.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall.rs">uninstall.rs</a>.</li>
+  <li id="s3">The <code>xdg-terminal-exec</code> flags, the quick window and the mark: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>parse_contract</code>, <code>contract_seed</code>, <code>launch_mark</code>).</li>
+  <li id="s4">The theme list: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette.rs">palette.rs</a>; INHERIT's watcher: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/palette/current.rs">palette/current.rs</a>; the switch: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/paint.rs">paint.rs</a>; 0.5.0's default: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>).</li>
+  <li id="s5">The key sheet: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-keys-hotkey.sh">install-keys-hotkey.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-keybindings">td-keybindings</a>; 0.5.0's installer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/install-keys-hotkey.sh">install-keys-hotkey.sh</a>.</li>
+  <li id="s6">The paint command and its workspace scope: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+  <li id="s7">Copy and paste on <kbd>Ctrl</kbd>+<kbd>Insert</kbd> and <kbd>Shift</kbd>+<kbd>Insert</kbd>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a> (<code>pane_chord</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s8">The move: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-send">td-send</a>, which asks <code>terminal-delight probe</code> what the tile runs.</li>
+</ol>
