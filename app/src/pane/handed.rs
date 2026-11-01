@@ -428,11 +428,15 @@ impl TerminalView {
     /// an empty chip and a chip still being read look the same, and only one
     /// of them is true.
     ///
-    /// Wide, it carries the newest handover's NAME — never a count, which is
-    /// the header's own rule, kept since a lone `2` beside BENCH was taken off
-    /// for nobody being able to say what it counted. Narrow, it carries the
-    /// word for what the list is. Both halves are buttons: the name opens that
-    /// handover over the pane, the `▾` opens the list.
+    /// It reads ARTIFACT in every skin and at every width, then its ▼: Parker,
+    /// 2026-11-01, on a Terminimalist chip that carried the newest artifact's
+    /// name and the word `next` — the name is not what the chip is, and `next`
+    /// is not what the ▼ does. The name lives in the list and on the page it
+    /// opens. Both halves are buttons: ARTIFACT opens the newest handover over
+    /// the pane, the ▼ (`more`, in a skin that writes its controls as words)
+    /// opens the whole list. Never a count, the header's own rule, kept since a
+    /// lone `2` beside BENCH was taken off for nobody being able to say what it
+    /// counted.
     pub(super) fn handover_chip(
         &self,
         sk: &crate::skin::Skin,
@@ -443,11 +447,7 @@ impl TerminalView {
         let newest = self.handovers.newest()?;
         let fresh = !self.handovers.is_opened(&newest.key());
         let text = px((hicon * 0.5).max(10.5));
-        let name: String = if wide {
-            ellipsize(&newest.label, CHIP_NAME_CHARS)
-        } else {
-            format!("▤ {}", crate::lang::current().strings().artifacts_word)
-        };
+        let (name, more) = chip_words(sk);
         let (edge, face, ink) = if fresh {
             (sk.ink.mark_dim, sk.ink.mark_wash, sk.ink.ink_lit)
         } else {
@@ -478,11 +478,7 @@ impl TerminalView {
                 MouseButton::Left,
                 cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    if wide {
-                        view.open_newest_handover(cx);
-                    } else {
-                        view.toggle_handover_page(cx);
-                    }
+                    view.open_newest_handover(cx);
                 }),
             );
         // The ▾ is the door to the whole list, so it is drawn as large and as
@@ -492,7 +488,7 @@ impl TerminalView {
             .border_color(edge)
             .text_color(ink)
             .text_size(text * 0.8)
-            .child(sk.control("\u{25bc}", "next"))
+            .child(more)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|view, _ev: &MouseDownEvent, _w, cx| {
@@ -522,11 +518,15 @@ impl TerminalView {
     }
 }
 
-/// How many characters of a name the wide chip shows, ellipsis included.
-/// Checked against the sixteen handovers in the 2026-10-06 Cinema Delight
-/// pane: 28 keeps "The symphony, curved glass" whole, where 26 cut it to
-/// "…glas…" (the test below caught that), and leaves every one distinct.
-const CHIP_NAME_CHARS: usize = 28;
+/// What the chip says in a skin: its label, then the door to the list. A skin
+/// that draws icons gets ▼; one that writes its controls as words
+/// (Terminimalist) gets `more`, which is what the ▼ does.
+fn chip_words(sk: &crate::skin::Skin) -> (&'static str, &'static str) {
+    (
+        crate::lang::current().strings().artifact_word,
+        sk.control("\u{25bc}", "more"),
+    )
+}
 
 /// How much of the pane's name the history page is headed with. A Claude
 /// auto-topic fits whole; a raw shell prompt with its path does not need to.
@@ -562,18 +562,41 @@ mod tests {
 
     #[test]
     fn a_long_name_is_cut_with_an_ellipsis_and_a_short_one_is_left_alone() {
-        assert_eq!(ellipsize("The File Drop", CHIP_NAME_CHARS), "The File Drop");
-        let cut = ellipsize("The symphony, curved glass (review cut)", CHIP_NAME_CHARS);
-        assert!(cut.chars().count() <= CHIP_NAME_CHARS, "{cut}");
-        assert!(cut.ends_with('\u{2026}'), "{cut}");
+        assert_eq!(ellipsize("The File Drop", PAGE_NAME_CHARS), "The File Drop");
+        let cut = ellipsize("The symphony, curved glass (review cut)", 28);
+        assert!(cut.chars().count() <= 28, "{cut}");
         assert_eq!(cut, "The symphony, curved glass\u{2026}");
-        // The longest name in that pane stays told apart from its neighbours.
-        assert_ne!(
-            ellipsize("IV: arpeggios + the melody, 3 ways each", CHIP_NAME_CHARS),
-            ellipsize("IV's climax, re-voiced 3 ways", CHIP_NAME_CHARS)
-        );
         // Not split inside a character.
         assert_eq!(ellipsize("ééééé", 3).chars().count(), 3);
+    }
+
+    /// Every skin's chip reads ARTIFACT, never an artifact's name, and its ▼ is
+    /// `more` where a skin writes words, never `next`.
+    #[test]
+    fn the_chip_says_artifact_and_its_door_in_every_skin() {
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme");
+        for id in ["chalk", "default", "deco", "ops", "clean", "terminimalist"] {
+            let sk = crate::skin::parse(crate::skin::builtin_toml(id).expect("a builtin skin"))
+                .expect("it parses")
+                .bake(&th, 1.0);
+            let (name, more) = chip_words(&sk);
+            assert_eq!(name, crate::lang::current().strings().artifact_word, "{id}");
+            let expected = if sk.text_controls() {
+                "more"
+            } else {
+                "\u{25bc}"
+            };
+            assert_eq!(more, expected, "{id}");
+            assert_ne!(more, "next", "{id}");
+        }
+        let words = crate::skin::parse(crate::skin::builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&th, 1.0);
+        assert!(
+            words.text_controls(),
+            "Terminimalist writes its controls as words"
+        );
+        assert_eq!(chip_words(&words).1, "more");
     }
 
     #[test]

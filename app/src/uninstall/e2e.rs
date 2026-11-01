@@ -123,7 +123,7 @@ impl Fx {
             "journal\n",
         );
         w(
-            &h(".local/share/terminal-delight/skills/decision-brief/SKILL.md"),
+            &h(".local/share/terminal-delight/skills/briefing/SKILL.md"),
             "kit\n",
         );
         w(
