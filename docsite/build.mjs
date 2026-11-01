@@ -33,7 +33,7 @@ import { fileURLToPath } from 'node:url';
 const HERE = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(HERE, '..');
 const PAGES = join(HERE, 'pages');
-const OUT = join(HERE, 'dist');
+const OUT = process.env.TD_DOCS_OUT || join(HERE, 'dist'); /* TD_DOCS_OUT: build somewhere else, so two builds at once never share a directory */
 
 const nav = JSON.parse(await readFile(join(HERE, 'nav.json'), 'utf8'));
 const layout = await readFile(join(HERE, 'layout.html'), 'utf8');
@@ -65,6 +65,20 @@ for (const g of nav.groups) {
 for (const f of files) if (!order.some((p) => p.slug === f)) fail(`pages/${f}.html`, 'is not listed in nav.json');
 const live = order.filter((p) => p.live);
 const url = (slug) => (slug === 'index' ? '/' : '/' + slug);
+
+/* A page whose whole subject is development work carries `"release"` in
+   nav.json. The spine and the chapter table tag it, and the page opens on a
+   line saying so. Inside any page, `class="in-dev"` on a block and
+   `<span class="dev-tag">0.5.0 dev</span>` inline mark the parts that are
+   development work. When that release ships, delete the key and the classes:
+   `grep -rn 'in-dev\|dev-tag\|"release"' docsite` finds every one. */
+const DEV_RELEASES = { '0.5.0': 'the 0.5.0 candidate is planned for 13 November 2026, and stable for 20 November' };
+const devTag = (p) => (p.release ? `<span class="dev-tag">${esc(p.release)} dev</span>` : '');
+const devNote = (p) => {
+  if (!p.release) return '';
+  if (!DEV_RELEASES[p.release]) fail(`pages/${p.slug}.html`, `nav.json names release "${p.release}", which DEV_RELEASES does not know`);
+  return `<p class="dev-note">In ${esc(p.release)} development. The current release does not have it yet; ${DEV_RELEASES[p.release] || 'no date is set'}.</p>\n`;
+};
 
 /* ------------------------------------------------------------------ helpers */
 
@@ -119,13 +133,15 @@ function spine(current) {
   const first = (ch) => ch.pages.find((p) => p.live) || ch.pages[0];
   const chs = chapters.map((ch) => {
     const lit = here && here.chapter === ch;
+    /* a chapter none of whose pages is written yet has nowhere to link */
+    if (!ch.pages.some((p) => p.live)) return `    <li><span class="is-soon"><span class="n">${ch.n} /</span>${esc(ch.short)}</span></li>`;
     return `    <li><a href="${url(first(ch).slug)}"${lit ? ' class="weak"' : ''}><span class="n">${ch.n} /</span>${esc(ch.short)}</a></li>`;
   }).join('\n');
   let out = `  <div class="td-group"><h6>Contents</h6><ul>\n${chs}\n  </ul></div>`;
   if (here) {
     const items = here.chapter.pages.map((p) => {
       if (!p.live) return `    <li><span class="is-soon"><span class="n">${p.num}</span>${esc(p.title)}</span></li>`;
-      return `    <li><a href="${url(p.slug)}"${p.slug === current ? ' aria-current="page"' : ''}><span class="n">${p.num}</span>${esc(p.title)}</a></li>`;
+      return `    <li><a href="${url(p.slug)}"${p.slug === current ? ' aria-current="page"' : ''}><span class="n">${p.num}</span>${esc(p.title)}${devTag(p)}</a></li>`;
     }).join('\n');
     out += `\n  <div class="td-group"><h6>In ${here.chapter.n} · ${esc(here.chapter.title)}</h6><ul>\n${items}\n  </ul></div>`;
   }
@@ -136,7 +152,7 @@ function spine(current) {
    introduction and the 404. */
 function chapterTable() {
   return '<table class="q">' + chapters.map((ch) => {
-    const items = ch.pages.map((p) => (p.live ? `<a href="${url(p.slug)}">${esc(p.title)}</a>` : `<span class="soon-link">${esc(p.title)}</span>`))
+    const items = ch.pages.map((p) => (p.live ? `<a href="${url(p.slug)}">${esc(p.title)}</a>${devTag(p)}` : `<span class="soon-link">${esc(p.title)}</span>`))
       .join('<span class="dot"> · </span>');
     return `<tr><td>${ch.n} ${esc(ch.short)}</td><td>${items}</td></tr>`;
   }).join('') + '</table>';
@@ -171,10 +187,16 @@ const APP_KEY_FIXES = [
     why: 'a tab never crosses a group (main.rs, the tab move)' },
   { key: 'theme icon (top-right)', text: 'PALETTE — Themes, style and rules', to: ['🎨 (bottom-right)', null],
     why: 'the 🎨 sits bottom-right' },
-  { key: '🤖 (mother bar)', text: 'MCP — read-only agent-watch surface', drop: true,
-    why: 'the wall has no chrome glyph' },
-  { key: 'Ctrl+Shift+A', text: 'MCP — read-only agent-watch surface', to: [null, 'The agent wall: every agent pane as a card'],
-    why: 'OpenAgentPanel raises the agent wall (pane.rs, main.rs)' },
+  /* The door to the agents differs by release. 0.4.0's sheet still names the
+     retired 🤖 glyph and calls Ctrl+Shift+A the MCP surface; 0.5.0's sheet names
+     the counter, which opens the Threshing Floor. One tree carries one of them,
+     so a fix in an `either` group fails only when no fix in its group matches. */
+  { key: '🤖 (mother bar)', text: 'MCP — read-only agent-watch surface', drop: true, either: 'agent-door',
+    why: 'the wall has no chrome glyph (0.4.0)' },
+  { key: 'Ctrl+Shift+A', text: 'MCP — read-only agent-watch surface', to: [null, 'The agent wall: every agent pane as a card'], either: 'agent-door',
+    why: 'OpenAgentPanel raises the agent wall (pane.rs, main.rs; 0.4.0)' },
+  { key: '\u{f06a9} (agent counter, top right)', text: 'the Threshing Floor: who may reach whom, and the window\u2019s MCP switches', to: ['agent counter (top right)', 'The Threshing Floor: who may reach whom, and the window\u2019s MCP switches'], either: 'agent-door',
+    why: 'the app draws the counter with an icon-font glyph the docs do not carry (0.5.0)' },
   { key: 'wheel / shift+wheel', text: 'Pan a zoomed FOCUS read down / sideways', to: ['wheel', 'Pan a zoomed FOCUS read; it wraps, so only down'],
     why: 'the reader wraps and has no horizontal axis' },
   { key: 'Ctrl+Alt+T', text: 'New window (quick scratch)', to: [null, 'Opens Terminal Delight on GNOME, once scripts/install-hotkey.sh binds it'],
@@ -187,9 +209,13 @@ async function appKeys() {
   const block = lang.match(/pub const EN: Strings = Strings \{([\s\S]*?)\n\};/);
   if (!block) { fail(where, 'app/src/lang.rs has no EN strings block'); return []; }
   const en = {};
-  for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) {
-    en[m[1]] = m[2].replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
-  }
+  const unescape = (v) => v.replace(/\\u\{([0-9a-f]+)\}/gi, (_, h) => String.fromCodePoint(parseInt(h, 16))).replace(/\\"/g, '"');
+  for (const m of block[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[m[1]] = unescape(m[2]);
+  /* the chrome strings (`s.ui.*`), which some rows use: the Threshing Floor's, for one */
+  const chrome = await readFile(join(ROOT, 'app', 'src', 'lang', 'chrome.rs'), 'utf8');
+  const chromeBlock = chrome.match(/pub const EN: Chrome = Chrome \{([\s\S]*?)\n\};/);
+  if (!chromeBlock) { fail(where, 'app/src/lang/chrome.rs has no EN block'); return []; }
+  for (const m of chromeBlock[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[`ui.${m[1]}`] = unescape(m[2]);
   const start = main.indexOf('let col_a = div()'), end = main.indexOf('// The FEATURES view', start);
   if (start < 0 || end < 0) { fail(where, 'the help sheet in app/src/main.rs moved; update appKeys()'); return []; }
   const region = main.slice(start, end), split = region.indexOf('let col_b');
@@ -197,11 +223,12 @@ async function appKeys() {
   const label = (expr) => {
     let m;
     if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return m[1];
-    if ((m = expr.match(/^s\.(\w+)$/))) return string(m[1]);
-    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.(\w+)\)$/))) return m[1].replace('{}', string(m[2]));
+    if ((m = expr.match(/^s\.((?:ui\.)?\w+)$/))) return string(m[1]);
+    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.((?:ui\.)?\w+)\)$/))) return unescape(m[1]).replace('{}', string(m[2]));
     fail(where, `a help row it cannot read: ${expr}`); return expr;
   };
-  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.\w+\)|s\.\w+)\s*,\s*s\.(\w+)\s*\)/g;
+  /* rustfmt splits a long row over lines and ends it with a comma */
+  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.(?:ui\.)?\w+\)|s\.(?:ui\.)?\w+)\s*,\s*s\.((?:ui\.)?\w+)\s*,?\s*\)/g;
   const cols = [region.slice(0, split), region.slice(split)].map((part) =>
     [...part.matchAll(/section\(\s*s\.(\w+),\s*vec!\[([\s\S]*?)\]\s*,?\s*\)/g)].map((sm) => ({
       title: string(sm[1]),
@@ -209,6 +236,7 @@ async function appKeys() {
     })));
   const count = cols.flat().reduce((n, s) => n + s.rows.length, 0);
   if (cols.some((c) => !c.length) || count < 30) fail(where, `read only ${count} rows from app/src/main.rs; the help sheet's shape changed`);
+  const groupHit = {};
   for (const f of APP_KEY_FIXES) {
     let hit = false;
     for (const sec of cols.flat()) {
@@ -218,7 +246,11 @@ async function appKeys() {
         return f.drop ? [] : [[f.to[0] ?? r[0], f.to[1] ?? r[1]]];
       });
     }
+    if (f.either) { groupHit[f.either] ||= hit; continue; }
     if (!hit) fail(where, `the fix for "${f.key}" matches no row: the app changed it, so check the row and delete the fix`);
+  }
+  for (const [g, hit] of Object.entries(groupHit)) {
+    if (!hit) fail(where, `no fix in the "${g}" group matches a row: the app changed it, so check the rows and delete the fixes`);
   }
   return cols;
 }
@@ -339,7 +371,7 @@ function renderPage(p, doc) {
     search.push({ u: url(p.slug), t: doc.meta.title || p.title, g: p.group, r: '', s: '', a: '', x: text(body).slice(0, 2400) });
     body = `<div class="plain">\n${body}\n</div>`;
   }
-  body = commands(body);
+  body = devNote(p) + commands(body);
   /* A link to a page that is listed but not written yet is drawn as text,
      and becomes a link by itself the day that page exists. */
   const soonUrls = new Set(order.filter((o) => !o.live).map((o) => url(o.slug)));

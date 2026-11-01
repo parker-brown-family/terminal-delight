@@ -33,12 +33,22 @@
           "title": "Agent wall"
         },
         {
+          "slug": "threshing-floor",
+          "title": "Threshing Floor",
+          "release": "0.5.0"
+        },
+        {
           "slug": "launching",
           "title": "Launching an agent"
         },
         {
           "slug": "attention",
           "title": "Attention"
+        },
+        {
+          "slug": "rest",
+          "title": "Resting agents",
+          "release": "0.5.0"
         },
         {
           "slug": "graveyard",
@@ -63,6 +73,10 @@
           "title": "Decision briefs"
         },
         {
+          "slug": "artifacts",
+          "title": "Artifacts"
+        },
+        {
           "slug": "surface-protocol",
           "title": "Surface protocol"
         },
@@ -83,6 +97,14 @@
         {
           "slug": "panes-and-tabs",
           "title": "Panes and tabs"
+        },
+        {
+          "slug": "documents",
+          "title": "Documents"
+        },
+        {
+          "slug": "git-signal",
+          "title": "Git signal"
         },
         {
           "slug": "sticky-notes",
@@ -111,6 +133,11 @@
           "title": "Skins"
         },
         {
+          "slug": "ui-config",
+          "title": "UI CONFIG",
+          "release": "0.5.0"
+        },
+        {
           "slug": "crt",
           "title": "CRT"
         },
@@ -133,6 +160,11 @@
           "title": "MCP server"
         },
         {
+          "slug": "restricted",
+          "title": "Restricted commands",
+          "release": "0.5.0"
+        },
+        {
           "slug": "agent-to-agent",
           "title": "Agent to agent"
         },
@@ -148,6 +180,21 @@
       "short": "MCP"
     },
     {
+      "title": "Desktop",
+      "pages": [
+        {
+          "slug": "omarchy",
+          "title": "Omarchy"
+        },
+        {
+          "slug": "uninstall",
+          "title": "Uninstall",
+          "release": "0.5.0"
+        }
+      ],
+      "short": "Desktop"
+    },
+    {
       "title": "Reference",
       "pages": [
         {
@@ -161,6 +208,10 @@
         {
           "slug": "cli",
           "title": "Command line"
+        },
+        {
+          "slug": "bug-report",
+          "title": "Reporting a bug"
         },
         {
           "slug": "languages",
