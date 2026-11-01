@@ -1,24 +1,25 @@
 <script type="application/json" data-page>
 {
   "title": "ctl",
-  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip faces, open documents, switch the MCP server, choose a skin. It never writes to a terminal.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "terminal-delight ctl sends one-line commands to a running window over its control socket: name and group tabs, flip panes to their workbench, open and annotate documents, read and set the MCP server's switches, choose a skin, open a pane running a command. In 0.5.0 a live window refuses the commands that act as a person, and the MCP switch changes, unless it was launched with TD_MCP_SCRIPTED=1.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Script a running window"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window without touching any terminal in it.</p>
+<p class="lede">Every Terminal Delight window listens on its own control socket, and the same binary is the client. <code>terminal-delight ctl</code> lets a script, a keybinding, a status bar or an agent's own shell change a running window.</p>
 <pre class="cmd"><code>terminal-delight ctl tab name "deploy"
-terminal-delight ctl mcp on
+terminal-delight ctl mcp status
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
-<p>It names and groups tabs, turns panes to their workbench, opens documents, switches the <a href="/mcp">MCP server</a>, picks a skin, and hands a new terminal to a window. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or the window you're running in for tab commands; <code>--all</code> or <code>--pid</code> choose others.</p>
+<p>It names and groups tabs, turns panes to their workbench, opens documents and edits their notes, reads and sets the <a href="/mcp">MCP server</a>'s switches, picks a skin, and hands a new terminal to a window. Its bench commands act on a pane's bench as your typing and clicks would, so they reach the agent in it, and <code>adopt</code> can open a pane running a command. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or to the window you're running in for tab commands.</p>
+<p class="in-dev">A live window refuses every command that acts as a person, and every MCP switch change, unless it was launched with <code>TD_MCP_SCRIPTED=1</code>. Status, paint, skin and MCP calls still work.</p>
 <p class="invite">Technical lists every command and its reply.</p>
 </section>
 
 <section data-register="technical" data-headline="The control socket">
-<p>Each window, scratch windows included, listens at <code>$XDG_RUNTIME_DIR/terminal-delight/ctl-&lt;pid&gt;.sock</code>, in a directory kept at <code>0700</code>. The client sends one line and reads one line back, then the connection closes. Effects are queued to the window, so <code>ok</code> means the command was accepted. The CLI checks your command against the window's grammar before sending, so a typo fails at once with the usage line.<sup><a href="#s1">1</a></sup></p>
+<p>Each window, scratch windows included, listens at <code>$XDG_RUNTIME_DIR/terminal-delight/ctl-&lt;pid&gt;.sock</code>, in a directory kept at <code>0700</code>. The client sends one line and reads one line back, then the connection closes. Most effects are queued to the window, so <code>ok</code> means the command was accepted; the bench and <code>doc</code> commands wait up to two seconds for the window to say what happened. The CLI checks your command against the window's grammar before sending, so a typo fails at once with the usage line.<sup><a href="#s1">1</a></sup></p>
 
 <h3>Which windows</h3>
 <table>
@@ -30,7 +31,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
     <tr><td><code>--pid &lt;N&gt;</code></td><td>One window.</td></tr>
   </tbody>
 </table>
-<p><code>tab …</code> always means your own tab and refuses a scope flag. <code>adopt</code> and <code>tabs</code> go to the first target only; everything else goes to every target. Each reply prints as <code>&lt;pid&gt;&#9;&lt;reply&gt;</code>. A window with no socket prints <code>err no control socket (older build — reopen this terminal)</code>.</p>
+<p><code>tab …</code> always means your own tab and refuses a scope flag. <code>adopt</code> and <code>tabs</code> go to the first target only; everything else goes to every target, and a <code>paint toggle</code> sent to several windows settles them all on one state. Each reply prints as <code>&lt;pid&gt;&#9;&lt;reply&gt;</code>. A window with no socket prints <code>err no control socket (older build — reopen this terminal)</code>.</p>
 <p>Exit codes: <code>0</code> when at least one window answered with something other than <code>err</code>; <code>2</code> when nothing matched or every reply was <code>err</code>; <code>1</code> for a usage error.</p>
 <p>The client waits 800 ms for a reply. If a window takes longer, the client prints <code>err unreachable … — swept stale socket</code> and deletes that window's socket, although the window is alive. Until the window restarts, neither <code>ctl</code> nor <code>terminal-delight mcp</code> can reach it. The <code>bench</code> and <code>doc</code> commands and <code>mcp rpc</code> can take longer than that on a busy window. It's tracked in <a href="https://github.com/parker-brown-family/terminal-delight/issues/796">issue 796</a>.</p>
 
@@ -42,25 +43,44 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
     <tr><td><code>whoami</code></td><td><code>ok &lt;session&gt; &lt;window-pid&gt;</code></td><td>Which session a window holds.</td></tr>
     <tr><td><code>paint on|off|toggle</code></td><td><code>ok</code></td><td>The palette overlay over every pane.</td></tr>
     <tr><td><code>paint status</code></td><td><code>on</code> or <code>off</code></td><td></td></tr>
-    <tr><td><code>skin &lt;name&gt;</code>, <code>skin theme</code></td><td><code>ok &lt;name&gt;</code></td><td>Pick a <a href="/skins">skin</a>, or follow the theme's.</td></tr>
+    <tr><td><code>skin &lt;name&gt;</code>, <code>skin theme</code></td><td><code>ok &lt;name&gt;</code></td><td>Pick a <a href="/skins">skin</a>, or follow the theme's. An unknown name answers with the ones there are.</td></tr>
     <tr><td><code>skin status</code></td><td><code>active=&lt;id&gt; known=&lt;ids&gt;</code></td><td></td></tr>
-    <tr><td><code>bench on|off|toggle</code></td><td><code>ok</code></td><td>Every pane to its workbench, or its terminal.</td></tr>
-    <tr><td><code>bench choose &lt;n&gt;</code></td><td>e.g. <code>ok pane 3</code></td><td>Answer the question waiting on the bench with option <code>n</code> (1 to 20).</td></tr>
-    <tr><td><code>bench submit</code></td><td></td><td>Send the open round of answers.</td></tr>
-    <tr><td><code>bench say &lt;text&gt;</code></td><td></td><td>Type a line to the focused pane's agent through the bench, and send it.</td></tr>
-    <tr><td><code>bench type &lt;text&gt;</code></td><td></td><td>The same without sending.</td></tr>
-    <tr><td><code>doc here &lt;path&gt;</code></td><td></td><td>Float a document over the focused pane. The path must be absolute.</td></tr>
+    <tr><td><code>skin snapshot</code></td><td>one line of JSON</td><td>The skin the window is drawing right now, with <code>active_skin</code>, <code>palette</code> and <code>custom_path</code>.</td></tr>
+    <tr><td><code>bench on|off|toggle</code></td><td><code>ok</code></td><td>Every pane to its <a href="/workbench">workbench</a>, or its terminal.</td></tr>
+    <tr><td><code>bench choose &lt;n&gt;</code></td><td rowspan="4"><code>ok pane &lt;n&gt;</code>, <code>queued pane &lt;n&gt; — off screen until you look</code>, or <code>err …</code></td><td>Answer the question waiting on a bench with option <code>n</code> (1 to 20).</td></tr>
+    <tr><td><code>bench submit</code></td><td>Send the open round of answers.</td></tr>
+    <tr><td><code>bench say &lt;text&gt;</code></td><td>Type a line to a pane's agent through its bench, and send it.</td></tr>
+    <tr><td><code>bench type &lt;text&gt;</code></td><td>The same without sending.</td></tr>
+    <tr><td><code>bench probe</code></td><td><code>ok pane &lt;n&gt; ‖ …</code></td><td>The bench's zones, its link-bearing text and its floating document, for a test to check.</td></tr>
+    <tr><td><code>bench click|hover &lt;x&gt; &lt;y&gt; [alt|ctrl|ctrl-alt]</code></td><td></td><td>A pointer event at a window point, through the bench's own handlers.</td></tr>
+    <tr><td><code>doc here &lt;path&gt;</code></td><td></td><td>Float a document over a pane. The path must be absolute.</td></tr>
     <tr><td><code>doc beside &lt;path&gt;</code></td><td></td><td>Open it in a pane beside the focused one.</td></tr>
-    <tr><td><code>doc close</code>, <code>doc scroll &lt;pixels&gt;</code></td><td></td><td>Close the floating document; scroll a document pane.</td></tr>
+    <tr><td><code>doc close</code></td><td></td><td>Close a floating document. One holding unsaved notes is kept once, and the reply says so.</td></tr>
+    <tr><td><code>doc scroll &lt;pixels&gt;</code></td><td></td><td>Scroll a floating document; negative scrolls up.</td></tr>
+    <tr><td><code>doc notes</code></td><td>the pane's answer and one line of JSON</td><td>What an open brief shows of its notes: its state, the bar's counts and the map <code>copy map</code> gives.</td></tr>
+    <tr><td><code>doc note add &lt;nid&gt; &lt;text&gt;</code>, <code>doc note delete &lt;nid&gt; &lt;text&gt;</code></td><td>like <code>doc notes</code></td><td>Add or delete a note on a brief's element. Text that starts with <code>"</code> is read as a JSON string, so it can hold a newline.</td></tr>
+    <tr><td><code>doc concur &lt;nid&gt;</code>, <code>doc save</code></td><td>like <code>doc notes</code></td><td>Put a stamp down or peel it off; save the notes into the file.</td></tr>
     <tr><td><code>mcp status</code></td><td><code>enabled=on writes=off expose=agents events=on</code></td><td></td></tr>
-    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose agents|all</code></td><td><code>ok</code></td><td>The MCP switches, saved with the session.</td></tr>
+    <tr><td><code>mcp on|off</code>, <code>mcp writes on|off</code>, <code>mcp expose all|agents</code></td><td><code>ok</code></td><td>Change the MCP server's switches, one at a time. They show on the agent wall and are saved with the session.</td></tr>
     <tr><td><code>mcp rpc &lt;json&gt;</code></td><td>the JSON-RPC answer</td><td>One MCP call. <code>mcp-none</code> for a notification.</td></tr>
+    <tr><td><code>mcp from &lt;session&gt; &lt;pane|-&gt; rpc &lt;json&gt;</code></td><td>the JSON-RPC answer</td><td>The same, naming the caller, as the relay sends it. A session that isn't the window's is refused with <code>-32001</code>; <code>-</code> says the caller doesn't know its pane.</td></tr>
     <tr><td><code>adopt --cwd &lt;dir&gt; [--run &lt;cmd&gt;]</code></td><td><code>ok</code></td><td>Open a new pane in a directory, running a command. Used by <code>td-send</code>, which moves an Omarchy terminal tile into a pane.</td></tr>
     <tr><td><code>tab name [&lt;text&gt;]</code></td><td><code>ok 1</code></td><td>Name your own tab; no text clears it.</td></tr>
     <tr><td><code>tab group &lt;name&gt;</code>, <code>tab ungroup</code></td><td><code>ok 1</code></td><td>Put your own tab in a group, or take it out.</td></tr>
     <tr><td><code>tabs &lt;json&gt;</code></td><td><code>ok &lt;n&gt;</code></td><td>Several tab operations at once; see below.</td></tr>
   </tbody>
 </table>
+<p>The bench and <code>doc</code> commands that act on one pane pick the focused pane when it qualifies, otherwise the first that does, the active tab's panes first. A pane marked off-limits to agents is never picked by the bench commands.<sup><a href="#s2">2</a></sup></p>
+
+<h3>Live windows and scripted windows</h3>
+<div class="in-dev">
+<p>A window reads <code>TD_MCP_SCRIPTED</code> once, when it starts. Unless it is exactly <code>1</code>, the window refuses two families of commands from every caller.<sup><a href="#s3">3</a></sup></p>
+<ul>
+  <li>The six MCP switch changes: <code>mcp on|off</code>, <code>mcp writes on|off</code> and <code>mcp expose all|agents</code>. The reply begins <code>err mcp on: nothing changed. Global MCP policy is a person's choice in the Threshing Floor (the agent counter, top right).</code> The switches live in the <a href="/threshing-floor">Threshing Floor</a>.</li>
+  <li>Everything that acts as a person: <code>adopt</code>, <code>tabs</code> and therefore <code>tab name|group|ungroup</code>, every <code>bench</code> command, and every <code>doc</code> command. The reply begins <code>err bench say: refused. This verb acts as the person</code> and names the door to use instead: an agent reaches another pane only along a Threshing Floor line.</li>
+</ul>
+<p><code>ping</code>, <code>whoami</code>, <code>paint</code>, <code>skin</code>, <code>mcp status</code>, <code>mcp rpc</code> and <code>mcp from</code> work on every window. A test rig launches its own window with <code>TD_MCP_SCRIPTED=1</code>; there the bench commands still skip panes that are read-only or off-limits to agents. The usage line also lists <code>bench probe</code> and <code>bench click|hover</code>, which 0.4.0 accepts without listing.</p>
+</div>
 
 <h3>Tab operations</h3>
 <p><code>tabs</code> takes a JSON array, or <code>{"ops": […]}</code>. Each operation has an <code>op</code>:</p>
@@ -75,13 +95,16 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
     <tr><td><code>collapse</code></td><td><code>group</code>, <code>collapsed</code></td></tr>
   </tbody>
 </table>
-<p>A tab operation names its tab with exactly one of <code>tab</code> (its index, which changes when tabs move) or <code>pane</code> (a shell pid in it, which doesn't). Colours are <code>#rrggbb</code>. An error says which operation failed: <code>tabs: op 2: …</code>.</p>
+<p>A tab operation names its tab with exactly one of <code>tab</code> (its index, which changes when tabs move) or <code>pane</code> (a shell pid in it, which doesn't). <code>group_color</code> and <code>collapse</code> act on a group by name and take neither. Colours are <code>#rrggbb</code>. An error says which operation failed: <code>tabs: op 2: …</code>. A pretty-printed list is re-sent as one line, so a file of operations works.</p>
 <pre><code>terminal-delight ctl tabs '[{"op":"name","pane":4121,"name":"api"},{"op":"group","pane":4121,"group":"backend","color":"#3ec6d1"}]'</code></pre>
 
 <h3>What would prove this wrong</h3>
-<p>No <code>ctl</code> command writes bytes into a terminal's input except <code>bench say</code> and <code>bench type</code>, which go to the agent through the bench on purpose. Any other command that does is a bug.</p>
+<p>Two kinds of <code>ctl</code> command reach a terminal's input, both on purpose. The bench commands act on a pane's bench as a person would: <code>bench say</code> sends a line to its agent, <code>bench choose</code> and <code>bench submit</code> press its answers, and <code>bench click</code> presses whatever is under the point, which can answer, pause or end the agent. <code>adopt</code> with <code>--run</code> opens a new pane running a command. <code>bench type</code> only fills the bench's composer. Any other route into a terminal is a bug, and so is a bench command reaching a pane marked off-limits to agents.</p>
+<p class="in-dev">On a window launched without <code>TD_MCP_SCRIPTED=1</code>, any of those commands, or any MCP switch change, that gets past the socket is a bug.</p>
 </section>
 
 <ol data-sources>
   <li id="s1">The grammar, the client and the replies: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+  <li id="s2">How the bench and document commands pick a pane: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s3">0.5.0's fence: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/ctl.rs">ctl.rs</a>.</li>
 </ol>

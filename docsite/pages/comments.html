@@ -2,8 +2,8 @@
 {
   "title": "Comments",
   "description": "The workbench's COMMENTS shelf holds notes you write to yourself about a pane. They're saved with the pane and never sent to the agent: no keystrokes, no journal line, no button that hands one over. Copy is the only way out.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Notes to yourself the agent never sees"
 }
 </script>
@@ -30,7 +30,7 @@
 <p>The rest of the editing keys are the composer's, listed on <a href="/keys#technical-workbench-writing">Keys</a>. Every other key goes into the note. An empty note closes without posting.</p>
 
 <h3>Where notes are kept</h3>
-<p>Each note is a file in the pane's own folder:</p>
+<p>Each note is a file in the pane's own folder:<sup><a href="#s1">1</a></sup></p>
 <pre><code>~/.local/state/terminal-delight/surfaces/&lt;session&gt;/&lt;pane&gt;/comment-&lt;time&gt;-&lt;n&gt;.json</code></pre>
 <pre><code>{"td":"0.4","kind":"comment","id":"comment-1758784380000-0","model":{"body":"check the bleed at 40%. it might be the chip"}}</code></pre>
 <p>It's the same folder an agent writes its own surfaces to, and the file is readable by anything running as you. A pane with nowhere to save, such as one in a scratch window, says <code>THIS PANE CANNOT SAVE NOTES · NOTHING HERE WILL SURVIVE</code> and keeps your draft if you try to post. Notes follow the same limits as every surface: 64 per pane on the bench, 512 files per pane on disk, and a session folder untouched for 30 days is removed.</p>
@@ -40,6 +40,7 @@
   <li>A comment's only action is <b>copy</b>, and copy is done by the window: it writes the clipboard and nothing else.</li>
   <li>Posting writes the file and draws the card. It doesn't touch the terminal or <code>actions.jsonl</code>.</li>
   <li>The <code>comment</code> kind isn't in the catalogue or the launch briefing, so agents aren't invited to write one, and no <a href="/mcp">MCP</a> tool returns the bench's contents.</li>
+  <li class="in-dev">One MCP tool reads from the bench: <code>ask_agent</code>'s quick answer about another pane carries that pane's newest reply, its brief and plain answer. It looks only at replies, so a comment is never in it.<sup><a href="#s2">2</a></sup></li>
 </ul>
 
 <h3>The card</h3>
@@ -55,4 +56,5 @@
 
 <ol data-sources>
   <li id="s1">The note box and posting: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; the comment kind and its one action: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>; the card: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>.</li>
+  <li id="s2">The quick answer: <code>latest_response</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/workbench.rs">workbench.rs</a> and its use in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a>, on dev/0.5.0.</li>
 </ol>

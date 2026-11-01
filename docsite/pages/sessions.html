@@ -1,19 +1,19 @@
 <script type="application/json" data-page>
 {
   "title": "Sessions and restarts",
-  "description": "A session is your saved workspace: tabs, layout, working directories, agent resume commands and notes. The shells are owned by a background session host, so closing or crashing the window kills nothing, and the next window picks them back up.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "A session is your saved workspace: tabs, layout, working directories, agent resume commands and notes, in sessions/<name>.toml. The shells are owned by a background session host, so closing or crashing the window kills nothing, and the next window picks them back up.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Close the window, keep the work"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">Closing the window doesn't end your work. Your shells and agents run in a background process, the <b>session host</b>, and the window only draws them. Close it, crash it or relaunch it, and every shell, agent, editor and scrollback keeps running; the next window you open picks them up where they are.</p>
-<p>A <b>session</b> is the saved picture of a workspace: its tabs, splits, each pane's directory, each agent's resume command, sticky notes and the left bar's tree. Launching <code>terminal-delight</code> with no arguments takes the most recent session nobody else is using, and prefers a running host with no window attached.</p>
-<p>If the host itself goes down, you still get your layout back. Terminal Delight reopens each pane in its directory and types the agent's resume command, such as <code>claude --resume &lt;id&gt;</code>, so every conversation continues. What doesn't come back is anything that only lived in memory: the scrollback, and programs like <code>vim</code> that can't resume.</p>
+<p class="lede">Closing the window doesn't end your work. Your shells and agents run in a background process, the <b>session host</b>, and the window only draws them. Close it, crash it or relaunch it, and every shell, agent and scrollback keeps running for the next window to pick up.</p>
+<p>A <b>session</b> is the saved picture of a workspace: its tabs, splits, each pane's directory, each agent's resume command, sticky notes and the left bar's tree, in <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>. Launching <code>terminal-delight</code> with no arguments reopens the session last saved on the workspace you are on, or the most recent one nobody else is using.</p>
+<p>If the host itself goes down, you still get your layout back. Terminal Delight reopens each pane in its directory and types the agent's resume command, such as <code>claude --resume &lt;id&gt;</code>, so every conversation continues. What doesn't come back is anything that only lived in memory: the scrollback, and programs like <code>vim</code> that can't resume. If a window ever stops saving its layout, it says <code>Layout not saving</code> across the top.</p>
 <p><code>TD_SESSION=work terminal-delight</code> opens a named session. <code>TD_SCRATCH=1</code> opens a throwaway window that never saves.</p>
-<p class="invite">Story explains the host and the window with a television. Technical has the files, the rules for which session opens, and what is guarded.</p>
+<p class="invite">Story explains it with a television; Technical has the files, which session opens, and what is guarded.</p>
 </section>
 
 <section data-register="story" data-headline="The television and the station">
@@ -21,32 +21,37 @@
 <p>Most terminals are a television that is also the station. Close the window and the shows stop, because the shells lived inside the window. Your agent was halfway through a change, your build was running, and a server was tailing its logs, and all of it goes dark together.</p>
 <p>Terminal Delight splits the two. The <b>session host</b> is the station: a small background process that owns every shell and agent in a session and keeps them running. The window is the set, drawing what the host sends it. You can close the set, kick its plug out, or swap it for a newer model, and the station keeps broadcasting. The next window tunes in to the same channel and you're back in the middle of every programme, scrollback and all. When nothing has been watching and nothing has happened for about twelve hours, the station takes a last picture of the schedule and closes for the night.</p>
 <p>The station also keeps a schedule on paper: the <b>session file</b>. It lists every channel, where each one was filming (the pane's directory) and which episode each show was on (the agent's resume command). That paper is what saves you when the station itself burns down. A new station reads the schedule, rebuilds every channel, and starts each show from its last episode. The live programmes are lost: a film that was mid-scene, or a <code>vim</code> session with unsaved edits, only ever existed on the air. Every conversation with an agent comes back, because an agent can pick up from its own transcript.</p>
-<p>One more rule keeps the schedule honest: only the station writes it. A set that has lost its station stops writing, so it can't overwrite a good schedule with a picture of a dead one. A save that would wipe out more than half your panes or tabs is refused unless you closed them yourself.</p>
-<p>So you are left holding the real terms. The <b>session host</b> owns the terminals, the <b>window</b> is its client, the <b>session file</b> is the layout and resume recipe it writes, and the <b>floor</b> is the recovery from that file when the host is gone.</p>
+<p>One more rule keeps the schedule honest: only the station writes it. A set that has lost its station stops writing, so it can't overwrite a good schedule with a picture of a dead one, and it puts a notice on screen so you know the paper has stopped keeping up. A save that would wipe out more than half your panes or tabs is refused unless you closed them yourself.</p>
+<p>So you are left holding the real terms. The <b>session host</b> owns the terminals, the <b>window</b> is its client, and the <b>session file</b> is the layout and resume recipe it writes, which is what a new host rebuilds from when the old one is gone.</p>
 </section>
 
 <section data-register="technical" data-headline="Sessions">
-<p>A session has a stable name Terminal Delight owns, like <code>1</code>, <code>2</code> or <code>work</code>, and its file is <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code> (or under <code>$XDG_CONFIG_HOME</code>). The name is cleaned to letters, digits, <code>-</code> and <code>_</code>, up to 64 characters; <code>default</code> is used where nothing names one. Since 2026-09-10 the session host is on by default.<sup><a href="#s1">1</a></sup></p>
+<p>A session has a stable name Terminal Delight owns, like <code>1</code>, <code>2</code> or <code>work</code>, and its file is <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code> (or under <code>$XDG_CONFIG_HOME</code>). The name is trimmed and cut to 64 characters, and any character other than a letter, a digit, <code>-</code> or <code>_</code> becomes <code>-</code>; a name with nothing else left becomes <code>default</code>, which is also used where nothing names one. Since 2026-09-10 the session host is on by default.<sup><a href="#s1">1</a></sup></p>
+<p>Older builds kept one <code>state.toml</code>. The first session window after an upgrade moves it to <code>sessions/&lt;name&gt;.toml</code> once, if that file does not exist yet; nothing reads or writes <code>state.toml</code> after that.</p>
 
 <h3>Which session a launch opens</h3>
 <ol>
   <li><code>$TD_SESSION</code>, if set, wins over everything, even if that session doesn't exist yet.</li>
   <li>A running host with no window attached.</li>
-  <li>The most recently saved session with no host, preferring one last saved on the same Hyprland workspace, then one with more than a single pane.</li>
+  <li>The most recently saved session with no host, preferring one last saved on the Hyprland workspace you are on, then one with more than a single pane.</li>
   <li>Otherwise, a new session.</li>
 </ol>
-<p>A host someone is already watching is left alone; a second launch gets a different session. Two windows can share one session only if you name it, and then the most recent to attach takes each pane.</p>
+<p>A host someone is already watching is left alone; a second launch gets a different session. Two windows can share one session only if you name it, and then the most recent to attach takes each pane. A host from an incompatible build is asked to save and stand down, which ends its terminals, and a new host starts from the saved file.</p>
+<p>Each save records <code>last_workspace</code>: the workspace the window itself is on, read from Hyprland's own list of windows, so two windows can no longer both claim the workspace that happened to have keyboard focus. When Hyprland gives no single answer, the key is left out rather than guessed.<sup><a href="#s1">1</a></sup></p>
 
 <h3>What the file records</h3>
 <table>
   <thead><tr><th>Level</th><th>Keys</th></tr></thead>
   <tbody>
-    <tr><td>Window</td><td>the active tab, window bounds, <code>scale</code>, <code>theme</code>, <code>lang</code>, the left bar's <code>projects</code>, <code>groups</code> and width, MCP policy, and <code>closed</code> for panes held in the bay</td></tr>
+    <tr><td>Window</td><td>the active tab, window bounds, <code>scale</code>, <code>theme</code>, <code>skin</code>, <code>lang</code>, <code>last_workspace</code>, the left bar's <code>projects</code>, <code>groups</code>, <code>left_bar</code> and <code>left_bar_w</code>, the MCP policy under <code>mcp</code> (<code>enabled</code>, <code>expose</code>, <code>events</code>, <code>writable</code>), and <code>closed</code> for panes held in the bay with the time each is held until</td></tr>
     <tr><td>Tab</td><td><code>name</code>, <code>color</code>, <code>text_color</code>, <code>group</code>, <code>project</code>, <code>level</code>, and the split tree</td></tr>
-    <tr><td>Pane</td><td><code>cwd</code>, <code>resume</code>, <code>name</code>, <code>logo</code>, <code>appearance</code>, the sticky <code>note</code>, the <code>document</code> it shows, and the host's <code>pane_id</code></td></tr>
+    <tr><td>Pane</td><td><code>cwd</code>, <code>resume</code>, <code>name</code>, <code>logo</code>, <code>appearance</code>, the sticky <code>note</code>, the <code>document</code> it shows (<code>path</code> and <code>scroll</code>), the host's <code>pane_id</code>, and <code>off_limits</code> when a person has marked it off-limits to agents</td></tr>
   </tbody>
 </table>
-<p>Older files still load, and a file from before the left bar opens as an unfiled list of tasks. Writes are atomic, and the directory and files are owner-only (<code>0700</code> and <code>0600</code>). Before each write the previous file is copied to <code>sessions/backups/&lt;name&gt;/</code>, keeping the last ten. To go back to one, copy it over the session file; a running host notices and carries on from it.</p>
+<p>Older files still load, and a file from before the left bar opens as an unfiled list of tasks. Writes go to <code>&lt;name&gt;.toml.tmp</code> and are renamed into place, and the directory and files are owner-only (<code>0700</code> and <code>0600</code>). Before each write the previous file is copied to <code>sessions/backups/&lt;name&gt;/</code>, keeping the last ten. To go back to one, copy it over the session file; a running host notices and carries on from it. What an agent handed over is not in this file: it is rebuilt from the agent's own conversation record.</p>
+
+<h3>When saving stops</h3>
+<p>Every 30 seconds, a window attached to a host checks that the file on disk files each pane's tab under the same project and group the window shows. The first time they differ it saves again without a word. If they still differ at the next check, it puts <code>Layout not saving: N tabs would reopen out of place</code> across the top of the window, repeats it at every check, and, if desktop notifications are on, sends one notification with the same title and the reason, such as <code>this window has lost its session host</code> or <code>saves are not reaching the session file</code>, followed by <code>Closing this window now would lose where those tabs are filed.</code> When the two agree again it says <code>Layout saving again</code>.<sup><a href="#s2">2</a></sup></p>
 
 <h3>How a resume command is chosen</h3>
 <p>For each agent pane Terminal Delight reads the foreground process's working directory and writes a resume command:</p>
@@ -57,7 +62,8 @@
     <tr><td>Codex</td><td><code>codex resume &lt;id&gt;</code></td><td><code>codex resume --last</code></td></tr>
   </tbody>
 </table>
-<p><code>--permission-mode</code>, <code>--model</code>, <code>--effort</code> and <code>--dangerously-skip-permissions</code> are carried over. The conversation id comes from what the process declares, then from a transcript started at the same moment, then from the newest conversation in that directory, which is skipped when two agents share a directory. For an exact answer across <code>/clear</code>, <code>/resume</code> and compaction, install the ledger hook with <code>scripts/install-recovery-hook.sh</code>. <code>terminal-delight probe &lt;pid&gt;</code> prints what would be resumed for any shell, as JSON.</p>
+<p>For Claude Code, <code>--permission-mode</code>, <code>--model</code>, <code>--effort</code> and <code>--dangerously-skip-permissions</code> are carried over; Codex lines carry no flags. The conversation id comes from what the process declares, then (for Claude Code) from a transcript started at the same moment, then from the newest conversation in that directory, which is skipped when two agents share a directory. For an exact answer across <code>/clear</code>, <code>/resume</code> and compaction, install the ledger hook with <code>scripts/install-recovery-hook.sh</code>. <code>terminal-delight probe &lt;pid&gt;</code> prints what would be resumed for any shell, as JSON, and <code>terminal-delight bindings</code> lists each agent's conversation with how many restarts deep it is, or <code>unrecorded</code> where the agent hooks are not installed.<sup><a href="#s3">3</a></sup></p>
+<p>The workbench and the focus reader find a pane's conversation the same way. When several agents share a folder and a pane cannot be matched to its own conversation for certain, it shows nothing rather than a neighbour's work.</p>
 
 <h3>What comes back</h3>
 <table>
@@ -71,12 +77,12 @@
     <tr><td>Sticky notes, documents, logos</td><td>yes</td><td>yes</td></tr>
   </tbody>
 </table>
-<p>A reattached window matches each saved pane to the live terminal by its id, and then by the resume command it is running. If a saved layout names one conversation twice, the first pane keeps it and the second opens a fresh shell with the note <code>DUPLICATE TAB</code>, so an agent is never started twice.</p>
+<p>A reattached window matches each saved pane to the live terminal by its id, and then by the resume command it is running. If a saved layout names one conversation twice (one conversation id, or <code>--continue</code> in the same directory), the first pane keeps it and the second comes back without it, wearing the note <code>DUPLICATE TAB</code>, so one conversation is never started twice. A bare <code>claude</code> names no conversation and never collides. A pane that reattaches to its live terminal has any such note taken off.</p>
 
 <h3>Guards</h3>
 <ul>
-  <li>Only the host writes the session file. A window whose host has gone stops saving, so it can't overwrite a good file with an empty one.</li>
-  <li>A save that loses more than half the panes (of four or more) or tabs (of three or more) is refused unless you closed them yourself.</li>
+  <li>Only the host writes the session file. A window whose host has gone stops saving, so it can't overwrite a good file with an empty one. A slow answer from the host does not count as gone; only a closed connection does.</li>
+  <li>A save that loses more than half the panes (of four or more) or tabs (of three or more) is refused unless you closed them yourself, and the file on disk is copied to <code>&lt;name&gt;.toml.last-good</code>.</li>
   <li>The host saves every 30 seconds while a window is attached and every five minutes while none is, and it exits after about twelve hours with no window and no output, saving first.</li>
   <li>A host holds 64 terminals at most. Only closing a pane ends its shell; a window disconnecting ends nothing.</li>
   <li>Another user's process can't talk to your host: the connection is refused on its user id before a byte is read.</li>
@@ -84,11 +90,12 @@
 
 <h3>Kinds of window</h3>
 <dl class="defs">
-  <dt>a session window</dt><dd>Owns a session and saves it. Its title is <code>terminal-delight — &lt;name&gt;</code>, or plain <code>terminal-delight</code> for <code>default</code>.</dd>
+  <dt>a session window</dt><dd>Owns a session and saves it. Its title is <code>terminal-delight — &lt;name&gt;</code>, or plain <code>terminal-delight</code> for <code>default</code>. <code>terminal-delight &lt;dir&gt;</code> is one too, with its first terminal in that directory.</dd>
   <dt>a scratch window</dt><dd><code>TD_SCRATCH=1</code>, or a pane torn off into its own window. One fresh terminal, never restores, never saves; it borrows the latest session's theme. Title <code>terminal-delight — scratch</code>.</dd>
+  <dt>a window opened by another program</dt><dd>A launch through <code>xdg-terminal-exec</code>, as when Terminal Delight is the desktop's default terminal, is a quick window: it never claims or saves a session and never starts a host, so it cannot disturb the window you are working in. See <a href="/omarchy">Omarchy</a>.</dd>
   <dt>a window without a host</dt><dd><code>TD_NO_SESSIOND=1</code>. The window owns its terminals, as in older builds, and holds the session with a file lock.</dd>
 </dl>
-<p>Inside a hosted pane the host sets <code>TD_SESSION</code>, <code>TD_PANE_ID</code> and <code>TD_TAG</code>, which agents use to find their own pane. See <a href="/environment">Environment flags</a>.</p>
+<p>Inside a hosted pane the host sets <code>TD_SESSION</code>, <code>TD_PANE_ID</code> and <code>TD_TAG</code>, which agents use to find their own pane. See <a href="/environment#technical-set-inside-every-pane">Environment flags</a>.</p>
 
 <h3>Files</h3>
 <table>
@@ -96,10 +103,22 @@
   <tbody>
     <tr><td><code>sessions/&lt;name&gt;.toml</code></td><td>The session.</td></tr>
     <tr><td><code>sessions/backups/&lt;name&gt;/</code></td><td>The last ten versions.</td></tr>
+    <tr><td><code>sessions/&lt;name&gt;.toml.last-good</code></td><td>The file as it was when a shrinking save was refused.</td></tr>
     <tr><td><code>sessions/&lt;name&gt;.host.lock</code></td><td>Which host serves it.</td></tr>
-    <tr><td><code>$XDG_RUNTIME_DIR/terminal-delight/session-&lt;name&gt;.sock</code></td><td>The host's socket, with <code>.log</code>, <code>.tag</code> and <code>.window</code> beside it.</td></tr>
+    <tr><td><code>sessions/&lt;name&gt;.hostspawn.lock</code></td><td>Held while a host is being started, so two windows never start two.</td></tr>
+    <tr><td><code>sessions/&lt;name&gt;.lock</code></td><td>The window's hold on the session when it runs without a host.</td></tr>
+    <tr><td><code>$XDG_RUNTIME_DIR/terminal-delight/session-&lt;name&gt;.sock</code></td><td>The host's socket, with <code>.tag</code> and <code>.window</code> beside it.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/logs/host-&lt;name&gt;.log</code></td><td>The host's log, moved aside to <code>.log.1</code> past 4 MiB.</td></tr>
   </tbody>
 </table>
+<p>The <code>sessions/</code> paths are under <code>~/.config/terminal-delight/</code>; the log follows <code>$XDG_STATE_HOME</code> when it is set.<sup><a href="#s4">4</a></sup></p>
+
+<h3>In 0.5.0</h3>
+<div class="in-dev">
+<p>Ending a terminal has a bounded wait. Closing a pane sends hangup to its programs and closes the terminal, waits 250 ms, then kills what is left and waits up to another 250 ms to see it go; each look at the remaining processes has a 100 ms budget. A program stuck in the kernel is handed to a background reaper and reported as pending, so the close never hangs on it. Jobs the shell started in their own process groups are reached too, and a session that was deliberately detached is left alone.<sup><a href="#s5">5</a></sup></p>
+<p>Watching a terminal no longer keeps it alive: reading its size or its foreground program holds only a weak reference, so closing a terminal ends it. The host's reply to a close can carry an optional <code>cleanup</code> record with <code>hangup_sent</code>, <code>kill_sent</code>, <code>exit_observed</code>, <code>observed_jobs_remaining</code> and <code>error</code>; what was not observed is left out rather than reported as zero, and older windows and hosts still understand the reply. The cleanup runs inside the host, so a host started by an older build keeps the old behaviour until it is restarted; replacing the window alone keeps the old host and its terminals.</p>
+<p>The layout file gains, on a pane, <code>seat</code> (its place in the <a href="/threshing-floor">Threshing Floor</a>) and <code>agents = "read-only"</code>; at the window level, <code>[[lines]]</code> (each with <code>from</code>, <code>to</code>, <code>rung</code> and an optional <code>prompts_left</code>), <code>[[org_lines]]</code> and <code>ask_press_tokens</code> for the Threshing Floor, <code>[ui]</code> for <a href="/ui-config">UI CONFIG</a>, and <code>looks</code>. A 0.4.0 window reading such a file opens a read-only pane as open and ignores seats and lines. Resting and sleeping agents are kept in a separate file, <code>~/.local/state/terminal-delight/rest-&lt;session&gt;.toml</code>; see <a href="/rest">Resting agents</a>.</p>
+</div>
 
 <h3>Not yet</h3>
 <ul>
@@ -108,10 +127,14 @@
 </ul>
 
 <h3>What would prove this wrong</h3>
-<p>Kill the window, not the host, and relaunch. If a single shell, agent or scrollback is missing, the split has failed. The project's survival test does exactly this twenty times in a row, and on 2026-09-11 it lost nothing.<sup><a href="#s2">2</a></sup></p>
+<p>Kill the window, not the host, and relaunch. If a single shell, agent or scrollback is missing, the split has failed. The project's survival test does exactly this twenty times in a row, and on 2026-09-11 it lost nothing.<sup><a href="#s6">6</a></sup> And if a window keeps working while its tabs vanish from the saved file without <code>Layout not saving</code> ever appearing, the save check has failed.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">Session files, adoption and locks: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; the host: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a> and the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/protocol/session-host-v1.md">session host protocol</a>; resume commands: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>.</li>
-  <li id="s2">The measurements, including 0 losses over 20 window kills: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/plans/client-server/00-status.md">the client-server plan's status</a>, and the harness <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-survival-test.sh">td-survival-test.sh</a>.</li>
+  <li id="s1">Session files, names, the <code>state.toml</code> move, which session a launch opens and <code>last_workspace</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; the host: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a> and the <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/protocol/session-host-v1.md">session host protocol</a>; the saved keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>StateFile</code>).</li>
+  <li id="s2">The save check (<code>SAVE_WATCH_SECS</code>) and its messages: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; a slow answer is not a lost host: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hostctl.rs">hostctl.rs</a>.</li>
+  <li id="s3">Resume commands and carried flags: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; which conversation a pane reads: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/paneident.rs">paneident.rs</a>; duplicate conversations: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s4">Locks: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; the socket: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hostproto.rs">hostproto.rs</a>; the log: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>.</li>
+  <li id="s5">0.5.0: the bounded close in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/vt/pty.rs">vt/pty.rs</a>, the <code>cleanup</code> record in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/vt/pump.rs">vt/pump.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/hostproto.rs">hostproto.rs</a>, the new layout keys in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor.rs">threshing_floor.rs</a>, and the rest file in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentrest_io.rs">agentrest_io.rs</a>.</li>
+  <li id="s6">The measurements, including 0 losses over 20 window kills: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/plans/client-server/00-status.md">the client-server plan's status</a>, and the harness <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-survival-test.sh">td-survival-test.sh</a>.</li>
 </ol>

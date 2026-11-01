@@ -1,0 +1,84 @@
+<script type="application/json" data-page>
+{
+  "title": "Reporting a bug",
+  "description": "The 🐞 in the bottom bar writes a bug report on your machine and opens it for you to read. Only a second click hands that one file to Claude Code or Codex to draft an issue, or opens GitHub's new-issue page. What a report holds, what it never holds, and where it goes.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "A report you read before anything is sent"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Click <code>🐞</code> at the right end of the bottom bar. A panel opens with three steps, and each one is its own click.</p>
+<p>Step 1 writes a report on your machine and opens it, so you read every word before anything else happens. Nothing is sent. Step 2 starts Claude Code or Codex in a new tab with that one file; it drafts a GitHub issue, shows you the exact text, and files it only when you say yes. Step 3 opens GitHub's new-issue page in your browser instead, for you to write yourself.</p>
+<p>A report holds Terminal Delight's own build, your system's versions, how many tabs and panes are open, any crash records, and its own error lines with paths, links and quoted values blanked out. It never holds scrollback, anything you typed, pane titles, working directories, commands or a screenshot.</p>
+<p>An orange dot on the <code>🐞</code> means Terminal Delight recorded a crash since your last report.</p>
+<p class="invite">Technical has the panel word for word, the report's sections, the blanking rules and where every file goes.</p>
+</section>
+
+<section data-register="technical" data-headline="The report">
+<h3>Where the 🐞 is</h3>
+<p>In the bottom bar, among the glyphs at its right end: <code>🎨</code>, the display tray, <code>🪦</code>, <code>🔔</code>, <code>🐞</code>, <code>🧩</code>. In a window narrower than 720 pixels those glyphs fold into one <code>…</code> button, and its menu has <code>Report a bug</code>. <kbd>Esc</kbd> or a click on the dimmed background closes the panel.<sup><a href="#s1">1</a></sup></p>
+<p>The orange dot appears when Terminal Delight wrote a crash record after your last prepared report, or when the window itself crashed on a background thread since it started. The second kind stays lit until the window restarts.</p>
+<div class="in-dev">
+<p>On 0.5.0 the <code>🐞</code> is hidden in the Clean and Standard UI sets, and a first launch opens in Clean. With it hidden, a <code>CONFIG ▾</code> button takes its place at the end of the bar, <code>Report a bug</code> is in its menu, and the crash dot moves onto <code>CONFIG</code> and onto that menu entry. To bring the glyph back, switch it on in <a href="/ui-config">UI CONFIG</a> or choose the <code>all</code> set. Under a skin that draws controls as words, it reads <code>report</code>.<sup><a href="#s4">4</a></sup></p>
+</div>
+
+<h3>The panel</h3>
+<p>Headed <code>🔒 REPORT A BUG</code>, then: <q>TD never puts your terminal's input or output in a report. Each step is its own click, and nothing leaves this machine until you choose step 2 or 3.</q> When a crash is waiting it adds, in orange: <q>TD recorded a crash since your last report. It will be included.</q></p>
+<table>
+  <thead><tr><th>Row</th><th>What it says</th><th>What the click does</th></tr></thead>
+  <tbody>
+    <tr><td><code>📝 1 · Prepare the report</code></td><td>Writes TD's builds, counts of tabs and panes, crash records and scrubbed error lines to a file here, then opens it so you can read every word. Nothing is sent.</td><td>Writes <code>report.md</code>, closes the panel and opens the file in a floating document on the focused pane. If no pane can show it, your desktop's opener opens it instead. Reopening the panel shows <code>Written on this machine:</code> and the path.</td></tr>
+    <tr><td><code>🤖 2 · Draft the issue with claude</code> (or <code>codex</code>)</td><td>Starts {agent} in a new tab with that one file. Its provider will see what is in it. It shows you the exact issue and files it only when you say yes.</td><td>Opens a new tab at the end of the window, in the report's own folder, and types the line below into it. Before step 1 the row says <code>Prepare the report first.</code></td></tr>
+    <tr><td><code>🌐 3 · File it yourself on GitHub</code></td><td>Opens GitHub's new-issue page in your browser. You paste what you choose.</td><td>Opens <code>https://github.com/parker-brown-family/terminal-delight/issues/new</code>, with nothing filled in. It doesn't need step 1.</td></tr>
+  </tbody>
+</table>
+<p>Step 2 picks the agent named in Omarchy's <code>~/.config/omarchy/defaults/agent</code> when that is <code>claude</code> or <code>codex</code>, and otherwise the first of the two found on your <code>PATH</code>. With neither, the row is dimmed and says <code>No agent TD can start was found. Install claude or codex, or use step 3.</code> The line it types is:<sup><a href="#s1">1</a></sup></p>
+<pre class="cmd"><code>claude 'Read report.md in this directory and follow its section "For an AI agent reading this file".'</code></pre>
+<p>That section of the report tells the agent that the file is everything it gets: it may not read your terminals, scrollback, transcripts or files, or ask you to paste terminal output. It asks what happened if you haven't written it, searches for an existing issue with <code>gh issue list</code>, shows you the exact title and body, and runs <code>gh issue create</code> only after you agree to that text. If <code>gh</code> is missing or not signed in, it gives you the text and the new-issue link, and installs or signs in to nothing.</p>
+
+<h3>Where the files go</h3>
+<table>
+  <thead><tr><th>Path</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>~/.local/state/terminal-delight/bug-reports/&lt;unix-seconds&gt;/report.md</code></td><td>One report per click of step 1. Nothing deletes them.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/bug-reports/.last-prepared</code></td><td>When the last report was written, which is what the orange dot is measured from.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/crashes/&lt;nanoseconds&gt;-&lt;pid&gt;.txt</code></td><td>One record per crash, written on its own, kept on this machine. Nothing deletes them.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/logs/window.log</code>, <code>host-&lt;session&gt;.log</code></td><td>The window's and each session host's error output. When a log is over 4 MiB as a process starts, it is moved to <code>.log.1</code>, and one old copy is kept.</td></tr>
+  </tbody>
+</table>
+<p><code>$XDG_STATE_HOME</code> replaces <code>~/.local/state</code> when it is set to an absolute path. A window started from a terminal keeps writing its errors to that terminal, and any <code>TD_…DEBUG</code> switch keeps them out of the log, so key traces never land in a file (see <a href="/environment#technical-debugging">Environment flags</a>).<sup><a href="#s2">2</a></sup></p>
+
+<h3>What a report holds</h3>
+<ol>
+  <li><code># Terminal Delight bug report</code>, the time it was prepared, and <q>Nothing in this file has been sent anywhere.</q></li>
+  <li><code>## What happened</code>: a placeholder for your own words, the one part that needs you.</li>
+  <li><code>## What this file holds, and what it never holds</code>: the promise below, in the file itself.</li>
+  <li><code>## System</code>: the window's build (the installed binary's name, which carries its commit, and the version), the builds of any session hosts running, the OS name, the kernel version, <code>$XDG_CURRENT_DESKTOP</code> and <code>$XDG_SESSION_TYPE</code>. A value it can't read says <code>unknown</code>.</li>
+  <li><code>## This window</code>: how many tabs and panes, with panes counted by kind (shell, claude, codex, remote, other). Another program is counted as <code>other</code>, never by its name.</li>
+  <li><code>## Crashes TD recorded (newest first)</code>: up to five crash records, whole.</li>
+  <li><code>## TD's own error lines (the last 80 per log, repeats folded)</code>: from up to six logs. Only lines Terminal Delight wrote about itself count: they start <code>terminal-delight</code> or <code>td:</code>. A line about launching an agent is left out, because it names a project's path.</li>
+  <li><code>## For an AI agent reading this file</code>: the rules quoted above.</li>
+</ol>
+<p>It never holds your terminal's input or output, scrollback, screen rows, pane titles, working directories, command lines or a screenshot. Nothing is collected about your GPU, theme or settings. You can delete any line before it goes anywhere.<sup><a href="#s2">2</a></sup></p>
+
+<h3>How values are blanked</h3>
+<p>Each error line, and each crash's message, has these replaced by <code>‹…›</code>:<sup><a href="#s3">3</a></sup></p>
+<ul>
+  <li>a quoted value: anything between backticks or double quotes, and between single quotes when the quote starts a word, so <code>can't</code> survives;</li>
+  <li>a link: letters followed by <code>://</code>, up to the next space or closing bracket;</li>
+  <li>a path: a word starting <code>/</code> or <code>~/</code>, up to the next clause break, so it can take a few words past the path.</li>
+</ul>
+<p>Relative paths such as <code>notes/x.md</code>, host names and email addresses are left as they are unless they were quoted. A crash record goes in whole: below its scrubbed message are the place in Terminal Delight's source where it failed and up to 120 lines of backtrace, which name source files as they were on the machine that built the binary.</p>
+
+<h3>What would prove this wrong</h3>
+<p>Any text from a terminal in a prepared report: a line you typed, something a program printed, a pane's title or a directory you worked in. The test that writes a whole report plants a password, a project name, a program name and a home path, and fails if any of them appears.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The glyph, the panel and its rows: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>render_bug_overlay</code>, <code>bug_prepare</code>, <code>bug_to_agent</code>, <code>doc_here</code>); the strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a> (<code>bug_*</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a> (<code>report_bug</code>).</li>
+  <li id="s2">The report, the logs and the crash records: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a> (<code>write_report</code>, <code>report_text</code>, <code>route_stderr</code>, <code>install_crash_record</code>, <code>chosen_agent</code>, <code>agent_run_line</code>).</li>
+  <li id="s3">Blanking and its tests: <code>scrub</code>, <code>scrub_takes_out_paths_links_and_quoted_values</code> and <code>a_whole_report_holds_no_terminal_content_and_says_the_rules</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>.</li>
+  <li id="s4">0.5.0: the UI sets <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/standard.toml">standard.toml</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">clean.toml</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/all.toml">all.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>; the CONFIG menu entry in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>. <code>diag.rs</code> is the same file on both branches.</li>
+</ol>

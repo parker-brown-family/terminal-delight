@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "Left bar and tasks",
-  "description": "The left bar lists every tab in the session as a task, filed under projects and groups two layers deep. Folded branches still show which agent needs you. Ctrl+Shift+B shows and hides it.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "The left bar lists every tab in the session as a task, filed under projects and groups two layers deep. Folded branches still show which agent needs you. Alt+L finds anything by name, Ctrl+Shift+Alt and the arrows carry a tab through the tree, and Ctrl+Shift+B shows and hides it.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Every tab as a task, filed by project"
 }
 </script>
@@ -11,13 +11,14 @@
 <section data-register="brief">
 <p class="lede">The left bar is a tree down the left edge of the window with every tab in the session in it. A tab is a <b>task</b>. Tasks are filed under a <b>project</b>, optionally inside a <b>group</b>, and no deeper than that.</p>
 <p>Each task row shows what its agents are doing: a robot that breathes while an agent works and blinks when it needs you, ✅ when it finished, ❌ when it finished against an error, 📌 for a pinned note. Fold a branch and those marks roll up onto the branch row, so a folded project still blinks when something inside it asks a question.</p>
-<p>Click a row to go there. Drag a task onto a project or group to file it. Right-click anything for its menu, including <b>▲ Promote</b> and <b>▼ Demote</b> for what matters today. Delete a branch or close a tab and it goes to the bay at the foot of the bar, where it stays recoverable for an hour or more. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings back the last thing you closed.</p>
-<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> shows and hides the bar, and <kbd>Ctrl</kbd>+<kbd>Alt</kbd> with the arrow keys walks it.</p>
-<p class="invite">Technical has every mark, menu, key and saved setting.</p>
+<p>Click a task to go there; a project or group row takes you to its first tab. Drag a task onto a branch to file it, or carry the active tab with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd> and the arrows. <kbd>Alt</kbd>+<kbd>L</kbd> finds a project, group, tab, pane or sticky note by name. A deleted branch or closed tab waits in the bay at the foot of the bar for an hour or more, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> shows and hides the bar.</p>
+<p class="in-dev">A new 0.5.0 window opens in the Clean design, which lists tabs across the top and keeps the bar shut until you open it.</p>
+<p class="invite">Technical has every mark, key, menu and saved setting.</p>
 </section>
 
 <section data-register="technical" data-headline="The tree">
-<p>The tree has three kinds of row, two layers deep: a project contains groups, a group contains tasks, and a task may also sit directly in a project. A group is the same thing as a tab group on the tab strip; the tree gives it a project. Tasks filed nowhere sit below an <code>UNFILED</code> divider, which only appears once something above it is filed.<sup><a href="#s1">1</a></sup></p>
+<p>The tree has three kinds of row, two layers deep: a project contains groups, a group contains tasks, and a task may also sit directly in a project. A group is the same thing as a tab group on the tab strip; the tree gives it a project. Tasks filed nowhere sit below the <code>UNFILED</code> line, which stays a drop target even when every tab is filed.<sup><a href="#s1">1</a></sup></p>
 
 <h3>What each row shows</h3>
 <table>
@@ -53,15 +54,43 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd></td><td>On a folded branch, open it; on an open branch, step to its first child; on a task, go to it.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd></td><td>Fold an open branch, or climb to the parent.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>9</kbd></td><td>Highlight the Nth top-level branch.</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></td><td>Rename the highlighted row, or the active tab when nothing is highlighted.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>R</kbd></td><td>Rename the highlighted row, or the active tab when nothing is highlighted or the bar is shut.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>L</kbd></td><td>Open <code>LOOKUP</code>, below.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd></td><td>Bring back the last thing you closed.</td></tr>
   </tbody>
 </table>
-<p>The arrow and number chords only work while the bar is open, and they travel over what is drawn, so folding a branch lets the same key press go further. Clicking a project or group goes to its first tab; clicking the branch you are already in does nothing. Double-click any row to rename it. Clicking a fold triangle folds without going anywhere, and the triangle in the bar's header folds or opens the whole tree.</p>
+<p>The arrow and number chords only work while the bar is open, and they travel over what is drawn, so folding a branch lets the same key press go further. A click on a task goes to it. A click on a project or group goes to the first tab anywhere in that branch; a click on the branch you are already in changes nothing. Double-click any row to rename it: a project or group takes 24 characters, a tab 18. Clicking a fold triangle folds without going anywhere, and the triangle in the bar's header folds or opens the whole tree.<sup><a href="#s3">3</a></sup></p>
+
+<h3>Finding by name</h3>
+<p><kbd>Alt</kbd>+<kbd>L</kbd> opens <code>LOOKUP</code>, a list of every name in the window: each project, group and tab as the bar shows it, each pane by its header title, and each sticky note by its words. Under every name is where it sits, such as <code>WORK › api · 2 panes</code>, so twenty panes with the same title can be told apart. With nothing typed it is the tree laid flat with every fold open.<sup><a href="#s4">4</a></sup></p>
+<ul>
+  <li>Type to narrow it. The letters you type have to appear in order, though not side by side, and a project outranks a tab that matches as well, so typing a project's name lands on the project.</li>
+  <li><kbd>↑</kbd> <kbd>↓</kbd> or <kbd>Tab</kbd> select, <kbd>Enter</kbd> goes there, and <kbd>Esc</kbd> or a second <kbd>Alt</kbd>+<kbd>L</kbd> closes it. The footer reads <code>↑↓ select · ↵ go · esc close</code>.</li>
+  <li>A pane or note goes to its tab with that pane focused. A branch goes to its first tab; if you are already in it, the bar unfolds it and highlights it instead.</li>
+  <li>Nothing matching reads <code>Nothing here is called “…”</code>.</li>
+</ul>
 
 <h3>Filing</h3>
-<p>Drag a task onto a branch row to file it inside. The top or bottom quarter of a branch row, or either half of a task row, puts it above or below instead, and a chip reading <code>into &lt;name&gt;</code>, <code>above &lt;name&gt;</code> or <code>below &lt;name&gt;</code> says which. Dropping onto a task takes that task's branch and place. Dropping onto a project takes the task out of any group. Drag onto the <code>UNFILED</code> line to file it under nothing. A group dragged onto a project moves into it; a group can't go inside another group.</p>
-<p>From the keyboard-free side: <kbd>Ctrl</kbd>+click a task for its tray, which has a <code>project</code> section with a chip per project and <code>＋ new project</code>. <code>Adopt loose tabs into their directories</code>, on the header's menu, files every unfiled task under a project named after its git root (a worktree counts as its own root), or its working directory outside a repository. It never moves a task that is already filed.</p>
+<p>Drag a task onto a branch row to file it inside. The top or bottom quarter of a branch row, or either half of a task row, puts it above or below instead, and a chip reading <code>into &lt;name&gt;</code>, <code>above &lt;name&gt;</code> or <code>below &lt;name&gt;</code> says which. Dropping onto a task takes that task's branch and place. Dropping onto a project takes the task out of any group. Drag onto the <code>UNFILED</code> line to file it under nothing. Drag a project above or below another project to reorder them.</p>
+<p>A group with no project can be dragged into one. A group already filed under a project stays there: a drop on a different project is refused and nothing moves. To move it, drag it to the <code>UNFILED</code> line first, then file it where it belongs. A group can't go inside another group.<sup><a href="#s3">3</a></sup></p>
+<p>You can also drag a running pane by its header onto the tree. Dropped on a task, it joins that tab as another pane; a tab already holding four panes refuses it, its row shows red while you hover, and the layout is left as it was. Dropped on a project, a group or the <code>UNFILED</code> line, it becomes a tab of its own there.</p>
+<p><kbd>Ctrl</kbd>+click a task for its tray, which has a <code>project</code> section with a chip per project and <code>＋ new project</code>. <code>Adopt loose tabs into their directories</code>, on the header's menu, files every unfiled task under a project named after its git root (a worktree counts as its own root), or its working directory outside a repository. It never moves a task that is already filed.</p>
+
+<h3>Carrying a tab from the keyboard</h3>
+<p>Add <kbd>Shift</kbd> to the walking chords and the tab travels with the highlight. The carried tab is the highlighted task if the highlight is on one, otherwise the active tab. Like the walk, it only works while the bar is open.<sup><a href="#s3">3</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>↑</kbd> <kbd>↓</kbd></td><td>Move the tab one place up or down. At the edge of its group it steps out into the next group, and at the edge of its project into the next project, in the same press.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>←</kbd></td><td>Widen the step, from a place to a group to a project. Moves nothing by itself; the next <kbd>↑</kbd> or <kbd>↓</kbd> takes the tab to the previous or next group in its project, or the previous or next project.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>→</kbd></td><td>Narrow the step again.</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Stop carrying.</td></tr>
+  </tbody>
+</table>
+<p>The highlight ring follows the tab, or the group or project it would move between at a wider step. Only the tab travels; a group never leaves its project this way.</p>
+
+<h3>Making branches</h3>
+<p>The <code>+</code> in the bar's header, and <code>New project</code> on the header's menu, make a project holding a fresh terminal. <code>New group</code> does the same for a group. <code>New tab here</code> on a branch's menu makes a tab in that branch, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd> one in the branch you are in. Each opens on its name box: type a name and press <kbd>Enter</kbd>, or press <kbd>Esc</kbd> to keep the name it was given, such as <code>project 7</code>, and go to the terminal.</p>
 
 <h3>Menus</h3>
 <table>
@@ -73,15 +102,15 @@
     <tr><td>A task</td><td><code>▲ Promote</code>, <code>▼ Demote</code>, <code>New tab beside this</code>, <code>Rename</code>, <code>Remove from group</code>, <code>Close</code> or <code>Close — N panes</code></td></tr>
   </tbody>
 </table>
-<p>The level already in force carries a <code>✓</code>; choosing it again clears it. A delete row counts what it takes with it, as in <code>Delete — 3 groups, 11 tabs, 14 panes</code>, and is disabled when the branch holds every tab in the window, because deleting the last tab would quit. The <code>+</code> in the header makes a project holding a fresh terminal, with its name box open.</p>
+<p>The level already in force carries a <code>✓</code>; choosing it again clears it. A delete row counts what it takes with it, as in <code>Delete — 3 groups, 11 tabs, 14 panes</code>, and is disabled when the branch holds every tab in the window, because deleting the last tab would quit.</p>
 
 <h3>The bay</h3>
-<p>The bay sits at the foot of the tree: two doors that open a little when you start dragging and all the way when you drag over them, reading <code>drop here to delete</code> and then <code>release to delete</code>. Deleting a project or group, closing a tab when more than one is open, and dropping a task or pane into the bay all put it there. Its shells keep running.<sup><a href="#s3">3</a></sup></p>
+<p>The bay sits at the foot of the tree: two doors in a frame that open a little when you start dragging and all the way when you drag over them, reading <code>drop here to delete</code> and then <code>release to delete</code>. Deleting a project or group, closing a tab when more than one is open, and dropping a task or pane into the bay all put it there. Its shells keep running.<sup><a href="#s5">5</a></sup></p>
 <ul>
   <li>Anything with one pane stays recoverable for an hour; two or more panes, four hours. The bay holds ten things; the eleventh pushes out the oldest, whose shells then end.</li>
   <li>Deleting a branch that holds anything asks first: <code>DELETE PROJECT?</code> or <code>DELETE GROUP?</code>, <kbd>Enter</kbd> to delete, <kbd>Esc</kbd> to cancel. An empty branch goes without asking.</li>
-  <li>With something inside, the shut doors read <code>N recoverable</code>. Click them, or right-click the header, and pick a <code>Recover …</code> row, which shows the time left as <code>under a minute</code>, <code>42m left</code> or <code>3h 5m left</code>.</li>
-  <li>A recovered branch comes back with its groups and its tabs in their old places. A recovered pane comes back to its old place if it can, and the bay says which: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>.</li>
+  <li>With something inside, the shut doors read <code>N recoverable</code>. Click them, or right-click the header, and pick a row such as <code>Recover project “api” — 42m left</code>; the time reads <code>under a minute</code>, <code>42m left</code> or <code>3h 5m left</code>.</li>
+  <li>A recovered branch comes back with its groups and its tabs in their old places. A recovered pane comes back to its old place if it can, and says which: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>.</li>
   <li>The bay's contents do not survive the window closing.</li>
 </ul>
 
@@ -89,7 +118,7 @@
 <p>Below the bay, the bar shows one row per AI subscription with how much of its allowance is left. <a href="/usage">Usage and vitals</a> has what those rows read and how to change them.</p>
 
 <h3>What is saved</h3>
-<p>The tree lives in the session's layout file, <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>, so a second window on the same session shows the same tree.</p>
+<p>The tree lives in the session's layout file, <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>, so a second window on the same session shows the same tree. See <a href="/sessions">Sessions and restarts</a>.</p>
 <table>
   <thead><tr><th>Key</th><th>Holds</th></tr></thead>
   <tbody>
@@ -100,13 +129,22 @@
     <tr><td><code>left_bar_w</code></td><td>Width, 132 to 420 px; the default is 208. Written only once you drag the edge.</td></tr>
   </tbody>
 </table>
-<p><code>level</code> is <code>Promoted</code>, <code>Neutral</code> or <code>Demoted</code>. A missing level means "inherit from the branch", which is a different answer from <code>Neutral</code>. Scratch windows and demo windows never show the bar. <code>terminal-delight ctl tab</code> and <code>ctl tabs</code> can name and group your own tab from a script (see <a href="/ctl">ctl</a>); there is no scripting for projects yet.</p>
+<p><code>level</code> is <code>Promoted</code>, <code>Neutral</code> or <code>Demoted</code>. A missing level means "inherit from the branch", which is a different answer from <code>Neutral</code>. Files from older builds that mention a branch pin or a strip scope still load. Scratch windows and demo windows never show the bar. <code>terminal-delight ctl tab</code> and <code>ctl tabs</code> can name and group your own tab from a script (see <a href="/ctl">ctl</a>); there is no scripting for projects yet.</p>
+
+<h3>In 0.5.0</h3>
+<div class="in-dev">
+<ul>
+  <li>A new window wears the Clean design, whose UI set asks for tabs across the top instead of the bar. The handle that opens the bar is always there. Opening the bar yourself, with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>, the handle or a new project's name box, is saved as your own choice and keeps it open; <a href="/ui-config">UI CONFIG</a> has the switch.<sup><a href="#s6">6</a></sup></li>
+  <li>In tabs view, the project chip at the head of the tab strip opens a switcher listing every top-level project and group in the tree's order, with the one you are in lit. Choosing one goes where a click on its row in the bar would. This applies to every skin. In 0.4.0 the chip goes to the project's first loose tab.</li>
+  <li>Under the TERMINIMALIST skin, or any <a href="/skins">skin</a> with <code>controls = "text"</code> and <code>boundary = "none"</code>, <code>ADD PROJECT</code> stays at the top left whether the bar is open or shut, with a hairline between it and the handle. The handle reads <code>SPINE</code> to open the bar and <code>TABS</code> to close it, branches fold with <code>+</code> and <code>−</code>, the status and pin marks are compact words and symbols, levels are green up and blue down arrows, and the selected task is shown by a thicker bar beside its title. The bar's header and the bay are not drawn there; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> still brings back what you closed.</li>
+</ul>
+</div>
 
 <h3>Not yet</h3>
 <ul>
   <li>Clicking a project does not open an overview of it; it goes to its first tab.</li>
   <li>There is no keyboard path to delete a branch. Use the menu or drag it to the bay.</li>
-  <li>The help screen has no row for <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> yet.</li>
+  <li>The F1 help has no row for <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> or for carrying a tab yet.</li>
 </ul>
 
 <h3>What would prove this wrong</h3>
@@ -116,5 +154,8 @@
 <ol data-sources>
   <li id="s1">The tree's model and row order: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/tree.rs">tree.rs</a>, and the <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/plans/left-bar">left bar plan</a>.</li>
   <li id="s2">Agent badges and their precedence: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (the tab badge and tree row drawing); levels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/attention.rs">attention.rs</a>.</li>
-  <li id="s3">The bay and its retention: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hold.rs">hold.rs</a>, and the plan's <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/plans/left-bar/02-manners.md">manners</a>.</li>
+  <li id="s3">Clicks (<code>go_to_branch</code>), renames, the walk and the carry (<code>bar_carry_move</code>), filing and the group lock (<code>file_initiative</code>, <code>apply_bar_drop</code>), and the four-pane cap on a pane dropped onto the tree (<code>MAX_PANES</code>): <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s4">LOOKUP's rows and ranking: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lookup.rs">lookup.rs</a>; its strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
+  <li id="s5">The bay and its retention: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hold.rs">hold.rs</a>, and the plan's <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/plans/left-bar/02-manners.md">manners</a>.</li>
+  <li id="s6">0.5.0: the left-bar switch (<code>set_left_bar</code>), the project switcher, <code>ADD PROJECT</code> and the unboxed spine in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; the Clean UI set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a>.</li>
 </ol>

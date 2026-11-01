@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "Pictures",
-  "description": "Programs that draw pictures with the Kitty graphics protocol, such as kitten icat or chafa, show them in a Terminal Delight pane. A picture stays while its pane is on screen and is forgotten when its tab is hidden.",
-  "updated": "2026-09-25",
-  "trueOf": "main at 1e2eb6c",
+  "description": "Programs that draw pictures with the Kitty graphics protocol, such as kitten icat or chafa, show them in a Terminal Delight pane. A picture stays while its pane is on screen and is forgotten when its tab is hidden. Terminal Delight answers a program's questions about the terminal as itself.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa",
   "summary": "Pictures programs draw, and when they go"
 }
 </script>
@@ -11,30 +11,30 @@
 <section data-register="brief">
 <p class="lede">Programs that draw pictures in a terminal show them in a Terminal Delight pane. Run <code>kitten icat photo.png</code>, <code>chafa</code>, or an agent that renders a chart with the Kitty graphics protocol, and the picture lands in the cells the program asked for, scrolls with the text around it, and bends with the glass like everything else in the tube.</p>
 <p>Pictures stay while you are looking at their pane. When you switch to another tab, the pane forgets them, and coming back shows the text alone. They are not saved with the session and do not come back when a window reattaches.</p>
-<p>Nothing to switch on. Sixel and iTerm2 pictures are not drawn yet.</p>
-<p class="invite">The Technical version lists what is supported, what a program is told when it asks, and how a picture reaches a window attached to a session host.</p>
+<p>There is nothing to switch on. Sixel and iTerm2 pictures are not drawn yet. To open a picture file in a square beside the prompt instead, Alt+click its path; that is <a href="/documents">Documents</a>.</p>
+<p class="invite">Technical lists what is drawn, what a program is told when it asks, and how a picture reaches a window attached to a session host.</p>
 </section>
 
 <section data-register="technical" data-headline="Pictures">
 
 <h2 id="technical-what-draws">What draws</h2>
-<p>The terminal core, <a href="https://crates.io/crates/rio-vt">rio-vt</a>, receives and stores Kitty graphics; the pane draws what the core holds over the grid.<sup><a href="#s1">1</a></sup></p>
+<p>The terminal core, <a href="https://crates.io/crates/rio-vt">rio-vt</a>, receives and keeps Kitty graphics; the pane draws what the core holds, over and under the grid.<sup><a href="#s1">1</a></sup></p>
 <table>
   <thead><tr><th>Part of the protocol</th><th>In a pane</th></tr></thead>
   <tbody>
     <tr><td>Formats: PNG (<code>f=100</code>), RGB (<code>f=24</code>), RGBA (<code>f=32</code>)</td><td>Drawn</td></tr>
     <tr><td>Sending: inline data (<code>t=d</code>), a file (<code>t=f</code>), a temporary file (<code>t=t</code>), shared memory (<code>t=s</code>)</td><td>All four</td></tr>
     <tr><td>A file, temporary file or shared memory that also says more chunks follow (<code>m=1</code>), as mpv's shared-memory mode sends every frame</td><td>Not drawn yet: the picture waits for a chunk that never comes (<a href="https://github.com/parker-brown-family/terminal-delight/issues/833">issue 833</a>)</td></tr>
-    <tr><td>One picture command, as a single escape sequence</td><td>Up to 4 MiB. The protocol's chunks are 4 KB each, so only a sender that skips chunking meets the limit</td></tr>
     <tr><td>Placement in cells (<code>c=</code>, <code>r=</code>), cropping (<code>x= y= w= h=</code>), offsets within a cell (<code>X=</code>, <code>Y=</code>)</td><td>Drawn</td></tr>
     <tr><td>Stacking (<code>z=</code>)</td><td>Negative draws under the text, zero and above over it</td></tr>
     <tr><td>Deleting (<code>a=d</code>)</td><td>Honoured</td></tr>
+    <tr><td>Many placements at once</td><td>The topmost 256 in a pane are drawn</td></tr>
     <tr><td>Unicode placeholders (<code>U=1</code>, U+10EEEE cells)</td><td>Not drawn yet: the cells show as text</td></tr>
     <tr><td>Sixel, iTerm2 inline images</td><td>Not drawn yet</td></tr>
   </tbody>
 </table>
-<p>A picture is not drawn while the rows are read upside down (the anchor-to-top read) or in <a href="/text-crawl">text crawl</a>, where it has no single cell to sit in. It is still held, and it returns with the plain read.</p>
-<p>A temporary file (<code>t=t</code>) is deleted by kitty's rule: only when its name contains <code>tty-graphics-protocol</code> and it sits in <code>/tmp</code>, <code>/dev/shm</code> or <code>$TMPDIR</code>. Terminal Delight deletes it itself after the core has read it, because the core's own check looks for that marker anywhere in the path. Shared memory (<code>t=s</code>) reaches the core only when it names a regular file in <code>/dev/shm</code>.</p>
+<p>A picture is not drawn while the rows are read upside down (the anchor-to-top read) or in <a href="/text-crawl">text crawl</a>, where it has no single cell to sit in. It is still held, and it returns with the plain read.<sup><a href="#s1">1</a></sup></p>
+<p>A temporary file (<code>t=t</code>) is deleted after it is read, by kitty's rule: only when its name contains <code>tty-graphics-protocol</code> and it sits in <code>/tmp</code>, <code>/dev/shm</code> or <code>$TMPDIR</code>. Any other file named that way is read and left alone. Shared memory (<code>t=s</code>) is read only when it names a regular file in <code>/dev/shm</code>.<sup><a href="#s1">1</a></sup></p>
 
 <h2 id="technical-attentional">When a picture goes</h2>
 <figure class="td-fig">
@@ -61,27 +61,33 @@
   <text class="lbl" x="396" y="126">switching tabs is the only thing that takes a picture away</text>
 </svg>
   </div>
-  <figcaption><b>Figure 1.</b> A picture lasts as long as your attention on its pane. When the pane's tab is hidden, the pane drops the texture and the core deletes the image, so the pixels are gone from memory as well as from the screen. A program that wants the picture back draws it again.</figcaption>
+  <figcaption><b>Figure 1.</b> A picture lasts as long as your attention on its pane. When the pane's tab is hidden, the pane drops the texture and the core deletes the image, so the pixels are gone from memory as well as from the screen. A program that wants the picture back draws it again. Drawn from <code>forget_pictures_out_of_sight</code>, which checks every frame which panes stopped being shown.</figcaption>
 </figure>
+<p>A tab stops being shown by any route: a click in the left bar, a keyboard jump, a notification, or the pane being carried to another tab. A picture resent by its program gets a new key, so the pane draws the new pixels.<sup><a href="#s1">1</a></sup></p>
 <p>No snapshot carries a picture, so a window that attaches to a pane shows its text and none of the pictures drawn before it arrived. <code>TD_PICTUREDEBUG=1</code> makes a window print one line to its log each time a hidden pane lets pictures go, for checking this by script.</p>
 
 <h2 id="technical-answers">What a program is told</h2>
-<p>Picture programs ask the terminal what it is before they draw. Terminal Delight answers as itself.<sup><a href="#s2">2</a></sup></p>
+<p>Picture programs, and agents choosing their colours, ask the terminal about itself before they draw. Terminal Delight answers as itself.<sup><a href="#s2">2</a></sup></p>
 <table>
   <thead><tr><th>Question</th><th>Answer</th></tr></thead>
   <tbody>
     <tr><td>Kitty graphics query (<code>a=q</code>)</td><td><code>OK</code>, from the core</td></tr>
     <tr><td>Primary device attributes (<code>CSI c</code>)</td><td><code>?62;22c</code>: a VT220 with ANSI colour, and no claim to sixel or clipboard access</td></tr>
-    <tr><td>XTVERSION (<code>CSI &gt; 0 q</code>)</td><td><code>terminal-delight 0.3.0</code></td></tr>
-    <tr><td>Cell size in pixels (<code>CSI 16 t</code>)</td><td>The cell the pane told the pseudoterminal, in device pixels</td></tr>
-    <tr><td>Kitty keyboard protocol (<code>CSI ? u</code>)</td><td>No answer: keys are sent in the legacy encodings</td></tr>
+    <tr><td>XTVERSION (<code>CSI &gt; 0 q</code>)</td><td><code>terminal-delight</code> and the build's version, such as <code>terminal-delight 0.4.0-rc.3</code></td></tr>
+    <tr><td>Cell size in pixels (<code>CSI 16 t</code>)</td><td>The cell the pane told the pseudoterminal</td></tr>
+    <tr><td>Text area in pixels (<code>CSI 14 t</code>)</td><td>The pane's columns and rows times that cell</td></tr>
+    <tr><td>Colours: a palette entry (<code>OSC 4</code>), foreground (<code>OSC 10</code>), background (<code>OSC 11</code>), cursor (<code>OSC 12</code>)</td><td>The colour the pane draws it in now, with its theme and gauges applied</td></tr>
+    <tr><td>Kitty keyboard protocol (<code>CSI ? u</code>)</td><td>No answer, and a request to switch it on changes nothing: keys are sent in the legacy encodings</td></tr>
+    <tr><td>XTGETTCAP (<code>DCS + q</code>)</td><td>No answer, so a program falls back to terminfo</td></tr>
+    <tr><td>Grapheme clustering (<code>CSI ? 2027 $ p</code>)</td><td>Not recognised (<code>?2027;0$y</code>)</td></tr>
   </tbody>
 </table>
-<p><code>kitten icat</code> decides from the first two answers together. Before the core swap it waited ten seconds in every pane and then gave up, because the old device-attributes answer was too short for its detector.<sup><a href="#s3">3</a></sup></p>
+<p><code>kitten icat</code> decides from the first two answers together, and the device-attributes answer is long enough for its detector, so it draws without waiting. Codex asks for the foreground and background as it starts, which is why the colour answers come from the pane: the pane is the one place that knows the colours it draws.<sup><a href="#s2">2</a></sup><sup><a href="#s3">3</a></sup></p>
 
 <h2 id="technical-hosted">Panes on a session host</h2>
-<p>A pane on a <a href="/sessions">session host</a> is parsed twice: by the host, which answers the program, and by your window, which draws. A picture sent as a temporary file or as shared memory is deleted by the first terminal that reads it, and the host reads first, so for those two methods the host rewrites the picture into its copy of the stream as inline data before the original is deleted. Inline data and plain files reach the window as the program sent them.<sup><a href="#s4">4</a></sup></p>
-<p>A window attached to a session host started before the core swap still draws pictures sent as inline data or a file, because the bytes pass through the old host to the window's own core. That host answers the questions in the table above the old way, so <code>kitten icat</code> still waits there until the host is replaced.</p>
+<p>A pane on a <a href="/sessions">session host</a> is parsed twice: by the host, which answers the program, and by your window, which draws. The host answers device attributes and the version, and both size questions from the size it was last told. A colour question is the exception: the host has no theme, so it passes the question to your window, and the pane answers it from the colours it draws.<sup><a href="#s3">3</a></sup></p>
+<p>A picture sent as a temporary file or as shared memory is deleted by the first terminal that reads it, and the host reads first. So for those two methods the host rewrites the picture into its copy of the stream as inline data before the original is deleted. Inline data and plain files reach the window as the program sent them.<sup><a href="#s4">4</a></sup></p>
+<p>A window attached to a session host left running from 0.3.0 still draws pictures sent as inline data or a file, because the bytes pass through the old host to the window's own core. That host answers the questions in the table above the 0.3.0 way, so <code>kitten icat</code> waits there before it draws until the host is replaced.</p>
 
 <h2 id="technical-try">Try it</h2>
 <pre class="cmd"><code>printf '\033_Ga=T,f=24,s=2,v=1,c=8,r=2;/wAAAP8A\033\\\n'</code></pre>
@@ -92,8 +98,8 @@
 </section>
 
 <ol data-sources>
-  <li id="s1">The core boundary and the picture verbs: <code>app/src/vt/mod.rs</code> and <code>app/src/vt/rio.rs</code>; drawing: <code>picture_elements</code> in <code>app/src/pane.rs</code>; forgetting: <code>Workspace::forget_pictures_out_of_sight</code> in <code>app/src/main.rs</code>.</li>
-  <li id="s2">The answers and their tests: <code>app/src/vt/rio.rs</code>, <code>as_terminal_delight</code> and the tests beside it.</li>
-  <li id="s3">The ten-second wait, measured at 10,076 ms and 10,044 ms in a hidden window: issue 750; the detector's length check is in kitty's <code>kittens/icat/detect.go</code>.</li>
-  <li id="s4">The rewrite: <code>app/src/picturewire.rs</code>; the test that fails without it: <code>a_picture_sent_as_a_temporary_file_reaches_the_attached_window</code> in <code>app/src/host.rs</code>.</li>
+  <li id="s1">The core boundary and the picture verbs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vt/mod.rs">vt/mod.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vt/rio.rs">vt/rio.rs</a> (<code>pictures</code>, <code>MOST_SHOWN</code>, and the tests beside them); the temporary-file and shared-memory rules: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vt/kitty.rs">vt/kitty.rs</a>; drawing: <code>picture_elements</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; forgetting: <code>Workspace::forget_pictures_out_of_sight</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s2">The answers: <code>as_terminal_delight</code> and <code>DEVICE_ATTRIBUTES</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vt/rio.rs">vt/rio.rs</a>, with the tests beside them; the colour answers: <code>asked_colour</code> and the <code>ColorRequest</code> arm in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; kitty's detector is <code>kittens/icat/detect.go</code> in the kitty repository.</li>
+  <li id="s3">Which side answers on a hosted pane: <code>EventProxy</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/term.rs">term.rs</a>, and the host's own answers in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
+  <li id="s4">The rewrite: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/picturewire.rs">picturewire.rs</a>; the test that fails without it: <code>a_picture_sent_as_a_temporary_file_reaches_the_attached_window</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
 </ol>

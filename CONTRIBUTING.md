@@ -39,6 +39,23 @@ belongs to (*Added*, *Changed*, *Fixed*, *Removed*, *Security*). Describe what
 someone using Terminal Delight notices, not what the code does. If it changes a
 config file, a default or a key, say what an upgrading user should do.
 
+## Documentation
+
+The documentation site (https://docs.terminal-delight.brownfamilysports.com) is
+built from [`docsite/pages/`](docsite/pages/), one page per feature, and each page
+says which commit it is true of. A pull request that changes what a user sees
+updates the page that describes it, and moves that page's `trueOf` forward, in
+the same pull request. That is how the pages stay true; the feature catalogue
+they replaced drifted because nothing tied it to a change.
+
+Work that exists only on a development branch is marked where it is described:
+`class="in-dev"` on a block, `<span class="dev-tag">0.5.0 dev</span>` inline, or
+`"release"` on the page's entry in `docsite/nav.json` when the whole page is new.
+`node docsite/build.mjs` refuses a broken link or anchor, a citation without a
+source and the phrases in the house writing ledger;
+[`docsite/ARTICLE-PROFILE.md`](docsite/ARTICLE-PROFILE.md) says how a page is
+written. A push does not publish the site; `docsite/deploy.sh` does.
+
 ---
 
 ## Path 1 — Themes (no Rust)
@@ -130,14 +147,16 @@ legible at a glance. Loud is fine; unreadable is not.
 
 ```bash
 bash scripts/setup-deps.sh     # Vulkan + build libs (Ubuntu/Debian)
-bash scripts/prepare-gpui.sh   # clone the pinned Zed + apply the td-crt-pass patch
+bash scripts/prepare-gpui.sh   # clone the pinned Zed + apply the td patches
 cd app && cargo run
 ```
 
 `prepare-gpui.sh` clones Zed at the rev pinned in `app/Cargo.toml`
 (`[package.metadata.terminal-delight] zed_rev`) into a sibling `zed-upstream/`
-directory and applies `docs/patches/0001-td-crt-pass.patch` (the per-pane CRT
-barrel-warp renderer pass). It's idempotent — safe to re-run.
+directory and applies every patch in `docs/patches/`: nine on `main`, starting
+with `0001-td-crt-pass.patch` (the per-pane CRT barrel-warp renderer pass), and
+thirteen on `dev/0.5.0`. It's idempotent — safe to re-run, and worth re-running
+after you switch between those branches.
 
 ### The bar (CI runs all of this — run it before you push)
 

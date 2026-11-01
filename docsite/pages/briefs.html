@@ -1,55 +1,81 @@
 <script type="application/json" data-page>
 {
-  "title": "Decision briefs",
-  "description": "An agent in Terminal Delight's workbench can hand you a decision brief: one HTML page, mostly pictures, that opens inside the window, takes a note on any element, and sends your notes back to the agent with one key.",
-  "updated": "2026-09-25",
-  "trueOf": "main at 426188d",
-  "summary": "Drawn pages you annotate, and the notes go back to the agent"
+  "title": "Briefs and notes",
+  "description": "Decision briefs and Markdown files opened in Terminal Delight take notes on each figure, finding, heading or paragraph, and a decision takes a CONCUR stamp. ↪ send to agent, or Ctrl+Shift+Enter, puts every note in the agent's prompt without pressing Enter, and the document_notes tool lets the agent read them.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "Notes on documents, and the notes go back to the agent"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">When an agent finishes work you have to decide on, such as an audit, a comparison of options or a set of findings, it can hand you a decision brief: one HTML page, mostly pictures, that opens in a square inside the window. You read it beside the agent, put a note on any figure or finding, and stamp <b>CONCUR</b> on the decisions you agree with. <b>↪ send to agent</b> then puts every note in front of the agent, anchored to the element it is about, and the agent answers them.</p>
-
-<figure class="reel" data-clip aria-label="A screen recording of Terminal Delight: an agent puts a decision brief on its workbench, the brief opens inside the window, two notes and a concur are added, and the notes are sent back to the agent, which answers them">
-  <div class="reel-screen">
-    <video class="on" src="/assets/clips/decision-briefs.mp4" poster="/assets/clips/decision-briefs.jpg" muted playsinline loop preload="none" aria-hidden="true"></video>
-    <canvas class="reel-live" data-glass-live width="1280" height="720" aria-hidden="true"></canvas>
-    <button type="button" class="reel-toggle" data-reel-toggle aria-pressed="false">Pause</button>
-  </div>
-  <figcaption>An agent measures two cache policies, writes a brief and puts it on its bench. The brief opens from the bench card, takes a note on the read-first list and one on figure 03, and a concur on the first decision. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> sends all three to the agent's composer, <kbd>Enter</kbd> sends the composer, and the agent answers each note. The agent and its work are mock data.</figcaption>
-</figure>
-
-<p>Agents started from the workbench's <a href="/launching">LAUNCH AGENT</a> panel are told how to build one, Claude Code and Codex alike, and Terminal Delight carries the kit they build it with. A Claude agent you start yourself by typing <code>claude</code> is told too, once you say yes to it: the first time its bench has nothing on it, the bench asks.</p>
-<p>The brief in the film is <a href="/assets/briefs/telemetry-cache.html">here to open in your browser</a>, and its notes work there too.</p>
-<p class="invite">Technical has the loop step by step, what the agent is told, where the kit lives and the keys.</p>
+<p class="lede">When an agent hands you something to decide on, you answer it on the page. A decision brief, one HTML page an agent draws, and any Markdown file you open in Terminal Delight both take notes: on a brief, each figure, finding and decision; in Markdown, each heading, paragraph, code block and list item. A decision also takes a <b>CONCUR</b> stamp.</p>
+<p>Point at an element and click its <code>💬</code>, or hold <kbd>Alt</kbd> to outline everything that takes a note. Write, then <kbd>Ctrl</kbd>+<kbd>Enter</kbd>. A note box takes a paste, pictures included. <b>↪ send to agent</b>, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, puts every note in the agent's prompt, tied to its element, without pressing Enter. An agent can also read them with the MCP tool <code>document_notes</code>.</p>
+<p>A brief keeps its notes inside its own file; Markdown notes are kept by Terminal Delight, and the <code>.md</code> is never touched. Agents started from <a href="/launching">LAUNCH AGENT</a> are told how to build a brief, and the kit they build it with ships inside Terminal Delight.</p>
+<p class="invite">Technical has how notes are saved, where they go, and what the agent is told. Opening documents is on <a href="/documents">Documents</a>.</p>
 </section>
 
-<section data-register="technical" data-headline="The brief loop">
-<h3>The loop</h3>
+<section data-register="technical" data-headline="Notes on documents">
+<h3>What takes a note</h3>
 <table>
-  <thead><tr><th>Step</th><th>Who</th><th>What happens</th></tr></thead>
+  <thead><tr><th>Document</th><th>Takes a note</th></tr></thead>
   <tbody>
-    <tr><td>1</td><td>the agent</td><td>Writes one self-contained HTML file, <code>reports/&lt;date&gt;-&lt;topic&gt;.html</code> in the project, with the kit's stylesheet and notes script inlined.</td></tr>
-    <tr><td>2</td><td>the agent</td><td>Presents it as an <code>artifact</code> <a href="/surface-protocol">surface</a> whose <code>href</code> is the file's absolute path and whose <code>mime</code> is <code>text/html</code>.</td></tr>
-    <tr><td>3</td><td>you</td><td>Open the card from the <code>artifacts</code> shelf (<kbd>Alt</kbd>+<kbd>2</kbd>) with <kbd>Enter</kbd> or a click. The brief opens in the floating square over the bench, and the card stays open under it.</td></tr>
-    <tr><td>4</td><td>you</td><td>Note any element that takes one: each figure, each read-first item, each finding and card, each decision. A decision also takes a <b>CONCUR</b> stamp. Holding <kbd>Alt</kbd> outlines every element that takes a note. Until the first note or stamp, a line above the notes bar says all of this in four clauses: <code>click anything to note it · hold Alt to see what takes one · ✓ stamps a decision · ↪ sends your notes to agent</code>. The stamp clause appears only on a page that takes stamps, and the send clause only with an agent beside the brief.</td></tr>
-    <tr><td>5</td><td>you</td><td>Press <b>↪ send to agent</b> in the square's notes bar, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>. Waiting notes are saved into the file first, and the button reads <b>↪ save &amp; send to agent</b> while there are any.</td></tr>
-    <tr><td>6</td><td>you</td><td>The notes map lands where you can see it and is not sent. Press <kbd>Enter</kbd> there to send it.</td></tr>
+    <tr><td>Decision brief (HTML)</td><td>Every element the brief's notes script marks: by default each figure, read-first item, finding, verdict card, stat tile, table row, chart row, callout, decision and dialog subheading. A brief can choose its own.</td></tr>
+    <tr><td>Markdown</td><td>Each heading, paragraph, code block, quote, table, HTML block, picture on its own line, and each top-level list item; a nested item goes with the item it sits under. Rules take none.</td></tr>
+    <tr><td>Any other HTML page</td><td>Nothing. It opens and reads normally.</td></tr>
   </tbody>
 </table>
-<p>Where step 6 puts the map depends on what the agent's pane is showing:</p>
+<p>Point at an element and its <code>💬</code> appears; once it has notes, the button shows their count and stays, and a rule runs down the element's left edge. Hold <kbd>Alt</kbd> over the document to outline everything that takes a note, then click inside an outline to open its box. Until the first note, a line above the notes bar says how: <code>click anything to note it · hold Alt to see what takes one · ✓ stamps a decision · ↪ sends your notes to agent</code>. The stamp clause appears only on a brief that takes stamps, and the send clause only with an agent beside the document.<sup><a href="#s1">1</a></sup></p>
+
+<h3>The note box</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <b>Add note</b> adds the note, <kbd>Enter</kbd> starts a new line, and <kbd>Esc</kbd> or a click outside closes the box. A note holds up to 20,000 characters. Each note in the box has a <b>delete</b>.</p>
+<p><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> and <kbd>Shift</kbd>+<kbd>Insert</kbd> paste text at the caret, and copied files as their paths. A pasted picture, or copied picture files, are attached to the element the note is on: the bar says <code>attached as [doc-image #1]</code>, and the box lists each picture by that name with its time and a <b>delete</b>. Pictures are kept in <code>$XDG_STATE_HOME/terminal-delight/notes/pictures/</code>, never written into the note's words or the document.<sup><a href="#s2">2</a></sup></p>
+<p>A note on words the file no longer has can still be read and deleted, behind <code>N on words no longer here</code>.</p>
+<div class="in-dev"><p>The box's button reads <b>Submit comment</b>. A box with more notes than fit scrolls: the wheel, <kbd>PageUp</kbd> and <kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> turn it, and it opens on the newest. In 0.4.0 older notes past the box's height are hidden.</p></div>
+
+<h3>CONCUR</h3>
+<p>On a brief whose notes script supports stamps, each decision carries a dashed slot reading <code>?</code> over <code>CONCUR</code>. Click it to stamp the decision; click the stamp to peel it off. A concur with no note means the decision is approved as recommended, and the kit tells the agent to read it that way. A brief whose script predates stamps refuses one: <code>This brief's notes script is older than CONCUR stamps, so a stamp saved here would never show.</code><sup><a href="#s3">3</a></sup></p>
+
+<h3>Saving a brief</h3>
+<p>A brief's notes are saved into the brief itself. The notes bar reads, left to right: the count (<code>2 notes · 1 concur</code>), <b>⎘ copy map</b>, the send button, <b>💾 save into file</b>, and <code>N unsaved</code> while edits wait. A save changes only the notes inside the file, then reads it back: <code>saving into …</code>, <code>saved into … · reading it back…</code>, and <code>saved into … ✓</code> once the reopened file shows every note and stamp.</p>
+<ul>
+  <li>Before each save, the file as it was is copied to <code>$XDG_STATE_HOME/terminal-delight/brief-backups/</code>, readable only by you, and the newest eight copies of each brief are kept.</li>
+  <li>A brief that is a symbolic link, or has a second name on disk, is never saved into. A brief that changes on disk during the save is left alone, and your notes stay to save again.</li>
+  <li>Closing the square with unsaved notes warns once: <code>N unsaved · save them into the file, or close again to leave without them</code>. Closing the pane or the tab does not ask.</li>
+</ul>
+<div class="in-dev"><p>Every note, deletion and stamp is saved into the brief the moment you submit it, so a closed square loses nothing. The bar has no save button, and sending the notes never writes the file. <code>N unsaved</code> appears only when a save failed; the next edit, or <code>ctl doc save</code>, tries again. Closing with notes not yet written warns <code>N not kept · close again to leave without them</code>.<sup><a href="#s4">4</a></sup></p></div>
+
+<h3>Markdown notes</h3>
+<p>A note on a Markdown file is kept the moment it is added, in <code>$XDG_STATE_HOME/terminal-delight/notes/</code>, one file per document named from the file's name and a hash of its path. The <code>.md</code> is never written. The notes bar has no save button.<sup><a href="#s5">5</a></sup></p>
+<div class="in-dev">
+<p>Each new note also keeps what it was written on: the passage's words, the passages either side, and the SHA-256 of the file as it was read. When the file is edited, the note follows its passage:</p>
+<table>
+  <thead><tr><th>The note says</th><th>When</th></tr></thead>
+  <tbody>
+    <tr><td><code>same revision</code></td><td>The file has not changed.</td></tr>
+    <tr><td><code>quotation matched</code></td><td>Exactly one passage of the same kind has the same words, wherever it moved.</td></tr>
+    <tr><td><code>quotation and context matched</code></td><td>Several passages have the same words, and only one has the same neighbours.</td></tr>
+    <tr><td><code>wording changed; context matched</code></td><td>The words changed a little: at least six words, most of the passage still running the same from its start or its end, and a neighbour unchanged.</td></tr>
+    <tr><td><code>passage not found</code>, <code>ambiguous passage; no automatic attachment</code></td><td>No passage, or no single passage, fits. The note waits under <code>N notes without a clear passage</code>.</td></tr>
+  </tbody>
+</table>
+<p>The note box and the notes map show each note's <code>Original quotation</code>, <code>Revision SHA-256</code> and <code>Attachment</code>. A note written by an older build reads <code>legacy note; quotation and revision unavailable</code>; nothing is made up for it. A store gains this as format 2 on its next save, and a 0.4.0 window refuses to overwrite a format 2 store; it shows none of its notes. Two saves to one document at once take turns, so neither loses the other's note, and deleting a note while it is being saved deletes it without dropping the next one.<sup><a href="#s6">6</a></sup></p>
+</div>
+
+<h3>Sending notes to the agent</h3>
+<p><b>↪ send to agent</b> in the notes bar, or <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> over the document, sends the notes map to the agent beside the document: the agent in the pane the square floats over, otherwise the nearest agent pane in the same tab. With several candidates the button names the pane instead of saying <code>agent</code>. With no agent in the tab there is no button, and <b>⎘ copy map</b> puts the map on the clipboard instead. On a brief with unsaved notes the button reads <b>↪ save &amp; send to agent</b>, and the save starts first.<sup><a href="#s7">7</a></sup></p>
 <table>
   <thead><tr><th>The agent's pane shows</th><th>The map goes</th><th>The bar says</th></tr></thead>
   <tbody>
-    <tr><td>its bench</td><td>into the bench's composer, as a draft</td><td><code>in the agent's composer on the bench, not sent · … · press Enter there</code></td></tr>
-    <tr><td>its terminal</td><td>into the agent's prompt, as one bracketed paste with no Enter</td><td><code>in the agent's prompt, not sent · … · press Enter there</code></td></tr>
-    <tr><td>a document</td><td>nowhere</td><td>says why, and <b>⎘ copy map</b> still works</td></tr>
+    <tr><td>its bench</td><td>into the bench's composer, as a draft</td><td><code>in the agent's composer on the bench, not sent · N characters · press Enter there</code></td></tr>
+    <tr><td>its terminal</td><td>into the agent's prompt, as one bracketed paste with no Enter</td><td><code>in the agent's prompt, not sent · N characters · press Enter there</code></td></tr>
+    <tr><td>a document</td><td>nowhere</td><td><code>the agent's pane is showing a document, so nobody would see the notes land — turn it to its prompt or its bench first</code></td></tr>
   </tbody>
 </table>
+<p>On the terminal face the agent must have bracketed paste on; without it every line of the map would press Enter, so nothing is sent and the bar says so.</p>
 
 <h3>The notes map</h3>
-<p>This is the map the film sends. Each line in brackets is an element id in the brief, so the agent finds the passage without rereading the page.</p>
+<p>Each line in brackets points into the document, so the agent finds the passage without rereading it. In a brief it is an element id:</p>
 <pre><code>NOTES — 2026-09-25-telemetry-cache.html
 2 notes on 2 elements · 1 concur.
 Each [anchor] is an element id in that file — search it to find the passage.
@@ -61,32 +87,43 @@ Each [anchor] is an element id in that file — search it to find the passage.
   · Show the cold start too, not only the quiet pass.
 
 [ask-1-evict-by-recency] 1 · Evict by recency or by age?  ✓ concur</code></pre>
-<p>A concur with no note reads as <em>approved as recommended</em>. An agent connected to the <a href="/mcp">MCP server</a> can ask for the same map with <code>document_notes</code>, which includes notes not yet saved.</p>
+<p>In Markdown it is the line the block starts on:</p>
+<pre><code>NOTES — /r/plan.md
+1 note on 1 block.
+Each [L&lt;n&gt;] is the line in that file where the block starts.
+
+[L7] ## Slice 2 — the agent side
+  · before slice 1 please</code></pre>
+<p>A pasted picture appears under its note as <code>· [doc-image #1]</code> and its full path, and the map explains <code>Each [doc-image #n] is a picture pasted onto that element — open its path to see it.</code><sup><a href="#s8">8</a></sup></p>
+
+<h3>document_notes</h3>
+<p>An agent connected to the <a href="/mcp">MCP server</a> calls <code>document_notes</code>, with no arguments, to read the notes on the document beside it: a square floating over its own pane, else a pane it opened beside, else the first document pane in its tab. The answer names the file, counts notes, stamps and edits not yet saved, and then gives the map, unsaved notes included. Pasted pictures follow as images, up to eight of up to 3,750,000 bytes each in PNG, JPEG, GIF or WebP; any others are named with the reason. It writes nothing and does not need the writes switch. With nothing open it says <code>nothing is open beside you — no brief floats over your pane, and no pane in your tab shows a document</code>.<sup><a href="#s9">9</a></sup></p>
+<p class="in-dev">A document on a pane marked off-limits to agents is skipped unless it is the caller's own pane.</p>
 
 <h3>What the agent is told</h3>
-<p>The launcher hands a Claude agent its briefing through <code>--append-system-prompt</code>, and writes it to <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/briefing.txt</code>. When the kit could be written, the briefing carries this paragraph, with the kit's directory in place of <code>&lt;kit&gt;</code>:</p>
-<blockquote><p>DECISION BRIEFS. When what you finish is something the person has to read and then decide on — an audit, a review, a comparison of options, a findings write-up, a proposal — build it as a decision brief: one self-contained HTML page, drawn rather than written, that they read inside this window. Read &lt;kit&gt;/SKILL.md before you start; Terminal Delight wrote it for you, with the assets it names beside it. Keep it SHORT and DRAWN: five minutes to read, a figure for every argument, prose only as captions, depth in modals. The page is yours to lay out; the surface only points at it, as an `artifact` whose href is the file's absolute path and whose mime is text/html. A click on that card opens the page over the bench, where the person notes any element, stamps CONCUR on a decision, and presses ↪ to paste the notes into your prompt as [anchor] lines, each anchor an element id in your file. A question with a few short answers is a `decision` surface, not a brief; one brief per decision is the rate.</p></blockquote>
-<p>When the kit could not be written, the paragraph is left out rather than pointing at a file that is not there. A Codex launch gets the same briefing as its first message, ahead of anything you typed in the panel.</p>
+<p>The launcher hands a Claude agent its briefing through <code>--append-system-prompt</code>, and writes it to <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/briefing.txt</code>. When the kit could be written, the briefing carries this paragraph, with the kit's <code>SKILL.md</code> in place of <code>&lt;kit&gt;</code>:<sup><a href="#s10">10</a></sup></p>
+<blockquote><p>DECISION BRIEFS. When what you finish is something the person has to read and then decide on — an audit, a review, a comparison of options, a findings write-up, a proposal — build it as a decision brief: one self-contained HTML page, drawn rather than written, that they read inside this window. Read &lt;kit&gt; before you start; Terminal Delight wrote it for you, with the assets it names beside it. Keep it SHORT and DRAWN: five minutes to read, a figure for every argument, prose only as captions, depth in modals. The page is yours to lay out; the surface only points at it, as an `artifact` whose href is the file's absolute path and whose mime is text/html. A click on that card opens the page over the bench, where the person notes any element, stamps CONCUR on a decision, and presses ↪ to paste the notes into your prompt as [anchor] lines, each anchor an element id in your file. A question with a few short answers is a `decision` surface, not a brief; one brief per decision is the rate.</p></blockquote>
+<p>When the kit could not be written, the paragraph is left out. A Codex launch gets the same briefing as its first message, ahead of anything you typed in the panel.</p>
 <h3>An agent you started by typing</h3>
 <p>Claude Code runs a <code>SessionStart</code> hook at the start of every session and hands what it prints to the model. <code>terminal-delight briefing</code> prints the briefing a LAUNCH AGENT pane gets, the same text byte for byte, after writing the kit. It prints nothing outside a Terminal Delight pane, and nothing in a pane the launcher started, whose command line carries <code>TD_BRIEFED=1</code>, so the hook is quiet in every other Claude session on the machine.</p>
-<p>Nothing installs the hook until you say so. On the bench of a Claude agent the launcher did not start, while the hook is not installed, Terminal Delight asks once, <b>NOT TOLD ABOUT THE WORKBENCH</b>, with <b>TELL THEM</b> and <b>NO THANKS</b>. Yes adds one entry to <code>~/.claude/settings.json</code>, beside whatever hooks are there, and keeps the file as it was as <code>settings.json.td-backup.&lt;time&gt;</code>. The agent already running is not told; the next one you start by typing is. Either answer is kept in <code>~/.config/terminal-delight/briefing.toml</code>, and the bench stops asking.</p>
-<p>From a terminal instead:</p>
+<p>Nothing installs the hook until you say so. On the bench of a Claude agent the launcher did not start, while the hook is not installed, Terminal Delight asks once, <b>NOT TOLD ABOUT THE WORKBENCH</b>, with <b>TELL THEM</b> and <b>NO THANKS</b>. Yes adds one entry to <code>~/.claude/settings.json</code>, beside whatever hooks are there, and keeps the file as it was as <code>settings.json.td-backup.&lt;time&gt;</code>. It takes effect from the next agent you start by typing. Either answer is kept in <code>~/.config/terminal-delight/briefing.toml</code>, and the bench stops asking. From a terminal instead:<sup><a href="#s11">11</a></sup></p>
 <pre><code>terminal-delight briefing hook status
 terminal-delight briefing hook on
 terminal-delight briefing hook off</code></pre>
-<p>The hook names the binary the way you reach it (the AppImage you downloaded, or the <code>terminal-delight</code> on your <code>PATH</code>), and a binary that has since moved fails silently rather than putting an error in front of every Claude session. A typed <code>codex</code> is not told yet.</p>
+<p>The hook names the binary the way you reach it (the AppImage you downloaded, or the <code>terminal-delight</code> on your <code>PATH</code>), and a binary that has since moved fails silently instead of putting an error in front of every Claude session. A typed <code>codex</code> is not told.</p>
 
 <h3>The kit</h3>
-<p>The binary carries the kit and writes it to <code>$XDG_DATA_HOME/terminal-delight/skills/decision-brief/</code>, or <code>~/.local/share/terminal-delight/skills/decision-brief/</code>, each time the launcher briefs an agent. Only files whose bytes changed are rewritten, so the kit on disk is always the one the running build carries.</p>
+<p>The binary carries the decision-brief kit and writes it to <code>$XDG_DATA_HOME/terminal-delight/skills/decision-brief/</code>, or <code>~/.local/share/terminal-delight/skills/decision-brief/</code>, each time LAUNCH AGENT starts an agent and each time <code>terminal-delight briefing</code> briefs a typed one. Only files whose bytes changed are rewritten, so the kit on disk is the one the running build carries.<sup><a href="#s12">12</a></sup></p>
 <table>
   <thead><tr><th>File</th><th>What it is</th></tr></thead>
   <tbody>
     <tr><td><code>SKILL.md</code></td><td>The workbench edition of the skill: the loop, the budget and the checks.</td></tr>
     <tr><td><code>assets/base.css</code></td><td>The look: glass over an Omarchy wallpaper, and every component a brief uses.</td></tr>
-    <tr><td><code>assets/notes.js</code>, <code>assets/notes.css</code></td><td>The notes: an anchor on every element, the concur stamp, the map, and save into file.</td></tr>
-    <tr><td><code>reference/pictures.md</code></td><td>How to draw a brief: eleven kinds of figure and what each is for.</td></tr>
+    <tr><td><code>assets/notes.js</code>, <code>assets/notes.css</code></td><td>The notes: an anchor on every element, the concur stamp, the map, and saving into the file.</td></tr>
+    <tr><td><code>reference/pictures.md</code></td><td>How to draw a brief, and what each kind of figure is for.</td></tr>
     <tr><td><code>reference/glass.md</code>, <code>layout.md</code>, <code>evidence.md</code>, <code>notes-markup.html</code></td><td>The look, the layout, confidence labels, and the markup the notes need.</td></tr>
     <tr><td><code>scripts/brief-wall</code></td><td>Picks a random Omarchy theme and wallpaper and prints the style block that dresses the brief in it. Needs <code>vips</code> and Omarchy's themes; without them the brief keeps a plain glow.</td></tr>
+    <tr><td><code>SOURCE</code></td><td>Which version of the skill this edition was taken from.</td></tr>
   </tbody>
 </table>
 <p>The workbench edition asks for less than the skill it comes from: five minutes of reading, at most three read-first items, a figure for every argument, and no paragraph over three sentences on the page.</p>
@@ -95,26 +132,42 @@ terminal-delight briefing hook off</code></pre>
 <table class="keys">
   <thead><tr><th>Keys</th><th>Where</th><th>What it does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>Alt</kbd>+<kbd>2</kbd></td><td>the bench</td><td>The <code>artifacts</code> shelf, where the brief's card is.</td></tr>
-    <tr><td><kbd>Enter</kbd></td><td>a card</td><td>Takes the card's first action; for a brief, opens it in the square.</td></tr>
-    <tr><td><kbd>Alt</kbd> held</td><td>over the brief</td><td>Outlines every element that takes a note.</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>the note box</td><td>Adds the note.</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>the square</td><td>↪ send to agent, while the bar shows the button.</td></tr>
-    <tr><td><kbd>Esc</kbd></td><td>the square</td><td>Closes the note box, then the brief's own dialog, then the square. With notes not yet saved it asks once.</td></tr>
-    <tr><td><kbd>Enter</kbd></td><td>the composer</td><td>Sends the notes to the agent.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>2</kbd>, then <kbd>Enter</kbd></td><td>the bench</td><td>The <code>artifacts</code> shelf, and open the brief's card in the floating square.</td></tr>
+    <tr><td><kbd>Alt</kbd> held</td><td>over the document</td><td>Outline every element that takes a note.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>the note box</td><td>Add the note.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>the note box</td><td>Paste text, paths or pictures.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>the document</td><td>↪ send to agent, while the bar shows the button.</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>the document</td><td>Close the note box, then the brief's own dialog, then the square. With notes not yet saved it asks once.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>the agent's composer or prompt</td><td>Send the notes to the agent.</td></tr>
   </tbody>
 </table>
 
-<h3>Limits</h3>
-<ul>
-  <li>↪ is drawn only when an agent pane is beside the brief: the pane the square floats over, or the pane a split was opened beside, else the nearest agent in the same tab.</li>
-  <li>On the terminal face the agent must have bracketed paste on. Without it every line of the map would press Enter, so nothing is sent and the bar says so.</li>
-  <li>An HTML file without the notes markup opens and reads normally, and takes no notes.</li>
-</ul>
-
 <h3>The film</h3>
-<p>The recording was made from a real window running this build, on a hidden workspace, with a mock agent playing back made-up work. The keys were sent to the window through the compositor. Nothing on this machine can click a hidden window, so the scrolling, the two notes and the concur went through Terminal Delight's control socket (<code>ctl doc scroll</code>, <code>ctl doc note add</code>, <code>ctl doc concur</code>), which drives the same notes layer a click does.</p>
+<figure class="reel" data-clip aria-label="A screen recording of Terminal Delight: an agent puts a decision brief on its workbench, the brief opens inside the window, two notes and a concur are added, and the notes are sent back to the agent, which answers them">
+  <div class="reel-screen">
+    <video class="on" src="/assets/clips/decision-briefs.mp4" poster="/assets/clips/decision-briefs.jpg" muted playsinline loop preload="none" aria-hidden="true"></video>
+    <canvas class="reel-live" data-glass-live width="1280" height="720" aria-hidden="true"></canvas>
+    <button type="button" class="reel-toggle" data-reel-toggle aria-pressed="false">Pause</button>
+  </div>
+  <figcaption>An agent measures two cache policies, writes a brief and puts it on its bench. The brief opens from the bench card, takes a note on the read-first list and one on figure 03, and a concur on the first decision. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> sends all three to the agent's composer, <kbd>Enter</kbd> sends the composer, and the agent answers each note. The agent and its work are mock data.</figcaption>
+</figure>
+<p>The recording was made from a real window on a hidden workspace, with a mock agent playing back made-up work. The keys were sent to the window through the compositor; the scrolling, the two notes and the concur went through Terminal Delight's control socket (<code>ctl doc scroll</code>, <code>ctl doc note add</code>, <code>ctl doc concur</code>), which drives the same notes layer a click does. The brief in the film is <a href="/assets/briefs/telemetry-cache.html">here to open in your browser</a>, and its notes work there too.</p>
 
 <h3>What would prove this wrong</h3>
-<p>Launch a Claude agent from LAUNCH AGENT and open <code>briefing.txt</code> in the session's surfaces folder. If it has no DECISION BRIEFS paragraph, or the <code>SKILL.md</code> it names is missing, this page is wrong. With the hook on, type <code>claude</code> in a pane and ask it which directory it writes surfaces into: if it cannot say, the typed half is wrong. So is it if <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> over a brief with notes, beside an agent on its bench, leaves the composer empty.</p>
+<p>Open a Markdown file, note a paragraph, and close and reopen it: if the note is gone, or the <code>.md</code> changed, this page is wrong. Over a brief with notes, beside an agent on its bench, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd> must leave the map in the composer, unsent. And launch a Claude agent from LAUNCH AGENT and open <code>briefing.txt</code> in the session's surfaces folder: if it has no DECISION BRIEFS paragraph, or the <code>SKILL.md</code> it names is missing, the agent was never told.</p>
 </section>
+
+<ol data-sources>
+<li id="s1">What takes a note on a brief: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skills/decision-brief/assets/notes.js">notes.js</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/extract.js">docview/extract.js</a>; in Markdown: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>; the buttons, outlines and hint: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>.</li>
+<li id="s2">The note box and pasting: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>; pictures: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/doc_images.rs">docview/doc_images.rs</a>.</li>
+<li id="s3">The stamp: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes.rs">docview/notes.rs</a>; how the agent reads a bare concur: the kit's <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skills/decision-brief/SKILL.md">SKILL.md</a>.</li>
+<li id="s4">Saving on submit: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/page.rs">docview/page.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>, on dev/0.5.0.</li>
+<li id="s5">The Markdown store: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>.</li>
+<li id="s6">Evidence, reattachment and the lock: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/md_notes/evidence.rs">docview/md_notes/evidence.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/md_notes.rs">docview/md_notes.rs</a>, on dev/0.5.0.</li>
+<li id="s7">Who is beside the document: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>; where the map lands and what the bar says: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
+<li id="s8">The brief map: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes.rs">docview/notes.rs</a>; the Markdown map: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>.</li>
+<li id="s9"><code>document_notes</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
+<li id="s10">The briefing and its paragraph: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/launcher.rs">launcher.rs</a> and <code>brief_paragraph</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>.</li>
+<li id="s11">The typed-agent hook and the bench's question: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefhook.rs">briefhook.rs</a>.</li>
+<li id="s12">The kit and when it is written: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefkit.rs">briefkit.rs</a>.</li>
+</ol>

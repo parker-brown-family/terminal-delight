@@ -1,0 +1,100 @@
+<script type="application/json" data-page>
+{
+  "title": "Git signal",
+  "description": "The GIT signal at the top left watches every project in the window for panes working on the same files. Alt+G opens GIT COORDINATION, which lists each finding with a sentence saying why it is shown. It only observes: it never commits, fetches or checks anything out.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "Which panes are changing the same files"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Two agents can edit the same file in two checkouts of one repository, and nothing tells you until their branches meet. The <b>GIT signal</b> at the top left of the window watches for that across every project in the window. Most of the time it reads <code>Git · No new findings</code>. When something needs a look it reads <code>Git · 1 project with new findings</code>, in yellow for a warning or red for a conflict.</p>
+<p>Press <kbd>Alt</kbd>+<kbd>G</kbd>, or click the signal, to open <code>GIT COORDINATION</code>. It shows a card per project and, under each, the findings: panes sharing one working folder, the same file changed in several working copies, a merge check that says a branch will not combine cleanly with main, or Git's own unresolved merge entries. Each finding has a <code>Why shown?</code> line saying what was seen and what that does not prove. Sharing you intend can be marked expected for 15 minutes, an hour or four hours.</p>
+<p>It only looks. It never commits, fetches, checks out or edits a file. Agents can read the same findings through four read-only MCP tools.</p>
+<p class="invite">Technical has every finding, how often it checks, what it runs and the MCP tools.</p>
+</section>
+
+<section data-register="technical" data-headline="Findings">
+<p>A <b>project</b> here means a branch of the <a href="/left-bar">left bar</a>: the project a tab is filed under, else its top-level group, else <code>Unfiled</code>, whichever repositories its panes are in. Each pane is placed by the working directory of the program in its foreground, and a directory becomes a checkout through <code>git rev-parse --show-toplevel</code>. Panes filed under other projects that sit in the same repository are counted in, so filing a tab somewhere else cannot hide an overlap.<sup><a href="#s1">1</a></sup></p>
+
+<h3>The signal</h3>
+<p>The signal sits in the top bar's left corner, after the app's mark. It sums every project in the window, so a quiet project you are standing in cannot silence an alert in another.<sup><a href="#s2">2</a></sup></p>
+<table>
+  <thead><tr><th>It reads</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>Git · No new findings</code></td><td>Every check that finished found nothing new.</td></tr>
+    <tr><td><code>Git · No new findings · scan incomplete</code></td><td>Nothing new so far, but some working folders could not be checked.</td></tr>
+    <tr><td><code>Git · 1 project with new findings</code>, <code>Git · 3 projects with new findings</code></td><td>A finding nobody has marked seen. Red when the loudest is an alert, yellow when it is a warning.</td></tr>
+    <tr><td><code>Git · 1 project with a conflict · seen</code></td><td>A conflict you have marked seen. It stays on the signal until it is resolved.</td></tr>
+  </tbody>
+</table>
+<p>Clicking the signal opens or closes the inspector.</p>
+
+<h3>The inspector</h3>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Alt</kbd>+<kbd>G</kbd></td><td>Open or close <code>GIT COORDINATION</code>.</td></tr>
+    <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Select a row.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Inspect the selected row: a project's findings, or a finding's evidence.</td></tr>
+    <tr><td><kbd>→</kbd> <kbd>←</kbd></td><td>Open or close a row's preview.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>Copy the assessment context, as the <code>Copy assessment context</code> button does.</td></tr>
+    <tr><td><kbd>Esc</kbd></td><td>Go back a level, then close. A click outside the panel also closes it.</td></tr>
+  </tbody>
+</table>
+<p>The first level, <code>PROJECTS IN THIS WINDOW · URGENCY FIRST</code>, has a card per project with its lead sentence and a short glance line such as <code>May need coordination</code> or <code>Edits affect every pane</code>. Before the first scan it reads <code>Waiting for the background scan</code>. Inside a project, each finding is a card with <code>Why shown?</code>; opening one shows the reasons, the marking controls below and <code>Inspect Git evidence →</code>. <code>Inspect checkouts and branches →</code> lists each working copy with its <code>PARTICIPANTS</code> (each pane with a <code>Focus</code> button that takes you to it), <code>CHANGED FILES</code>, <code>INTEGRATION CHECK</code> and <code>GIT REFERENCES</code>. Long lists page forty rows at a time.<sup><a href="#s2">2</a></sup></p>
+
+<h3>What counts as a finding</h3>
+<table>
+  <thead><tr><th>Finding</th><th>When</th><th>Level</th><th>Its sentence</th></tr></thead>
+  <tbody>
+    <tr><td>shared checkout</td><td>Two or more panes in one working folder.</td><td>Warning when they belong to more than one known agent session, else caution.</td><td><code>2 panes share one working folder.</code> <code>They use the same files; edits can affect the other panes.</code></td></tr>
+    <tr><td>shared file</td><td>The same path changed in two or more working copies of one repository. Changed means committed since the branch left the target, staged, unstaged or untracked.</td><td>Warning at three or more copies when any of the changes is uncommitted, else caution.</td><td><code>2 working copies include changes to app/src/main.rs.</code> <code>Combining their changes may require coordination.</code></td></tr>
+    <tr><td>target conflict</td><td>Git's merge check says the committed branch will not combine cleanly with the target.</td><td>Alert.</td><td><code>Git's merge check reports a conflict involving 3 files.</code></td></tr>
+    <tr><td>unmerged index</td><td>Git already holds unresolved merge entries in a working folder.</td><td>Alert.</td><td><code>Git has unresolved entries for 1 file in this working folder.</code></td></tr>
+    <tr><td>missing observation</td><td>A folder could not be checked, the reading is older than 30 seconds, or the merge check failed.</td><td>None; shown so a gap is never read as clear.</td><td><code>Not checked yet.</code> <code>Missing observations can hide shared work or conflicts.</code></td></tr>
+  </tbody>
+</table>
+<p>Each sentence carries what it does not prove: <code>Sharing is observed; simultaneous editing is not established.</code>, <code>A shared file path does not establish a conflict.</code>, <code>Uncommitted edits were not included.</code> and <code>An incomplete check does not establish that work is clear.</code> A file only one working copy touches is never a finding, separate clones of a repository are never matched with each other, and unpushed commits and ahead/behind counts are shown in the evidence but never raise a finding on their own. The target is the first of <code>origin/main</code>, <code>main</code>, <code>origin/master</code> and <code>master</code> that exists.<sup><a href="#s1">1</a></sup><sup><a href="#s3">3</a></sup></p>
+
+<h3>Seen and expected</h3>
+<p><code>Mark seen · keep the condition visible</code> stops a finding counting as new without hiding it. <code>This sharing is expected…</code> is offered only on a shared checkout or shared file, only while the evidence is fresh and only when the branch and checkout are known. It offers <code>15 minutes</code>, <code>1 hour</code> (the default) or <code>4 hours</code>, each confirmed with <code>Confirm expected for …</code>, and quiets sharing notices for that scope; conflicts and missing observations stay visible. While it holds, the glance line reads <code>Expected until</code> and the time. It ends when the time runs out, when the branch or file set changes, when the evidence goes stale, or at a restart, after which it asks to be confirmed again. <code>Revoke expectation</code> and <code>Change expectation</code> undo or adjust it.<sup><a href="#s4">4</a></sup></p>
+<p>These marks are saved per session in <code>~/.local/state/terminal-delight/coordination-attention/</code> (under <code>$XDG_STATE_HOME</code> when it is set), one JSON file with a lock beside it. Records older than seven days are dropped, and the file holds 512 at most.</p>
+
+<h3>How often, and what it runs</h3>
+<p>A background loop wakes every two seconds and scans one project whose reading is twenty seconds old or older, the project you are in first, one scan at a time. Sitting still costs one scan per project every twenty seconds; switching projects gets a fresh reading within a few seconds.<sup><a href="#s2">2</a></sup></p>
+<p>Every Git call runs with <code>GIT_OPTIONAL_LOCKS=0</code>, so <code>git status</code> never takes the index lock from under an agent, and each call is killed at its deadline (three to eight seconds a call, ten seconds a checkout). The commands are reads: <code>rev-parse</code>, <code>symbolic-ref</code>, <code>status --porcelain</code>, <code>diff --name-status</code> and <code>diff --numstat</code>, <code>log</code>, <code>rev-list --count</code>, <code>merge-base</code>, <code>worktree list</code>, <code>stash list</code>, <code>remote get-url origin</code>, and <code>merge-tree --write-tree</code> for the integration check. Nothing commits, fetches, checks out, garbage-collects, or touches refs, the index or your files. The one write is <code>merge-tree</code>'s: it stores the trial merge's tree and blob objects in <code>.git/objects</code>, where nothing points at them and Git's own housekeeping prunes them in time. A scan stops at 20,000 paths, 128 checkouts or 4 MiB of output and says the scan was partial.<sup><a href="#s3">3</a></sup></p>
+
+<h3>For agents</h3>
+<p>Four read-only MCP tools serve the same findings. They need the MCP server on (see <a href="/mcp#technical-the-switches">MCP server</a>); with it off they answer <code>MCP exposure is disabled</code>.<sup><a href="#s5">5</a></sup></p>
+<table>
+  <thead><tr><th>Tool</th><th>Arguments</th><th>Returns</th></tr></thead>
+  <tbody>
+    <tr><td><code>coordination_overview</code></td><td><code>cursor</code>, <code>limit</code> (1–100)</td><td>Every project the agent may see, its findings, how complete the evidence is, and the exact arguments for a follow-up read.</td></tr>
+    <tr><td><code>coordination_project</code></td><td><code>project_id</code>; <code>view</code> = <code>meanings</code>, <code>checkout_id</code>, <code>cursor</code>, <code>limit</code></td><td>A project's coordination groups, checkouts, branches, panes and sessions, and what could not be observed. <code>view: "meanings"</code> pages the explained findings; a <code>checkout_id</code> pages that checkout's file and conflict evidence.</td></tr>
+    <tr><td><code>coordination_cluster</code></td><td><code>project_id</code>, <code>cluster_id</code>, <code>cursor</code>, <code>limit</code></td><td>One group's joined evidence: panes, sessions, checkout roots, branches, where each change came from, and what is uncertain.</td></tr>
+    <tr><td><code>coordination_changes</code></td><td><code>epoch</code>, <code>since_version</code></td><td>What changed since a version. After a restart or once history has expired, it asks for a fresh overview.</td></tr>
+  </tbody>
+</table>
+<p>An agent sees only the panes it is allowed to see. When every pane is exposed, the agents' view and the inspector's are the same; when some panes are hidden from agents, the inspector shows you the fuller picture. Branch names, paths and titles in the answers are marked as untrusted terminal data.</p>
+<p class="in-dev">On 0.5.0 which panes an agent may see is decided in the <a href="/threshing-floor">Threshing Floor</a>, so a seated pane is left out of the agents' view unless a line reaches it.<sup><a href="#s6">6</a></sup></p>
+
+<h3>Hiding it</h3>
+<p>In 0.4.0 the signal is always drawn and has no switch. <kbd>Alt</kbd>+<kbd>G</kbd> is listed in the F1 help as <code>Open Git coordination</code>. There is no <code>ctl</code> verb for it.</p>
+<div class="in-dev">
+<p>On 0.5.0 the signal is a switch in <a href="/ui-config">UI CONFIG</a>, <code>git notice</code>, saved as <code>git_notice</code> under <code>[outer]</code>. A new window opens in the Clean design, whose UI set hides it, so on a fresh 0.5.0 window the signal is not on screen until you turn it on; TERMINIMALIST asks for the same set. A switch you flip yourself always wins. While the signal is hidden, its red or yellow moves onto the CONFIG button, and <kbd>Alt</kbd>+<kbd>G</kbd> still opens the inspector. The findings and their sentences are the same as in 0.4.0.<sup><a href="#s6">6</a></sup></p>
+</div>
+
+<h3>What would prove this wrong</h3>
+<p>Run two agents on one repository in two worktrees and have both change the same file. If the signal still reads <code>Git · No new findings</code> after twenty seconds with both changes uncommitted, the shared-file finding has failed. And if any Git command from Terminal Delight ever leaves an <code>index.lock</code> behind or moves a ref, the page is wrong about the one thing it promises.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Findings, their levels and the project grouping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination.rs">coordination.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination/meaning.rs">coordination/meaning.rs</a>; every sentence quoted: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/coord.rs">lang/coord.rs</a>; where a pane's directory comes from: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>.</li>
+  <li id="s2">The signal, the scan loop (<code>ENG_STALE</code>, twenty seconds) and the F1 row: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; the inspector and its keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination_view.rs">coordination_view.rs</a>.</li>
+  <li id="s3">The Git commands, <code>GIT_OPTIONAL_LOCKS=0</code>, deadlines and the integration target: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/engstate.rs">engstate.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination.rs">coordination.rs</a> (limits at its top).</li>
+  <li id="s4">Seen and expected, the three durations, retention and the file: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination/attention.rs">coordination/attention.rs</a>.</li>
+  <li id="s5">The four tools and their schemas: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
+  <li id="s6">0.5.0: the <code>git_notice</code> switch in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>, the Clean set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a>, and the agents' view in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/coordination_view.rs">coordination_view.rs</a>.</li>
+</ol>

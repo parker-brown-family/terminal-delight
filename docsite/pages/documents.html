@@ -1,0 +1,198 @@
+<script type="application/json" data-page>
+{
+  "title": "Documents",
+  "description": "Alt+click a file path in a Terminal Delight pane and the file opens inside the window, in a floating square beside the line that printed it: pictures, Markdown, HTML pages, PDFs, video and sound. Ctrl+Alt+click opens it in a new pane beside. Without Chromium, poppler or mpv, the file opens in the desktop's own app instead.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "summary": "Alt+click a path, read it beside the prompt"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Alt+click a file path anywhere in a pane and the file opens inside Terminal Delight, in a floating square beside the line that printed it. Pictures, Markdown, HTML pages, PDFs, video and sound all open this way. <kbd>Esc</kbd> closes the square, and everything else you type still goes to the prompt underneath.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click opens the same file in a new pane beside the one you clicked, where it fills the pane and comes back after a restart. <kbd>Shift</kbd>+click shows the file in your file manager, and <kbd>Ctrl</kbd>+click hands it to your desktop's own app.</p>
+<p>Pictures and Markdown need nothing extra. HTML pages need Chromium, PDFs need poppler, and video and sound need mpv. When one is missing, the file opens in your desktop's own app and a chip on the line says why. HTML pages are drawn with the network off unless <code>documents.toml</code> allows it.</p>
+<p>A path that Claude Code or Codex wrapped across two rows opens whole, and so does a name in an <code>ls</code> listing.</p>
+<p class="invite">Technical has every click, the keys while a square is up, what each kind of file needs, and the <code>documents.toml</code> keys.</p>
+</section>
+
+<section data-register="technical" data-headline="Documents">
+
+<h3>Opening a file</h3>
+<p>Every modified click on a path or link goes through one table, read top to bottom; the first row that matches decides.<sup><a href="#s1">1</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Click</th><th>On</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click</td><td>a file Terminal Delight can draw</td><td>Opens it in a new pane to the right, with focus left where it was. A pane in the tab already showing the file comes forward instead.</td></tr>
+    <tr><td><kbd>Alt</kbd>+click</td><td>a file Terminal Delight can draw</td><td>Opens it in a floating square over this pane.</td></tr>
+    <tr><td><kbd>Alt</kbd>+click again</td><td>the file the square is showing</td><td>Moves the square into a pane beside, as its <code>⇲ split</code> does.</td></tr>
+    <tr><td><kbd>Alt</kbd>+click</td><td>a command line, with no file under the pointer</td><td>Copies the command.</td></tr>
+    <tr><td><kbd>Shift</kbd>+click, or <kbd>Super</kbd>+<kbd>Ctrl</kbd>+click</td><td>a file on this disk</td><td>Shows it in the file manager, selected.</td></tr>
+    <tr><td><kbd>Shift</kbd>+click or <kbd>Ctrl</kbd>+click</td><td>any link</td><td>Opens it with the desktop's own app.</td></tr>
+  </tbody>
+</table>
+<p>Holding <kbd>Alt</kbd> over a path that opens shows the chip <code>◳ alt+click · open here</code>. Right-click a path for <code>◳ Open here</code> and <code>⤢ Open beside</code> (on a file that opens), <code>↗ Open with desktop</code>, <code>⌖ Reveal in folder</code> (on a file on this disk) and <code>⎘ Copy link</code>. The same clicks work on a path in the <a href="/focus-reader">FOCUS reader</a>, read against the pane's folder.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Which paths open</h3>
+<p>The name decides first, matched without regard to case. Then the first sixteen bytes of the file must agree, so a log file named <code>.png</code> doesn't open as an empty square.<sup><a href="#s2">2</a></sup></p>
+<table>
+  <thead><tr><th>Kind</th><th>Names</th><th>The bytes must</th></tr></thead>
+  <tbody>
+    <tr><td>Picture</td><td><code>.png</code> <code>.jpg</code> <code>.jpeg</code> <code>.webp</code> <code>.gif</code> <code>.bmp</code> <code>.svg</code></td><td>be that picture (SVG is text, so its name is enough). A file with no extension opens as a picture when its bytes are one.</td></tr>
+    <tr><td>Markdown</td><td><code>.md</code> <code>.markdown</code></td><td>nothing; the name is enough</td></tr>
+    <tr><td>HTML</td><td><code>.html</code> <code>.htm</code></td><td>nothing; the name is enough</td></tr>
+    <tr><td>PDF</td><td><code>.pdf</code></td><td>start with <code>%PDF-</code>. A file with no extension that starts with it is a PDF too.</td></tr>
+    <tr><td>Video</td><td><code>.mp4</code> <code>.m4v</code> <code>.mov</code> <code>.webm</code> <code>.mkv</code> <code>.ogv</code> <code>.avi</code></td><td>carry a video container's signature</td></tr>
+    <tr><td>Sound</td><td><code>.mp3</code> <code>.m4a</code> <code>.aac</code> <code>.flac</code> <code>.wav</code> <code>.ogg</code> <code>.oga</code> <code>.opus</code> <code>.weba</code></td><td>carry a sound container's signature</td></tr>
+  </tbody>
+</table>
+<p>A directory, a file that can't be read, or a file whose bytes contradict its name doesn't open, and the click does what it would have done anyway.</p>
+<p>Paths that a program broke across rows open whole, from either row:<sup><a href="#s2">2</a></sup></p>
+<ul>
+  <li>A path the terminal wrapped at the pane's edge.</li>
+  <li>A path Claude Code broke across rows. Its replies are indented two columns, and the second half starts at that margin. Where the break could be read two ways, the reading that names a file on disk wins. A path broken inside a cell of a table Claude Code drew opens whole too.</li>
+  <li>A file reference Codex prints in parentheses across indented rows. A relative one, such as <code>(reports/brief.html)</code>, opens from the pane's folder.</li>
+</ul>
+<p>A name in a directory listing opens by <kbd>Alt</kbd>+click. When the listing puts each file's path behind its name, as <code>ls --hyperlink</code> and <code>eza --hyperlink</code> do, the click opens exactly the file listed, wherever the shell has gone since. A plain name with no link behind it opens only if the pane's own folder holds a file by that name. If your <code>ls</code> writes no links, add <code>--hyperlink=auto</code> to it.<sup><a href="#s2">2</a></sup></p>
+
+<h3>The square</h3>
+<figure class="td-fig">
+  <div class="figwrap">
+<svg class="flow" viewBox="0 0 700 450" role="img" aria-label="A pane with a directory listing. The name brief.html on the second row was Alt+clicked, and a square 336 pixels on a side opens right-aligned just below that row, with a strip across its top reading: brief.html, minus, fit, plus, split, desktop, esc.">
+  <rect class="box" x="10" y="10" width="680" height="430" rx="8"/>
+  <text class="t2" x="24" y="26">pane header</text>
+  <path class="ln" d="M10 32 L690 32"/>
+  <text class="t2" x="24" y="54">$ ls --hyperlink reports</text>
+  <text class="t2" x="24" y="74">notes.md</text>
+  <text class="t1" x="96" y="74">brief.html</text>
+  <text class="t2" x="190" y="74">chart.png   paper.pdf</text>
+  <text class="t2" x="24" y="94">$ _</text>
+  <path class="back" d="M140 80 C 160 150, 250 120, 336 110"/>
+  <path class="ahy" d="M334 105 L344 110 L334 115 Z"/>
+  <rect class="hot" x="342" y="82" width="336" height="336" rx="6"/>
+  <path class="ln" d="M342 104 L678 104"/>
+  <text class="t2" x="350" y="97">☰ brief.html     −  fit  +   ⇲ split  ↗ desktop  ✕ esc</text>
+  <text class="t2" x="372" y="150">the page, drawn by Chromium</text>
+  <text class="t2" x="372" y="170">and scrolled by Terminal Delight</text>
+  <rect class="box" x="664" y="112" width="8" height="70" rx="2"/>
+  <text class="lbl" x="24" y="300">side: 56% of the screen's width,</text>
+  <text class="lbl" x="24" y="318">or 84% of its height when smaller</text>
+  <text class="lbl" x="24" y="344">right-aligned, 12 px in from the edge,</text>
+  <text class="lbl" x="24" y="362">6 px below the clicked row</text>
+  <text class="lbl" x="24" y="388">typing still reaches the prompt</text>
+</svg>
+  </div>
+  <figcaption><b>Figure 1.</b> A square opens next to the line you clicked and never covers the whole pane. Here the pane is short enough that 84% of its height sets the side, which works out to 336 px for a screen 680 by 400. When the square doesn't fit below the row, it ends just above it. Drawn from the placement rule (<code>float_home</code> in <code>docopen.rs</code>) at those numbers; it is not a screenshot. The bar on the right edge is the reading rail.</figcaption>
+</figure>
+<p>The strip across the top carries <code>☰</code> and the file's name, then <code>−</code>, the zoom and <code>+</code> for anything that zooms, then <code>⇲ split</code>, <code>↗ desktop</code> and <code>✕ esc</code>. The zoom reads <code>fit</code> or a percentage; pressing it switches between fitting the square and actual size. Pictures zoom from 10% to 800%, and Markdown, pages and PDFs from 50% to 300%.<sup><a href="#s1">1</a></sup><sup><a href="#s3">3</a></sup></p>
+<p>Drag the strip to move the square. Drag a side or the bottom edge to resize it, or any of the four corners; it never gets smaller than 200 by 120 px. A document taller than the square draws a column of blocks down its right edge, lit where you are and dimmer where you've been, with the percentage read so far beside its top. A document that fits draws none.<sup><a href="#s1">1</a></sup><sup><a href="#s3">3</a></sup></p>
+<p>Opening another document replaces the square. A square holding notes you haven't saved stays once and says so; see <a href="/briefs">Decision briefs</a>.</p>
+
+<h3>Keys while a square is up</h3>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Esc</kbd></td><td>Close the box on top. A clip closes first, and the square it covered comes back. A brief's own dialog closes before the square does.</td></tr>
+    <tr><td>wheel over the square</td><td>Scroll or pan the document.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel over the square</td><td>Zoom the document.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>R</kbd></td><td>Read the document in the <a href="/focus-reader">FOCUS reader</a>. The square says <code>being read</code> until the reader closes, and the document goes back into it at the zoom it had.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Enter</kbd>, over a brief</td><td>↪ send its notes to the agent beside it (<a href="/briefs">Decision briefs</a>).</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd><span class="dev-tag">0.5.0 dev</span></td><td>Close the box on top, one per press.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd><span class="dev-tag">0.5.0 dev</span></td><td>Step the document 48 px, a wheel notch.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> / <kbd>↓</kbd><span class="dev-tag">0.5.0 dev</span></td><td>Page it.</td></tr>
+  </tbody>
+</table>
+<p>Other keys reach the pane as they would with no square up, so you can read beside the prompt and keep typing. In 0.4.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> with a square up still closes the whole tab, after asking.<sup><a href="#s5">5</a></sup></p>
+<div class="in-dev">
+<p><kbd>Ctrl</kbd>+<kbd>W</kbd> closes the box on top, one per press, as <kbd>Esc</kbd> does. Closing the tab moves to <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd>, which still asks first, and with no box open <kbd>Ctrl</kbd>+<kbd>W</kbd> reaches the shell or agent as delete-word again. While a square floats, <kbd>Ctrl</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> step it and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd>/<kbd>↓</kbd> page it, so those chords don't reach the shell; the Document face takes them too, and with a brief's note box open they turn the notes. <kbd>Ctrl</kbd>+<kbd>PgUp</kbd>/<kbd>PgDn</kbd> still switch tabs. With no square up, nothing is taken.<sup><a href="#s5">5</a></sup></p>
+</div>
+
+<h3>A document in its own pane</h3>
+<p><kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click, <code>⤢ Open beside</code> or <code>⇲ split</code> puts the file on a new pane's Document face. It fills the pane, bent with the glass, over a shell that keeps running underneath; <kbd>Alt</kbd>+<kbd>K</kbd> flips between them. A square moved there keeps its zoom and its place. A document pane comes back after a restart at the place you were reading. A tab already holding four panes has no room, so the file opens in a square instead and its strip says <code>four panes · opened here</code>.<sup><a href="#s1">1</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Key, on the Document face</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>0</kbd></td><td>Fit.</td></tr>
+    <tr><td><kbd>1</kbd></td><td>Actual size.</td></tr>
+    <tr><td><kbd>+</kbd> or <kbd>=</kbd>, <kbd>-</kbd></td><td>Zoom in, zoom out.</td></tr>
+    <tr><td>arrows</td><td>Pan or scroll 48 px.</td></tr>
+    <tr><td><kbd>PgUp</kbd> <kbd>PgDn</kbd></td><td>Most of a screen.</td></tr>
+    <tr><td><kbd>Space</kbd>, <kbd>←</kbd> <kbd>→</kbd>, <kbd>M</kbd>, on a video or sound</td><td>Pause, skip five seconds, mute.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>Back to the terminal.</td></tr>
+  </tbody>
+</table>
+<p>Every other key stops at the face, so nothing is typed into the hidden shell.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Pictures</h3>
+<p>PNG, JPEG, WebP, GIF, BMP and SVG, with nothing to install. A picture with a side longer than the graphics card can hold opens a square that says so, with its size and the card's limit, and ends <code>so ctrl+click the path to open it with the desktop.</code><sup><a href="#s3">3</a></sup></p>
+
+<h3>Markdown</h3>
+<p>Headings, paragraphs, lists, tables, code blocks, quotes and rules, drawn in the pane's own colours: headings, links, list markers and the quote bar take the theme's accent. A local picture on a line of its own is drawn. A remote one is never fetched, and shows as a line such as <code>image · chart.png — on example.com, not fetched</code>. Links are followed. While the file is open it is checked for changes every half second, and an edit is drawn again with your place kept. Nothing extra to install.<sup><a href="#s3">3</a></sup></p>
+
+<h3>HTML pages</h3>
+<p>Headless Chromium draws the page as pictures, and Terminal Delight scrolls them itself. One browser serves every page Terminal Delight opens, each page in a fresh context on an empty profile made for it, so a page's <code>localStorage</code> is always empty. The browser closes after five minutes with nothing to draw and starts again for the next page. Chromium's own sound is muted.<sup><a href="#s3">3</a></sup></p>
+<p>The network is off. Every page is told to block <code>http</code>, <code>https</code>, <code>ws</code> and <code>wss</code>, and the browser is pointed at a proxy that isn't there and a resolver that finds nothing, so a brief that loads a web font draws with the fallback. <code>network = "allowed"</code> in <code>documents.toml</code> turns it on. Renders are kept on disk, up to 256 MiB, in <code>$XDG_CACHE_HOME/terminal-delight/pages</code> (<code>~/.cache/terminal-delight/pages</code> when it is unset), so a page opened again draws at once.<sup><a href="#s3">3</a></sup><sup><a href="#s4">4</a></sup></p>
+<p>A video or audio player on the page plays as a clip when you press it. One the page plays from its own script has no file to open, and says so.<sup><a href="#s3">3</a></sup></p>
+<p class="in-dev">A page with a link inside an SVG drawing, such as a diagram whose boxes link to sections, opens. In 0.4.0 such a page fails to open. The links work too, including jumps to a heading in the same page.<sup><a href="#s7">7</a></sup></p>
+
+<h3>PDFs</h3>
+<p>One column of pages, with the page in view counted at the bottom right. poppler redraws each page at the size it is shown, so zoomed text stays sharp. A link to <code>paper.pdf#page=3</code> in a Markdown or HTML document opens it on page 3, and a PDF rewritten while it is open is read again on the page you were reading. A PDF locked with a password says <code>This PDF is locked with a password. Ctrl+click its path to open it on the desktop, which can ask for it.</code> A page still being drawn after twenty seconds is stopped: <code>poppler was still drawing this after twenty seconds, and was stopped.</code><sup><a href="#s3">3</a></sup></p>
+
+<h3>Video and sound</h3>
+<p>In a square, a video or sound is a clip: it opens in its own box inside the square it covers, with that square's rim showing round it, plays once with sound, and closes at its end. The square it covered comes back exactly as it was, so a video pressed on a page leaves the page where you were. A sound gets a band only as tall as its waveform, drawn in the pane's accent colour, so the page under it stays in sight. A new clip replaces the one that's up.<sup><a href="#s1">1</a></sup><sup><a href="#s3">3</a></sup></p>
+<p>The bar along the bottom has <code>▶</code> or <code>❚❚</code>, the time, a track to press or drag, and the sound switch. A press on the picture pauses or plays it. In a square, <kbd>Space</kbd>, the arrows and <kbd>M</kbd> stay the prompt's. On the Document face a video loops, and those keys work.<sup><a href="#s3">3</a></sup></p>
+
+<h3>What each kind needs</h3>
+<table>
+  <thead><tr><th>Kind</th><th>Needs</th><th>Looked for</th></tr></thead>
+  <tbody>
+    <tr><td>Pictures, Markdown</td><td>nothing extra</td><td></td></tr>
+    <tr><td>HTML</td><td>Chromium</td><td>the <code>chromium</code> path in <code>documents.toml</code>; otherwise <code>chromium</code>, <code>chromium-browser</code>, <code>google-chrome-stable</code> and <code>google-chrome</code> on <code>PATH</code>, in that order</td></tr>
+    <tr><td>PDF</td><td>poppler's <code>pdfinfo</code> and <code>pdftoppm</code></td><td>on <code>PATH</code></td></tr>
+    <tr><td>Video, sound</td><td>libmpv, which comes with mpv</td><td><code>libmpv.so.2</code>, then <code>libmpv.so.1</code>, then <code>libmpv.so</code></td></tr>
+  </tbody>
+</table>
+<p>Each is looked for the first time a file needs it. A missing one is looked for again thirty seconds later, so installing it needs no restart. Without it, the file opens in your desktop's own app, no square opens, and a chip on the clicked line says why, such as <code>no Chromium found · ↗ opened with the desktop</code>, <code>no poppler · ↗ opened with the desktop</code> or <code>no libmpv · ↗ opened with the desktop</code>. A Chromium that is there but won't start is found once the square is up: the square says why, and the file goes to the desktop.<sup><a href="#s1">1</a></sup><sup><a href="#s4">4</a></sup></p>
+
+<h3>documents.toml</h3>
+<p><code>~/.config/terminal-delight/documents.toml</code>, or under <code>$XDG_CONFIG_HOME</code> when it is set. It only exists if you write it, and every key is optional. All four sit under <code>[html]</code>.<sup><a href="#s4">4</a></sup></p>
+<table>
+  <thead><tr><th>Key</th><th>Takes</th><th>When unset</th></tr></thead>
+  <tbody>
+    <tr><td><code>engine</code></td><td><code>"snapshot"</code>, or <code>"off"</code> to send every HTML file to the desktop</td><td><code>"snapshot"</code></td></tr>
+    <tr><td><code>chromium</code></td><td>a path to the browser</td><td>the first of the four names on <code>PATH</code></td></tr>
+    <tr><td><code>gpu</code></td><td><code>"vulkan"</code>, which starts the browser with Vulkan through ANGLE</td><td>headless defaults</td></tr>
+    <tr><td><code>network</code></td><td><code>"allowed"</code> or <code>"blocked"</code></td><td>blocked</td></tr>
+  </tbody>
+</table>
+<pre><code>[html]
+network = "allowed"</code></pre>
+<p>A word Terminal Delight doesn't know is an error that names it, so a typo in <code>network</code> can't open pages to the internet. A file that doesn't parse, or a <code>network</code> or <code>gpu</code> it doesn't know, sends HTML to the desktop with <code>documents.toml could not be read (…)</code>. An unknown engine says <code>documents.toml asks for an HTML engine called "…", and the only one TD has is "snapshot".</code> A <code>chromium</code> path with nothing there says <code>No Chromium at … (the chromium setting in documents.toml).</code></p>
+<p>The file is read the first time an HTML file opens. Once a page has been drawn, a change to it takes effect when Terminal Delight restarts; a setting that left HTML unavailable is read again after thirty seconds.<sup><a href="#s4">4</a></sup></p>
+
+<h3>Links inside a document</h3>
+<p>A link to a heading in the same document scrolls to it. A link to a file Terminal Delight can draw opens in the same square, or on the same Document face, so reading a set of linked notes stays in one place; a video or sound opens as a clip over the square instead. A web or mail address, or a local file Terminal Delight doesn't draw, goes to the desktop, as <kbd>Ctrl</kbd>+click does. Any other scheme is refused, because a document is someone else's text and a click in it shouldn't reach every handler the desktop has registered.<sup><a href="#s2">2</a></sup></p>
+
+<h3>Agents and scripts</h3>
+<p>An agent opens a file it made with the <a href="/mcp">MCP</a> tool <code>open_document</code>, which needs the server's writes switch. It takes <code>path</code>, an absolute path or <code>file://</code> URL, and <code>placement</code>: <code>"here"</code>, the default, floats it over the agent's own pane as <kbd>Alt</kbd>+click does, and <code>"beside"</code> opens it in a pane to the right as <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+click does. It only ever opens in the agent's own pane or tab. In 0.4.0, <code>"here"</code> replaces a square you have open, unless that square holds unsaved notes, which answers <code>err</code>.<sup><a href="#s6">6</a></sup></p>
+<div class="in-dev">
+<p>An agent never replaces a square you have open. If a square is up over its pane, whatever it shows, nothing opens: the file is kept as the pane's handover on the <a href="/artifacts">artifact rail</a>, and the agent's answer begins <code>held</code> (over MCP, a success with <code>"held": true</code>). A clip still opens over the square, since it replaces nothing. A click, the rail and <code>ctl doc here</code> still replace the square, because a person asked.<sup><a href="#s6">6</a></sup></p>
+</div>
+<p>From a script, <a href="/ctl"><code>terminal-delight ctl</code></a> has <code>doc here &lt;path&gt;</code>, <code>doc beside &lt;path&gt;</code>, <code>doc close</code> and <code>doc scroll &lt;pixels&gt;</code>.<sup><a href="#s6">6</a></sup></p>
+
+<h3>Notes on a document</h3>
+<p>A decision brief opened in a square or a document pane shows its note buttons, counts and CONCUR stamps, and saves your notes into its own file. A Markdown file takes notes too. All of that is on <a href="/briefs">Decision briefs</a>.</p>
+
+<h3>What would prove this wrong</h3>
+<p>A key other than <kbd>Esc</kbd> (and, in 0.5.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> and the <kbd>Ctrl</kbd>+arrows) that stops reaching the prompt while a square floats; an HTML page that loads a web font with <code>network</code> unset; or a file that opens in a square when its first bytes contradict its name.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The click table, the square's placement, size and strip, the clip and the Document face's keys: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a> (<code>click_intent</code>, <code>link_menu</code>, <code>float_home</code>, <code>clip_home</code>, <code>sound_box</code>, <code>doc_face_key</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/doc.rs">pane/doc.rs</a> (<code>open_float</code>, <code>open_clip</code>, <code>square_el</code>, <code>engine_refused</code>, <code>doc_wheel</code>); strings in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>.</li>
+  <li id="s2">Which files open, by name and first bytes: <code>doc_kind</code> and <code>drawable_document</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>; links inside a document: <code>link_route</code> there and <code>follow_doc_link</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/doc.rs">pane/doc.rs</a>; wrapped paths, table cells, Codex references, OSC 8 links and bare names: <code>continuation_start</code>, <code>wrapped_link_candidates</code>, <code>hyperlink_reading</code> and <code>bare_name_reading</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>, tested in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/behaviour.rs">pane/behaviour.rs</a>.</li>
+  <li id="s3">Drawing each kind: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview.rs">docview.rs</a> (<code>READING_ZOOM</code>, <code>WATCH_EVERY</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/src/docview">docview/</a>: <code>image.rs</code> (<code>ZOOM_STEPS</code>), <code>markdown.rs</code>, <code>snapshot.rs</code> (<code>IDLE_SHUTDOWN</code>, the network block), <code>cache.rs</code> (<code>CAP_BYTES</code>), <code>pdf.rs</code>, <code>poppler.rs</code> (<code>RENDER_LIMIT</code>), <code>video.rs</code>, <code>mpv.rs</code>, <code>progress.rs</code>; messages in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
+  <li id="s4"><code>documents.toml</code> as parsed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/pref.rs">docview/pref.rs</a>; when it is read and how a missing engine is asked again: <code>engine</code> and <code>ASK_AGAIN</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview.rs">docview.rs</a>; the reasons: <code>Unavailable</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/engine.rs">docview/engine.rs</a>; the libmpv names: <code>SONAMES</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/mpv.rs">docview/mpv.rs</a>.</li>
+  <li id="s5">Keys: the routing ladder in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a> (0.4.0: <code>Layer::Float</code> takes Escape; <code>pane_chord</code> keeps <kbd>Ctrl</kbd>+<kbd>W</kbd> as close-tab); 0.5.0: <code>glow_chord</code> and the <kbd>Ctrl</kbd>+<kbd>W</kbd> arm of <code>pane_chord</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/keylayer.rs">keylayer.rs on dev/0.5.0</a>, and <code>DocumentView::glow</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview.rs">docview.rs on dev/0.5.0</a>.</li>
+  <li id="s6"><code>open_document</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a> and <code>open_here</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/doc.rs">pane/doc.rs</a>; the <code>held</code> answer: <code>open_here</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane/doc.rs">pane/doc.rs on dev/0.5.0</a>; <code>ctl doc</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+  <li id="s7">Links in SVG: <code>resolvedHref</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/extract.js">docview/extract.js on dev/0.5.0</a>, with real-Chromium fixtures in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/tests/snapshot_engine.rs">tests/snapshot_engine.rs</a>.</li>
+</ol>
