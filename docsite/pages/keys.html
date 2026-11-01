@@ -198,7 +198,7 @@
     <tr><td><kbd>Esc</kbd></td><td>close, dropping the draft</td></tr>
   </tbody>
 </table>
-<p>A comment note takes the same editing keys; <kbd>Enter</kbd> posts it and <kbd>Esc</kbd> discards it. Nothing typed there reaches the agent.</p>
+<p>A comment note takes the same editing keys; <kbd>Enter</kbd> posts it and <kbd>Esc</kbd> discards it. Nothing typed there reaches the agent, with the same three exceptions as the draft.</p>
 
 <h3>Documents</h3>
 <table class="keys">
@@ -219,7 +219,7 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd>, <kbd>PgUp</kbd> <kbd>PgDn</kbd>, with the note box open</td><td>turn the notes instead <span class="dev-tag">0.5.0 dev</span></td></tr>
   </tbody>
 </table>
-<p>A floating document takes only <kbd>Esc</kbd> and ↪; every other key reaches the shell under it. The document face takes every key the window and pane chords leave, so nothing is typed into the shell it hides. A video plays its keys only on the document face. Over a square, they belong to the prompt.<sup><a href="#s5">5</a></sup></p>
+<p>A floating document takes only <kbd>Esc</kbd> and ↪; every other key reaches the shell under it. The document face takes every key the window and pane chords leave, so nothing is typed into the shell it hides, except <kbd>Ctrl</kbd>+<kbd>X</kbd> with nothing selected in the terminal, which still sends <code>^X</code> to it (issue 1247). A video plays its keys only on the document face. Over a square, they belong to the prompt.<sup><a href="#s5">5</a></sup></p>
 
 <h3>Paint overlay</h3>
 <p>Raised by <code>terminal-delight ctl paint on</code> or <code>toggle</code>; on Omarchy, bind that to <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>P</kbd>. Other letters are swallowed, and chords with a modifier pass through. <a href="/themes#technical-paint">Themes</a> has more.</p>
