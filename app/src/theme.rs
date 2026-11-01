@@ -455,6 +455,8 @@ pub enum GradeKey {
     ImageGlow,
     InactiveImageGlow,
     InactiveText,
+    InactiveBrightness,
+    InactiveBlur,
     AfterglowMs,
     CursorLingerMs,
     OffCursorLingerMs,
@@ -487,6 +489,9 @@ impl GradeKey {
             // The CRT pass clamps a tube's glare to `0..1` (`warp::register_tube`).
             GradeKey::Glare | GradeKey::ImageGlow | GradeKey::InactiveImageGlow => (0.0, 1.0, 0.0),
             GradeKey::InactiveText => (0.0, 1.0, 0.45),
+            // 78% is the 22% black veil every inactive pane has always worn.
+            GradeKey::InactiveBrightness => (0.0, 1.0, INACTIVE_BRIGHTNESS),
+            GradeKey::InactiveBlur => (0.0, 1.0, 0.0),
             GradeKey::AfterglowMs => (0.0, 1200.0, 220.0),
             GradeKey::CursorLingerMs | GradeKey::InactiveCursorLingerMs => {
                 (0.0, TextLinger::CURSOR_MAX_MS, TextLinger::CURSOR_MAX_MS)
@@ -636,6 +641,14 @@ pub struct Grade {
     /// Fraction of active text intensity while inactive; default 45% / Intrusive 52%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_text: Option<f32>,
+    /// How much light an inactive pane keeps under its veil, 0..1. None draws
+    /// [`INACTIVE_BRIGHTNESS`], the dimming panes have always had.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_brightness: Option<f32>,
+    /// How soft an inactive pane's terminal is, 0..1: none at 0, a little past
+    /// the popups' frosted backdrop at 1. None is crystal clear.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_blur: Option<f32>,
     /// Legacy unified timing. New optional dials override each trail independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub afterglow_ms: Option<f32>,
@@ -715,6 +728,8 @@ pub enum GradeChannel {
     ImageGlow,
     InactiveImageGlow,
     InactiveText,
+    InactiveBrightness,
+    InactiveBlur,
     AfterglowMs,
     CursorLingerMs,
     OffCursorLingerMs,
@@ -736,7 +751,7 @@ impl GradeChannel {
     ///
     /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
     /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 26] = [
+    pub const ALL: [GradeChannel; 28] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -752,6 +767,8 @@ impl GradeChannel {
         Self::ImageGlow,
         Self::InactiveImageGlow,
         Self::InactiveText,
+        Self::InactiveBrightness,
+        Self::InactiveBlur,
         Self::AfterglowMs,
         Self::CursorLingerMs,
         Self::OffCursorLingerMs,
@@ -789,6 +806,8 @@ impl GradeChannel {
             Self::InactiveOffCursorLingerMs => "inactive_off_cursor_linger_ms",
 
             Self::InactiveText => "inactive_text",
+            Self::InactiveBrightness => "inactive_brightness",
+            Self::InactiveBlur => "inactive_blur",
             Self::InactiveImageGlow => "inactive_image_glow",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
@@ -845,6 +864,16 @@ impl GradeChannel {
                 _ => false,
             },
             Self::InactiveText => match (a.inactive_text, b.inactive_text) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::InactiveBrightness => match (a.inactive_brightness, b.inactive_brightness) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::InactiveBlur => match (a.inactive_blur, b.inactive_blur) {
                 (None, None) => true,
                 (Some(x), Some(y)) => close(x, y),
                 _ => false,
@@ -930,6 +959,8 @@ impl GradeChannel {
             }
 
             Self::InactiveText => dst.inactive_text = src.inactive_text,
+            Self::InactiveBrightness => dst.inactive_brightness = src.inactive_brightness,
+            Self::InactiveBlur => dst.inactive_blur = src.inactive_blur,
             Self::InactiveImageGlow => dst.inactive_image_glow = src.inactive_image_glow,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
@@ -964,6 +995,8 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::InactiveOffCursorLingerMs => Self::InactiveOffCursorLingerMs,
 
             GradeKey::InactiveText => Self::InactiveText,
+            GradeKey::InactiveBrightness => Self::InactiveBrightness,
+            GradeKey::InactiveBlur => Self::InactiveBlur,
             GradeKey::InactiveImageGlow => Self::InactiveImageGlow,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
@@ -1127,6 +1160,8 @@ impl Default for Grade {
             image_glow: None,
             inactive_image_glow: None,
             inactive_text: None,
+            inactive_brightness: None,
+            inactive_blur: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -1154,7 +1189,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 18] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 20] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -1169,6 +1204,8 @@ impl Grade {
         (GradeKey::ImageGlow, "letter glow"),
         (GradeKey::InactiveImageGlow, "inactive letter glow"),
         (GradeKey::InactiveText, "inactive text"),
+        (GradeKey::InactiveBrightness, "inactive brightness"),
+        (GradeKey::InactiveBlur, "inactive blur"),
         (GradeKey::CursorLingerMs, "cursor linger"),
         (GradeKey::OffCursorLingerMs, "off-cursor linger"),
         (GradeKey::InactiveCursorLingerMs, "inactive cursor linger"),
@@ -1201,6 +1238,8 @@ impl Grade {
             image_glow: n.image_glow,
             inactive_image_glow: n.inactive_image_glow,
             inactive_text: n.inactive_text,
+            inactive_brightness: n.inactive_brightness,
+            inactive_blur: n.inactive_blur,
             afterglow_ms: n.afterglow_ms,
             cursor_linger_ms: n.cursor_linger_ms,
             off_cursor_linger_ms: n.off_cursor_linger_ms,
@@ -1234,6 +1273,8 @@ impl Grade {
             image_glow: None,
             inactive_image_glow: None,
             inactive_text: None,
+            inactive_brightness: None,
+            inactive_blur: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -1321,6 +1362,8 @@ impl Grade {
             && self.image_glow == d.image_glow
             && self.inactive_image_glow == d.inactive_image_glow
             && self.inactive_text == d.inactive_text
+            && self.inactive_brightness == d.inactive_brightness
+            && self.inactive_blur == d.inactive_blur
             && self.afterglow_ms == d.afterglow_ms
             && self.cursor_linger_ms == d.cursor_linger_ms
             && self.off_cursor_linger_ms == d.off_cursor_linger_ms
@@ -1368,6 +1411,22 @@ impl Grade {
         } else {
             self.inactive_image_glow_at_edge()
         }
+    }
+
+    /// The light an inactive pane keeps: 1 is no veil, 0 the darkest one.
+    pub fn inactive_brightness_at_edge(&self) -> f32 {
+        self.inactive_brightness
+            .filter(|v| v.is_finite())
+            .unwrap_or(INACTIVE_BRIGHTNESS)
+            .clamp(0.0, 1.0)
+    }
+
+    /// How soft an inactive pane's terminal is, 0..1.
+    pub fn inactive_blur_at_edge(&self) -> f32 {
+        self.inactive_blur
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, 1.0)
     }
 
     pub fn inactive_text_at_edge(&self, preset: TerminalLightPreset) -> f32 {
@@ -1451,6 +1510,8 @@ impl Grade {
             GradeKey::InactiveOffCursorLingerMs => return self.inactive_off_cursor_linger_ms,
 
             GradeKey::InactiveText => return self.inactive_text,
+            GradeKey::InactiveBrightness => return self.inactive_brightness,
+            GradeKey::InactiveBlur => return self.inactive_blur,
             GradeKey::InactiveImageGlow => return self.inactive_image_glow,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
@@ -1486,6 +1547,16 @@ impl Grade {
             GradeKey::InactiveText => {
                 if v.is_finite() {
                     self.inactive_text = Some(v);
+                }
+            }
+            GradeKey::InactiveBrightness => {
+                if v.is_finite() {
+                    self.inactive_brightness = Some(v);
+                }
+            }
+            GradeKey::InactiveBlur => {
+                if v.is_finite() {
+                    self.inactive_blur = Some(v);
                 }
             }
             GradeKey::AfterglowMs => {
@@ -1684,6 +1755,8 @@ pub fn house_outer() -> ThemeChoice {
             image_glow: None,
             inactive_image_glow: None,
             inactive_text: None,
+            inactive_brightness: None,
+            inactive_blur: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -3105,6 +3178,9 @@ pub fn select_outer(cx: &mut App, choice: ThemeChoice) {
 /// [`Theme::warp`] and the renderer registers each tube with its own `(k1, k2)`.
 /// `0` = dead flat; the slider runs to [`WARP_MAX`] for a full fishbowl.
 pub const WARP_DEFAULT: f32 = 1.43;
+/// The light an inactive pane keeps under its veil when nobody has set it: a
+/// 22% black veil, the dimming every inactive pane has always had.
+pub const INACTIVE_BRIGHTNESS: f32 = 0.78;
 
 /// The size a fresh window opens at — the two SIZE channels of
 /// [`house_outer`]'s grade. `scale` is the menu-bar/chrome multiplier
@@ -4655,6 +4731,8 @@ mod tests {
             image_glow: Some(0.7),
             inactive_image_glow: Some(0.9),
             inactive_text: Some(0.3),
+            inactive_brightness: Some(0.6),
+            inactive_blur: Some(0.5),
             afterglow_ms: Some(900.0),
             cursor_linger_ms: Some(123.0),
             off_cursor_linger_ms: Some(456.0),
@@ -5363,7 +5441,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 26);
+        assert_eq!(GradeChannel::ALL.len(), 28);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -5406,6 +5484,8 @@ warp = 1.5
                     | GradeKey::ImageGlow
                     | GradeKey::InactiveImageGlow
                     | GradeKey::InactiveText
+                    | GradeKey::InactiveBrightness
+                    | GradeKey::InactiveBlur
                     | GradeKey::AfterglowMs
                     | GradeKey::CursorLingerMs
                     | GradeKey::OffCursorLingerMs

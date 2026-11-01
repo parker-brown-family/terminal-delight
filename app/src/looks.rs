@@ -156,6 +156,8 @@ look_dials! {
     image_glow: f32 => "image_glow", opt;
     inactive_image_glow: f32 => "inactive_image_glow", opt;
     inactive_text: f32 => "inactive_text", opt;
+    inactive_brightness: f32 => "inactive_brightness", opt;
+    inactive_blur: f32 => "inactive_blur", opt;
     afterglow_ms: f32 => "afterglow_ms", opt;
     cursor_linger_ms: f32 => "cursor_linger_ms", opt;
     off_cursor_linger_ms: f32 => "off_cursor_linger_ms", opt;
@@ -172,6 +174,8 @@ pub fn look_key(k: GradeKey) -> Option<&'static str> {
         GradeKey::ImageGlow => "image_glow",
         GradeKey::InactiveImageGlow => "inactive_image_glow",
         GradeKey::InactiveText => "inactive_text",
+        GradeKey::InactiveBrightness => "inactive_brightness",
+        GradeKey::InactiveBlur => "inactive_blur",
         GradeKey::AfterglowMs => "afterglow_ms",
         GradeKey::CursorLingerMs => "cursor_linger_ms",
         GradeKey::OffCursorLingerMs => "off_cursor_linger_ms",

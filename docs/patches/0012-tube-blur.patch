@@ -1,0 +1,173 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -22,7 +22,7 @@ struct CrtParams {
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+     crawl: array<vec4<f32>, 32>,    // enabled, top width, depth, bezel strength
+-    image_glow: array<vec4<f32>, 32>, // strength, reserved (vec4 uniform alignment)
++    image_glow: array<vec4<f32>, 32>, // strength, blur radius px (td-tube-blur), reserved
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -70,6 +70,29 @@ fn glow_emission(p: vec2<f32>, r: vec4<f32>) -> vec3<f32> {
+     return sample.rgb * bright * sample.a;
+ }
+ 
++// td-tube-blur: soften one tube's own picture. The same golden-angle disk as
++// the FOCUS backdrop, but every tap is held inside the tube, so a neighbour's
++// edge never bleeds in and the blur stops where the pane does.
++fn tube_blur(p: vec2<f32>, r: vec4<f32>, radius: f32) -> vec3<f32> {
++    let dims = vec2<f32>(textureDimensions(screen_tex));
++    let lo = r.xy + vec2<f32>(0.5);
++    let hi = r.xy + r.zw - vec2<f32>(0.5);
++    let ign = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
++    let rot = ign * 6.2831853;
++    var acc = vec3<f32>(0.0);
++    var wsum = 0.0;
++    for (var t = 0; t < 32; t = t + 1) {
++        let ft = f32(t) + 0.5;
++        let rr = sqrt(ft / 32.0);
++        let ang = ft * 2.3999632 + rot;
++        let q = clamp(p + vec2<f32>(cos(ang), sin(ang)) * rr * radius, lo, hi);
++        let w = exp(-rr * rr * 1.8);
++        acc = acc + textureSampleLevel(screen_tex, screen_samp, q / dims, 0.0).rgb * w;
++        wsum = wsum + w;
++    }
++    return acc / max(wsum, 1e-4);
++}
++
+ fn image_bloom(base: vec3<f32>, p: vec2<f32>, r: vec4<f32>, strength: f32) -> vec3<f32> {
+     if (strength <= 0.0) { return base; }
+     // Explicit taps preserve the kernel and avoid per-fragment dynamic array indexing.
+@@ -112,9 +135,14 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+             // through, so it looks identical with or without the pass — no
+             // vignette, no glare, exact hit-testing. A crawling pane never takes
+             // this path even when barrel-flat, so its perspective still applies.
++            let blur = crt.image_glow[i].y;
+             if (abs(k1) < 0.0005 && abs(k2) < 0.0005 && !crawl_on) {
+                 let original = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
+-                return vec4<f32>(image_bloom(original.rgb, p, r, crt.image_glow[i].x), original.a);
++                var base = original.rgb;
++                if (blur > 0.5) {
++                    base = tube_blur(p, r, blur);
++                }
++                return vec4<f32>(image_bloom(base, p, r, crt.image_glow[i].x), original.a);
+             }
+             var local = (p - r.xy) / r.zw;
+             // ---- crawl perspective pre-map (Star-Wars text recede) ----
+@@ -219,8 +247,11 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+                 lip = lip * (1.0 - bezel_strength);
+             }
+             let g = (r.xy + clamp(l2, vec2<f32>(0.0), vec2<f32>(1.0)) * r.zw) / dims;
+-            let col = textureSampleLevel(screen_tex, screen_samp, g, 0.0);
+-            let lit_col = image_bloom(col.rgb, g * dims, r, crt.image_glow[i].x);
++            var col = textureSampleLevel(screen_tex, screen_samp, g, 0.0).rgb;
++            if (blur > 0.5) {
++                col = tube_blur(g * dims, r, blur);
++            }
++            let lit_col = image_bloom(col, g * dims, r, crt.image_glow[i].x);
+             let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
+             let glare_strength = crt.glare[i].x;
+             let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -16,3 +16,4 @@ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+ // td-glass-rim: last, so the patch anchors on lines every checkout agrees on
+ pub use wgpu_renderer::set_crt_rects_tubes_bezel;
+ pub use wgpu_renderer::set_crt_rects_tubes_glow;
++pub use wgpu_renderer::set_crt_rects_tubes_blur;
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -139,7 +139,9 @@ fn crt_warp() -> (f32, f32) {
+ // td-glass-rim: and bezel[packed rgb, strength] — the frame round the glass.
+ // The colour is 0xRRGGBB carried in an f32 (exact up to 2^24); strength 0 draws
+ // no bezel, which is what every setter but `set_crt_rects_tubes_bezel` sends.
+-type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32);
++// The last f32 is the tube's own blur radius in physical px (td-tube-blur); every
++// setter but `set_crt_rects_tubes_blur` sends 0, a sharp tube.
++type CrtRect = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32, f32);
+ 
+ /// No bezel: the glass edge alone.
+ const BEZEL_NONE: [f32; 2] = [0.0, 0.0];
+@@ -157,7 +159,7 @@ pub fn set_crt_rects(rects: &[[f32; 4]]) {
+         rects
+             .iter()
+             .take(32)
+-            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0)),
++            .map(|rect| (*rect, 0.0, 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0, 0.0)),
+     );
+ }
+ 
+@@ -169,7 +171,7 @@ pub fn set_crt_rects_with_glare(rects: &[([f32; 4], f32)]) {
+         rects
+             .iter()
+             .take(32)
+-            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0)),
++            .map(|(rect, glare)| (*rect, glare.clamp(0.0, 1.0), 0.0, 0.0, CRAWL_IDENTITY, BEZEL_NONE, 0.0, 0.0)),
+     );
+ }
+ 
+@@ -184,7 +186,7 @@ pub fn set_crt_rects_tubes(rects: &[([f32; 4], f32, f32, f32, [f32; 3])]) {
+             .iter()
+             .take(32)
+             .map(|(rect, glare, k1, k2, crawl)| {
+-                (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, BEZEL_NONE, 0.0)
++                (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, BEZEL_NONE, 0.0, 0.0)
+             }),
+     );
+ }
+@@ -197,7 +199,7 @@ pub fn set_crt_rects_tubes_bezel(rects: &[([f32; 4], f32, f32, f32, [f32; 3], [f
+     guard.clear();
+     guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel)| {
+         let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
+-        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, [rgb, bezel[1].clamp(0.0, 1.0)], 0.0)
++        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl, [rgb, bezel[1].clamp(0.0, 1.0)], 0.0, 0.0)
+     }));
+ }
+ 
+@@ -208,7 +210,22 @@ pub fn set_crt_rects_tubes_glow(rects: &[([f32; 4], f32, f32, f32, [f32; 3], [f3
+     guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel, glow)| {
+         let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
+         (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl,
+-            [rgb, bezel[1].clamp(0.0, 1.0)], glow.clamp(0.0, 1.0))
++            [rgb, bezel[1].clamp(0.0, 1.0)], glow.clamp(0.0, 1.0), 0.0)
++    }));
++}
++
++/// `set_crt_rects_tubes_glow`, plus a blur radius per tube in physical px. A
++/// tube above half a pixel is softened inside its own rectangle, flat or bent;
++/// 0 leaves it exactly as `set_crt_rects_tubes_glow` does.
++pub fn set_crt_rects_tubes_blur(
++    rects: &[([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32, f32)],
++) {
++    let mut guard = CRT_RECTS.lock().unwrap();
++    guard.clear();
++    guard.extend(rects.iter().take(32).map(|(rect, glare, k1, k2, crawl, bezel, glow, blur)| {
++        let rgb = bezel[0].clamp(0.0, 16_777_215.0).round();
++        (*rect, glare.clamp(0.0, 1.0), *k1, *k2, *crawl,
++            [rgb, bezel[1].clamp(0.0, 1.0)], glow.clamp(0.0, 1.0), blur.clamp(0.0, 64.0))
+     }));
+ }
+ 
+@@ -224,14 +241,15 @@ fn crt_rects() -> ([[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32
+     let mut crawl = [[0.0f32, 1.0, 1.0, 0.0]; 32];
+     let mut image_glow = [[0.0f32; 4]; 32];
+     let mut max_k = 0.0f32;
+-    for (i, (r, g, k1, k2, c, b, glow)) in guard.iter().take(32).enumerate() {
++    for (i, (r, g, k1, k2, c, b, glow, blur)) in guard.iter().take(32).enumerate() {
+         rects[i] = *r;
+         glare[i] = [*g, *k1, *k2, b[0]];
+         crawl[i] = [c[0], c[1], c[2], b[1]];
+         image_glow[i][0] = *glow;
++        image_glow[i][1] = *blur;
+         max_k = max_k.max(k1.abs()).max(k2.abs());
+-        // A crawling tube must keep the pass live even when it's barrel-flat.
+-        if c[0] > 0.5 || *glow > 0.0 {
++        // A crawling, glowing or blurred tube keeps the pass live when it is flat.
++        if c[0] > 0.5 || *glow > 0.0 || *blur > 0.5 {
+             max_k = max_k.max(1.0);
+         }
+     }

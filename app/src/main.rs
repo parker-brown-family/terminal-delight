@@ -8808,6 +8808,10 @@ impl Workspace {
                 .inactive_image_glow
                 .map(|v| K::InactiveImageGlow.to_percent(v)),
             inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            inactive_brightness: g
+                .inactive_brightness
+                .map(|v| K::InactiveBrightness.to_percent(v)),
+            inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
             afterglow_ms: g.afterglow_ms,
             cursor_linger_ms: g.cursor_linger_ms,
             off_cursor_linger_ms: g.off_cursor_linger_ms,
@@ -8880,6 +8884,12 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_text {
             set!(K::InactiveText, p);
+        }
+        if let Some(p) = patch.inactive_brightness {
+            set!(K::InactiveBrightness, p);
+        }
+        if let Some(p) = patch.inactive_blur {
+            set!(K::InactiveBlur, p);
         }
         if let Some(ms) = patch.afterglow_ms {
             g.set(K::AfterglowMs, ms);
@@ -22716,7 +22726,9 @@ impl Workspace {
                         | theme::GradeKey::Glare
                         | theme::GradeKey::ImageGlow
                         | theme::GradeKey::InactiveImageGlow
-                        | theme::GradeKey::InactiveText => {
+                        | theme::GradeKey::InactiveText
+                        | theme::GradeKey::InactiveBrightness
+                        | theme::GradeKey::InactiveBlur => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::AfterglowMs
@@ -29334,9 +29346,13 @@ fn render_node(
             // highlight in the PANE's own theme (override / mode tint), not the
             // outer chrome's; shadows (not border width) so the grid never reflows.
             // Its glow follows the pane's own phosphor gauge for the same reason.
-            let (acc, glow, sk) = {
+            let (acc, glow, sk, veil) = {
                 let pth = e.read(cx).resolved_theme(cx);
                 let sk = skin::for_theme(cx, &pth, pth.grade.scale);
+                // The INACTIVE TERMINALS brightness gauge: the black an
+                // unfocused pane wears is the light it gives up, at most 90%
+                // so a pane at zero is still a pane.
+                let veil = (1. - pth.grade.inactive_brightness_at_edge()).min(0.9);
                 (
                     if sk.text_controls() {
                         sk.ink.focus
@@ -29349,6 +29365,7 @@ fn render_node(
                         pth.grade.phosphor
                     },
                     sk,
+                    veil,
                 )
             };
             // is a dragged sub-tab hovering THIS pane right now? which side?
@@ -29437,7 +29454,7 @@ fn render_node(
                 // dim every pane that isn't focused so the live one is the bright
                 // one. Plain bg overlay (no .occlude()) → a click still falls
                 // through to the terminal beneath to focus it.
-                .when(!is_focused, |d| {
+                .when(!is_focused && veil > 0.005, |d| {
                     d.child(
                         div()
                             .absolute()
@@ -29447,7 +29464,7 @@ fn render_node(
                             .when(sk.shape.corner != skin::Corner::Round, |d| {
                                 d.rounded(px(0.))
                             })
-                            .bg(hsla(0., 0., 0., 0.22)),
+                            .bg(hsla(0., 0., 0., veil)),
                     )
                 })
                 // translucent slab on the side the drop will split toward
@@ -32891,6 +32908,12 @@ impl Render for Workspace {
                 (
                     t.g_inactive_hdr,
                     vec![
+                        (
+                            G::InactiveBrightness,
+                            t.g_brightness,
+                            grade.inactive_brightness_at_edge(),
+                        ),
+                        (G::InactiveBlur, t.g_blur, grade.inactive_blur_at_edge()),
                         (
                             G::InactiveText,
                             t.g_text_level,

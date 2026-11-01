@@ -42,6 +42,10 @@
 #                             of whether CRT glass is enabled.
 #   0010-image-glow-taps    — evaluates the same 16 weighted samples explicitly,
 #                             avoiding dynamic per-fragment array indexing.
+#   0012-tube-blur          — a per-tube blur radius in the spare image_glow.y
+#                             lane: the tube's own picture softened inside its
+#                             rect, flat or bent (set_crt_rects_tubes_blur).
+#                             TD blurs an inactive pane's terminal with it.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -60,9 +64,10 @@ patch_rim="$repo_root/docs/patches/0008-glass-rim.patch"
 patch_image_glow="$repo_root/docs/patches/0009-image-glow.patch"
 patch_glow_taps="$repo_root/docs/patches/0010-image-glow-taps.patch"
 patch_cutout="$repo_root/docs/patches/0011-desktop-cutout.patch"
+patch_tube_blur="$repo_root/docs/patches/0012-tube-blur.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -150,3 +155,6 @@ apply_patch "$patch_glow_taps" "image-glow-taps" \
 # Replace the pixels under desktop-facing glass before normal foreground draws.
 apply_patch "$patch_cutout" "desktop-cutout" \
     'grep -qF "is_desktop_cutout" crates/gpui/src/color.rs'
+
+apply_patch "$patch_tube_blur" "tube-blur" \
+    'grep -qF "td-tube-blur" crates/gpui_wgpu/src/crt_pass.wgsl'

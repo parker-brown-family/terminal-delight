@@ -332,6 +332,10 @@ type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 /// screen changes. See `TerminalView::agent_status`.
 type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
 
+/// The blur an inactive pane's terminal takes at 100% INACTIVE TERMINALS blur,
+/// in logical px: a touch softer than the 7px backdrop behind a popup.
+const INACTIVE_BLUR_PX: f32 = 9.0;
+
 /// The frame round a bent tube's glass, for [`crate::warp::register_tube`]: a
 /// plastic in the pane's own chrome hue, desaturated and at a fixed lightness so
 /// it reads as a moulding beside the glass and not as another screen colour, at
@@ -9411,6 +9415,46 @@ impl TerminalView {
         } else {
             Vec::new()
         };
+        // Where a skin owns the field, an agent's shades of it become lines:
+        // collect the tinted columns per row, then the bands they make, and
+        // leave those cells unfilled below. See `styling::BandRow`.
+        let bands: styling::Bands = match th.field_background.filter(|_| agent) {
+            Some(field) => {
+                let mut tinted = vec![Vec::new(); self.grid.rows];
+                for indexed in cells {
+                    let row = indexed.point.line.0 + display_offset as i32;
+                    if row < 0 || row as usize >= self.grid.rows {
+                        continue;
+                    }
+                    let cell = &indexed.cell;
+                    if cell.flags.contains(Flags::INVERSE)
+                        || matches!(cell.bg, AnsiColor::Named(NamedColor::Background))
+                    {
+                        continue;
+                    }
+                    if styling::is_field_tint(ansi_to_hsla(cell.bg, th, th.bg), field) {
+                        tinted[row as usize].push(indexed.point.column.0);
+                    }
+                }
+                let mut bands: styling::Bands = tinted
+                    .iter_mut()
+                    .map(|t| {
+                        t.sort_unstable();
+                        t.dedup();
+                        styling::band_row(t, cols)
+                    })
+                    .collect();
+                styling::join_wrapped(&mut bands);
+                bands
+            }
+            None => Vec::new(),
+        };
+        let banded = |row: usize, col: usize| {
+            bands.get(row).is_some_and(|b| {
+                b.rule.is_some_and(|(a, z)| (a..z).contains(&col))
+                    || b.notes.iter().any(|&(a, z)| (a..z).contains(&col))
+            })
+        };
         let mut ords = vec![0usize; self.grid.rows];
         // Hoist the frame-constant grade math out of the per-cell loop below.
         // `grade.apply(..)` is bit-identical to `graded(.., &th.grade, ..)` but
@@ -9452,8 +9496,16 @@ impl TerminalView {
             }
             let mut bg: Option<Hsla> = match cell.bg {
                 AnsiColor::Named(NamedColor::Background) => None,
+                _ if !cell.flags.contains(Flags::INVERSE)
+                    && banded(row as usize, indexed.point.column.0) =>
+                {
+                    None
+                }
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
+            // A background the program chose itself, still standing where it
+            // put it: not swapped by an inverse, a selection or the cursor.
+            let mut bg_is_program = bg.is_some() && !cell.flags.contains(Flags::INVERSE);
             let mut flags = cell.flags;
             // Retain the program's text colour, including its own inverse/DIM,
             // before TD draws a selection or its block cursor over the glyph.
@@ -9482,6 +9534,7 @@ impl TerminalView {
             }
             if flags.contains(Flags::INVERSE) {
                 fg_is_field = bg.is_none();
+                bg_is_program = false;
                 let new_fg = bg.unwrap_or(th.bg);
                 bg = Some(fg);
                 fg = new_fg;
@@ -9491,6 +9544,7 @@ impl TerminalView {
                 && cursor.point.line == indexed.point.line
                 && cursor.point.column == indexed.point.column
             {
+                bg_is_program = false;
                 bg = Some(th.cursor);
                 fg = th.bg;
                 fg_is_field = true;
@@ -9509,7 +9563,17 @@ impl TerminalView {
             } else {
                 grade.apply(fg, Channel::Text)
             };
-            bg = bg.map(|c| grade.apply(c, Channel::Bg));
+            // A program picks its backgrounds against the field TD reported
+            // (OSC 11). Where a skin paints that field ungraded, the program's
+            // own backgrounds stay ungraded too: graded, a shade meant to sit
+            // just off the field landed far below it and read as black.
+            bg = bg.map(|c| {
+                if bg_is_program && th.field_background.is_some() {
+                    c
+                } else {
+                    grade.apply(c, Channel::Bg)
+                }
+            });
 
             let weight = if flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
@@ -9568,6 +9632,7 @@ impl TerminalView {
             key,
             lines: std::rc::Rc::new(lines.clone()),
             glyphs: std::rc::Rc::new(glyphs),
+            bands: std::rc::Rc::new(bands),
         });
         lines
     }
@@ -10717,6 +10782,13 @@ impl Render for TerminalView {
         let letter_glow = th
             .grade
             .letter_glow_for_focus(focused_now, th.terminal_light);
+        // INACTIVE TERMINALS blur, in logical px: at 100% a little past the
+        // frosted backdrop behind a TERMINIMALIST popup (7px, `Skin::popup`).
+        let inactive_blur = if focused_now {
+            0.0
+        } else {
+            th.grade.inactive_blur_at_edge() * INACTIVE_BLUR_PX
+        };
         let mut grid_th = th.clone();
         grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
@@ -11219,6 +11291,19 @@ impl Render for TerminalView {
                 .glyphs)
                 .clone()
         };
+        // An agent's tinted bands, by grid row. They move with the rows below,
+        // so a rule stays on the line it rules.
+        let mut bands: styling::Bands = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .bands)
+                .clone()
+        };
         arm_grid_fallbacks(&mut lines, window.text_system());
         arm_grid_fallbacks(&mut glyphs, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
@@ -11265,6 +11350,11 @@ impl Render for TerminalView {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
             bottom_anchor_rows(&mut glyphs, self.grid.rows);
+            if !bands.is_empty() {
+                let mut shifted = vec![styling::BandRow::default(); self.paint_offset];
+                shifted.extend(bands.into_iter().take(lines.len() - self.paint_offset));
+                bands = shifted;
+            }
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
@@ -11284,6 +11374,10 @@ impl Render for TerminalView {
             // so a cross-section drag highlights the visually-contiguous span (not
             // whole reversed blocks). styled_lines skipped the logical highlight.
             self.apply_visual_selection(&mut lines, &perm, &th);
+            bands = perm
+                .iter()
+                .map(|&g| bands.get(g).cloned().unwrap_or_default())
+                .collect();
             self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
             self.paint_offset = 0;
@@ -12739,6 +12833,7 @@ impl Render for TerminalView {
                                         crawl,
                                         tube_bezel,
                                         if on_terminal { letter_glow } else { 0.0 },
+                                        if on_terminal { inactive_blur * sf } else { 0.0 },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -12813,6 +12908,8 @@ impl Render for TerminalView {
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
+                                bands: std::rc::Rc::new(bands),
+                                band_ink: (sk.ink.rule_strong, sk.ink.rule),
                             },
                             cx,
                         );

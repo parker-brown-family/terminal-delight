@@ -63,6 +63,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - Threshing Floor cards are larger (264 by 184) so text-control skins keep the
   artifact line and the connect control inside the border; long messages end
   in an ellipsis.
+- Agent panes no longer show black slabs under TERMINIMALIST. A program's own
+  backgrounds are painted in the same ungraded colour space as the field TD
+  reports to it, so Claude Code's and Codex's shades sit just off the field.
+  Those shades are then drawn as lines: a full-width band (your turn, the
+  Codex composer) is ruled above and below, and a short one (Jump to bottom)
+  sits in a hairline box. Diff colours keep their fills.
+- INACTIVE TERMINALS gains brightness and blur gauges. Brightness defaults to
+  78%, the veil inactive panes have always worn, and can go much darker; blur
+  runs from crystal clear to slightly softer than a popup's backdrop. The blur
+  is a new renderer patch, `0012-tube-blur`.
 
 ### Installer ownership and cleanup
 

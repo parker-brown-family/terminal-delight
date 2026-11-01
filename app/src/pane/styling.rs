@@ -23,11 +23,149 @@ pub(super) struct Memo {
     pub key: Key,
     pub lines: std::rc::Rc<Lines>,
     pub glyphs: std::rc::Rc<Lines>,
+    pub bands: std::rc::Rc<Bands>,
+}
+
+/// What one viewport row carries of an agent's tinted surfaces, in grid
+/// columns. An agent marks your own turn, its composer and a few small pills
+/// by painting cells a shade of the background it was told about. Where a
+/// skin owns that background, TD draws those shades as lines instead of
+/// fills: `rule` is a band across the row, ruled above and below like
+/// Claude's own input box, and each of `notes` is a short run boxed by a
+/// hairline, like a sticky note.
+#[derive(Clone, Debug, Default, PartialEq)]
+pub(super) struct BandRow {
+    pub rule: Option<(usize, usize)>,
+    pub notes: Vec<(usize, usize)>,
+}
+
+pub(super) type Bands = Vec<BandRow>;
+
+/// Whether `c`, a background an agent painted, is a shade of `field` rather
+/// than a colour of its own: grey, or the field moved evenly on every channel,
+/// and not far from it. A diff's red or green moves the channels unevenly and
+/// stays a fill.
+pub(super) fn is_field_tint(c: Hsla, field: Hsla) -> bool {
+    let (a, b) = (c.to_rgb(), field.to_rgb());
+    let d = [a.r - b.r, a.g - b.g, a.b - b.b];
+    let mean = (d[0] + d[1] + d[2]) / 3.;
+    let spread =
+        d.iter().copied().fold(f32::MIN, f32::max) - d.iter().copied().fold(f32::MAX, f32::min);
+    let near = mean.abs() < 0.3;
+    let grey = c.s < 0.12;
+    let even = spread <= 0.08 + 0.6 * mean.abs();
+    near && (grey || even)
+}
+
+/// One row's tinted columns, sorted, as bands: a run covering nine tenths of
+/// the row or more is the row's rule, and every other run of two or more
+/// cells is a note.
+pub(super) fn band_row(tinted: &[usize], cols: usize) -> BandRow {
+    let mut row = BandRow::default();
+    if tinted.is_empty() || cols == 0 {
+        return row;
+    }
+    if tinted.len() * 10 >= cols * 9 {
+        row.rule = Some((tinted[0], tinted[tinted.len() - 1] + 1));
+        return row;
+    }
+    let mut start = tinted[0];
+    let mut prev = start;
+    for &c in &tinted[1..] {
+        if c != prev + 1 {
+            if prev > start {
+                row.notes.push((start, prev + 1));
+            }
+            start = c;
+        }
+        prev = c;
+    }
+    if prev > start {
+        row.notes.push((start, prev + 1));
+    }
+    row
+}
+
+/// A turn that wraps leaves its last row short: the tint stops where the words
+/// do. A short run that starts where the rule above it starts is that rule's
+/// continuation, so it joins the rule rather than taking a box of its own.
+pub(super) fn join_wrapped(bands: &mut Bands) {
+    for r in 1..bands.len() {
+        let Some((a, z)) = bands[r - 1].rule else {
+            continue;
+        };
+        if bands[r].rule.is_none() && bands[r].notes.first().is_some_and(|n| n.0 == a) {
+            bands[r].notes.remove(0);
+            bands[r].rule = Some((a, z));
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn rgb(r: u8, g: u8, b: u8) -> Hsla {
+        gpui::Rgba {
+            r: r as f32 / 255.,
+            g: g as f32 / 255.,
+            b: b as f32 / 255.,
+            a: 1.,
+        }
+        .into()
+    }
+
+    #[test]
+    fn a_shade_of_the_field_is_a_tint_and_a_diff_colour_is_not() {
+        let field = rgb(14, 25, 20); // a jade-ish TERMINIMALIST field
+                                     // Claude Code's user turn and jump pill, ANSI black, and a Codex-style
+                                     // composer lifted evenly off the field: all shades of it.
+        for shade in [rgb(55, 55, 55), rgb(0, 0, 0), rgb(30, 41, 36)] {
+            assert!(is_field_tint(shade, field), "{shade:?}");
+        }
+        // A diff's red and green move the channels unevenly and keep their fill,
+        // and so does anything far from the field, grey or not.
+        for colour in [
+            rgb(61, 1, 0),
+            rgb(2, 40, 0),
+            rgb(200, 200, 200),
+            rgb(30, 90, 200),
+        ] {
+            assert!(!is_field_tint(colour, field), "{colour:?}");
+        }
+    }
+
+    #[test]
+    fn a_full_row_is_ruled_and_a_short_run_is_a_note() {
+        let full: Vec<usize> = (0..80).collect();
+        assert_eq!(band_row(&full, 80).rule, Some((0, 80)));
+        // nine tenths is still the row's band, eight tenths is not
+        assert_eq!(
+            band_row(&(0..72).collect::<Vec<_>>(), 80).rule,
+            Some((0, 72))
+        );
+        let pill = band_row(&(30..50).chain(60..61).collect::<Vec<_>>(), 80);
+        assert_eq!(pill.rule, None);
+        // a lone tinted cell is not a note: nothing to box
+        assert_eq!(pill.notes, vec![(30, 50)]);
+        assert_eq!(band_row(&[], 80), BandRow::default());
+    }
+
+    #[test]
+    fn a_wrapped_turns_short_last_row_joins_its_rule() {
+        let mut bands = vec![
+            band_row(&(0..80).collect::<Vec<_>>(), 80),
+            band_row(&(0..28).collect::<Vec<_>>(), 80),
+            BandRow::default(),
+            band_row(&(30..50).collect::<Vec<_>>(), 80),
+        ];
+        join_wrapped(&mut bands);
+        assert_eq!(bands[1].rule, Some((0, 80)));
+        assert!(bands[1].notes.is_empty());
+        // a pill below a blank row stays a pill
+        assert_eq!(bands[3].rule, None);
+        assert_eq!(bands[3].notes, vec![(30, 50)]);
+    }
     use crate::pane::harness::{Pane, Scratch};
     use gpui::TestAppContext;
 
