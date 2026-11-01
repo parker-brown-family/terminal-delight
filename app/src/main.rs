@@ -4568,6 +4568,10 @@ struct Workspace {
     /// easter eggs, so neither is remembered: every opening of the tray starts
     /// them shut (see [`Self::open_osd`]).
     osd_eggs: OsdEggs,
+    /// Which GAUGES groups are open, by position (TYPE, PICTURE, ACTIVE,
+    /// INACTIVE). Every group starts shut: twenty sliders at once was too
+    /// busy to read. Kept for the session, so a group you use stays open.
+    osd_groups: Vec<bool>,
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
@@ -6389,6 +6393,7 @@ impl Workspace {
             osd_menu: None,
             osd_at: None,
             osd_eggs: OsdEggs::default(),
+            osd_groups: Vec::new(),
             mcp: saved.mcp.clone().unwrap_or_default(),
             chart: threshing_floor::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
             floor_orgs: threshing_floor::Orgs::default(),
@@ -30323,6 +30328,9 @@ impl Render for Workspace {
                 self.open_osd(MenuScope::Outer, None);
                 self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
                 self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
+                if demo.split(',').any(|s| s == "open") {
+                    self.osd_groups = vec![true; 4];
+                }
                 cx.notify();
             }
         }
@@ -32943,17 +32951,59 @@ impl Render for Workspace {
                 .flex_col()
                 .gap_2()
                 .when(sk.m.frost > 0., |d| sk.finish_group(d).p_2());
-            for (heading, controls) in groups {
-                let mut section = div().flex().flex_col().gap_1().child(label(heading));
-                for (key, name, value) in controls {
-                    section = section.child(self.slider_row(key, name, value, &th, cx));
-                    if key == G::InactiveText {
-                        section = section.child(label(t.g_text_relative));
+            // A group is its heading until opened; a press on the heading opens
+            // or shuts it. Unboxed, each group ends on a short rule, as the
+            // CONFIG surfaces' sections do.
+            let fold_mark = |open: bool| match (sk.unboxed(), open) {
+                (true, true) => "\u{2212}",
+                (true, false) => "+",
+                (false, true) => "\u{25be}",
+                (false, false) => "\u{25b8}",
+            };
+            let mut lingers_shown = false;
+            for (gi, (heading, controls)) in groups.into_iter().enumerate() {
+                let open = self.osd_groups.get(gi).copied().unwrap_or(false);
+                let mut section = div().flex().flex_col().gap_1().child(
+                    div()
+                        .id(SharedString::from(format!("osd-group-{gi}")))
+                        .debug_selector(move || format!("osd-group-{gi}"))
+                        .cursor_pointer()
+                        .child(label(&format!("{} {heading}", fold_mark(open))))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if ws.osd_groups.len() <= gi {
+                                    ws.osd_groups.resize(gi + 1, false);
+                                }
+                                ws.osd_groups[gi] = !ws.osd_groups[gi];
+                                cx.notify();
+                            }),
+                        ),
+                );
+                if open {
+                    for (key, name, value) in controls {
+                        lingers_shown |= matches!(
+                            key,
+                            G::CursorLingerMs
+                                | G::OffCursorLingerMs
+                                | G::InactiveCursorLingerMs
+                                | G::InactiveOffCursorLingerMs
+                        );
+                        section = section.child(self.slider_row(key, name, value, &th, cx));
+                        if key == G::InactiveText {
+                            section = section.child(label(t.g_text_relative));
+                        }
                     }
                 }
                 rows = rows.child(section);
+                if sk.unboxed() {
+                    rows = rows.child(div().mx(px(18.)).child(sk.rule_h()));
+                }
             }
-            rows = rows.child(label(t.g_afterglow_hint));
+            if lingers_shown {
+                rows = rows.child(label(t.g_afterglow_hint));
+            }
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
             // go looking.
@@ -32963,7 +33013,7 @@ impl Render for Workspace {
                     .text_size(sk.text_px(9.))
                     .text_color(th.text.alpha(if open { 0.55 } else { 0.28 }))
                     .cursor_pointer()
-                    .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
+                    .child(format!("{} {}", fold_mark(open), name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance
