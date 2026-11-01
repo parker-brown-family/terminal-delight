@@ -83,10 +83,12 @@ not orchestrate them. Each item below links to its page in the docs.
 
 **The look**
 
-- **[Themes](https://docs.terminal-delight.brownfamilysports.com/themes)**: five
-  built-in designs, plus your own `~/.config/terminal-delight/theme.toml`, picked
-  up about 300 ms after you save it. Every installed Omarchy theme is offered as a
-  palette, and INHERIT follows the desktop's.
+- **[Themes](https://docs.terminal-delight.brownfamilysports.com/themes)**: the
+  painter (🎨, or Ctrl+Shift+D on a pane) offers every theme Omarchy's own picker
+  shows, and INHERIT follows the one the desktop is wearing. A design sets the
+  finish rather than the hue (how much CRT texture and glow, which font); five
+  are built in, plus your own `~/.config/terminal-delight/theme.toml`, picked up
+  about 300 ms after you save it.
 - **[Skins](https://docs.terminal-delight.brownfamilysports.com/skins)** change
   the chrome's shape: OPS with its cut corners, Chalk's paper, or one you write
   in `skin.toml`.
@@ -120,7 +122,7 @@ None of this is in a published build yet:
 
 - **[The Threshing Floor](https://docs.terminal-delight.brownfamilysports.com/threshing-floor)**
   decides which agents may reach each other. Seat agents on an org chart and draw
-  lines between them; a line's rung says whether one agent may find, read, ask or
+  lines between them; a line's rung says whether one agent may see, read, ask or
   prompt another. An agent with no seat is never asked.
 - **[Resting agents](https://docs.terminal-delight.brownfamilysports.com/rest)**:
   an agent pane left alone is frozen, and a Claude agent left long enough is
@@ -189,8 +191,9 @@ gpui is consumed from a pinned Zed checkout
 (`abbe85a3321bf6cb7f5b241e623d9c2e16c29187`, post-wgpu-Linux-renderer) carrying
 nine patches from [`docs/patches/`](docs/patches/) (about 1,600 lines). Eight
 add what Terminal Delight draws: the per-pane CRT barrel warp (`0001-td-crt-pass`),
-the FOCUS blur, the text crawl, the warp's tube cap, glyph transforms, two for
-clickable path targets, and the glass rim. The ninth, `0002-sever-gpl-crates`,
+the FOCUS blur, the text crawl, the warp's tube cap, glyph transforms, two that
+create the GPU's path textures only for a frame that draws a path and size them
+to fit (part of 0.4.0's idle graphics-memory cut), and the glass rim. The ninth, `0002-sever-gpl-crates`,
 removes the GPL crates the Zed graph would otherwise link (see [License](#license)).
 `scripts/prepare-gpui.sh` sets the checkout up as a sibling `zed-upstream/`
 directory and applies them all; CI does the same, and `docs/patches/PINLOG.md`
