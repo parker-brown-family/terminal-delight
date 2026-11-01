@@ -8,7 +8,7 @@
 > was closed for exactly that — it would have regressed Codex).
 
 Code: `app/src/pane.rs` — `should_invert`, `invert_logical_read`, `bottom_anchor_rows`,
-the render inversion (~line 4206), `scroll_by_wheel`, `cell_at`/`link_under`,
+the render inversion (the two callers of `should_invert`), `scroll_by_wheel`, `cell_at`/`link_under`,
 `paint_row_to_grid_row`. Toggle: the ⚓ control / `TD_ANCHOR_TOP=1`.
 Diagnostic: `TD_ANCHORDEBUG=1` (see §7).
 

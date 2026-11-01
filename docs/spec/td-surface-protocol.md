@@ -1,6 +1,11 @@
 # TDSP — the Terminal Delight Surface Protocol
 
-**Version 0.4 · 2026-09-21 · implemented in `app/src/surface.rs`**
+**Version 0.4 · text revised 2026-11-01 against the code · implemented in `app/src/surface.rs`**
+
+Every example in this document parses under the build it describes: 0.4.0
+(`main`) and the 0.5.0 development line, which share this protocol's code. The
+few places where 0.5.0 behaves differently say so with a **0.5.0
+development:** lead-in.
 
 An agent hands Terminal Delight a small JSON object describing **what it made**.
 Terminal Delight decides how that thing looks. This document is the contract
@@ -40,13 +45,21 @@ half, with the catalogue cut down to things this house already produces.
 
 ## 2 · Getting a surface onto a bench
 
-Three writers, one format. Pick whichever your agent can do.
+Four writers, one format. Pick whichever your agent can do.
 
-| Transport | How | Needs | Use it when |
-|---|---|---|---|
-| **MCP verb** | `present_surface` with `pid` and `surface` | a connection to TD's MCP server, and the writes toggle | you are connected and want the error message when a payload is wrong |
-| **File drop** | write a `.json` file into the pane's directory | a filesystem | anything else — any language, any harness, no cooperation |
-| **CLI** | `terminal-delight surface [file]` (or pipe to stdin) | the binary on `PATH` | scripts, and prose that contains a fenced block |
+| Transport | How | Needs | Checks the document? | Use it when |
+|---|---|---|---|---|
+| **File drop** | write a `.json` file into the pane's directory | a filesystem | leniently: a document that fails becomes an `unclassified` card carrying the reason | almost always — any language, any harness, no cooperation |
+| **MCP verb** | `present_surface` with `pid` and `surface` | a connection to TD's MCP server, MCP exposure on, and the writes toggle | strictly: a bad document is refused with the reason, and nothing lands | you are connected and want the error message when a payload is wrong |
+| **CLI** | `terminal-delight surface [file]` (or pipe to stdin) | the binary on `PATH`, run inside a pane | no: it writes what it was given into the pane's directory, which the file drop then reads leniently | scripts, and prose that contains a fenced block |
+| **Transcript fence** | a ` ```td ` or ` ```tdsp ` block in your own reply | a Claude Code transcript the window can bind to your pane | leniently, like the file drop | nothing else is available — it puts raw JSON in front of the person reading your reply |
+
+The launcher's briefing ranks them the same way: file first, MCP second, the
+fence as a last resort, and never the same document by two routes.
+
+`terminal-delight surface --catalogue` (or `--catalog`, or the
+`surface_catalogue` MCP verb) prints what this build renders; see §8 for what it
+does and does not list.
 
 ### The pane's directory
 
@@ -63,29 +76,120 @@ dir="${XDG_STATE_HOME:-$HOME/.local/state}/terminal-delight/surfaces/$TD_SESSION
 mkdir -p "$dir" && cat > "$dir/my-finding.json"
 ```
 
-Any filename ending `.json` works. Write the file **atomically** (write beside,
-rename into place) if you can; a file caught mid-write is skipped and retried on
-the next sweep rather than lost, but a rename makes that impossible.
+Any filename ending `.json` works except `bench.json`, which is the window's own
+liveness marker for the agent channel and is never read as a surface. Other
+files in the directory (`actions.jsonl`, `inbound.jsonl`, `outbound.jsonl`,
+`answers/`) belong to the agent channel and are not surfaces either. Write the
+file **atomically** (write beside, rename into place) if you can.
 
-The window sweeps the directory once a second. Files are read **oldest first**,
-with the filename breaking ties, so a numbered prefix is how you control what a
-person sees first.
+The window sweeps the directory once a second and reads only files whose size
+or modification time moved. Files are read **oldest first** by modification
+time, with the path breaking ties, so a numbered prefix is how you order files
+written in the same instant.
+
+A file that is not JSON at all is skipped **without a card and without a log
+line**, and tried again on every sweep until it parses — that is what makes a
+file caught mid-write safe, and it is also why a typo'd file stays invisible.
+A file that is JSON but not a valid surface lands as an `unclassified` card
+carrying the reason, so a mistake shows up where you can see it.
+
+The file's name does not set the surface's id: the `id` inside does (§3). When
+the CLI or the MCP verb writes a file for you, they name it after the id and,
+if the document carried none, write that name into it as its `id`.
+
+**File names are stricter than ids.** A file name keeps only `A–Z a–z 0–9 - _`
+and the first 64 of them, where an id also keeps `.` and `:` and runs to 96.
+So the CLI and the MCP verb store `a.b` and `ab` in the same `ab.json`, and the
+second overwrites the first on disk: both stay on the live bench, and only one
+comes back after a restart. Keep ids to letters, digits, `-` and `_`, under 64
+characters, and two ids never share a file.
+
+The same directory is how a new window gets the bench back: when a window
+starts, it reads every file in it again, oldest first.
+
+### Disk and retention
+
+| What | Limit |
+|---|---|
+| Surfaces one pane holds in memory | **64**; the oldest is dropped, never the newest |
+| Surface files one pane directory keeps on disk | **512** `.json` files, newest by modification time; older ones are deleted |
+| A session directory nothing has written to | removed whole after **30 days**; the window's own session is never removed, only capped |
+
+The prune runs when a window starts and every ten minutes after, in every
+window except a scratch one. It removes only directories whose names it could
+have written, keeps anything whose age it cannot read, and never touches
+`actions.jsonl`.
 
 ### The fenced block
 
-Prose containing a fenced `td` block is also a surface. Pipe it to the CLI:
+Prose containing a fenced `td` (or `tdsp`) block is also a surface. It is read
+from two places.
+
+**Piped to the CLI.** The CLI first tries the whole input as one JSON document;
+if that fails it takes every fenced block in it:
 
 ````text
 Here is what I found.
 
 ```td
-{"td":"0.1","kind":"finding","title":"…","model":{…}}
+{"td":"0.4","kind":"markdown","id":"queue-finding","title":"The queue backs up","model":{"body":"…"}}
 ```
 ````
 
 ```sh
 your-agent --print | terminal-delight surface
 ```
+
+The CLI checks only that it found JSON. It writes each document into the
+pane's directory as `<id>.json` — or, with no `id`, as `<milliseconds>-<n>.json`
+with that name inserted as the id — prints each path it wrote, and exits **0**
+if it wrote anything, **2** if the input held no JSON document or fence (or no
+file could be written), and **3** when it is not run inside a Terminal Delight
+pane (`TD_SESSION` or `TD_PANE_ID` unset or not a number). A document that is
+not a valid surface is written anyway and lands as `unclassified` on the next
+sweep.
+
+**Printed in your reply.** The window also reads ` ```td ` and ` ```tdsp `
+blocks out of the agent's own transcript: the last 256 KiB of it, and only
+when it is certain which transcript belongs to the pane. Only assistant text
+counts. A later block with the same id replaces an earlier one, and a block
+whose body is not JSON is skipped silently. The reader understands Claude
+Code's transcript format; a Codex transcript yields nothing through this
+route today. ` ```tdx ` and other languages that merely start with `td` are
+left alone, and an unclosed fence is treated as still being written.
+
+The same reader turns the newest `Deliverable: <label> — <path or URL>` line in
+your prose into an `artifact`, and every `AskUserQuestion` call into a
+`question` — surfaces you never had to send.
+
+### The MCP verb
+
+`present_surface` takes `pid` (the pane whose bench it belongs on, from
+`list_panes`) and `surface` (one document). A document sent at the top level of
+the arguments, beside `pid`, is accepted too if it carries `td`. The verb needs
+MCP exposure on and the writes toggle on (the MCP CONTROL panel, or
+`TD_MCP_WRITE=1`); without them it is refused with a sentence saying which.
+
+It parses strictly (§8). On success it answers
+`on the bench — "<title>" (<kind>) is on pane <pid>'s WORKBENCH face`, or
+`retired — <id> is off the bench`, with `{pid, surface, kind, op}` as structured
+content — the `op` is echoed so an agent can see whether a `present` replaced
+something.
+
+It also **writes the document into the pane's directory** as `<id>.json`, so a
+surface sent over MCP survives a restart like a dropped file, and a `retire`
+deletes that file. The window's next sweep reads the file back; the card keeps
+its more precise MCP origin. A pane with no session host behind it has no
+directory, and nothing is written.
+
+**0.5.0 development:** the Threshing Floor decides who may write to a pane. A
+`present_surface` aimed at a pane other than your own needs a line reaching it
+at `read` or higher, on a pane that takes writes; otherwise it is refused with
+`pane <pid> takes no writes from here — it is read-only to you; only a person,
+or the agent in that pane, may write it` (or `no pane with pid <pid>` when the
+pane is hidden from you). The file is written only after the window accepted
+the surface. The disabled-exposure and disabled-writes refusals point at the
+Threshing Floor instead of the MCP CONTROL panel.
 
 ### Why not an escape sequence
 
@@ -101,7 +205,7 @@ upgrades by dying. A file costs none of that.
 
 ```json
 {
-  "td": "0.1",
+  "td": "0.4",
   "op": "present",
   "id": "auth-refactor-plan",
   "kind": "decision",
@@ -118,22 +222,37 @@ upgrades by dying. A file costs none of that.
     "reference": "turn 412"
   },
   "actions": ["approve", "reject", "comment"],
-  "model": { "…": "kind-specific, see §5" }
+  "model": {
+    "question": "Does the workbench live in the pane or the window?",
+    "options": [ { "name": "In the pane", "recommended": true },
+                 { "name": "In the window" } ]
+  }
 }
 ```
 
+`model` is kind-specific; see §5.
+
 | Field | Type | Required | Meaning |
 |---|---|---|---|
-| `td` | string | **yes** | Protocol version, `major.minor`. A newer **major** is refused; a newer minor is accepted (a minor bump may only add optional fields). |
-| `kind` | string | **yes** (except `retire`) | One of §5. An unknown kind is **kept** and rendered `unclassified`. |
-| `op` | string | no | `present` (default), `update`, `retire`. See §4. |
-| `id` | string | no | Stable identity. Same id twice = the same work object. Omitted: derived from kind + title, so a retry updates rather than duplicates. Sanitised to `[A-Za-z0-9-_.:]`. |
-| `title` | string | no | Up to 72 characters. Omitted: derived from the model (a filename, a question, a count). |
-| `pane` | integer | no | The pid whose bench this belongs on. Omitted: the pane the payload arrived through. |
+| `td` | string | **yes** | Protocol version, `major.minor`; this build writes and speaks `"0.4"`. Only the major number is compared: `"0.1"` through `"0.9"` are accepted, `"1.0"` is refused. A `td` that is not a string (`0.4` as a number) reads as missing. |
+| `kind` | string | **yes** (except `retire`) | One of §5. An unknown kind is refused by the MCP verb and lands as `unclassified` through every other route. |
+| `op` | string | no | `present` (default), `update`, `retire`. See §4. Anything else is refused. |
+| `id` | string | no (**yes** for `retire`) | Stable identity. Same id twice = the same work object. Only `A–Z a–z 0–9 - _ . :` are kept, and only the first **96** of those; an id with none of them is refused. Omitted: `anon-<16 hex digits>`, derived from the kind and the title alone — see the warning below. |
+| `title` | string | no | Trimmed and cut to **72** characters. Omitted or empty: a default for the kind — the file or page name for an artifact, `note` for markdown and comment, `table of <rows>`, `<n> nodes`, `<n> hunks`, the question for a decision or question, the first sentence of the `layman` for a response, `unclassified`. |
+| `pane` | integer | no | Parsed and **ignored**. The route decides the pane: the directory a file sits in, the `pid` given to the MCP verb, the pane the CLI runs in, the pane whose transcript held the fence. |
 | `weight` | object | no | §6. Every field optional, and absence means *undeclared*. |
-| `source` | object | no | `files[]`, `command`, `reference`. The drill-back. |
-| `actions` | string[] | no | §7. Merged with the kind's own defaults; never replaces them. |
-| `model` | object | **yes** (except `retire`) | The kind's payload. |
+| `source` | object | no | `files[]` (strings), `command`, `reference`. The drill-back; the **source** button opens the first file. An object with none of the three is dropped. |
+| `actions` | string[] | no | §7. Added after the kind's own defaults; never removes one. |
+| `model` | object | **yes** (except `retire`) | The kind's payload. Missing, it reads as an empty object, and each kind then refuses for the field it needed. |
+
+**Always send an `id`.** Without one, two surfaces of the same kind and the same
+title — or two untitled ones, whatever their content — get the same derived id,
+and the second replaces the first. Two untitled markdown notes with different
+bodies collapse into one row. The derivation exists so that a *retry* of the
+same document updates rather than duplicates, and it cannot tell a retry from a
+second document. Only the CLI avoids it, because it gives an id-less document a
+fresh `<milliseconds>-<n>` id when it names the file; the MCP verb, a file you
+drop yourself and a fence in your reply all get the derived one.
 
 ---
 
@@ -141,18 +260,45 @@ upgrades by dying. A file costs none of that.
 
 | `op` | Effect |
 |---|---|
-| `present` | Put it on the bench. An id already there is **replaced whole**, so presenting twice is idempotent and a retry is harmless. |
-| `update` | Merge into the surface with this id. Fields the payload does not mention are left alone — a progress update need not restate a document to change its title. |
-| `retire` | Take it off the bench. Requires `id`. The file on disk is the agent's own business. |
+| `present` | Put it on the bench. An id already there is **replaced whole**, so presenting twice is idempotent and a retry is harmless. The same document presented again, differing only in arrival time, changes nothing. |
+| `update` | Merge into the surface with this id, or add it if the id is new. The payload is parsed exactly like a `present`, so it still needs `kind` and a valid `model`. |
+| `retire` | Take it off the bench. Requires `id`; needs nothing else. Over MCP it also deletes the stored `<id>.json` file. |
+
+**What `update` keeps.** The title is always replaced (see the caution below).
+The kind and model are replaced unless the update itself failed to parse and
+became `unclassified`. The weights are replaced if the update carries any, the
+actions if it lists any, the source if it has one. The arrival time and the
+origin are always the update's.
+
+**Caution — send the title with every `update`.** A missing title is filled
+with the kind's default *before* the merge, so an update without a `title`
+replaces it with that default: a markdown surface titled "Draft title" becomes
+`note`. This is how the code behaves today and is not what the merge was meant
+to do; until it changes, repeat the title.
+
+**Retiring a file you dropped.** The files are yours and stay where you put
+them. A window that re-reads the directory replays them oldest first, so a
+retire document in a newer file keeps the surface retired, and deleting or
+overwriting the surface's own file does the same.
 
 A bench holds **64 surfaces per pane**; the oldest is dropped, never the newest.
+
+An arrival never changes the shelf a person is looking at and never selects
+anything. It is marked unseen unless its shelf is on screen.
 
 ---
 
 ## 5 · The catalogue
 
-Eight kinds and an honest default. Small on purpose: each one gets a renderer
-that is actually good, and the vocabulary fits in your head.
+Eight kinds an agent sends, and an honest default. Small on purpose: each one
+gets a renderer that is actually good, and the vocabulary fits in your head.
+The catalogue (§8) advertises exactly these eight: `response`, `artifact`,
+`markdown`, `table`, `architecture`, `changeset`, `decision`, `question`.
+
+The parser knows two more. `comment` is a note a person writes on the bench's
+comments board; it is deliberately not advertised to agents, and one an agent
+sends anyway lands labelled with however it arrived. `unclassified` is what the
+window makes of a document it cannot type (below); nobody sends it.
 
 ### `response` — your reply, as registers
 
@@ -161,7 +307,7 @@ OVERVIEW shelf shows. A transcript is one register at one length; a response
 is the same reply cut for several readers, and the person picks the cut.
 
 ```json
-{ "kind": "response",
+{ "td": "0.4", "kind": "response", "id": "turn-412",
   "title": "What this turn did",
   "model": {
     "layman": "The whole reply in plain English, written for the person.",
@@ -186,19 +332,26 @@ is the same reply cut for several readers, and the person picks the cut.
   } }
 ```
 
-| Key | Required | Drawn as | Notes |
+Keys are matched without regard to case, and `-` or a space reads as `_`, so
+`Next-Steps` is `next_steps`.
+
+| Key | Required | Tab · chip | Notes |
 |---|---|---|---|
-| `layman` | **yes** | the first register, and what the card opens on | Aliases: `plain`, `plain_brief`, `plain_english`, `layman_brief`. The first sentence titles the row if `title` is absent, and the whole thing is the row's subtitle. |
-| `brief` | no | the **last** reading — the rung a reader drops to | **At most two sentences, under fifty words.** Aliases: `in_brief`, `bare_minimum`, `bottom_line`. Never the default and never the row: a brief identical to the `layman` is dropped rather than drawn twice. |
-| `technical` | no | a folded register, **Technical brief** | Aliases: `technical_brief`, `tech`, `detail`. |
-| `evidence` | no | a folded register, **What was verified** | Aliases: `verified`, `proof`, `checks`. |
-| `asks` | no | an **open** register, **Needs from you** — or the escalation, if none was declared | Aliases: `needs`, `questions`, `blocked_on`. |
-| `next` | no | a folded, numbered register, **What's next** | Aliases: `next_steps`, `follow_ups`. |
-| `escalation` | no | the card's one interrupt, above the title | See below. `none` and *absent* are different answers. |
-| `doubts` | no | its own strip, never folded, quiet | Aliases: `unsure`, `caveats`, `risks`. |
-| anything else | no | a folded register labelled by the key | `next_steps` → `Next steps`. Never dropped. |
-| `tldr` | no | **no register of its own — dead as of 2026-09-21** | Aliases: `tl;dr`, `summary`, `gist`, `headline`. Consumed, never a section: it fills `brief`, which is the length it always was, and falls back to the plain reply only when there is no other text at all. A pane still running an older briefing keeps rendering. |
-| `eli5` | no | **dead as a reading as of 2026-09-21** | Files under **Other**, after every register the build lays out, labelled `ELI5`. Kept, because nothing here is dropped; just not one of the lengths the card offers. |
+| `layman` | **yes** | `reading` · `Plain brief` — what the card opens on | Aliases: `layman_brief`, `laymans`, `plain`, `plain_brief`, `plain_english`. The first sentence titles the row if `title` is absent, and the whole thing is the row's subtitle. |
+| `brief` | no | `reading` · `Brief`, the **last** chip | **At most two sentences, under fifty words.** Aliases: `in_brief`, `bare_minimum`, `bottom_line`. Never the default and never the row: a brief identical to the `layman` is dropped rather than drawn twice. |
+| `technical` | no | `reading` · `Technical brief` | Aliases: `technical_brief`, `tech`, `engineering`, `detail`, `details`. |
+| `evidence` | no | `evidence` · `What was verified` | Aliases: `verified`, `verification`, `proof`, `checks`, `tested`. |
+| `doubts` | no | `evidence` · `doubts` | Aliases: `doubt`, `articles_of_doubt`, `unsure`, `uncertain`, `uncertainties`, `caveats`, `confidence_gaps`, `risks`. Counted on the row. |
+| `asks` | no | `steps` · `Needs from you` — or promoted into the escalation | Aliases: `ask`, `needs`, `needs_from_you`, `questions`, `questions_for_you`, `blocked_on`. |
+| `next` | no | `steps` · `What's next`, numbered | Aliases: `next_steps`, `whats_next`, `what_s_next`, `follow_ups`, `followups`, `todo`. |
+| `escalation` | no | the card's one interrupt, above the tabs | Aliases: `escalate`, `waiting_on_you`, `summons`. See below. `none` and *absent* are different answers. |
+| anything else | no | `other` · the key, tidied | `open_questions` → `Open questions`: underscores and dashes become spaces and the first letter is capitalised. Never dropped. |
+| `tldr` | no | **no register of its own — dead as of 2026-09-21** | Aliases: `tl;dr`, `tl_dr`, `summary`, `gist`, `headline`. Consumed, never a section: it fills `brief`, which is the length it always was, and falls back to the plain reply only when there is no other text at all. A pane still running an older briefing keeps rendering. |
+| `eli5` | no | `other` · `ELI5` — **dead as a reading as of 2026-09-21** | Aliases: `explain_like_im_five`, `simple`. Kept, because nothing here is dropped; just not one of the lengths the card offers. |
+
+When a key appears twice under different spellings, the first one met wins for
+the plain reply, the brief and the escalation; doubts from every spelling are
+collected.
 
 **Three readings, and they differ in LENGTH rather than in voice.** `tldr` and
 `eli5` were separate registers until 2026-09-21, when both died: three lengths
@@ -245,10 +398,17 @@ same goes for the brief, which has fifty words to be complete in.
 
 | `level` | Means | Drawn as |
 |---|---|---|
-| `blocking` | the agent has stopped and cannot continue | the spine frame in the theme's red, pinned above the title |
-| `wanted` | an answer is wanted; work carries on | the same frame at reduced strength — present, not urgent |
+| `blocking` | the agent has stopped and cannot continue | the spine frame in the theme's red, pinned above the tabs, under the legend `◆ NEEDS YOU · <n> unanswered · BLOCKING` |
+| `wanted` | an answer is wanted; work carries on | the same frame at reduced strength, legend `◆ WANTED · <n> unanswered · WORK CONTINUES` |
 | `none` | the agent looked and needs nothing | nothing, and the card is **known** to be clear |
-| *absent* | **undeclared — the agent never said** | falls back to the `asks` register, drawn at `wanted` and labelled `inferred`; nothing if there are no asks |
+| *absent* | **undeclared — the agent never said** | falls back to the `asks` register, drawn at `wanted` with the tag `inferred`; nothing if there are no asks |
+
+Spellings: `blocking`, `blocked`, `stopped` and `halted` all read as
+`blocking`; `none`, `clear`, `nothing` and `ok` as `none`; any other word as
+`wanted`. `"escalation": null` is the same as leaving it out. Inside the
+object, `items` may also be spelled `asks` or `questions`, each item's text
+`ask`, `question` or `text`, and `why` may be `reason`. The frame is not drawn
+on a pane too small for more than a one-line summary.
 
 `none` and *absent* are deliberately different values. An agent saying it needs
 nothing is a finding; an agent that never addressed it is a card you should not
@@ -261,36 +421,53 @@ keeps shouting and the frame stops meaning anything. Answered asks stay in
 `items` — a settled question is part of the record — they just stop counting.
 
 `items` may be bare strings (`["which root wins?"]`), and `escalation` may be a
-bare level (`"escalation": "blocking"`) or a bare list of questions, which reads
-as `wanted`. A `level` this build does not know reads as `wanted`: an unfamiliar
-spelling should neither seize the card's one interrupt nor swallow a summons.
+bare list of questions, which reads as `wanted`. A `level` this build does not
+know reads as `wanted`: an unfamiliar spelling should neither seize the card's
+one interrupt nor swallow a summons.
+
+**An escalation needs at least one unanswered item to draw.** The frame is
+drawn only while something in `items` is unanswered, so a bare level
+(`"escalation": "blocking"`), or an object with a `level` and a `why` and no
+`items`, is accepted and **draws nothing** in this build — the card looks
+exactly as if you had sent nothing. If you are blocked, say on what, as an item.
 
 When an escalation is drawn, the `asks` register is **not** drawn beneath it —
-the escalation is that content, promoted. Print the questions once.
+the escalation is that content, promoted. Print the questions once. When the
+escalation draws nothing (all answered, `none`, or no items), `asks` stays in
+its tab.
 
 **Well defined and very flexible, both.** The known keys get a fixed label and
-a fixed order (plain, technical, verified, needs, next, then yours by key). Any
-other key becomes a section too, because a reply shape that dropped what it did
-not expect would be the transcript problem again.
+a fixed order — plain, technical, brief, verified, needs, next — and every
+other key follows in alphabetical order of its key. Any other key becomes a
+section too, because a reply shape that dropped what it did not expect would be
+the transcript problem again.
 
 **The value's own shape decides how it is drawn.** A string is prose. An array
-of strings is a list — numbered under `next`, bulleted elsewhere. An object of
-strings is facts, one per row, and a `null` fact reads `unavailable`. An empty
-string or array is a section you wrote nothing in, and is not drawn.
+is a list — numbered under `next`, bulleted elsewhere — and an item that is not
+a string is shown as its JSON. An object is facts, one per row, with the key
+tidied the way an unknown section's is; a `null` fact reads `unavailable`, and a
+number or nested value is shown as its JSON. An empty string, array or object,
+or a `null`, is a section you wrote nothing in, and is not drawn.
 
-**A doubt** is a string (the claim) or `{ claim, why, confidence }`. `why` and
-`confidence` are optional, and *absent* is drawn as `confidence undeclared`,
-which is a different fact from `"confidence": "unknown"`. Doubts are counted on
+**A doubt** is a string (the claim) or `{ claim, why, confidence }`. The claim
+may also be spelled `what`, `text`, `about` or `doubt`, and `why` may be
+`because`, `reason` or `detail`; an object with no claim is dropped. `why` and
+`confidence` are optional, and *absent* confidence is a different fact from
+`"confidence": "unknown"` — the parser keeps the two apart. Doubts are counted on
 the row (`2 doubts`) so a reader can see how sure a reply is before opening it.
 
 The registers may sit directly in `model` or one level down under
 `model.response`; both land as the same surface.
 
-**Folding.** The gist and the doubts are always open. `asks` starts open — it is
-what the agent needs from the person. Every other section starts folded behind
-a header that says how much is behind it (`Technical brief · 340 words`), and a
-click on the header flips it. The window remembers the flips per surface until
-the surface is retired.
+**How a card lays them out.** A response card files its registers under up to
+four tabs, in this order: `reading` (Plain brief, Technical brief, Brief),
+`evidence` (What was verified, doubts), `steps` (Needs from you, What's next)
+and `other` (keys this build does not lay out, ELI5 among them). A tab with
+nothing in it is not drawn; a card with only one tab draws no tab strip, and a
+tab holding one register draws no chip row. The card opens on `reading` ·
+`Plain brief`. The window remembers the reader's pick per surface for as long
+as the surface is on the bench. No tab or chip carries a word or item count:
+the counters that once sat beside each label were removed on purpose.
 
 **On the shelf.** A response files under OVERVIEW and nothing else does. With
 no card opened, the overview shows the newest response by itself — the way the
@@ -300,7 +477,7 @@ from the rail keeps it until they close it.
 ### `artifact` — a thing with a location
 
 ```json
-{ "kind": "artifact",
+{ "td": "0.4", "kind": "artifact", "id": "report-x",
   "model": { "href": "/home/parker/reports/x.html",
              "mime": "text/html",
              "summary": "what it is, in one line" } }
@@ -308,14 +485,17 @@ from the rail keeps it until they close it.
 
 | Field | Required | Notes |
 |---|---|---|
-| `href` | yes | Absolute path or full URL. **Relative paths are refused** — they would resolve against the *terminal's* directory, not yours. `javascript:` and `data:` are refused as not-documents. |
-| `mime` | no | Shown when present; the row says nothing rather than guessing from the extension. |
-| `summary` | no | One line. |
+| `href` | yes | Also read as `open`, `path`, `file`, `url` or `link`, taking the first present in that order. It must start with `/`, `http://`, `https://` or `file://`. `javascript:` and `data:` are refused as not documents. **Everything else is refused as relative** — `report.html`, `~/x.html`, and also a `mailto:` or any other scheme — because a relative path would resolve against the *terminal's* directory, not yours. |
+| `mime` | no | Names the format badge on the row (`HTML`, `MD`, `PDF`, `IMG` …). Without one, the badge comes from the file's extension. |
+| `summary` | no | One line, the row's subtitle. Also read as `what` or `about`. Without one the subtitle is the mime type, else the last part of the path. |
+| any other key | no | Kept, in the order you wrote them, and drawn as facts under the target — `finding`, `measured`, `served`, whatever a person should know before opening it. A `null` is left out. |
 
-A click on the card opens a document the window can draw — HTML, Markdown, a
-picture, a video, a PDF — in the floating square over the bench, and the card stays open
-underneath. Anything else goes to the desktop's own handler. The window never
-hard-wires a viewer for a type it cannot draw.
+A click on the card, or its **open** button, opens a local file the window can
+draw — Markdown, HTML, an image, a video, audio, a PDF, recognised by extension
+and checked against the file's first bytes — in the floating square over the
+bench, and the card stays open underneath. A URL, a file of any other type, or
+a type whose viewer is not available (HTML with no Chromium, for example) goes
+to the desktop's own handler instead.
 
 #### A decision brief is an artifact
 
@@ -350,53 +530,65 @@ a terminal is told none of it.
 ### `markdown` — prose with structure
 
 ```json
-{ "kind": "markdown", "model": { "body": "## Finding\n\nThe queue…" } }
+{ "td": "0.4", "kind": "markdown", "id": "queue-finding",
+  "model": { "body": "## Finding\n\nThe queue…" } }
 ```
+
+`body` is required. A markdown card offers **comment**; add `"copy"` to
+`actions` if a person should be able to put the body on the clipboard.
 
 ### `table` — rows of comparable things
 
 ```json
-{ "kind": "table",
+{ "td": "0.4", "kind": "table", "id": "transports",
   "model": { "columns": ["transport", "durable"],
              "rows": [["file", "yes"], ["escape sequence", null]] } }
 ```
 
-A `null` cell renders as `unavailable`. An empty string renders as an empty
-cell. **These are different**: one is a measurement nobody took, the other is a
-blank somebody wrote.
+`columns` is required (an array; anything in it that is not a string becomes an
+empty heading); `rows` is optional. A `null` cell renders as `unavailable`. An
+empty string renders as an empty cell. **These are different**: one is a
+measurement nobody took, the other is a blank somebody wrote. A number or
+boolean cell is shown as written. A cell is drawn up to 600 characters.
 
 ### `architecture` — boxes and arrows
 
 ```json
-{ "kind": "architecture",
+{ "td": "0.4", "kind": "architecture", "id": "pipeline",
   "model": {
     "nodes": [ { "id": "agent", "label": "Agent", "state": "running", "group": "pane" } ],
     "edges": [ { "from": "agent", "to": "queue", "label": "work order" } ] } }
 ```
 
-`state` renders as a pill; `group` draws a labelled boundary. An edge naming a
-node that was never declared is **kept and drawn as dangling**, because an arrow
-to nowhere is a fact about your model and deleting it would hide a real mistake.
+`nodes` is required; a node needs an `id` (one without is dropped) and its
+`label` defaults to the id. An edge needs `from` and `to`. `state` renders as a
+pill; `group` draws a labelled boundary. An edge naming a node that was never
+declared is **kept and drawn as dangling**, because an arrow to nowhere is a
+fact about your model and deleting it would hide a real mistake.
 
 ### `changeset` — a change a person can answer
 
 ```json
-{ "kind": "changeset",
+{ "td": "0.4", "kind": "changeset", "id": "change-847",
   "model": { "repository": "terminal-delight",
              "hunks": [ { "id": "surface.rs#4",
                           "file": "app/src/surface.rs",
                           "patch": "@@\n+one\n-two" } ] } }
 ```
 
-`+`/`−` counts are computed from the patch, not taken from you. Every hunk
+`hunks` is required; a hunk needs a `file` (one without is dropped), `patch`
+may be empty, and a missing hunk `id` becomes `<file>#hunk-<n>`. `+`/`−` counts
+are computed from the patch, not taken from you, skipping `+++` and `---`
+header lines; the card draws the first 24 lines of each patch. Every hunk
 carries a three-state verdict — **undecided**, accepted, rejected — because a
 proposed edit, a rejected one and an unread one are three different things.
-`accept_part` / `reject_part` act on `id`.
+`accept_part` / `reject_part` act on the hunk `id`, which travels back as the
+action's target.
 
 ### `decision` — a call to make
 
 ```json
-{ "kind": "decision",
+{ "td": "0.4", "kind": "decision", "id": "rail-home",
   "model": {
     "question": "Does the rail belong to the pane or the window?",
     "options": [ { "name": "In the pane", "recommended": true,
@@ -405,76 +597,97 @@ proposed edit, a rejected one and an unread one are three different things.
     "consequences": ["what follows if we do"] } }
 ```
 
-**Exactly one option may be `recommended`.** A second claim is dropped by the
-parser, because two recommendations is no recommendation.
+`question` is required. An option needs a `name` (one without is dropped); a
+missing option `id` becomes `option-<n>`. **At most one option may be
+`recommended`.** Every claim after the first is dropped by the parser, because
+two recommendations is no recommendation.
 
 ### `question` — the agent has stopped, and needs a person
 
 The kind that matters most, and the one an agent almost never has to send: the
-window derives it from a picker on the screen (§14). You may declare one
-anyway, and a declared question and a derived one render identically.
+window makes it itself, from a picker it reads on the agent's screen (§9, *What
+a surface is NOT told*), from an `AskUserQuestion` call in the transcript, or
+from the agent channel's hooks (`td-agent-channel.md`). You may declare one
+anyway, and it is drawn by the same renderer and files on the same shelf.
 
 ```json
-{ "kind": "question",
-  "question": "Where should this page live?",
-  "options": [
-    { "label": "Artifact only", "what_happens": "One link, nothing on disk" },
-    { "label": "Local file too", "what_happens": "Greppable tomorrow" }
-  ],
-  "recommend": 0,
-  "answer": null }
+{ "td": "0.4", "kind": "question", "id": "page-home",
+  "model": {
+    "question": "Where should this page live?",
+    "options": [
+      { "label": "Artifact only", "what_happens": "One link, nothing on disk" },
+      { "label": "Local file too", "what_happens": "Greppable tomorrow" }
+    ],
+    "recommend": 0 } }
 ```
 
-`answer` has **four** states and they are four different facts:
+| Field | Required | Notes |
+|---|---|---|
+| `question` | yes | The question. Also the default title. |
+| `options` | yes, at least one | Strings, or objects with a `label` and an optional `what_happens` (also read as `description`). An object with no `label` is dropped. |
+| `recommend` | no | The index of the recommended option, counted from 0. Out of range reads as none. |
+| `answer` | no | The index of the option already chosen, counted from 0. Any other value — `null`, an object, a string, an index out of range — reads as *waiting on you*. |
 
-| `answer` | Means |
-|---|---|
-| `null` | nobody has answered |
-| `{"chose": 1}` | option 1 was picked |
-| `{"typed": "…"}` | a person wrote prose instead of picking |
-| `"answered"` | answered, and the record does not say how |
+A declared question's options become one **choose** button each, plus
+**comment**. Pressing one types
+`[workbench:<tag>] choose on surface <id> · <option label>` into your terminal
+(§7) and records the question as answered with that option.
 
-The last one is not a stub. A transcript can show a question ending without
-naming an option, and rendering that as "option 0 was chosen" would invent a
-decision nobody made.
+**The window knows more answer states than a payload can carry.** A question
+the window made itself can also read *answered in the person's own words*,
+*answered, and the record does not say how*, *cancelled*, *ended* and *left
+blank* — the row subtitles `answered · <words>`, `answered · how is
+unavailable`, `cancelled · nothing was answered`, `ended · nobody recorded how`
+and `left blank · the round went without it`. None of them is read from a
+document. The second is not a stub: a transcript can show a question ending
+without naming an option, and rendering that as "option 0 was chosen" would
+invent a decision nobody made.
 
-**Derived questions carry three more fields**, all of which describe a live TUI
-rather than a document, and none of which you should send:
+**Never send `cursor`.** It is read from a payload, but it means *a live picker
+is on the screen with its highlight on this row*: a question carrying one is
+answered by sending arrow keys and Return into your terminal instead of a typed
+line. The window sets it on the questions it reads off a screen.
 
-- `cursor` — which row the picker's own highlight is on. The window answers by
-  driving that menu, so it has to know where the caret starts.
+**What the window adds to questions it reads itself**, none of which is read
+from a payload:
+
 - `submit` — where the picker's Submit button sits in its **navigation** order.
   It is not an index into `options`: a picker draws Submit between the last
   option and its trailing `Chat about this`, so every option after it is one
   arrow further down than its own position suggests.
-- `round` — the multi-question shape, below.
-
-Each option may also carry `checked`, which is `true`, `false` or **absent** —
-ticked, unticked, and *not a checkbox at all*. A boolean here would make every
-single-choice option claim to be an unticked box.
-
-### `round` — several questions, one decision
-
-A picker asking more than one thing draws a strip of its own steps, and the
-window reads it:
-
-```json
-{ "steps": [ { "label": "Tomorrow", "done": true },
-             { "label": "Mug", "done": false } ],
-  "submitting": false }
-```
-
-The bench draws it as ONE decision node with a progress bar rather than as a
-pile of questions, because that is what it is. A round of **one** reports
-nothing: a single question with a Submit button is a question, not a workflow,
-and a one-segment bar would invent a sequence that does not exist.
+- `checked` on each option — `true`, `false` or **absent**: ticked, unticked,
+  and *not a checkbox at all*. A boolean here would make every single-choice
+  option claim to be an unticked box.
+- `round` — several questions asked as one decision. A picker asking more than
+  one thing draws a strip of its own steps, and the window reads it as steps,
+  each `done` or not. The bench draws it as ONE decision node with a progress
+  bar rather than as a pile of questions, because that is what it is. A round
+  of **one** reports nothing: a single question with a Submit button is a
+  question, not a workflow, and a one-segment bar would invent a sequence that
+  does not exist.
 
 ### `unclassified` — everything else
 
-Not an error, and not yours to send: it is what the window produces when it
-cannot type your payload. The reason and the raw bytes are both kept and shown.
-A kind this build has never heard of always lands — it is never dropped — so it
-is always safe to try something new.
+Not an error, and not yours to send: it is what the file drop, the CLI and the
+transcript fence produce when they cannot type your payload. The reason is the
+row's subtitle; the raw document is kept (up to 4096 bytes) and its first 20
+lines are shown, with an **ask** button that puts the question back to you. A
+kind this build has never heard of always lands through those routes — it is
+never dropped — so it is always safe to try something new. The MCP verb refuses
+instead, and says why.
+
+### `comment` — the person's own note
+
+```json
+{ "td": "0.4", "kind": "comment", "model": { "body": "check the bleed at 40%" } }
+```
+
+Written by a person on the bench's **comments** shelf, which is the only kind
+that files there. `body` is required, and its first line is the default title.
+A comment offers only **copy**, which puts the body on the clipboard: no button
+on it reaches the agent's terminal. It is not in the catalogue, and an agent
+should not send one; one that arrives anyway is labelled with its route (a file
+drop reads `dropped as a file · writer unknown`), never as the person's.
 
 ---
 
@@ -484,16 +697,35 @@ Four optional judgements a reader wants and prose rarely carries.
 
 | Field | Values | Answers |
 |---|---|---|
-| `effort` | `small` `medium` `large` `epic` | roughly how much work |
+| `effort` | `small` `medium` `large` `epic` (also `s` `m` `l` `xl`) | roughly how much work |
 | `complexity` | `trivial` `moderate` `involved` `hairy` | how tangled — *not* the same question as how big |
 | `foundation` | `{ system: "<free text>", depth: leaf\|component\|subsystem\|bedrock }` | if this is wrong, how much else is wrong with it |
 | `confidence` | `measured` `inferred` `hunch` `unknown` | how much you stand behind it |
 
+Words are matched exactly, in lower case. A word this build does not know is
+read as *undeclared*, without an error. A `foundation` with no valid `depth` is
+dropped whole; one with no `system` is drawn as *a system it did not name*.
+
 **Omitting a weight and declaring it `unknown` are different, and both are
 supported.** An agent that says it does not know is telling the reader
 something; an agent that never mentioned confidence is telling them nothing.
-Nothing here defaults to a value, so a silent payload renders `unweighed`
-rather than inventing a confident "trivial, leaf, measured".
+Nothing here defaults to a value.
+
+**How the window draws them.** As one sentence under the title of a full-size
+card — not on a question or a comment, and not when the pane is too small:
+
+```text
+A middling, involved job in request cache, where other components call it. Measured.
+```
+
+The effort words become *small*, *middling*, *big* and *huge*; the complexity
+words *straightforward*, *fiddly*, *involved* and *hairy*; each depth a clause
+(*nothing else depends on it*, *other components call it*, *several components
+depend on it*, *a mistake here is paid for by everything above it*); and each
+confidence its own sentence (*Measured.*, *Inferred, not measured.*, *A hunch.*,
+*The agent looked and could not tell.*). A surface with no weights at all says
+`Nobody said how big this is or how deep it goes.` rather than inventing a
+confident "trivial, leaf, measured".
 
 ---
 
@@ -502,15 +734,34 @@ rather than inventing a confident "trivial, leaf, measured".
 A surface a person can only look at is a picture. These are what makes it an
 interaction surface.
 
-| Action | Performed by | Meaning |
-|---|---|---|
-| `open` | the window | open the artifact with the desktop handler |
-| `open_source` | the window | open the first file in `source` |
-| `approve` / `reject` | **the agent** | yes / no |
-| `accept_part` / `reject_part` | the agent, with a `target` | a verdict on one hunk, also recorded on the row |
-| `comment` | the agent | free text the person typed |
-| `ask_agent` | the agent | put the question back |
-| anything else | the agent | offered as-is, labelled as you spelled it |
+| Action | Button | Performed by | Meaning |
+|---|---|---|---|
+| `open` | open | the window; nothing is sent | open an artifact: in the floating square when the window can draw it, else with the desktop's handler (§5, `artifact`) |
+| `open_source` | source | the window; nothing is sent | open the first file in `source` the same way |
+| `copy` | copy | the window; nothing is sent | put the body of a comment or a markdown surface on the clipboard |
+| `approve` / `reject` | approve / reject | **the agent** | yes / no |
+| `accept_part` / `reject_part` | accept / reject, per hunk | the agent, with a `target` | a verdict on one hunk, also recorded on the row. `accept_hunk` and `reject_hunk` are read as these two. |
+| `choose` | one per question option | the agent, with the option's label as `target` | an answer to a declared question; a question read off the screen is answered by keys instead |
+| `comment` | comment | the agent | free text the person typed — the composer opens first |
+| `ask_agent` | ask | the agent | put the question back — the composer opens first |
+| anything else | its name, underscores as spaces | the agent | offered as-is, as you spelled it |
+
+**What each kind offers before you add anything:**
+
+| Kind | Default actions |
+|---|---|
+| `response` | comment, ask_agent |
+| `artifact` | open, comment |
+| `markdown`, `table` | comment |
+| `architecture` | comment, ask_agent |
+| `changeset` | accept_part, reject_part, comment, approve |
+| `decision` | approve, reject, comment |
+| `question` | one choose per option, comment |
+| `comment` | copy |
+| `unclassified` | ask_agent |
+
+The envelope's `actions` adds to these, after them and without repeats; it
+cannot take one away.
 
 ### How the answer arrives
 
@@ -537,8 +788,15 @@ that wants the structure:
 
 ```
 <pane dir>/actions.jsonl
-{"td":"0.1","type":"action","surface":"change-847","action":"reject_part","target":"src/surface.rs#hunk-4","comment":"…"}
+{"td":"0.4","type":"action","surface":"change-847","action":"reject_part","target":"src/surface.rs#hunk-4","comment":"…"}
 ```
+
+`target` and `comment` appear only when the action had them. The journal keeps
+the comment as written; the typed line flattens line breaks and control
+characters to spaces. A question answered by driving its picker with keys is
+journaled after the keys are sent, with the target `chose "<label>"`, and no
+line is typed. Actions the window performs itself (`open`, `open_source`,
+`copy`) are neither typed nor journaled.
 
 The journal is written **first**. A line typed into a terminal can be eaten by
 whatever the program is doing at that instant; the file is what makes the answer
@@ -548,51 +806,95 @@ recoverable when it is.
 
 ## 8 · Errors
 
-`present_surface` refuses a bad payload and says why, in words you can act on:
+`present_surface` refuses a bad payload and says why, in words you can act on.
+These are the parser's sentences, exactly as this build writes them (the
+`{…}` parts are filled in):
 
 | Refusal | Cause |
 |---|---|
-| `missing 'td' version field` | no `td` |
-| `payload says TDSP 1.x and this build speaks 0.x` | newer major |
-| `unknown kind "hologram" — this build renders artifact, markdown, …` | a kind this build lacks (the **verb** refuses; a **file** lands as unclassified) |
-| `"report.html" is relative — it would resolve against the TERMINAL's directory` | relative href |
-| `'retire' needs the 'id' of the surface to take off the bench` | retire with no id |
+| `a surface payload is a JSON object` | the document is an array, a string or a number |
+| `` missing `td` version field — this build speaks TDSP 0.4 `` | no `td`, or a `td` that is not a string |
+| `payload says TDSP 1.x and this build speaks 0.x — a newer major may have re-cut the envelope, so it is refused rather than guessed at` | a newer major |
+| `` `td` should be a version like "0.4" — got "{td}" `` | a `td` whose major is not a number |
+| `` `op` must be present, update or retire — got "{op}" `` | an unknown `op` |
+| `` `id` must contain at least one letter, digit, dash, dot, colon or underscore `` | an id with nothing left after sanitising |
+| `` `retire` needs the `id` of the surface to take off the bench `` | a retire with no id |
+| `` missing `kind` — this build renders response, artifact, markdown, table, architecture, changeset, decision, question `` | no `kind` |
+| `` unknown kind "hologram" — this build renders response, artifact, … `` | a kind this build lacks |
+| `` a response needs a `layman` — the plain-English explanation of the whole reply `` | a response with no plain reply under any spelling (nor a `brief` or legacy `tldr` to stand in) |
+| `` an artifact needs a `href` — an absolute path or a full URL `` | no href under any of its six spellings |
+| `"report.html" is relative — it would resolve against the TERMINAL's directory, not yours. Send an absolute path or a full URL.` | an href that is not absolute — including `mailto:` and other schemes |
+| `"javascript:…" is not a document — the workbench opens files and web pages, nothing else` | a `javascript:` or `data:` href |
+| `` markdown needs a `body` string `` | |
+| `` a table needs `columns`, an array of strings `` | |
+| `` architecture needs `nodes`, each with an `id` and a `label` `` | no `nodes` array (a node needs only its `id`) |
+| `` a changeset needs `hunks`, each with a `file` and a `patch` `` | no `hunks` array (a hunk needs only its `file`) |
+| `` a decision needs a `question` `` | |
+| `` a question needs a `question` `` | |
+| `` a question needs `options` — an array of strings, or of {label, what_happens} `` | no usable option |
+| `` a comment needs a `body` string `` | |
 
-The file and CLI transports never refuse: nobody is there to be told, so a
-payload that cannot be typed becomes an `unclassified` surface carrying the
-reason. **Nothing is ever silently dropped.**
+The MCP verb adds its own: exposure off, writes off, a missing or out-of-range
+`pid`, and a `surface` that is not a JSON object. A refused document reaches no
+bench and no file.
 
-Ask what this build can render:
+**The file drop, the CLI and the transcript fence do not refuse.** Nobody is
+there to be told, so a JSON document that fails any check above becomes an
+`unclassified` card carrying the same sentence as its reason, plus the raw
+document. Two things vanish without a card:
+
+- a `.json` file that is not JSON at all — skipped silently and tried again
+  every second until it parses (§2);
+- a fence whose body is not JSON — skipped silently.
+
+The CLI tells you about its own input on stderr and in its exit status (§2):
+**2** when it found no JSON document or fence, **3** outside a pane. It does not
+check the document itself.
+
+### Asking what this build renders
 
 ```sh
 terminal-delight surface --catalogue
 ```
 
-or call the `surface_catalogue` MCP verb.
+or call the `surface_catalogue` MCP verb. Both return the same JSON:
+`"td"`, `"type": "capabilities"`, the eight kinds as `{ "kind", "version": 1 }`,
+the weight words, the transports (`mcp:present_surface`, `file`,
+`transcript-fence`) and the rule for an unknown kind. Its `actions` list names
+`open`, `comment`, `approve`, `reject`, `accept_part`, `reject_part`,
+`ask_agent` and `open_source`; it leaves out `choose` and `copy`, which this
+build also handles, and the CLI transport. It carries no per-kind model or
+field list — §5 is the only description of the models.
+
+`terminal-delight surface --derive <transcript.jsonl>` prints what the window
+would read out of a transcript: one line per derived surface with its kind, id,
+title and subtitle. It exits 2 when the file does not exist.
 
 ---
 
 ## 9 · What the window decides, not you
 
 Given the same surface, the same pane renders it differently depending on how
-much room it has and whether anyone is looking:
+much room the card has. Room only: whether the pane has the keyboard does not
+change it, because in a tiled window every visible pane is being read.
 
-| Embodiment | When | What |
+| Embodiment | When (the card's content area, in logical pixels) | What |
 |---|---|---|
-| **Full** | a focused pane with room | the whole thing, interactive |
-| **Compact** | under 460px wide, or 220px tall | headings, counts, first rows, the recommendation |
-| **Summary** | not focused, and under 640px | one line |
+| **Full** | at least 460 wide and 260 tall | the whole thing, interactive, with the weight sentence |
+| **Compact** | under 460 wide or under 260 tall | the heading, then headings, counts, first rows, the recommendation |
+| **Summary** | under 300 wide or under 160 tall | one line, and no escalation frame |
 
 Also the window's: the rail's width, which shelf a kind files under, the colour
 of every marker, the corner radius, and whether the pane is bent.
 
-### The three shelves
+### The four shelves
 
 | Shelf | Holds |
 |---|---|
 | `overview` | `response` — the feed of what the agent said, and nothing else |
 | `artifacts` | `artifact`, `markdown`, `table`, `architecture`, and `unclassified` — things made |
 | `decisions` | `decision`, `question`, `changeset` — things a person is asked to answer |
+| `comments` | `comment` — the person's own notes, which never reach the agent |
 
 Each shelf shows exactly what files under it. Until 0.3 the overview was a view
 over everything with the other two as filters, which made it a census rather
@@ -649,11 +951,14 @@ lossy in ways worth naming, because each has already cost a defect:
 
 ### The agent's own state
 
-Reported beside the surfaces, and derived from the screen the same way:
-`Asking`, `Blocked`, `Done`, `Exited`, `Working`, `Idle`. Matched on the SHAPE
-of the working line — a bracket carrying both an elapsed time and a token count
-— rather than on any particular verb, because the CLI varies the gerund
-deliberately and keeps the structure.
+Reported beside the surfaces: `Asking`, `Blocked`, `Done`, `Exited`,
+`Working`, `Reading`, `Paused`, `Idle`. Most are derived from the screen the
+same way, and the working state is matched on the SHAPE of the working line — a
+bracket carrying both an elapsed time and a token count — rather than on any
+particular verb, because the CLI varies the gerund deliberately and keeps the
+structure. Two are the bench's own memory rather than the screen's: `Reading`
+is the moment after the bench typed an answer and before the agent moved, and
+`Paused` is a turn a person stopped from the bench that has not started again.
 
 ---
 
@@ -668,6 +973,20 @@ New kinds are additive by design: an older build renders a newer kind as
 the sender can read.
 
 ### What changed
+
+**0.4, 2026-11-01** — no wire change, and so no bump. The text was checked
+line by line against the code and corrected where it had drifted: four
+transports (the transcript fence was missing), ten kinds in the parser with
+eight advertised, four shelves, the response tabs that replaced folded
+headers, the full alias lists, the weight sentence that replaced `unweighed`,
+the embodiment thresholds, the `question` model and its integer `answer`, the
+actions `choose` and `copy`, the MCP verb's persistence and `retire`, disk
+caps and pruning, and the refusals as the parser actually words them. Every
+example now carries `"td": "0.4"` and parses. Four behaviours that look like
+code bugs are written down as they are rather than as intended: an `update`
+without a title resets it (§4), id-less surfaces of one kind and title collide
+(§3), an escalation with no unanswered item draws nothing (§5), and ids that
+differ only in `.` or `:` share one file on disk (§2).
 
 **0.4, 2026-09-25** — no wire change, and so no bump. The launcher's briefing
 asks for a decision brief, sent as an `artifact`, when the work is
@@ -727,7 +1046,7 @@ dir="${XDG_STATE_HOME:-$HOME/.local/state}/terminal-delight/surfaces/$TD_SESSION
 mkdir -p "$dir"
 cat > "$dir/01-plan.json" <<'JSON'
 {
-  "td": "0.1",
+  "td": "0.4",
   "kind": "decision",
   "id": "cache-eviction",
   "title": "Cache eviction policy",
@@ -750,12 +1069,20 @@ cat > "$dir/01-plan.json" <<'JSON'
 JSON
 ```
 
-The pane's header badge increments. Flip it to **BENCH**, and the decision is
-drawn with the recommended option lit. Press `approve`, and the agent reads:
+Within a second the decision lands on the pane's bench, on the `decisions`
+shelf, marked unseen. Flip the pane to its bench with Alt+K or the header's
+face chip (it reads **TERM** on the terminal and **BENCH** on the bench), open
+the row, and the card shows the
+question, both options with LRU recommended, and the weight sentence *A
+middling, involved job in request cache, where other components call it.
+Measured.* Press **approve**, and the agent's terminal receives, followed by a
+return:
 
 ```
-[workbench] approve on surface cache-eviction
+[workbench:k7f2q9ax] approve on surface cache-eviction
 ```
+
+with the same event appended to `actions.jsonl` in that directory.
 
 ---
 
@@ -775,15 +1102,19 @@ drawn with the recommended option lit. Press `approve`, and the agent reads:
 
 | Piece | File |
 |---|---|
-| Types, parsing, validation, catalogue | `app/src/surface.rs` |
-| Per-pane state: faces, shelves, selection, actions | `app/src/workbench.rs` |
-| Renderers for the seven kinds, and the bench's chrome — and no decisions, which a test in that file enforces | `app/src/benchdraw.rs` |
+| Types, parsing, validation, catalogue, the typed line and the journal record | `app/src/surface.rs` |
+| Per-pane state: faces, shelves, selection, the response tabs, embodiment, what a press does | `app/src/workbench.rs` |
+| Renderers for every kind, the weight sentence and the escalation frame, and the bench's chrome — and no decisions, which a test in that file enforces | `app/src/benchdraw.rs` |
+| When an escalation draws and how hard | `app/src/emphasis.rs` |
 | Everything read off the agent's SCREEN — the live question, its options and cursor, working and blocked, the human-input prompt — under one law: every public reader has a test transcribed from a real screen | `app/src/screenread.rs` |
-| Deliverables out of a transcript, and the human title a file gets | `app/src/derive.rs` |
+| Surfaces out of a transcript: fences, `Deliverable:` lines, `AskUserQuestion` calls | `app/src/derive.rs` |
 | The agent's own state, off its status line (the working detector it uses lives in `screenread.rs`) | `app/src/hud.rs` |
-| The bench as the terminal view reaches it: keys, clicks, the wheel, the clipboard, the pseudoterminal | `app/src/pane/bench.rs` |
-| Transports: the sweep, the fence, the journal, the CLI | `app/src/surfacefeed.rs` |
-| The MCP verbs | `app/src/mcp.rs` |
+| The bench as the terminal view reaches it: keys, clicks, the wheel, the clipboard, the pseudoterminal, opening an artifact | `app/src/pane/bench.rs` |
+| The one door every transport arrives through (`TerminalView::present`) | `app/src/pane.rs` |
+| Transports: the sweep, the fence, the journal, the CLI, retention | `app/src/surfacefeed.rs` |
+| The once-a-second sweep and the ten-minute prune | `app/src/main.rs` |
+| The MCP verbs `present_surface` and `surface_catalogue` | `app/src/mcp.rs` |
+| The agent channel (`td-agent-channel.md`) | `app/src/channel.rs`, `scripts/td-agent-hooks` |
 | The launcher that briefs an agent it starts | `app/src/launcher.rs` |
 | The decision-brief kit the briefing names, embedded and written on launch | `app/src/briefkit.rs`, `app/skills/decision-brief/` |
 

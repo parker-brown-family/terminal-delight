@@ -1,7 +1,12 @@
 # The agent channel — TDAC 0.2
 
-**Version 0.2 · 2026-09-21 · implemented in `app/src/channel.rs`, read by
-`app/src/surfacefeed.rs`, written on the harness side by `scripts/td-agent-hooks`**
+**Version 0.2 · 2026-09-21, text revised 2026-11-01 against the code ·
+implemented in `app/src/channel.rs`, read by `app/src/surfacefeed.rs`, written
+on the harness side by `scripts/td-agent-hooks`**
+
+The window writes `"td": "0.2"` on every record it makes (outbound, the answer
+file, the marker), and the adapter writes `"td": "0.2"` on every inbound line.
+0.4.0 and the 0.5.0 development line share this code unchanged.
 
 TDSP (`td-surface-protocol.md`) says how an agent hands the window a thing it
 MADE. This document says how the workbench and the agent PROCESS talk to each
@@ -52,6 +57,9 @@ $XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/$TD_PANE_ID/
     bench.json                NEW · the window's liveness marker for this pane
 ```
 
+One level up, in the session directory itself, `launches.jsonl` records each
+agent the launcher starts (§4).
+
 **The inbox stays pane-addressed.** Gate 1 fixed this and nothing here moves it:
 `TD_SESSION` and `TD_PANE_ID` are stamped at shell spawn, before any agent exists
 to be named, and a hook is the agent's own child, so it inherits both. The
@@ -61,9 +69,11 @@ for the STORE and never an address.
 Both journals are one JSON object per line, appended under an advisory lock
 (`flock`) because a question with option previews is longer than a pipe buffer
 and two hooks can fire inside one second. A reader keeps a byte offset per file
-and reads only what is new. A line that does not parse is skipped, counted and
-retried on the next sweep, the same rule the surface sweep uses for a file
-caught mid-write.
+and reads only what is new. A trailing line with no newline yet is still being
+written: it is left, offset unmoved, for the next sweep. A complete line that
+does not parse as a record is counted as unknown and **not** retried — the
+offset moves past it. A journal that shrank was rotated or truncated, and is
+read again from the start.
 
 ---
 
@@ -71,9 +81,11 @@ caught mid-write.
 
 Every line carries `td`, `type`, `at_ms` (the writer's clock, used for ordering
 within the file only) and, when the writer knows them, `pid` (the agent's
-process) and `session_id`. Unknown types are **kept and counted**, never dropped:
-a bench that silently ignored a record it did not understand would be the
-transcript problem again.
+process) and `session_id`. The window reads a record by its `type` and does not
+check its `td`. Unknown types, and known types missing a field they need (a
+`question` with no `tool_use_id` or no questions, say), are **counted** as
+unknown rather than dropped silently: a bench that ignored a record it did not
+understand without a trace would be the transcript problem again.
 
 | `type` | Written on | Carries | The bench does |
 |---|---|---|---|
@@ -81,9 +93,14 @@ transcript problem again.
 | `question` | the agent calls its question tool (`PreToolUse` on `AskUserQuestion`) | `tool_use_id`, `questions[]` verbatim from the tool input, `deadline_ms` | presents one `question` surface per question, whole round, provenance *hook* |
 | `waiting` | the hook has decided to hold the picker and wait for the bench | `tool_use_id`, `until_ms`, `at_ms` | routes the answer as a file while `until_ms` is in the future |
 | `released` | the hook stopped waiting | `tool_use_id`, `at_ms`, `why` ∈ `answered` (the file arrived) · `missing` (no marker at all) · `closed` (the bench is not the face on screen) · `stale` (the marker's clock is more than four seconds off) · `timeout` (`TD_ASK_WAIT_S` ran out) | routes any later answer as keys (the picker has painted) |
-| `answered` | the tool returned (`PostToolUse`) | `tool_use_id`, `answers` — the map the tool returned, or `null` when the shape was not readable | marks the round's cards answered, whichever route the answer took |
-| `reply` | the agent's turn ends (`Stop`) | `text` — the harness's own `last_assistant_message`, or `null` | if no `response` surface arrived this turn, presents one holding the reply as its plain brief, provenance *hook* |
-| `notify` | the harness raises a notification | `notification_type`, `message` | records it; `permission_prompt` and `agent_needs_input` raise the pane's needs-you state without reading the screen |
+| `answered` | the tool returned (`PostToolUse`) | `tool_use_id`, `answers` — the tool's whole response as the harness reported it, or `null` | marks the round's cards answered, whichever route the answer took, and ticks the options it can match by label |
+| `cancelled` | **not written by the adapter** | `tool_use_id` | ends the round as cancelled. The window derives this record from the agent's transcript, because a refused question never reaches `PostToolUse`; a journal line of this type is read the same way |
+| `reply` | the agent's turn ends (`Stop`) | `text` — the harness's own `last_assistant_message`, or `null` | if no `response` surface arrived since the last prompt, presents one holding the reply as its `layman`, provenance *hook*; any round still open is ended |
+| `notify` | the harness raises a notification | `notification_type` (also read as `kind`), `message` | **parsed and otherwise ignored in this build**: it raises no needs-you state and draws nothing |
+
+A `prompt` whose text is the harness waking the agent (a background task
+finishing, a message from another session) is captioned as a wake-up rather
+than as words the person typed.
 
 `questions[]` is the tool's own shape, copied and not reshaped:
 
@@ -111,7 +128,13 @@ another device) needs nothing from the path it found the line at.
 | `interrupt` | — | one `0x03` |
 | `end` | — | two `0x03` in one write — asked to quit, not signalled, so the alternate screen comes down |
 | `keys` | `bytes_hex`, `why` | raw bytes — the ONE impure verb, always journaled so the fallback is visible in the record |
-| `launch` | as today's `launches.jsonl` | unchanged; listed so the vocabulary is in one place |
+
+Launches are **not** in this journal. The launcher appends one line per agent
+it starts to `launches.jsonl` in the session directory (one level above the
+pane directories), with `"type": "launch"`, `at_ms`, `harness`, `model`,
+`effort`, `reach`, `cwd`, `command`, `landing` and `briefing_fnv1a64` (a
+fingerprint of the briefing it handed over). That line carries
+TDSP's version, `"td": "0.4"`, rather than this protocol's.
 
 ---
 
@@ -119,10 +142,12 @@ another device) needs nothing from the path it found the line at.
 
 ```
 answers/<tool_use_id>.json
-{"td":"0.1","tool_use_id":"toolu_…","answers":{"Which drink?":"Coffee"}}
+{"td":"0.2","tool_use_id":"toolu_…","answers":{"Which drink?":"Coffee"}}
 ```
 
-Written beside and renamed into place. The map is keyed by the question's own
+Written beside and renamed into place. The file name keeps only the letters,
+digits, `-` and `_` of the tool-use id, up to 96 of them — the same filter the
+adapter applies when it polls. The map is keyed by the question's own
 text and valued by the chosen option's `label`, because that is the shape the
 harness's own answer channel takes: **measured 2026-09-21** by driving Claude
 Code 2.1.274 under a pseudoterminal with a `PreToolUse` hook that returned
@@ -178,8 +203,10 @@ and `delivery` says `held` until it goes.
 
 ```
 bench.json
-{"td":"0.1","face":"workbench","at_ms":1790006865309,"window":1983471}
+{"td":"0.2","face":"workbench","at_ms":1790006865309,"window":1983471}
 ```
+
+`face` is `workbench` or `terminal`; `window` is the window's process id.
 
 The window refreshes this about once a second **while the bench is the face on
 screen**, and writes it once, on the change, when it is not — a closed face is
@@ -281,17 +308,20 @@ Reproducer: `reports/_codexask.py`. Full write-up:
 
 ## 9 · Provenance is drawn
 
-Every record the bench shows names where it came from, using TDSP's `origin`:
+Every card names where it came from, using TDSP's `origin`, as one line in the
+card's heading. These are the lines this build draws:
 
-| Origin | Means |
-|---|---|
-| `hook` | arrived through this channel; complete and exact |
-| `derived` | read off the screen by the window; may be partial, may lag |
-| `mcp` / `file drop` / `person` | as TDSP already defines them |
+| Origin | Line on the card | Means |
+|---|---|---|
+| hook | `arrived through this agent's own hooks · whole` | arrived through this channel; complete and exact |
+| derived | `read from this agent's own record` | read by the window from the agent's transcript or its screen; may be partial, may lag |
+| MCP | `presented by this pane's agent · MCP · pid <n>`, `presented over MCP by pid <n> — not this pane's agent`, or `presented over MCP by pid <n>` | sent with `present_surface`, by a process under this pane's shell, by some other process, or before the window could tell |
+| file drop | `dropped as a file · writer unknown` | a file in the pane's directory; anything running as the user could have written it |
+| person | `written here, by you` | a comment typed on this bench |
+| unknown | `origin unknown — no transport said` | nothing recorded how it arrived |
 
-A question card reads *asked through the hook · whole round* or *read off the
-screen · what was visible*. An overview caption reads the person's exact words
-under `hook` and *as the screen showed them* under `derived`. This is the whole
+The derived line does not say whether the window read a transcript or a
+screen; both are the agent's own record, and both can lag. This is the
 difference between a decoupled bench and a scraped one, made visible where the
 person is looking.
 
@@ -314,8 +344,17 @@ person is looking.
 ## 11 · Versioning
 
 `major.minor`, the TDSP rule: a minor bump adds optional fields or new record
-types and never re-cuts an existing one; a record naming a newer major is kept
-as unknown and counted. **A field added for a bug is still a version bump.**
+types and never re-cuts an existing one. **A field added for a bug is still a
+version bump.** The window does not yet read an inbound record's `td`, so a
+record naming a newer major is read by its `type` like any other; refusing a
+newer major is the intended rule and is not built.
+
+**0.2, text revised 2026-11-01** — no record changed. The text caught up with
+the code: the examples carry `"td": "0.2"`, which the window and the adapter
+both write; `cancelled` is listed; a malformed complete line is counted and
+not retried; `notify` is documented as ignored; launches live in the session
+directory's `launches.jsonl`, not in `outbound.jsonl`; and the provenance lines
+are the ones the cards actually draw.
 
 **0.2** — `waiting` and `released` carry `at_ms`; `released.why` gains
 `missing` and `closed` (the first cut said `no-bench` for the one and `stale`
