@@ -4,7 +4,7 @@
 //! Terminal Delight's first-launch page tells a newcomer to *type `claude` at a
 //! prompt*, and until this module an agent started that way was told nothing:
 //! the launcher's briefing (the workbench, how to present work, and the
-//! DECISION BRIEFS paragraph naming the kit) only ever rode on a command line
+//! BRIEFS AND JUDGEMENT CALLS paragraph naming the kit) only ever rode on a command line
 //! the launcher wrote itself, as `--append-system-prompt`. A person who typed
 //! got an agent that had never heard of the bench, and a bench that never
 //! filled.
@@ -51,8 +51,8 @@ pub const MARKER: &str = "# terminal-delight:briefing";
 /// `kit_root` [`crate::briefkit::default_root`], passed in so a test can point
 /// them somewhere of its own.
 ///
-/// Without a kit the briefing still goes out, minus its DECISION BRIEFS
-/// paragraph — the same rule [`crate::surface::launch_briefing`] applies,
+/// Without a kit the briefing still goes out, minus its BRIEFS AND JUDGEMENT
+/// CALLS paragraph — the same rule [`crate::surface::launch_briefing`] applies,
 /// because an agent sent to read a file that is not there does worse than one
 /// never sent.
 pub fn briefing_for(
@@ -571,8 +571,8 @@ mod tests {
         )
         .expect("a pane with a session is told");
         assert_eq!(typed, launcher);
-        assert!(typed.contains("DECISION BRIEFS"), "{typed}");
-        assert!(typed.contains(&kit.join("SKILL.md").display().to_string()));
+        assert!(typed.contains("BRIEFS AND JUDGEMENT CALLS"), "{typed}");
+        assert!(typed.contains(&kit.join("briefing/SKILL.md").display().to_string()));
     }
 
     /// Outside a Terminal Delight pane the hook runs in every Claude session
@@ -605,7 +605,7 @@ mod tests {
         let d = scratch("nokit");
         let text = briefing_for(env_of(&[("TD_SESSION", "work")]), &d, None).unwrap();
         assert!(text.contains("WORKBENCH"), "{text}");
-        assert!(!text.contains("DECISION BRIEFS"), "{text}");
+        assert!(!text.contains("BRIEFS AND JUDGEMENT CALLS"), "{text}");
     }
 
     #[test]

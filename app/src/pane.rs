@@ -12271,8 +12271,8 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
-                    // What this pane's agent handed over: the newest one's
-                    // name, and the list behind ▾. See `pane/handed.rs`.
+                    // What this pane's agent handed over: ARTIFACT, which opens
+                    // the newest, and the list behind ▼. See `pane/handed.rs`.
                     .children(
                         show_handover
                             .then(|| self.handover_chip(&sk, hicon, handover_name, cx))

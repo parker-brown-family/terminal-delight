@@ -184,8 +184,13 @@ pub struct Strings {
     /// simply there, and a help sheet that explains the presence of a visible
     /// surface is answering a question nobody asked.
     pub rail: &'static str,
-    /// The handover chip's word for its list, on a pane too narrow for a name.
+    /// The word for the list of what a pane's agent handed over: the overflow
+    /// menu's entry, and the history page's.
     pub artifacts_word: &'static str,
+    /// The handover chip's label in every skin and at every width: the word for
+    /// what the chip is, never the newest artifact's own name (Parker,
+    /// 2026-11-01: "should always be (for all skins and designs) ARTIFACT").
+    pub artifact_word: &'static str,
     /// The help row for Ctrl+Shift+M: what the pane's agent handed over.
     pub handed_over: &'static str,
     pub text_size: &'static str,
@@ -575,6 +580,7 @@ pub const EN: Strings = Strings {
     display_tray: "GAUGES — Monitor grade · text size · text-crawl",
     rail: "Who needs you — open the attention queue",
     artifacts_word: "artifacts",
+    artifact_word: "ARTIFACT",
     handed_over: "What this agent handed over — open its list",
     text_size: "Text size",
     outer_size: "Outer / menu size (over menus or the left bar)",
@@ -834,6 +840,7 @@ pub const ES: Strings = Strings {
     display_tray: "CONTROLES — Ajuste del monitor · tamaño de texto · text-crawl",
     rail: "Quién te necesita — abre la cola de atención",
     artifacts_word: "artefactos",
+    artifact_word: "ARTEFACTO",
     handed_over: "Lo que este agente entregó — abre su lista",
     text_size: "Tamaño del texto",
     outer_size: "Tamaño del exterior / menús (sobre los menús o la barra izquierda)",
@@ -1093,6 +1100,7 @@ pub const DE: Strings = Strings {
     display_tray: "REGLER — Monitor-Abstimmung · Textgröße · Text-Crawl",
     rail: "Wer dich braucht — die Aufmerksamkeitsliste öffnen",
     artifacts_word: "Artefakte",
+    artifact_word: "ARTEFAKT",
     handed_over: "Was dieser Agent übergeben hat — die Liste öffnen",
     text_size: "Textgröße",
     outer_size: "Außen- / Menügröße (über Menüs oder der linken Leiste)",
@@ -1352,6 +1360,7 @@ pub const ZH: Strings = Strings {
     display_tray: "显示调节 — 显示器调校 · 文字大小 · 文字滚屏",
     rail: "谁需要你 — 打开关注队列",
     artifacts_word: "成果",
+    artifact_word: "成果",
     handed_over: "这个智能体交付的内容 — 打开列表",
     text_size: "文字大小",
     outer_size: "外层／菜单大小（鼠标位于菜单或左侧栏）",
@@ -1611,6 +1620,7 @@ pub const FR: Strings = Strings {
     display_tray: "RÉGLAGES — Réglage écran · taille du texte · défilement",
     rail: "Qui a besoin de vous — ouvrir la file d’attention",
     artifacts_word: "artefacts",
+    artifact_word: "ARTEFACT",
     handed_over: "Ce que cet agent a remis — ouvrir la liste",
     text_size: "Taille du texte",
     outer_size: "Taille de l’extérieur / des menus (sur les menus ou la barre de gauche)",
@@ -1870,6 +1880,7 @@ pub const RU: Strings = Strings {
     display_tray: "РЕГУЛЯТОРЫ — Настройка монитора · размер текста · бегущая строка",
     rail: "Кому вы нужны — открыть очередь внимания",
     artifacts_word: "артефакты",
+    artifact_word: "АРТЕФАКТ",
     handed_over: "Что передал этот агент — открыть список",
     text_size: "Размер текста",
     outer_size: "Размер внешнего / меню (над меню или левой панелью)",
@@ -2129,6 +2140,7 @@ pub const JA: Strings = Strings {
     display_tray: "画面調整 — モニター調整 · 文字サイズ · テキストクロール",
     rail: "誰が待っているか — 注目キューを開く",
     artifacts_word: "成果物",
+    artifact_word: "成果物",
     handed_over: "このエージェントが渡したもの — 一覧を開く",
     text_size: "文字サイズ",
     outer_size: "外側・メニューの拡大率（メニュー・左バー上）",
@@ -2388,6 +2400,7 @@ pub const KO: Strings = Strings {
     display_tray: "화면 조정 — 모니터 보정 · 글자 크기 · 텍스트 크롤",
     rail: "누가 기다리는지 — 주의 대기열 열기",
     artifacts_word: "산출물",
+    artifact_word: "산출물",
     handed_over: "이 에이전트가 넘긴 것 — 목록 열기",
     text_size: "글자 크기",
     outer_size: "바깥 / 메뉴 배율 (메뉴 또는 왼쪽 막대 위에서)",
@@ -2648,6 +2661,7 @@ pub const HI: Strings = Strings {
     display_tray: "डिस्प्ले नियंत्रण — मॉनिटर समायोजन · टेक्स्ट आकार · टेक्स्ट-क्रॉल",
     rail: "किसे आपकी ज़रूरत है — ध्यान कतार खोलें",
     artifacts_word: "आर्टिफ़ैक्ट",
+    artifact_word: "आर्टिफ़ैक्ट",
     handed_over: "इस एजेंट ने क्या सौंपा — सूची खोलें",
     text_size: "टेक्स्ट आकार",
     outer_size: "बाहरी / मेनू आकार (मेनू या बाएँ बार पर)",

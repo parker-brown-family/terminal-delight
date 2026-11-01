@@ -7,6 +7,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Briefs and judgement calls
+
+- Agents Terminal Delight briefs are now pointed at the briefing skill instead
+  of decision-brief. The binary carries it whole, with the parts of
+  decision-brief and fancy-pants-brief it builds pages with, and writes them
+  under `~/.local/share/terminal-delight/skills/` on launch. The old
+  decision-brief instructions an earlier build wrote there are removed.
+- The launch briefing asks for a brief whenever finished work is something to
+  read, check or decide, and adds the fallback for decisions nobody made: the
+  agent makes them and keeps going unless they contradict something approved,
+  cannot be undone, or are high uncertainty or plainly the person's taste. It
+  records each one with `brief.py call`, names the open ones in its reply at
+  the `wanted` level, and carries them into its closing brief for a stamp.
+
+### Artifact chip
+
+- The pane header's artifact chip reads ARTIFACT in every skin and at every
+  width, instead of the newest artifact's name. ARTIFACT opens the newest one,
+  and its ▼ opens the list; in TERMINIMALIST the ▼ is written `more`, not
+  `next`.
+
 ### Uninstall trust boundaries
 
 - MCP setup for Claude Code, Codex and Gemini now records the absolute installed

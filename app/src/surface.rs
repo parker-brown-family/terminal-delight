@@ -3279,11 +3279,12 @@ pub fn catalogue() -> Value {
 /// protocol's JSON catalogue from `terminal-delight surface --catalogue` and
 /// the `present_surface` verb's own description, and nothing more.
 ///
-/// `kit` is the decision-brief skill's `SKILL.md` as [`crate::briefkit`]
-/// wrote it for this launch. With it, the briefing asks for a brief when the
-/// work is decision-shaped and says where the how is; without it, the
-/// briefing says nothing about briefs at all, because an agent sent to read a
-/// file that is not there does worse than one never sent.
+/// `kit` is the briefing skill's `SKILL.md` as [`crate::briefkit`] wrote it
+/// for this launch. With it, the briefing asks for a brief when the work is
+/// something to read, check or decide, carries the judgement-call policy, and
+/// says where the how is; without it, the briefing says nothing about briefs
+/// or calls at all, because an agent sent to read a file that is not there
+/// does worse than one never sent.
 ///
 /// Kept short deliberately. A launch prompt competes with the user's actual
 /// first instruction, and a page of protocol documentation ahead of "fix the
@@ -3401,27 +3402,39 @@ pub const FLOOR_PARAGRAPH: &str = "THE THRESHING FLOOR. Agents in this window wo
      adversarial review is worth what it costs; ask an agent from a different provider than \
      the one that built the work.";
 
-/// The briefing's paragraph on decision briefs, naming the kit's `SKILL.md`.
+/// The briefing's paragraph on briefs and judgement calls, naming the kit's
+/// `SKILL.md`.
 ///
-/// Three things it must carry, each a test: when to build one (and when a
+/// What it must carry, each a test: when to write a brief (and when a
 /// `decision` surface is the right size instead), that it is SHORT and DRAWN,
-/// and how it reaches the person — an `artifact` with an absolute href — and
-/// comes back, as a pasted map of anchors.
+/// how it reaches the person — an `artifact` with an absolute href — and comes
+/// back, as a pasted map of anchors; and the fallback for decisions nobody
+/// made, Parker's 2026-11-01: carry them without blocking unless they are high
+/// uncertainty or plainly the person's taste, record them, and escalate the
+/// fact at `wanted`, the protocol's present-but-not-urgent level.
 fn brief_paragraph(kit: &str) -> String {
     format!(
-        "DECISION BRIEFS. When what you finish is something the person has to read and then \
-         decide on — an audit, a review, a comparison of options, a findings write-up, a \
-         proposal — build it as a decision brief: one self-contained HTML page, drawn rather \
-         than written, that they read inside this window. Read {kit} before you start; \
-         Terminal Delight wrote it for you, with the assets it names beside it. Keep it SHORT \
-         and DRAWN: five minutes to read, a figure for every argument, prose only as \
-         captions, depth in modals. The page is yours to lay out; the surface only points \
-         at it, as an `artifact` whose href is the file's absolute path and whose mime is \
-         text/html. A click on that card opens the page over the bench, where the person \
-         notes any element, stamps CONCUR on a decision, and presses ↪ to paste the notes \
-         into your prompt as [anchor] lines, each anchor an element id in your file. A \
-         question with a few short answers is a `decision` surface, not a brief; one brief \
-         per decision is the rate.\n\
+        "BRIEFS AND JUDGEMENT CALLS. Read {kit} before you start; Terminal Delight wrote it \
+         for you, with the files it uses beside it. When what you finish is something the \
+         person should read, check or decide — an audit, a review, a comparison of options, \
+         findings, a proposal, a write-up of what you changed — write it as a brief with that \
+         skill: one self-contained HTML page, drawn rather than written, that they read inside \
+         this window. Keep it SHORT and DRAWN: five minutes to read, a figure for every \
+         argument, prose only as captions, evidence one link behind each claim. The surface \
+         only points at it, as an `artifact` whose href is the file's absolute path and whose \
+         mime is text/html. A click on that card opens the page over the bench, where the \
+         person notes any element, stamps CONCUR on a decision, and presses ↪ to paste the \
+         notes into your prompt as [anchor] lines, each anchor an element id in your file. A \
+         question with a few short answers is a `decision` surface, not a brief.\n\
+         \n\
+         When the work needs a decision the person has not made, make it and keep going, unless \
+         it contradicts something they approved, cannot be undone without them, or is high \
+         uncertainty or plainly their own taste at the posture their project's instructions \
+         declare. Record it either way with the skill's `brief.py call`; exit 3 means stop and \
+         ask. Name each open call in your reply's `escalation` at level `wanted`, and carry \
+         them into your closing brief as rows to stamp. When a slice starts, after your \
+         context is compacted, and before you say done, run `brief.py orient` on the brief \
+         you are working under.\n\
          \n"
     )
 }
@@ -4674,8 +4687,8 @@ mod tests {
         );
     }
 
-    /// Where a launch wrote the decision-brief kit, as the briefing names it.
-    const KIT: &str = "/home/me/.local/share/terminal-delight/skills/decision-brief/SKILL.md";
+    /// Where a launch wrote the briefing kit, as the briefing names it.
+    const KIT: &str = "/home/me/.local/share/terminal-delight/skills/briefing/SKILL.md";
 
     /// The brief paragraph is there when the kit is, and is the ONLY thing the
     /// kit changes. Read off the returned strings, both ways round, so a
@@ -4689,7 +4702,7 @@ mod tests {
             with.contains(KIT),
             "the kit's SKILL.md is named by its path"
         );
-        for gone in ["SKILL.md", "DECISION BRIEF", "↪"] {
+        for gone in ["SKILL.md", "BRIEFS AND JUDGEMENT CALLS", "↪", "brief.py"] {
             assert!(
                 !without.contains(gone),
                 "with no kit on disk the briefing still says {gone:?}"
@@ -4702,7 +4715,9 @@ mod tests {
         );
         // The reply rule still precedes the optional brief kit.
         let reply = with.find("END EVERY TURN").expect("the reply rule");
-        let briefs = with.find("DECISION BRIEFS").expect("the brief paragraph");
+        let briefs = with
+            .find("BRIEFS AND JUDGEMENT CALLS")
+            .expect("the brief paragraph");
         assert!(reply < briefs, "the brief paragraph never leads");
     }
 
@@ -4712,7 +4727,7 @@ mod tests {
     fn the_brief_paragraph_says_when_how_short_and_the_way_back() {
         let text = brief_paragraph(KIT);
         for (said, why) in [
-            ("read and then decide on", "when"),
+            ("read, check or decide", "when"),
             (
                 "`decision` surface, not a brief",
                 "and when a smaller kind is right",
@@ -4725,6 +4740,16 @@ mod tests {
             ("text/html", "the mime the bench opens in the square"),
             ("↪", "the way the notes come back"),
             ("[anchor]", "and what they look like when they do"),
+            ("has not made", "what a judgement call is"),
+            ("high uncertainty", "the first reason to stop"),
+            ("their own taste", "the second"),
+            ("`brief.py call`", "how a call is recorded"),
+            ("exit 3", "the signal to stop and ask"),
+            (
+                "`escalation` at level `wanted`",
+                "how the fact of a call reaches the person",
+            ),
+            ("`brief.py orient`", "re-reading what was approved"),
         ] {
             assert!(
                 text.contains(said),
