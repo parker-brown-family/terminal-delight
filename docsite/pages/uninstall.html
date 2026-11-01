@@ -93,7 +93,7 @@ reason = "my development machine"</code></pre>
   <tbody>
     <tr><td><code>uninstall preview [--json|--handoff] [--retention keep|export|delete]</code></td><td>Prints the plan and changes nothing. <code>--json</code> prints it as data; <code>--handoff</code> prints the agent brief.</td><td>0; 2 usage</td></tr>
     <tr><td><code>uninstall plan [--retention keep|export|delete]</code></td><td>Writes the plan for review and prints both paths.</td><td>0; 2 usage</td></tr>
-    <tr><td><code>uninstall run --plan FILE [--now]</code></td><td>Starts the worker on a reviewed plan and prints where the receipt will be. <code>--now</code> runs it in the foreground.</td><td>0 done; 1 done in part; 3 refused; 2 usage</td></tr>
+    <tr><td><code>uninstall run --plan FILE [--now]</code></td><td>Starts the worker on a reviewed plan and prints where the receipt will be. <code>--now</code> runs it in the foreground.</td><td>Without <code>--now</code>: 0 the worker started (its receipt says how the removal went); 1 it could not start; 2 usage. With <code>--now</code>: 0 done; 1 done in part, or no receipt written; 3 refused; 2 usage</td></tr>
     <tr><td><code>admin export [--records] [--to DIR] [--json]</code></td><td>The panel's export. <code>--to</code> names a new folder.</td><td>0; 1 failed; 2 usage</td></tr>
     <tr><td><code>admin builds [--json]</code>, <code>admin builds prune [--keep N] [--dry-run] [--json]</code></td><td>Lists builds, or removes old ones keeping the newest <code>N</code> (default 3, at least 1).</td><td>0; 1 failed; 2 refused or usage</td></tr>
     <tr><td><code>admin guard</code></td><td>Says whether this machine refuses removal.</td><td>0</td></tr>

@@ -177,20 +177,20 @@
 </table>
 
 <h3>Workbench, writing</h3>
-<p>Nothing reaches the agent until you send.<sup><a href="#s4">4</a></sup></p>
+<p>Nothing you type reaches the agent until you send, with three exceptions today, because the pane takes these chords before the workbench does: <kbd>Shift</kbd>+<kbd>Insert</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> (and so Omarchy's <kbd>Super</kbd>+<kbd>V</kbd>) paste into the agent's terminal rather than the draft, and <kbd>Ctrl</kbd>+<kbd>X</kbd> with nothing selected in the terminal sends <code>^X</code> to the agent. Paste into the draft with <kbd>Ctrl</kbd>+<kbd>V</kbd> (<a href="https://github.com/parker-brown-family/terminal-delight/issues/1247">issue 1247</a>).<sup><a href="#s4">4</a></sup></p>
 <table class="keys">
   <tbody>
     <tr><td><kbd>Enter</kbd></td><td>send</td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd>, <kbd>Alt</kbd>+<kbd>Enter</kbd></td><td>new line</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>pause the agent's turn</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd></td><td>copy the selection, or the whole draft</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd></td><td>cut the selection, or the whole draft</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste, images too</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>paste into the draft, images too</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>select the whole draft</td></tr>
     <tr><td><kbd>Shift</kbd>+arrows, <kbd>Shift</kbd>+<kbd>Home</kbd> / <kbd>End</kbd></td><td>select as you move</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd></td><td>undo</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> / <kbd>Ctrl</kbd>+<kbd>K</kbd></td><td>delete to the start / end</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>W</kbd> / <kbd>Alt</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Delete</kbd></td><td>delete a word left / right</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd> / <kbd>Alt</kbd>+<kbd>D</kbd>, <kbd>Ctrl</kbd>+<kbd>Delete</kbd></td><td>delete a word left / right</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>closes the tab, after asking, as it does on the terminal face; deletes a word left when no document box is up <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete a word left; undo brings it back <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd></td><td>delete the line the caret is on <span class="dev-tag">0.5.0 dev</span></td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>delete the whole draft <span class="dev-tag">0.5.0 dev</span></td></tr>
