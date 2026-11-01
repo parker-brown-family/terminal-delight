@@ -4568,6 +4568,10 @@ struct Workspace {
     /// easter eggs, so neither is remembered: every opening of the tray starts
     /// them shut (see [`Self::open_osd`]).
     osd_eggs: OsdEggs,
+    /// Which GAUGES groups are open, by position (TYPE, PICTURE, ACTIVE,
+    /// INACTIVE). Every group starts shut: twenty sliders at once was too
+    /// busy to read. Kept for the session, so a group you use stays open.
+    osd_groups: Vec<bool>,
     /// Read-only MCP control-surface policy (persisted). The 🤖 mother-bar
     /// button edits this; the live snapshot it would expose is derived per-frame.
     mcp: mcp::McpConfig,
@@ -6389,6 +6393,7 @@ impl Workspace {
             osd_menu: None,
             osd_at: None,
             osd_eggs: OsdEggs::default(),
+            osd_groups: Vec::new(),
             mcp: saved.mcp.clone().unwrap_or_default(),
             chart: threshing_floor::Chart::from_saved(saved.lines.clone(), saved.org_lines.clone()),
             floor_orgs: threshing_floor::Orgs::default(),
@@ -8808,6 +8813,10 @@ impl Workspace {
                 .inactive_image_glow
                 .map(|v| K::InactiveImageGlow.to_percent(v)),
             inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            inactive_brightness: g
+                .inactive_brightness
+                .map(|v| K::InactiveBrightness.to_percent(v)),
+            inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
             afterglow_ms: g.afterglow_ms,
             cursor_linger_ms: g.cursor_linger_ms,
             off_cursor_linger_ms: g.off_cursor_linger_ms,
@@ -8880,6 +8889,12 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_text {
             set!(K::InactiveText, p);
+        }
+        if let Some(p) = patch.inactive_brightness {
+            set!(K::InactiveBrightness, p);
+        }
+        if let Some(p) = patch.inactive_blur {
+            set!(K::InactiveBlur, p);
         }
         if let Some(ms) = patch.afterglow_ms {
             g.set(K::AfterglowMs, ms);
@@ -22716,7 +22731,9 @@ impl Workspace {
                         | theme::GradeKey::Glare
                         | theme::GradeKey::ImageGlow
                         | theme::GradeKey::InactiveImageGlow
-                        | theme::GradeKey::InactiveText => {
+                        | theme::GradeKey::InactiveText
+                        | theme::GradeKey::InactiveBrightness
+                        | theme::GradeKey::InactiveBlur => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::AfterglowMs
@@ -29334,9 +29351,13 @@ fn render_node(
             // highlight in the PANE's own theme (override / mode tint), not the
             // outer chrome's; shadows (not border width) so the grid never reflows.
             // Its glow follows the pane's own phosphor gauge for the same reason.
-            let (acc, glow, sk) = {
+            let (acc, glow, sk, veil) = {
                 let pth = e.read(cx).resolved_theme(cx);
                 let sk = skin::for_theme(cx, &pth, pth.grade.scale);
+                // The INACTIVE TERMINALS brightness gauge: the black an
+                // unfocused pane wears is the light it gives up, at most 90%
+                // so a pane at zero is still a pane.
+                let veil = (1. - pth.grade.inactive_brightness_at_edge()).min(0.9);
                 (
                     if sk.text_controls() {
                         sk.ink.focus
@@ -29349,6 +29370,7 @@ fn render_node(
                         pth.grade.phosphor
                     },
                     sk,
+                    veil,
                 )
             };
             // is a dragged sub-tab hovering THIS pane right now? which side?
@@ -29437,7 +29459,7 @@ fn render_node(
                 // dim every pane that isn't focused so the live one is the bright
                 // one. Plain bg overlay (no .occlude()) → a click still falls
                 // through to the terminal beneath to focus it.
-                .when(!is_focused, |d| {
+                .when(!is_focused && veil > 0.005, |d| {
                     d.child(
                         div()
                             .absolute()
@@ -29447,7 +29469,7 @@ fn render_node(
                             .when(sk.shape.corner != skin::Corner::Round, |d| {
                                 d.rounded(px(0.))
                             })
-                            .bg(hsla(0., 0., 0., 0.22)),
+                            .bg(hsla(0., 0., 0., veil)),
                     )
                 })
                 // translucent slab on the side the drop will split toward
@@ -30306,6 +30328,9 @@ impl Render for Workspace {
                 self.open_osd(MenuScope::Outer, None);
                 self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
                 self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
+                if demo.split(',').any(|s| s == "open") {
+                    self.osd_groups = vec![true; 4];
+                }
                 cx.notify();
             }
         }
@@ -32892,6 +32917,12 @@ impl Render for Workspace {
                     t.g_inactive_hdr,
                     vec![
                         (
+                            G::InactiveBrightness,
+                            t.g_brightness,
+                            grade.inactive_brightness_at_edge(),
+                        ),
+                        (G::InactiveBlur, t.g_blur, grade.inactive_blur_at_edge()),
+                        (
                             G::InactiveText,
                             t.g_text_level,
                             grade.inactive_text_at_edge(light_preset),
@@ -32920,17 +32951,59 @@ impl Render for Workspace {
                 .flex_col()
                 .gap_2()
                 .when(sk.m.frost > 0., |d| sk.finish_group(d).p_2());
-            for (heading, controls) in groups {
-                let mut section = div().flex().flex_col().gap_1().child(label(heading));
-                for (key, name, value) in controls {
-                    section = section.child(self.slider_row(key, name, value, &th, cx));
-                    if key == G::InactiveText {
-                        section = section.child(label(t.g_text_relative));
+            // A group is its heading until opened; a press on the heading opens
+            // or shuts it. Unboxed, each group ends on a short rule, as the
+            // CONFIG surfaces' sections do.
+            let fold_mark = |open: bool| match (sk.unboxed(), open) {
+                (true, true) => "\u{2212}",
+                (true, false) => "+",
+                (false, true) => "\u{25be}",
+                (false, false) => "\u{25b8}",
+            };
+            let mut lingers_shown = false;
+            for (gi, (heading, controls)) in groups.into_iter().enumerate() {
+                let open = self.osd_groups.get(gi).copied().unwrap_or(false);
+                let mut section = div().flex().flex_col().gap_1().child(
+                    div()
+                        .id(SharedString::from(format!("osd-group-{gi}")))
+                        .debug_selector(move || format!("osd-group-{gi}"))
+                        .cursor_pointer()
+                        .child(label(&format!("{} {heading}", fold_mark(open))))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if ws.osd_groups.len() <= gi {
+                                    ws.osd_groups.resize(gi + 1, false);
+                                }
+                                ws.osd_groups[gi] = !ws.osd_groups[gi];
+                                cx.notify();
+                            }),
+                        ),
+                );
+                if open {
+                    for (key, name, value) in controls {
+                        lingers_shown |= matches!(
+                            key,
+                            G::CursorLingerMs
+                                | G::OffCursorLingerMs
+                                | G::InactiveCursorLingerMs
+                                | G::InactiveOffCursorLingerMs
+                        );
+                        section = section.child(self.slider_row(key, name, value, &th, cx));
+                        if key == G::InactiveText {
+                            section = section.child(label(t.g_text_relative));
+                        }
                     }
                 }
                 rows = rows.child(section);
+                if sk.unboxed() {
+                    rows = rows.child(div().mx(px(18.)).child(sk.rule_h()));
+                }
             }
-            rows = rows.child(label(t.g_afterglow_hint));
+            if lingers_shown {
+                rows = rows.child(label(t.g_afterglow_hint));
+            }
             // The foot of the tray: one faint disclosure row per easter egg.
             // Deliberately quieter than every label above it — somebody has to
             // go looking.
@@ -32940,7 +33013,7 @@ impl Render for Workspace {
                     .text_size(sk.text_px(9.))
                     .text_color(th.text.alpha(if open { 0.55 } else { 0.28 }))
                     .cursor_pointer()
-                    .child(format!("{} {}", if open { "▾" } else { "▸" }, name))
+                    .child(format!("{} {}", fold_mark(open), name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance

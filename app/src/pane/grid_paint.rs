@@ -25,6 +25,62 @@ pub(super) struct Snapshot {
     /// The alpha of the phosphor bleed under every letter, or `None` for a
     /// clean grid — which is every design but Intrusive. See [`bleed_runs`].
     pub bleed: Option<f32>,
+    /// An agent's tinted bands by PAINTED row, drawn as lines over the grid.
+    /// Empty unless a skin owns the field. See [`styling::BandRow`].
+    pub bands: std::rc::Rc<styling::Bands>,
+    /// The ink of a band's rules, then of a note's box.
+    pub band_ink: (Hsla, Hsla),
+}
+
+/// The lines that stand in for an agent's tinted fills: one rule above and one
+/// below each run of consecutive banded rows, and a hairline box round each
+/// note. Positions are in the grid's padded frame, as the afterglow's are.
+fn band_lines(s: &Snapshot) -> Vec<gpui::Div> {
+    let (rule_ink, note_ink) = s.band_ink;
+    let x = |col: usize| s.pad.0 + col as f32 * s.cell_w;
+    let y = |row: usize| s.pad.1 + row as f32 * s.cell_h;
+    let line = |left: f32, top: f32, width: f32| {
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(width))
+            .h(px(1.))
+            .bg(rule_ink)
+    };
+    let mut out = Vec::new();
+    let mut row = 0;
+    while row < s.bands.len() {
+        let Some((mut a, mut z)) = s.bands[row].rule else {
+            row += 1;
+            continue;
+        };
+        let first = row;
+        while let Some((a2, z2)) = s.bands.get(row + 1).and_then(|b| b.rule) {
+            a = a.min(a2);
+            z = z.max(z2);
+            row += 1;
+        }
+        let width = (z - a) as f32 * s.cell_w;
+        out.push(line(x(a), y(first), width));
+        out.push(line(x(a), y(row + 1) - 1., width));
+        row += 1;
+    }
+    for (row, band) in s.bands.iter().enumerate() {
+        for &(a, z) in &band.notes {
+            out.push(
+                div()
+                    .absolute()
+                    .left(px(x(a)))
+                    .top(px(y(row)))
+                    .w(px((z - a) as f32 * s.cell_w))
+                    .h(px(s.cell_h))
+                    .border_1()
+                    .border_color(note_ink),
+            );
+        }
+    }
+    out
 }
 
 /// The bleed: two rings of copies, and the alpha each ring takes of the bleed's
@@ -208,6 +264,8 @@ impl Render for GridPaint {
                     .whitespace_nowrap()
                     .child(StyledText::new(ghost.text).with_runs(ghost.runs))
             }))
+            // A crawl centres every line, so grid columns no longer place them.
+            .when(!s.crawl, |d| d.children(band_lines(s)))
     }
 }
 

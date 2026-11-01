@@ -233,6 +233,10 @@ pub struct GradeReport {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
+    /// Percent of its light an inactive pane keeps; undeclared draws at 78%.
+    pub inactive_brightness: Option<f32>,
+    /// Softness of an inactive pane's terminal, 0..100; undeclared is clear.
+    pub inactive_blur: Option<f32>,
     /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
     pub afterglow_ms: Option<f32>,
     /// Active text-change trail, 0..220 milliseconds; zero disables it.
@@ -280,6 +284,10 @@ pub struct ConfigPatch {
     pub inactive_image_glow: Option<f32>,
     /// Percent of active text intensity; undeclared draws at 45% on Standard or 52% on Intrusive.
     pub inactive_text: Option<f32>,
+    /// Percent of its light an inactive pane keeps; undeclared draws at 78%.
+    pub inactive_brightness: Option<f32>,
+    /// Softness of an inactive pane's terminal, 0..100; undeclared is clear.
+    pub inactive_blur: Option<f32>,
     /// Legacy unified setting, 0..1200ms. New controls override it at drawing time.
     pub afterglow_ms: Option<f32>,
     /// Active text-change trail, 0..220 milliseconds; zero disables it.
@@ -1393,7 +1401,9 @@ fn tool_defs() -> Value {
                  phosphor — the glow of the lit borders, 25 the house look, 0 none; \
                  image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
                  — inactive glow, default 100; inactive_text — percent of active \
-                 text, default 45 (Standard) / 52 (Intrusive)). The four linger fields use milliseconds: \
+                 text, default 45 (Standard) / 52 (Intrusive); inactive_brightness — light an \
+                 inactive pane keeps, default 78; inactive_blur — softness of an inactive \
+                 pane's terminal, default 0). The four linger fields use milliseconds: \
                  cursor_linger_ms and inactive_cursor_linger_ms range 0..220; off_cursor_linger_ms \
                  and inactive_off_cursor_linger_ms range 0..650. Defaults are the maxima; zero \
                  disables that trail. Cursor means text changes; off-cursor means erased passages. \
@@ -1453,7 +1463,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/field_colour/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text (0..100; field_colour fades the default terminal field from black at 0 to matching chrome at 100, unset follows the skin; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/field_colour/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text/inactive_brightness/inactive_blur (0..100; inactive_brightness is the light an inactive pane keeps, default 78; inactive_blur softens an inactive pane's terminal, default 0; field_colour fades the default terminal field from black at 0 to matching chrome at 100, unset follows the skin; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
