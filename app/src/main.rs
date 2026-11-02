@@ -13081,6 +13081,107 @@ impl Workspace {
     }
 
     /// One row of a left-bar menu.
+    /// The spine's row menu for a tab: how a single key reaches it. The same
+    /// lines and the same three verbs as the tab menu's HOTKEYS (see
+    /// `tab_hotkey_lines`), because with the spine open this menu is the one a
+    /// right-click on a tab opens. The menu stays up while it waits for a
+    /// letter, so the answer — or the reason it was refused — lands in it.
+    fn bar_hotkey_rows(
+        &self,
+        i: usize,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let ui = self.lang.strings().ui;
+        let (place, pin) = self.tab_hotkey_lines(i, cx);
+        let capturing = self.hotkey_capture == Some(i);
+        let digits = self.tab_digits_on();
+        let mut rows = vec![Self::bar_menu_rule(th, s).into_any_element()];
+        if let Some(line) = place {
+            rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
+        }
+        match pin {
+            Some(line) => {
+                rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
+                rows.push(
+                    Self::bar_menu_row(sk, s, ui.tab_menu_key_unpin, MenuTone::Plain)
+                        .id("bar-key-unpin")
+                        .debug_selector(|| "bar-key-unpin".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.tabs.get_mut(i) {
+                                    t.hotkey = None;
+                                }
+                                ws.hotkey_refused = None;
+                                ws.save(cx);
+                                cx.notify();
+                            }),
+                        )
+                        .into_any_element(),
+                );
+            }
+            None => rows.push(
+                Self::bar_menu_row(
+                    sk,
+                    s,
+                    if capturing {
+                        ui.tab_menu_key_press
+                    } else {
+                        ui.tab_menu_key_pin
+                    },
+                    MenuTone::Plain,
+                )
+                .id("bar-key-pin")
+                .debug_selector(|| "bar-key-pin".into())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.hotkey_capture = Some(i);
+                        ws.hotkey_refused = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            ),
+        }
+        if let Some((_, why)) = self.hotkey_refused.as_ref().filter(|(t, _)| *t == i) {
+            rows.push(
+                Self::bar_menu_row(sk, s, format!("\u{26a0} {why}"), MenuTone::Quiet)
+                    .into_any_element(),
+            );
+        }
+        rows.push(
+            Self::bar_menu_row(
+                sk,
+                s,
+                if digits {
+                    ui.tab_menu_key_digits_on
+                } else {
+                    ui.tab_menu_key_digits_off
+                },
+                MenuTone::Plain,
+            )
+            .id("bar-key-digits")
+            .debug_selector(|| "bar-key-digits".into())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.tab_digits = Some(!ws.tab_digits_on());
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        rows
+    }
+
     fn bar_menu_row(
         sk: &skin::Skin,
         s: f32,
@@ -13511,6 +13612,7 @@ impl Workspace {
                             }),
                         ),
                     )
+                    .children(self.bar_hotkey_rows(i, th, &sk, s, cx))
                     .child(
                         Self::bar_menu_row(
                             &sk,
@@ -20287,6 +20389,33 @@ impl Workspace {
         }
     }
 
+    /// What a tab's menus say about reaching it: its place key while the
+    /// digits are on (or that it has none), and its pin, if it has one.
+    fn tab_hotkey_lines(&self, i: usize, cx: &App) -> (Option<String>, Option<String>) {
+        let ui = self.lang.strings().ui;
+        let place = self
+            .tab_digits_on()
+            .then(|| match self.tab_position_key(i, cx) {
+                Some(n) => lang::fill(
+                    ui.tab_menu_key_position,
+                    &[("key", &Self::chord_label(keylayer::TabChord::Position(n)))],
+                ),
+                None => ui.tab_menu_key_beyond.to_string(),
+            });
+        let pin = self.tabs.get(i).and_then(|t| t.hotkey).map(|c| {
+            lang::fill(
+                ui.tab_menu_key_pinned,
+                &[("key", &Self::chord_label(keylayer::TabChord::Pinned(c)))],
+            )
+        });
+        (place, pin)
+    }
+
+    /// Whether a menu for tab `i` is open to take the letter it is waiting for.
+    fn tab_menu_open_for(&self, i: usize) -> bool {
+        self.tab_menu == Some(i) || matches!(self.bar_menu, Some((BarMenu::Task(t), _)) if t == i)
+    }
+
     /// Pin tab `i` to `alt+shift+<c>`, or say why not. A letter Terminal
     /// Delight already answers is refused, and so is one another tab holds —
     /// moving a pin silently would leave the other tab's owner pressing a key
@@ -20325,7 +20454,7 @@ impl Workspace {
         let Some(i) = self.hotkey_capture else {
             return false;
         };
-        if self.tab_menu != Some(i) {
+        if !self.tab_menu_open_for(i) {
             self.hotkey_capture = None;
             return false;
         }
@@ -37183,7 +37312,6 @@ impl Render for Workspace {
                 // (or the button that takes the next letter as one), why the
                 // last letter was refused, and the window's digit switch.
                 let digits = self.tab_digits_on();
-                let pinned = tab.hotkey;
                 let capturing = self.hotkey_capture == Some(i);
                 let refused = self
                     .hotkey_refused
@@ -37202,38 +37330,28 @@ impl Render for Workspace {
                         .text_color(th.text.alpha(0.7))
                         .child(ui.tab_menu_keys_hdr),
                 );
-                if digits {
-                    keys_box = keys_box.child(note(match self.tab_position_key(i, cx) {
-                        Some(n) => lang::fill(
-                            ui.tab_menu_key_position,
-                            &[("key", &Self::chord_label(keylayer::TabChord::Position(n)))],
-                        ),
-                        None => ui.tab_menu_key_beyond.to_string(),
-                    }));
+                let (place_line, pin_line) = self.tab_hotkey_lines(i, cx);
+                if let Some(line) = place_line {
+                    keys_box = keys_box.child(note(line));
                 }
-                keys_box = match pinned {
-                    Some(c) => keys_box
-                        .child(note(lang::fill(
-                            ui.tab_menu_key_pinned,
-                            &[("key", &Self::chord_label(keylayer::TabChord::Pinned(c)))],
-                        )))
-                        .child(
-                            Self::bezel_btn(&sk, ui.tab_menu_key_unpin, false)
-                                .id("tab-key-unpin")
-                                .debug_selector(|| "tab-key-unpin".into())
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                        cx.stop_propagation();
-                                        if let Some(t) = ws.tabs.get_mut(i) {
-                                            t.hotkey = None;
-                                        }
-                                        ws.hotkey_refused = None;
-                                        ws.save(cx);
-                                        cx.notify();
-                                    }),
-                                ),
-                        ),
+                keys_box = match pin_line {
+                    Some(line) => keys_box.child(note(line)).child(
+                        Self::bezel_btn(&sk, ui.tab_menu_key_unpin, false)
+                            .id("tab-key-unpin")
+                            .debug_selector(|| "tab-key-unpin".into())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(t) = ws.tabs.get_mut(i) {
+                                        t.hotkey = None;
+                                    }
+                                    ws.hotkey_refused = None;
+                                    ws.save(cx);
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
                     None => keys_box.child(
                         Self::bezel_btn(
                             &sk,
@@ -38437,6 +38555,38 @@ mod tests {
             "ADD PROJECT, then the rule"
         );
         assert!(cx.debug_bounds("minimal-add-project").is_none());
+        // With the spine open its row menu is a tab's right-click, so the
+        // hotkeys are offered there: press "pin a hotkey", type a letter, and
+        // the tab carries it; a letter the window owns is refused in the menu.
+        ws.update(cx, |ws, cx| {
+            ws.bar_menu = Some((BarMenu::Task(0), point(px(60.), px(80.))));
+            cx.notify();
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("bar-key-digits").is_some());
+        let pin = cx.debug_bounds("bar-key-pin").expect("pin row");
+        cx.simulate_click(pin.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.hotkey_capture), Some(0));
+        cx.simulate_keystrokes("w");
+        draw(cx);
+        let refused = ws.read_with(cx, |ws, _| ws.hotkey_refused.clone());
+        assert!(refused.is_some_and(|(t, why)| t == 0 && why.contains("Alt+Shift+W")));
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), None);
+        let pin = cx.debug_bounds("bar-key-pin").expect("pin row");
+        cx.simulate_click(pin.center(), gpui::Modifiers::default());
+        cx.simulate_keystrokes("q");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), Some('q'));
+        assert!(
+            cx.debug_bounds("bar-key-unpin").is_some(),
+            "the pin shows, with its undo"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.bar_menu = None;
+            cx.notify();
+        });
+        draw(cx);
         ws.update(cx, |ws, cx| ws.set_left_bar(false, cx));
         draw(cx);
         assert!(cx.debug_bounds("minimal-add-project").is_some());
