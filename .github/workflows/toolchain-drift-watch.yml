@@ -56,13 +56,15 @@ jobs:
         run: |
           set -uo pipefail
           pinned=$(grep -oP 'RUST_TOOLCHAIN: "\K[0-9.]+' ../.github/workflows/ci.yml)
-          stable=$(rustc --version | awk '{print $2}')
+          # `+stable` throughout: rust-toolchain.toml pins every plain cargo
+          # to the same Rust as CI, which is the one this job must not test.
+          stable=$(rustc +stable --version | awk '{print $2}')
           echo "pinned=$pinned" >>"$GITHUB_OUTPUT"
           echo "stable=$stable" >>"$GITHUB_OUTPUT"
           failed=0
-          cargo fmt -- --check >../fmt.log 2>&1 || failed=1
-          cargo clippy --locked -- -D warnings >../clippy.log 2>&1 || failed=1
-          cargo clippy --locked --features core-alacritty -- -D warnings >../clippy-alacritty.log 2>&1 || failed=1
+          cargo +stable fmt -- --check >../fmt.log 2>&1 || failed=1
+          cargo +stable clippy --locked -- -D warnings >../clippy.log 2>&1 || failed=1
+          cargo +stable clippy --locked --features core-alacritty -- -D warnings >../clippy-alacritty.log 2>&1 || failed=1
           echo "failed=$failed" >>"$GITHUB_OUTPUT"
           # The lint names, once each, are what a person needs to read first.
           grep -ohE '#[a-z_]+$|clippy::[a-z_]+|`-D [a-z:_-]+`' ../clippy.log ../clippy-alacritty.log | sort | uniq -c | sort -rn >../lints.txt || true
@@ -87,7 +89,7 @@ jobs:
           set -euo pipefail
           body="Rust ${{ steps.gates.outputs.stable }} (latest stable) fails the gates CI runs; CI is pinned to ${{ steps.gates.outputs.pinned }} (\`RUST_TOOLCHAIN\` in \`.github/workflows/ci.yml\`), so no pull request is failing yet.
 
-          To move the pin: install it beside the default (\`rustup toolchain install ${{ steps.gates.outputs.stable }} --profile minimal --component clippy --component rustfmt\`), run \`cargo +${{ steps.gates.outputs.stable }} clippy --locked -- -D warnings\` with and without \`--features core-alacritty\` into a target directory outside the repo, fix what it finds, and change \`RUST_TOOLCHAIN\` in the same commit.
+          To move the pin: install it beside the default (\`rustup toolchain install ${{ steps.gates.outputs.stable }} --profile minimal --component clippy --component rustfmt\`), run \`cargo +${{ steps.gates.outputs.stable }} clippy --locked -- -D warnings\` with and without \`--features core-alacritty\` into a target directory outside the repo, fix what it finds, and change \`RUST_TOOLCHAIN\` and \`rust-toolchain.toml\` in the same commit.
 
           Lints this run found (count, name):
           \`\`\`

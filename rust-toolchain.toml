@@ -1,0 +1,10 @@
+# The Rust every build of Terminal Delight uses: CI, scripts/land.sh,
+# scripts/build-appimage.sh, and anyone running cargo in app/. rustup reads
+# this and fetches the toolchain on first use, so moving it needs nothing from
+# whoever builds next. Keep `RUST_TOOLCHAIN` in .github/workflows/ci.yml and
+# td-lab.yml equal to it (toolchain-drift-watch.yml reads that one). 1.99.1 is
+# the least rio-vt 0.5.29 builds with.
+[toolchain]
+channel = "1.99.1"
+components = ["clippy", "rustfmt"]
+profile = "minimal"

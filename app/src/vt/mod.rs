@@ -42,6 +42,8 @@ use alacritty::Core;
 #[cfg(not(feature = "core-alacritty"))]
 mod compat;
 #[cfg(not(feature = "core-alacritty"))]
+mod hold;
+#[cfg(not(feature = "core-alacritty"))]
 mod kitty;
 #[cfg(not(feature = "core-alacritty"))]
 mod rio;
