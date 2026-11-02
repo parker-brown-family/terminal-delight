@@ -77,6 +77,11 @@ serde_json = "1.0"
 sha2 = "0.10"
 toml = "0.8"
 
+[build-dependencies]
+# build.rs fingerprints the window↔host wire for the updater (src/update.rs),
+# with the same sha2 the binary already links, so nothing new enters the graph.
+sha2 = "0.10"
+
 [dev-dependencies]
 # gpui's headless test platform — `TestAppContext`, `VisualTestContext`, the
 # deterministic dispatcher — so a real `TerminalView` can be built and driven

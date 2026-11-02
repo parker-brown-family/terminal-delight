@@ -103,6 +103,8 @@ mod session;
 mod skin;
 mod threshing_floor_view;
 mod uninstall;
+mod update;
+mod update_view;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -4689,6 +4691,9 @@ struct Workspace {
     /// The ⚙ ADMIN panel is open: export, old builds, uninstall (see [`admin_view`]).
     admin_menu: bool,
     admin: admin_view::AdminState,
+    /// ⚙ CONFIG › UPDATES (see [`update_view`]).
+    update_menu: bool,
+    update: update_view::UpdateState,
     /// What step 1 of the bug report did while the panel was open: the report
     /// it wrote, or why it could not. Step 2 is offered only after a report
     /// exists, and closing the panel starts the ladder again.
@@ -6444,6 +6449,8 @@ impl Workspace {
             bug_menu: false,
             admin_menu: false,
             admin: Default::default(),
+            update_menu: false,
+            update: Default::default(),
             bug_report: None,
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
@@ -6779,6 +6786,24 @@ impl Workspace {
         // around it: a timer on the background executor, the work itself
         // already written (`refresh_usage` runs the collectors on the pool and
         // swaps the records in), and the loop ends with the window.
+        // update watch: the daily check a person can turn on in ⚙ CONFIG ›
+        // UPDATES. Off unless they did; when on, it looks five minutes after
+        // the window opens and every six hours after, asks GitHub at most once
+        // a day, and never does more than raise a notification.
+        cx.spawn(async move |this, cx| {
+            let mut wait = Duration::from_secs(300);
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = Duration::from_secs(6 * 3600);
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.update_daily_tick(cx))
+                    .is_err()
+                {
+                    break; // window gone
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let mut wait = Duration::from_secs(USAGE_FIRST_SWEEP_SECS);
             loop {
@@ -20428,6 +20453,7 @@ impl Workspace {
             || self.agents_menu
             || self.bug_menu
             || self.admin_menu
+            || self.update_menu
             || self.savings_menu
     }
 
@@ -20564,6 +20590,10 @@ impl Workspace {
         }
         if self.admin_menu {
             self.close_admin();
+            return true;
+        }
+        if self.update_menu {
+            self.close_updates();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -30130,6 +30160,7 @@ impl Render for Workspace {
                 || self.agents_menu
                 || self.bug_menu
                 || self.admin_menu
+                || self.update_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -30185,6 +30216,7 @@ impl Render for Workspace {
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
                     "admin" => self.open_admin(cx),
+                    "updates" => self.open_updates(cx),
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),
@@ -33265,6 +33297,7 @@ impl Render for Workspace {
         let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
         let admin_overlay = self.render_admin_overlay(&th, cx);
+        let update_overlay = self.render_update_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -36001,6 +36034,16 @@ impl Render for Workspace {
                         }),
                     ),
                 )
+                .child(
+                    entry("\u{2b73}", s.ui.cfg_updates, "more-updates").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.open_updates(cx);
+                        }),
+                    ),
+                )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -37833,6 +37876,7 @@ impl Render for Workspace {
                     .children(agents_overlay)
                     .children(bug_overlay)
                     .children(admin_overlay)
+                    .children(update_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -45634,6 +45678,7 @@ mod tests {
             [
                 ("admin", &["help"][..]),
                 ("uninstall", &["help"][..]),
+                ("update", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -48297,6 +48342,8 @@ Usage:
   terminal-delight uninstall preview|plan|run
                                  what a removal would do, the plan to review, and
                                  the worker that carries a reviewed plan out
+  terminal-delight update [status|check|install|rollback|channel|backups]
+                                 update from the stable or dev channel, or go back
   terminal-delight admin export|builds|guard|protect
                                  export settings, list or prune old builds, and
                                  protect this machine from uninstall
@@ -48324,6 +48371,7 @@ Usage:
 Options:
   -h, --help                     show this
   -V, --version                  show the version
+      --build-info               this build's version, commit and wire, as JSON
 
 Environment:
   TD_SCRATCH=1                   force a throwaway window that never claims a session
@@ -48344,21 +48392,57 @@ Environment:
 /// internal `--td-emit-demo` are dispatched above (that last one diverges, so it
 /// never reaches here), and a bare positional is deliberately left alone so a
 /// future "open in this directory" argument does not have to fight the gate.
+/// Install a staged update and run it in this process's place, when one is
+/// waiting and no session host anywhere on this machine would be left
+/// speaking an older wire. Returns only when it did not.
+fn cold_start_update(argv: &[String]) {
+    use std::os::unix::process::CommandExt;
+    let Ok(roots) = uninstall::roots::Roots::current() else {
+        return;
+    };
+    if update::load_record(&roots).pending.is_none() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    if let Some(entry) = update::apply_pending_at_cold_start(&roots, &exe, update::live_hosts()) {
+        let err = std::process::Command::new(&entry)
+            .args(argv.get(1..).unwrap_or_default())
+            .exec();
+        eprintln!(
+            "terminal-delight: installed the update but could not start {}: {err}",
+            entry.display()
+        );
+    }
+}
+
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
             // The core is named because a window can outlive the build it was
             // started from, and which emulator a running process has is the
             // first question when a pane draws something wrong.
+            // The commit too, now that the build carries one: the version
+            // alone reads the same three days of dev commits later.
+            let me = update::BuildInfo::this();
+            let commit = match (me.short_sha(), me.dirty) {
+                (Some(s), Some(true)) => format!(", commit {s}+dirty"),
+                (Some(s), _) => format!(", commit {s}"),
+                (None, _) => String::new(),
+            };
             Some((
                 format!(
-                    "terminal-delight {} (terminal core: {})",
+                    "terminal-delight {} (terminal core: {}{commit})",
                     env!("CARGO_PKG_VERSION"),
                     vt::CORE_NAME
                 ),
                 0,
             ))
         }
+        // What the updater asks a downloaded build before installing it: one
+        // line of JSON, and nothing started.
+        Some("--build-info") => Some((update::build_info_json(), 0)),
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
             format!("terminal-delight: unrecognised option `{flag}`\n\n{USAGE}"),
@@ -48554,6 +48638,9 @@ enum Verb {
     Briefing,
     /// Preview, plan and carry out a removal of Terminal Delight.
     Uninstall,
+    /// Find, check, install and roll back builds from the stable or dev
+    /// channel (see [`update`]); what ⚙ CONFIG › UPDATES does, from a terminal.
+    Update,
     /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
     Admin,
 }
@@ -48601,6 +48688,12 @@ const VERBS: &[VerbSpec] = &[
     VerbSpec {
         word: "uninstall",
         verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "update",
+        verb: Verb::Update,
         typed: true,
         piping: Piping::Streams(&["help"]),
     },
@@ -48868,6 +48961,7 @@ fn main() {
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
+                Verb::Update => update::run_cli(&argv[2..]),
                 Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
@@ -48953,6 +49047,13 @@ fn main() {
         (key, claim, None)
     } else {
         let resolved = instance::resolve_session_hosted();
+        // A cold start — no session host to keep — is when an update that
+        // changes the window↔host wire installs, if one is staged. The new
+        // build then runs in this one's place; any failure leaves this build
+        // to carry on and says why in the log.
+        if matches!(resolved.route, instance::Route::SpawnHost) {
+            cold_start_update(&argv);
+        }
         // No lock is consulted here any more. A hosted window writes nothing —
         // it hands its layout to the host — so the claim that decides who may
         // write a session file has no bearing on whether this window may show
