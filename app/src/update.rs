@@ -77,6 +77,10 @@ pub(crate) struct BuildInfo {
     /// same one can share a session host; anything else is a full restart.
     pub(crate) wire: Option<String>,
     pub(crate) core: String,
+    /// The protocol part of the wire alone (`build.rs`), which a replay cannot
+    /// test. Absent from builds before it existed.
+    #[serde(default)]
+    pub(crate) wire_proto: Option<String>,
 }
 
 pub(crate) const BUILD_SCHEMA: &str = "td-build/1";
@@ -91,6 +95,7 @@ impl BuildInfo {
             dirty: option_env!("TD_BUILD_DIRTY").map(|d| d == "1"),
             wire: option_env!("TD_BUILD_WIRE").map(String::from),
             core: crate::vt::CORE_NAME.into(),
+            wire_proto: option_env!("TD_BUILD_WIRE_PROTO").map(String::from),
         }
     }
 
@@ -134,6 +139,26 @@ pub(crate) enum Compat {
     /// One side does not say (an older build has no `--build-info`). Treated
     /// as `Different`, because guessing wrong would end terminals silently.
     Unknown,
+    /// A different wire, but CI replayed a real host of this window's wire
+    /// into the candidate and it read the same screen ([`Attestation`]).
+    ///
+    /// That proves the candidate reads a host of this window's wire, and no
+    /// other. So it keeps terminals only while every host it could meet runs
+    /// this window's own bytes ([`Sessions::keeps`]); a host left over from
+    /// an earlier window-only update may be older still, and an attestation
+    /// does not chain.
+    Attested,
+}
+
+/// What CI's replay proved about a dev build, from its `build.json`
+/// (`scripts/wire-attest.sh`).
+#[derive(Debug, Clone, PartialEq, Serialize)]
+pub(crate) struct Attestation {
+    /// The wire CI read off the build it attested. A downloaded build that
+    /// reports a different one is not the build that was tested.
+    pub(crate) wire: String,
+    /// Wires whose hosts it was replayed against and read correctly.
+    pub(crate) compatible_with: Vec<String>,
 }
 
 pub(crate) fn compat(this: &BuildInfo, other: Option<&BuildInfo>) -> Compat {
@@ -141,6 +166,29 @@ pub(crate) fn compat(this: &BuildInfo, other: Option<&BuildInfo>) -> Compat {
         (Some(a), Some(b)) if a == b && this.core == other.map_or("", |o| &o.core) => Compat::Same,
         (Some(_), Some(_)) => Compat::Different,
         _ => Compat::Unknown,
+    }
+}
+
+/// [`compat`], raised to [`Compat::Attested`] when the candidate's attestation
+/// names this window's wire and is about this very build: same reported wire,
+/// same core. Anything short of that keeps the plain answer.
+pub(crate) fn compat_attested(
+    this: &BuildInfo,
+    other: Option<&BuildInfo>,
+    attested: Option<&Attestation>,
+) -> Compat {
+    let plain = compat(this, other);
+    let (Compat::Different, Some(other), Some(att), Some(mine)) =
+        (plain, other, attested, this.wire.as_deref())
+    else {
+        return plain;
+    };
+    let about_this_build = other.wire.as_deref() == Some(att.wire.as_str());
+    if about_this_build && other.core == this.core && att.compatible_with.iter().any(|w| w == mine)
+    {
+        Compat::Attested
+    } else {
+        plain
     }
 }
 
@@ -554,6 +602,9 @@ pub(crate) struct Offer {
     pub(crate) ahead_by: Option<u64>,
     /// Its notes say its fixes reach terminals only after a host restart.
     pub(crate) host_restart: bool,
+    /// What CI's replay proved about it; dev builds only, and absent from any
+    /// build CI could not attest.
+    pub(crate) attested: Option<Attestation>,
 }
 
 impl Offer {
@@ -675,6 +726,7 @@ fn check_stable(this: &BuildInfo) -> Result<Check, String> {
             size,
             relation,
             ahead_by,
+            attested: None,
         }),
         none: None,
         source_build: None,
@@ -717,6 +769,24 @@ struct DevBuild {
     date: Option<String>,
     branch: Option<String>,
     version: Option<String>,
+    /// The build's own wire, as CI read it off the AppImage.
+    #[serde(default)]
+    wire: Option<String>,
+    /// Wires CI replayed a real host of into this build, and that read right.
+    #[serde(default)]
+    compatible_with: Vec<String>,
+}
+
+impl DevBuild {
+    fn attestation(&self) -> Option<Attestation> {
+        match (&self.wire, self.compatible_with.is_empty()) {
+            (Some(wire), false) => Some(Attestation {
+                wire: wire.clone(),
+                compatible_with: self.compatible_with.clone(),
+            }),
+            _ => None,
+        }
+    }
 }
 
 fn check_dev(this: &BuildInfo) -> Result<Check, String> {
@@ -779,6 +849,7 @@ fn check_dev(this: &BuildInfo) -> Result<Check, String> {
             size,
             relation,
             ahead_by,
+            attested: build.attestation(),
         }),
         none: None,
         source_build,
@@ -940,7 +1011,7 @@ fn prepare_in(
         image,
         binary,
         sha256: got,
-        compat: compat(this, info.as_ref()),
+        compat: compat_attested(this, info.as_ref(), offer.attested.as_ref()),
         info,
     })
 }
@@ -1157,6 +1228,11 @@ pub(crate) struct Sessions {
     pub(crate) alive: Vec<String>,
     /// Sessions whose host runs a build nothing here can vouch for.
     pub(crate) unvouched: Vec<String>,
+    /// Every host a new window could meet runs this window's own bytes: this
+    /// session's host is absent or runs this program, so the hosts vouched
+    /// for are all this program too. False when that is not known, which is
+    /// what an [`Compat::Attested`] build needs before it may keep terminals.
+    pub(crate) hosts_run_this: bool,
 }
 
 impl Sessions {
@@ -1165,6 +1241,33 @@ impl Sessions {
         Sessions {
             alive: hosts_alive(),
             unvouched: unvouched_hosts(&exe, own),
+            hosts_run_this: own_host_runs(&exe, own),
+        }
+    }
+
+    /// Whether a candidate of `compat` keeps every vouched host's terminals.
+    pub(crate) fn keeps(&self, compat: Compat) -> bool {
+        match compat {
+            Compat::Same => true,
+            Compat::Attested => self.hosts_run_this,
+            Compat::Different | Compat::Unknown => false,
+        }
+    }
+
+    /// Why a swap to `compat` waits for no host to be alive, or `None` when
+    /// it may happen beside them.
+    pub(crate) fn why_cold(&self, compat: Compat) -> Option<String> {
+        if compat == Compat::Attested && !self.hosts_run_this {
+            Some("this build was proven against this window's build, and your terminals' host runs an older one".into())
+        } else if !self.keeps(compat) {
+            Some("this build changes how the window talks to your terminals".into())
+        } else if !self.unvouched.is_empty() {
+            Some(format!(
+                "the session host of {} runs a build TD cannot vouch for",
+                self.unvouched.join(", ")
+            ))
+        } else {
+            None
         }
     }
 
@@ -1184,14 +1287,7 @@ impl Sessions {
     /// alive at all. Anything else would put the next window that opens in
     /// front of a host it cannot talk to.
     pub(crate) fn allow(&self, compat: Compat) -> Result<(), String> {
-        let why = if compat != Compat::Same {
-            "this build changes how the window talks to your terminals".to_string()
-        } else if !self.unvouched.is_empty() {
-            format!(
-                "the session host of {} runs a build TD cannot vouch for",
-                self.unvouched.join(", ")
-            )
-        } else {
+        let Some(why) = self.why_cold(compat) else {
             return Ok(());
         };
         if self.alive.is_empty() {
@@ -1206,7 +1302,7 @@ impl Sessions {
 
     /// True when only a cold start, or Restart everything, may install it.
     pub(crate) fn needs_cold_start(&self, compat: Compat) -> bool {
-        compat != Compat::Same || !self.unvouched.is_empty()
+        self.why_cold(compat).is_some()
     }
 }
 
@@ -1697,6 +1793,9 @@ pub(crate) fn apply_pending_at_cold_start(
         relation: Relation::Unknown,
         ahead_by: None,
         host_restart: false,
+        // A staged build installs only with no host alive, so what CI proved
+        // about it has nothing to keep.
+        attested: None,
     };
     let p = Prepared {
         compat: compat(&this, info.as_ref()),
@@ -1764,6 +1863,26 @@ pub(crate) fn unvouched_hosts(this_exe: &Path, own_session: Option<&str>) -> Vec
             HostProbe::Unresponsive | HostProbe::Skewed => true,
         })
         .collect()
+}
+
+/// Whether this session's host is absent or runs the very bytes of `this_exe`.
+/// A host whose program cannot be read, or that does not answer properly,
+/// does not.
+pub(crate) fn own_host_runs(this_exe: &Path, own_session: Option<&str>) -> bool {
+    use crate::hostctl::{probe_host, HostProbe};
+    let Some(own) = own_session else {
+        return true;
+    };
+    match probe_host(own) {
+        HostProbe::NoSocket => true,
+        HostProbe::Live { host, .. } => {
+            let theirs = (host > 0)
+                .then(|| sha256_file(Path::new(&format!("/proc/{host}/exe"))).ok())
+                .flatten();
+            theirs.is_some() && theirs == sha256_file(this_exe).ok()
+        }
+        HostProbe::Unresponsive | HostProbe::Skewed => false,
+    }
 }
 
 // ---------------------------------------------------------------- restart
@@ -1937,15 +2056,7 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
                 Err(e) => return fail(e),
             };
             let sessions = Sessions::now(own.as_deref());
-            if sessions.needs_cold_start(p.compat) && !now {
-                let why = if p.compat != Compat::Same {
-                    "it changes how the window talks to your terminals".to_string()
-                } else {
-                    format!(
-                        "the session host of {} runs a build TD cannot vouch for",
-                        sessions.unvouched.join(", ")
-                    )
-                };
+            if let (Some(why), false) = (sessions.why_cold(p.compat), now) {
                 return match stage(&roots, &p, &inst) {
                     Ok(()) => {
                         say(
@@ -2202,6 +2313,7 @@ mod tests {
             relation,
             ahead_by: None,
             host_restart: false,
+            attested: None,
         }
     }
 
@@ -2448,6 +2560,7 @@ mod tests {
         let alive = Sessions {
             alive: vec!["1".into()],
             unvouched: vec![],
+            hosts_run_this: true,
         };
         assert_eq!(apply_pending_at_cold_start(&r, &exe, &alive), None);
         assert!(
@@ -2555,10 +2668,12 @@ mod tests {
         let one = Sessions {
             alive: vec!["1".into()],
             unvouched: vec![],
+            hosts_run_this: true,
         };
         let foreign = Sessions {
             alive: vec!["1".into(), "2".into()],
             unvouched: vec!["2".into()],
+            hosts_run_this: true,
         };
         assert!(one.allow(Compat::Same).is_ok());
         assert!(one.allow(Compat::Different).is_err());
@@ -2571,6 +2686,119 @@ mod tests {
         assert!(!one.needs_cold_start(Compat::Same));
         assert_eq!(foreign.others(Some("1")), 1);
         assert_eq!(foreign.others(None), 2);
+    }
+
+    /// An attested build keeps terminals only while every host it could meet
+    /// runs this window's own bytes. A window that was itself swapped in over
+    /// an older host was proven against nothing that host speaks, so the next
+    /// attested build waits for a cold start there: attestations do not chain.
+    #[test]
+    fn an_attested_build_keeps_terminals_only_beside_hosts_running_this_window() {
+        let ours = Sessions {
+            alive: vec!["1".into()],
+            unvouched: vec![],
+            hosts_run_this: true,
+        };
+        let older = Sessions {
+            hosts_run_this: false,
+            ..ours.clone()
+        };
+        let foreign = Sessions {
+            alive: vec!["1".into(), "2".into()],
+            unvouched: vec!["2".into()],
+            hosts_run_this: true,
+        };
+        assert!(ours.allow(Compat::Attested).is_ok());
+        assert!(!ours.needs_cold_start(Compat::Attested));
+        let err = older.allow(Compat::Attested).unwrap_err();
+        assert!(err.contains("older one"), "{err}");
+        assert!(older.needs_cold_start(Compat::Attested));
+        assert!(foreign.allow(Compat::Attested).is_err());
+        assert!(Sessions::default().allow(Compat::Attested).is_ok());
+        assert!(
+            !Sessions::default().keeps(Compat::Attested),
+            "unknown is never safe"
+        );
+    }
+
+    /// An attestation counts only for this window's wire, only for the very
+    /// build CI tested, and never turns a matching wire into anything else.
+    #[test]
+    fn an_attestation_counts_only_for_this_wire_and_the_build_it_was_made_for() {
+        let mut me = BuildInfo::this();
+        me.wire = Some("aaaa".into());
+        let mut next = me.clone();
+        next.wire = Some("bbbb".into());
+        let att = |wire: &str, with: &[&str]| Attestation {
+            wire: wire.into(),
+            compatible_with: with.iter().map(|w| w.to_string()).collect(),
+        };
+        let ok = att("bbbb", &["zzzz", "aaaa"]);
+        assert_eq!(
+            compat_attested(&me, Some(&next), Some(&ok)),
+            Compat::Attested
+        );
+        assert_eq!(compat_attested(&me, Some(&next), None), Compat::Different);
+        let other_window = att("bbbb", &["cccc"]);
+        assert_eq!(
+            compat_attested(&me, Some(&next), Some(&other_window)),
+            Compat::Different
+        );
+        let other_build = att("dddd", &["aaaa"]);
+        assert_eq!(
+            compat_attested(&me, Some(&next), Some(&other_build)),
+            Compat::Different,
+            "a download reporting another wire is not the build CI tested"
+        );
+        let mut other_core = next.clone();
+        other_core.core = "other-core".into();
+        assert_eq!(
+            compat_attested(&me, Some(&other_core), Some(&ok)),
+            Compat::Different
+        );
+        assert_eq!(compat_attested(&me, None, Some(&ok)), Compat::Unknown);
+        let mut blind = me.clone();
+        blind.wire = None;
+        assert_eq!(
+            compat_attested(&blind, Some(&next), Some(&ok)),
+            Compat::Unknown
+        );
+        assert_eq!(compat_attested(&me, Some(&me), Some(&ok)), Compat::Same);
+    }
+
+    /// `build.json` from before attestations parses to none; one with an
+    /// empty list is none too, and a full one carries both halves.
+    #[test]
+    fn a_dev_builds_attestation_is_read_from_its_build_json() {
+        let old: DevBuild =
+            serde_json::from_str(r#"{"schema":"td-dev-build/1","sha":"abcdef01","date":null,"branch":"dev/0.5.0","version":"0.5.0"}"#)
+                .unwrap();
+        assert_eq!(old.attestation(), None);
+        let empty: DevBuild =
+            serde_json::from_str(r#"{"sha":"abcdef01","date":null,"branch":null,"version":null,"wire":"bbbb","compatible_with":[]}"#)
+                .unwrap();
+        assert_eq!(empty.attestation(), None);
+        let full: DevBuild =
+            serde_json::from_str(r#"{"sha":"abcdef01","date":null,"branch":null,"version":null,"wire":"bbbb","compatible_with":["aaaa"]}"#)
+                .unwrap();
+        assert_eq!(
+            full.attestation(),
+            Some(Attestation {
+                wire: "bbbb".into(),
+                compatible_with: vec!["aaaa".into()]
+            })
+        );
+    }
+
+    /// A build from before `wire_proto` existed still parses, as unknown.
+    #[test]
+    fn build_info_without_a_protocol_fingerprint_reads_as_unknown() {
+        let old: BuildInfo = serde_json::from_str(
+            r#"{"schema":"td-build/1","version":"0.5.0","sha":null,"date":null,"dirty":null,"wire":"aaaa","core":"rio"}"#,
+        )
+        .unwrap();
+        assert_eq!(old.wire_proto, None);
+        assert!(BuildInfo::this().wire_proto.is_some_and(|w| w.len() == 16));
     }
 
     /// Going back to a build whose wire is unknown is refused while a host
@@ -2601,6 +2829,7 @@ mod tests {
         let alive = Sessions {
             alive: vec!["1".into()],
             unvouched: vec![],
+            hosts_run_this: true,
         };
         let err = rollback(&r, &inst, &BuildInfo::this(), &alive).unwrap_err();
         assert!(err.contains("changes how the window talks"), "{err}");

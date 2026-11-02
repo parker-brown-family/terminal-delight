@@ -105,6 +105,7 @@ mod threshing_floor_view;
 mod uninstall;
 mod update;
 mod update_view;
+mod wirecheck;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -49718,6 +49719,10 @@ enum Verb {
     /// Find, check, install and roll back builds from the stable or dev
     /// channel (see [`update`]); what ⚙ CONFIG › UPDATES does, from a terminal.
     Update,
+    /// Replay a capture of a real session host and say whether this build's
+    /// core reads it into the screen that host reported. Internal: CI's wire
+    /// attestation runs it (`scripts/wire-attest.sh`).
+    WireReplay,
     /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
     Admin,
 }
@@ -49773,6 +49778,14 @@ const VERBS: &[VerbSpec] = &[
         verb: Verb::Update,
         typed: true,
         piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "wire-replay",
+        verb: Verb::WireReplay,
+        typed: false,
+        piping: Piping::Ungated(
+            "reads a capture named on the command line; with none it refuses on stderr",
+        ),
     },
     VerbSpec {
         word: "restricted",
@@ -50039,6 +50052,7 @@ fn main() {
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
                 Verb::Update => update::run_cli(&argv[2..]),
+                Verb::WireReplay => wirecheck::run_cli(&argv[2..]),
                 Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
