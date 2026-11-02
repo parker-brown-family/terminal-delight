@@ -3379,7 +3379,9 @@ pub const NAMING_PARAGRAPH: &str = "NAMING PANES. When you tell a person about a
      line to use. Never say \"pane 33\" or a pid to a person. Pane numbers and pids \
      are locations, and they change when an agent sleeps and wakes into a fresh pane, \
      so never remember one across turns: every verb that acts on your own pane works \
-     out which pane is calling, so leave `pid` out for your own pane.";
+     out which pane is calling, so leave `pid` out for your own pane. To act on \
+     another agent, give the verb its `agent` from `list_panes` (its conversation, \
+     which lasts across sleep and wake), not its pid.";
 
 /// The briefing's paragraph on the Threshing Floor: what a line is, how an
 /// agent learns its own, how to answer a prompt that arrives along one, and
@@ -4835,6 +4837,7 @@ mod tests {
         );
         assert!(NAMING_PARAGRAPH.contains("name.said"));
         assert!(NAMING_PARAGRAPH.contains("leave `pid` out"));
+        assert!(NAMING_PARAGRAPH.contains("its `agent` from `list_panes`"));
     }
 
     /// **The transports are RANKED, and the fence is last.**

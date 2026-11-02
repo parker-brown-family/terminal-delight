@@ -8689,6 +8689,10 @@ impl Workspace {
                     name: Some(self.pane_name(leaf, cx))
                         .filter(|n| !n.full().is_empty())
                         .map(|n| mcp::PaneNameReport::from(&n)),
+                    // Which conversation, proven: stamped by the MCP connection
+                    // (`mcp_transport::stamp_agents`), off this thread, because
+                    // binding a pane to a transcript reads files.
+                    agent: None,
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),
