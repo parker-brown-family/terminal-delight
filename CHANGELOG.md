@@ -393,6 +393,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Security for 0.5.0 development
 
+- **A program cannot make a pane keep picture uploads open without limit.**
+  A picture sent in pieces stays unfinished until its last piece arrives, and
+  nothing capped how many could be open at once. At most 16 are now kept; a
+  further one is refused until one finishes or sits idle. A pane's host keeps
+  running the build it started with, so terminals opened before an update are
+  covered once the host next starts. (#PR_UPLOADS)
 - **No agent prompts another without a line a person drew.** `ask_agent` asks
   only along a Threshing Floor line that reaches `ask`, or a bypass a person granted on
   the rail, and a pane nobody seated is never asked. A seated pane is hidden from
