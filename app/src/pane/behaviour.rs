@@ -4668,3 +4668,67 @@ fn a_native_markdown_note_reopens_on_moved_words_with_its_original_revision(
     );
     assert!(!map.contains("md-unresolved-"), "{map}");
 }
+
+/// Ctrl+C in an agent pane is a cut: the words typed into the prompt go to
+/// the clipboard, and the ^C still reaches the agent to clear it. Parker,
+/// 2026-11-02: fat-fingering the chord that clears a prompt is *"a REAL AND
+/// AWEFUL PAIN POINT"*. The stand-in reads its terminal raw and prints the
+/// byte it got, so the ^C is seen arriving, not assumed.
+#[gpui::test]
+fn ctrl_c_in_an_agent_prompt_copies_the_words_and_still_clears(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[1m›\\033[22m fix the login bug'; \
+         head -c1 | od -An -tx1; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(pane.clipboard().as_deref(), Some("fix the login bug"));
+}
+
+/// An empty prompt saves nothing. Both agents draw a dim placeholder there —
+/// Codex's `› Ask Codex to do anything`, written exactly as it writes it — and
+/// a ctrl+c on it must leave the person's clipboard as it was. A shell pane,
+/// with words on its line, is untouched too: there ctrl+c is an interrupt.
+#[gpui::test]
+fn ctrl_c_on_an_empty_prompt_or_in_a_shell_keeps_the_clipboard(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[1m›\\033[22m \\033[2mAsk Codex to do anything\\033[22m\\r\\033[2C'; \
+         head -c1 | od -An -tx1; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("what was there"),
+        "the placeholder"
+    );
+
+    let mut shell = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n› fix the login bug'; head -c1 | od -An -tx1; exec cat",
+    );
+    shell.wait_for("ready");
+    shell.settle();
+    shell
+        .cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    shell.keys("ctrl-c");
+    shell.wait_for(" 03");
+    assert_eq!(
+        shell.clipboard().as_deref(),
+        Some("what was there"),
+        "a shell"
+    );
+}
