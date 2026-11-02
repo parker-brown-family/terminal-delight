@@ -30117,13 +30117,13 @@ fn render_node(
                 .size_full(),
             );
             // A seam, not a gutter, where the clean design meets an unboxed
-            // skin: each terminal already draws its own hairline, so the two
-            // panes close up and those hairlines become the one rule between
-            // them. The tube designs keep the dark break, because a CRT needs
-            // glass between its screens.
+            // skin: the terminals are open at their sides and foot, so side by
+            // side the seam itself is the one upright rule between them, and
+            // stacked the lower pane's header is the break. The tube designs
+            // keep the dark break, because a CRT needs glass between its
+            // screens.
             let sk = skin::skin(cx, 1.);
-            let seam = sk.unboxed() && theme::outer_choice(cx).id == theme::CLEAN;
-            let hairline = sk.m.hairline;
+            let seam = skin::open_tiling(cx);
             // the grab handle: flat black bar; accent only while dragging
             let mut handle = div().flex_none().bg(if is_dragging {
                 th.accent.alpha(0.8)
@@ -30131,6 +30131,11 @@ fn render_node(
                 gpui::black()
             });
             handle = match dir {
+                SplitDir::Row if seam => div()
+                    .flex_none()
+                    .w(px(sk.m.hairline))
+                    .h_full()
+                    .bg(sk.ink.rule),
                 _ if seam => div().flex_none(),
                 SplitDir::Row => handle.w(px(7.)).h_full().cursor_col_resize(),
                 SplitDir::Col => handle.h(px(7.)).w_full().cursor_row_resize(),
@@ -30176,19 +30181,9 @@ fn render_node(
                 SplitDir::Row => first.h_full().w(gpui::relative(*ratio)),
                 SplitDir::Col => first.w_full().h(gpui::relative(*ratio)),
             };
-            let second = div()
-                .flex_1()
-                .min_w_0()
-                .min_h_0()
-                .flex()
-                // Side by side, the right pane's left hairline lands on the
-                // left pane's right one; stacked, a header sits between them.
-                .when(seam && matches!(dir, SplitDir::Row), |d| {
-                    d.ml(px(-hairline))
-                })
-                .child(render_node(
-                    b, th, focused, dragging, registry, pane_reg, drop, cx,
-                ));
+            let second = div().flex_1().min_w_0().min_h_0().flex().child(render_node(
+                b, th, focused, dragging, registry, pane_reg, drop, cx,
+            ));
 
             let ratio_now = *ratio;
             let store2 = registry.clone();
@@ -38631,11 +38626,9 @@ impl Render for Workspace {
                         .collect::<Vec<_>>(),
                     )
                     .map(|d| sk.finish(d))
-                    .when(sk.unboxed(), |d| {
-                        d.border(px(sk.m.hairline))
-                            .border_t_0()
-                            .border_color(sk.ink.edge)
-                    })
+                    // An unboxed skin draws no frame round the window at all,
+                    // and asks the compositor to drop its own border too
+                    // (`desktop_glass::init`): the tile is borderless outside.
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)

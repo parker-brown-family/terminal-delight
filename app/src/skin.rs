@@ -3060,6 +3060,16 @@ pub fn skin(cx: &App, scale: f32) -> Skin {
     spec(cx).bake(&th, scale)
 }
 
+/// Clean under an unboxed skin tiles its terminals open: a terminal keeps only
+/// the rule under its header, side-by-side terminals share one upright line, and
+/// nothing closes a terminal at its foot. The tube designs keep their boxes,
+/// because a CRT's frame is part of the picture. Parker, 2026-11-02: *"ONLY top
+/// border... and if we have multiple terminals just PARTILE vertical between
+/// them"*, with Intrusive and the other designs keeping the tmux tiling.
+pub fn open_tiling(cx: &App) -> bool {
+    skin(cx, 1.).unboxed() && theme::outer_choice(cx).id == theme::CLEAN
+}
+
 /// Native furniture only. A grid must keep `theme::theme` / its pane's resolved
 /// Design; projecting chrome never mutates the registry or a saved palette.
 pub fn native_theme(cx: &App, th: Arc<Theme>) -> Arc<Theme> {
