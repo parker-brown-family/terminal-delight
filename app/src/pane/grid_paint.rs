@@ -73,6 +73,10 @@ const CURSOR_GHOSTS_MAX: usize = 64;
 /// a program hid on purpose does not leave a trail when it comes back.
 const CURSOR_HIDDEN_GRACE: Duration = Duration::from_millis(250);
 
+/// The most of the cursor's light an afterimage keeps: it is drawn over the
+/// letters, and the character beneath it has to stay legible.
+const CURSOR_GHOST_OVER: f32 = 0.5;
+
 /// Record the cursor leaving `from` for `to`. An afterimage is one ghost at
 /// `from`; a streak along one row is a ghost in every cell it crossed, the far
 /// end born earliest so it goes dark first. Paint only: nothing here reads or
@@ -241,10 +245,11 @@ pub(super) struct GridPaint {
     snapshot: Snapshot,
     trail: afterglow::Trail,
     cursor_ghosts: std::collections::VecDeque<CursorGhost>,
-    /// Where the cursor was last drawn, and when. A line editor hides the
-    /// cursor while it redraws (zsh does on Home, End and every word jump),
-    /// so the frame before a move is often one with no cursor in it; the
-    /// afterimage starts from here instead, within [`CURSOR_HIDDEN_GRACE`].
+    /// Where a cursor that is hidden right now was last drawn, and when it
+    /// went. A program may hide the cursor while it redraws, so the frame
+    /// before a move can be one with no cursor in it; the afterimage starts
+    /// from here instead, within [`CURSOR_HIDDEN_GRACE`] of the hiding. A
+    /// cursor that is showing needs none of this: the last frame says where.
     last_cursor: Option<((usize, usize), Instant)>,
     live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
@@ -288,9 +293,17 @@ impl GridPaint {
             let mut trail = previous.trail.clone();
             let mut cursor_ghosts = previous.cursor_ghosts.clone();
             let now = cx.background_executor().now();
-            let mut last_cursor = previous
+            // Where the cursor stood: the last frame's, however long it sat
+            // there, or else where it was hidden, if that was moments ago.
+            let hidden = previous
                 .last_cursor
                 .filter(|(_, at)| now.saturating_duration_since(*at) < CURSOR_HIDDEN_GRACE);
+            let from = previous.snapshot.cursor.or(hidden.map(|(at, _)| at));
+            let mut last_cursor = match (snapshot.cursor, previous.snapshot.cursor) {
+                (Some(_), _) => None,
+                (None, Some(was)) => Some((was, now)),
+                (None, None) => hidden,
+            };
             let compatible = previous.snapshot.context.is_some()
                 && previous.snapshot.context == snapshot.context
                 && previous.snapshot.cell_h == snapshot.cell_h
@@ -315,13 +328,9 @@ impl GridPaint {
                                 .max(afterglow::MIN_GLYPH_BUDGET)
                         }),
                 );
-                // The cursor's afterimage, from where it was last drawn to
-                // where it is drawn now; see `last_cursor`.
-                match (
-                    snapshot.cursor_trail,
-                    last_cursor.map(|(at, _)| at),
-                    snapshot.cursor,
-                ) {
+                // The cursor's afterimage, from where it stood to where it is
+                // drawn now.
+                match (snapshot.cursor_trail, from, snapshot.cursor) {
                     (None, ..) => cursor_ghosts.clear(),
                     (Some(cursor_trail), Some(from), Some(to)) if from != to => {
                         cursor_moved(&mut cursor_ghosts, from, to, cursor_trail, now);
@@ -332,9 +341,6 @@ impl GridPaint {
                 trail.clear();
                 cursor_ghosts.clear();
                 last_cursor = None;
-            }
-            if let Some(at) = snapshot.cursor {
-                last_cursor = Some((at, now));
             }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
@@ -397,17 +403,6 @@ impl Render for GridPaint {
             .py(px(s.pad.1))
             .flex()
             .flex_col()
-            // Under the letters, so a block left behind a typed character
-            // glows round it rather than over it.
-            .children(self.cursor_ghosts.iter().map(|ghost| {
-                div()
-                    .absolute()
-                    .left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
-                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
-                    .w(px(s.cell_w))
-                    .h(px(s.cell_h))
-                    .bg(ink.alpha(ink.a * ghost.alpha(now)))
-            }))
             .children(self.live.clone().map(|live| {
                 gpui::AnyView::from(live).cached(
                     gpui::StyleRefinement::default()
@@ -432,6 +427,19 @@ impl Render for GridPaint {
                     .h(px(s.cell_h))
                     .whitespace_nowrap()
                     .child(StyledText::new(ghost.text).with_runs(ghost.runs))
+            }))
+            // Over the letters, at most half the cursor's own light, so the
+            // character under a fading block still reads. It was drawn under
+            // them first, and on the private-display rig a block behind text
+            // never showed: only the blank cells past a line's end glowed.
+            .children(self.cursor_ghosts.iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .w(px(s.cell_w))
+                    .h(px(s.cell_h))
+                    .bg(ink.alpha(ink.a * CURSOR_GHOST_OVER * ghost.alpha(now)))
             }))
             // A crawl centres every line, so grid columns no longer place them.
             .when(!s.crawl, |d| d.children(band_lines(s)))
@@ -1134,6 +1142,7 @@ mod tests {
         // a move often has none: the afterimage starts where it was last drawn.
         pane.read(|v| v.session.term.lock().advance(b"\x1b[?25l"));
         pane.redraw();
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
         pane.read(|v| v.session.term.lock().advance(b"\x1b[3;20H\x1b[?25h"));
         pane.redraw();
         let (hidden_hop, ghosts) = at(&mut pane);
@@ -1160,6 +1169,37 @@ mod tests {
         pane.read(|v| v.session.term.lock().advance(b"\x1b[5;2H"));
         pane.redraw();
         assert!(at(&mut pane).1.is_empty(), "off means off");
+    }
+
+    /// A carriage return back over a line of text leaves its afterimage too.
+    #[gpui::test]
+    fn a_return_over_text_leaves_an_afterimage(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_trail = Some(theme::CursorTrail::first());
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[3;1Hecho the cursor leaves a trail");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        // A person reads before pressing Home: the cursor has sat still for
+        // seconds, and where it sat is still where the afterimage starts.
+        pane.cx.executor().advance_clock(Duration::from_secs(2));
+        pane.read(|v| v.session.term.lock().advance(b"\r"));
+        pane.redraw();
+        let (cursor, ghosts) = pane.view.read_with(pane.cx, |v, cx| {
+            let g = v.grid_paint.read(cx);
+            (g.snapshot.cursor, g.cursor_ghosts.len())
+        });
+        assert_eq!(cursor.map(|c| c.1), Some(0));
+        assert_eq!(ghosts, 1, "the return left no afterimage");
     }
 
     /// A streak lights every cell the cursor crossed on its row, nearest
