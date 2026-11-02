@@ -660,6 +660,10 @@ pub struct Grade {
     pub inactive_cursor_linger_ms: Option<f32>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_off_cursor_linger_ms: Option<f32>,
+    /// The cursor's afterimage, or `None` for **nobody has turned it on** —
+    /// which draws nothing. See [`CursorTrail`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub cursor_trail: Option<CursorTrail>,
 
     /// CRT tracking-band dials `[intensity, speed, size]` in `0..1`, or `None` to
     /// use whatever the resolved theme authored. Per-pane via the grade group.
@@ -705,6 +709,67 @@ impl TextLinger {
     pub const OFF_CURSOR_MAX_MS: f32 = 650.0;
 }
 
+/// The cursor's phosphor afterimage: where the block was keeps a little light
+/// for a moment after it moves on, the way the text linger keeps an erased
+/// word. Paint only — the terminal's cursor, its input and its timing are
+/// never touched; the old position is read off the frame that was drawn.
+///
+/// The switch and the dials are separate, so turning it off keeps the tuning.
+/// A grade with no `cursor_trail` has never had it turned on and draws nothing,
+/// which is how a pane already on disk reads.
+#[derive(Clone, Copy, PartialEq, Debug, Serialize, Deserialize)]
+#[serde(default)]
+pub struct CursorTrail {
+    pub on: bool,
+    /// How long an afterimage takes to go dark, `0..=MAX_MS`.
+    pub ms: f32,
+    /// Its light at birth, as a fraction of the cursor's own, `0..=1`.
+    pub intensity: f32,
+    pub style: CursorTrailStyle,
+}
+
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, Serialize, Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum CursorTrailStyle {
+    /// One fading block where the cursor last stood.
+    #[default]
+    Afterimage,
+    /// Along a row, every cell the cursor crossed fades in turn, the far end
+    /// first — a smear behind it. A jump to another row leaves an afterimage.
+    Streak,
+}
+
+impl CursorTrail {
+    pub const MAX_MS: f32 = 600.0;
+    /// Every row of a streak is capped here, so a jump across a wide pane
+    /// never lays a bar of light across the whole line.
+    pub const STREAK_MAX_CELLS: usize = 24;
+
+    /// What the switch turns on when nothing was ever set: short and faint,
+    /// because a cursor that drags a bright tail is a distraction.
+    pub const fn first() -> Self {
+        Self {
+            on: true,
+            ms: 160.0,
+            intensity: 0.4,
+            style: CursorTrailStyle::Afterimage,
+        }
+    }
+
+    /// The afterimage's lifetime when it should be drawn at all.
+    pub fn lifetime(self) -> Option<std::time::Duration> {
+        let ms = self.ms.clamp(0.0, Self::MAX_MS);
+        (self.on && ms.is_finite() && ms >= 1.0 && self.intensity > 0.0)
+            .then(|| std::time::Duration::from_secs_f32(ms / 1000.0))
+    }
+}
+
+impl Default for CursorTrail {
+    fn default() -> Self {
+        Self::first()
+    }
+}
+
 /// One addressable channel of a [`Grade`] — every dial a pane can own, the two
 /// non-slider ones (`Crawl`, `Tracking`) included. [`GradeKey`] is the subset the
 /// OSD draws as a slider row; this is the FULL set, because provenance is tracked
@@ -735,6 +800,7 @@ pub enum GradeChannel {
     OffCursorLingerMs,
     InactiveCursorLingerMs,
     InactiveOffCursorLingerMs,
+    CursorTrail,
     CrawlAngle,
     CrawlDepth,
     Crawl,
@@ -751,7 +817,7 @@ impl GradeChannel {
     ///
     /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
     /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 28] = [
+    pub const ALL: [GradeChannel; 29] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -774,6 +840,7 @@ impl GradeChannel {
         Self::OffCursorLingerMs,
         Self::InactiveCursorLingerMs,
         Self::InactiveOffCursorLingerMs,
+        Self::CursorTrail,
         Self::CrawlAngle,
         Self::CrawlDepth,
         Self::Crawl,
@@ -804,6 +871,7 @@ impl GradeChannel {
             Self::OffCursorLingerMs => "off_cursor_linger_ms",
             Self::InactiveCursorLingerMs => "inactive_cursor_linger_ms",
             Self::InactiveOffCursorLingerMs => "inactive_off_cursor_linger_ms",
+            Self::CursorTrail => "cursor_trail",
 
             Self::InactiveText => "inactive_text",
             Self::InactiveBrightness => "inactive_brightness",
@@ -924,6 +992,7 @@ impl GradeChannel {
             Self::Crawl => a.crawl == b.crawl,
             Self::Crt => a.crt == b.crt,
             Self::Phosphor => close(a.phosphor, b.phosphor),
+            Self::CursorTrail => a.cursor_trail == b.cursor_trail,
             Self::Tracking => match (a.tracking, b.tracking) {
                 (None, None) => true,
                 (Some(x), Some(y)) => x.iter().zip(y.iter()).all(|(p, q)| close(*p, *q)),
@@ -966,6 +1035,7 @@ impl GradeChannel {
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
             Self::Crawl => dst.crawl = src.crawl,
             Self::Tracking => dst.tracking = src.tracking,
+            Self::CursorTrail => dst.cursor_trail = src.cursor_trail,
             Self::Crt => dst.crt = src.crt,
             Self::Phosphor => dst.phosphor = src.phosphor,
         }
@@ -1169,7 +1239,8 @@ impl Default for Grade {
             inactive_off_cursor_linger_ms: None,
             glare: None,    // defer to the theme's authored glass
             tracking: None, // defer to the theme's authored roll bar
-            crawl: false,   // crawl mode off until toggled
+            cursor_trail: None,
+            crawl: false, // crawl mode off until toggled
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
             // What a grade with no `crt` key has always meant. The fresh
@@ -1282,7 +1353,8 @@ impl Grade {
             inactive_off_cursor_linger_ms: None,
             glare: None,    // reset = defer to the theme's glass
             tracking: None, // reset = defer to the theme's roll bar
-            crawl: false,   // reset = crawl off
+            cursor_trail: None,
+            crawl: false, // reset = crawl off
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
             // Not a grade: the tube is on, as every grade before the switch
@@ -1371,6 +1443,7 @@ impl Grade {
             && self.inactive_off_cursor_linger_ms == d.inactive_off_cursor_linger_ms
             && self.glare == d.glare
             && self.tracking == d.tracking
+            && self.cursor_trail == d.cursor_trail
             && self.crawl == d.crawl
             && (self.crawl_angle - d.crawl_angle).abs() < EPS
             && (self.crawl_depth - d.crawl_depth).abs() < EPS
@@ -1764,6 +1837,7 @@ pub fn house_outer() -> ThemeChoice {
             inactive_off_cursor_linger_ms: None,
             glare: None, // the design's own glass
             tracking: Some(HOUSE_ROLL),
+            cursor_trail: None,
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
@@ -3113,7 +3187,8 @@ pub fn design_stock(cx: &App, id: &str) -> crate::looks::LookDials {
 /// What Clean holds off while it is worn: the whole tube, as the CRT switch
 /// would, and every light — the glow on the letters (focused and not), the
 /// afterglow of erased text, the bloom on cards and the window's frame
-/// (`glow`), and the halo on lit borders (the phosphor gauge).
+/// (`glow`), the halo on lit borders (the phosphor gauge), and the cursor's
+/// afterimage, which is the same phosphor light as the text's.
 ///
 /// Applied to the RESOLVED theme only. The GAUGES tray reads the scope's own
 /// grade, which keeps the person's values, and says Clean is holding them.
@@ -3129,6 +3204,7 @@ pub fn hold_clean(th: &mut Theme) {
     th.grade.off_cursor_linger_ms = Some(0.0);
     th.grade.inactive_cursor_linger_ms = Some(0.0);
     th.grade.inactive_off_cursor_linger_ms = Some(0.0);
+    th.grade.cursor_trail = None;
 }
 
 /// Photo-negative of a colour: invert each RGB channel (`1 − x`), alpha kept. A
@@ -3943,6 +4019,7 @@ mod tests {
             lit.grade.image_glow = Some(0.6);
             lit.grade.phosphor = 2.5;
             lit.grade.cursor_linger_ms = Some(200.0);
+            lit.grade.cursor_trail = Some(CursorTrail::first());
             let held = resolve(cx, &lit);
             assert!(!held.crt, "the tube is held off");
             assert_eq!(held.warp, 0.0);
@@ -3959,6 +4036,10 @@ mod tests {
             }
             assert_eq!(held.grade.phosphor, 0.0, "no halo on lit borders");
             assert_eq!(held.glow, 0.0, "no bloom on cards or the frame");
+            assert_eq!(
+                held.grade.cursor_trail, None,
+                "no afterimage behind the cursor"
+            );
             assert_eq!(lit.grade.image_glow, Some(0.6), "the dial is kept");
 
             let hacker = ThemeChoice {
@@ -3969,6 +4050,11 @@ mod tests {
             assert!(on.crt && on.warp > 0.0, "the tube comes back as it was");
             assert!((on.grade.letter_glow_for_focus(true, on.terminal_light) - 0.6).abs() < 1e-6);
             assert_eq!(on.grade.phosphor, 2.5);
+            assert_eq!(
+                on.grade.cursor_trail,
+                Some(CursorTrail::first()),
+                "and the trail"
+            );
         });
     }
 
@@ -4712,6 +4798,8 @@ mod tests {
         // the whole set: pin exactly one, and only that one may leave `base`.
         let base = Grade::neutral();
         let own = Grade {
+            // neutral() has never turned the trail on, so the walk sets one.
+            cursor_trail: Some(CursorTrail::first()),
             brightness: 0.1,
             contrast: 0.2,
             colour: 0.3,
@@ -5441,7 +5529,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 28);
+        assert_eq!(GradeChannel::ALL.len(), 29);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));

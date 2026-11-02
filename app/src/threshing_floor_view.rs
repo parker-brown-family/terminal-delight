@@ -9130,6 +9130,58 @@ mod tests {
         );
     }
 
+    /// An asleep agent runs a plain shell in the foreground, and judged by its
+    /// mode it read as gone: `list_panes` called it SHELL and the rules treated
+    /// it as one (#1160). It is an agent that is asleep: the snapshot says so,
+    /// names its conversation from the sleep record, and the pane's own party,
+    /// which every window-side gate reads, agrees. A plain shell stays a shell
+    /// with no rest state at all, never "awake".
+    #[gpui::test]
+    fn an_asleep_agent_is_listed_as_an_asleep_agent(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let sleeper = pool_member(&ws, cx, "Sleeper");
+        let shell = pool_member(&ws, cx, "Shell");
+        let awake = pool_member(&ws, cx, "Awake");
+        cx.update(|_, cx| {
+            sleeper.update(cx, |v, _| {
+                v.mode = pane::PaneMode::Shell;
+                v.rest.dormancy = crate::agentrest::Dormancy::Asleep(crate::agentrest::Asleep {
+                    since_ms: 1,
+                    session: "conv-asleep".into(),
+                    wake_file: "/unused".into(),
+                    model: None,
+                    program: Some("CLAUDE".into()),
+                });
+            });
+            shell.update(cx, |v, _| v.mode = pane::PaneMode::Shell);
+        });
+        ws.update(cx, |ws, cx| {
+            let snap = ws.mcp_snapshot(cx);
+            let row = |leaf: &Entity<TerminalView>| {
+                let pid = leaf
+                    .read(cx)
+                    .shell_pid()
+                    .expect("a fixture pane has a shell");
+                snap.iter().find(|p| p.pid == pid).cloned().expect("listed")
+            };
+            let (s, sh, a) = (row(&sleeper), row(&shell), row(&awake));
+            assert!(s.is_agent, "an asleep agent is an agent");
+            assert_eq!(s.dormancy, Some(mcp::Dormancy::Asleep));
+            assert_eq!(s.agent.as_deref(), Some("conv-asleep"));
+            assert!(
+                sleeper.read(cx).party().is_agent,
+                "and the window's gates agree"
+            );
+            assert_eq!(s.party(), sleeper.read(cx).party());
+            assert!(!sh.is_agent);
+            assert_eq!(sh.dormancy, None, "a shell has no rest state, not awake");
+            assert_eq!(a.dormancy, Some(mcp::Dormancy::Awake));
+        });
+    }
+
     #[gpui::test]
     fn a_sleeping_agent_can_be_seated_and_a_plain_shell_cannot(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL

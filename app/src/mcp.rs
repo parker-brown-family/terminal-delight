@@ -191,6 +191,23 @@ pub struct PaneInfo {
     /// an empty name.
     #[serde(default)]
     pub name: Option<PaneNameReport>,
+    /// The conversation this agent is in: its lasting name. A pane id and a
+    /// shell pid change when an agent sleeps and wakes into a fresh pane; the
+    /// conversation does not, so a verb given `agent` finds the agent wherever
+    /// it is at the moment of the call. Filled only when the window can prove
+    /// it (the agent declared it, or its start time or elimination binds it,
+    /// see [`crate::paneident`]); `None` (sent as null) when it cannot, never a
+    /// guess, because a guessed conversation would aim one agent's prompt at
+    /// another.
+    #[serde(default)]
+    pub agent: Option<String>,
+    /// Whether the agent is awake, resting (frozen, its memory pushed out) or
+    /// asleep (ended, its conversation kept, one key or a prompt brings it
+    /// back). An asleep agent runs a plain shell in the foreground and is
+    /// still an agent: `is_agent` is true for it. `None` (null) for a pane
+    /// that is not an agent, never "awake".
+    #[serde(default)]
+    pub dormancy: Option<Dormancy>,
     /// The pane's *effective* grade — what it actually renders with (its own
     /// override, else the inherited outer) — in the config API's percentages
     /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
@@ -754,6 +771,39 @@ pub struct Snapshot {
     /// an org reaches whoever the org holds right now, so the membership is
     /// read live beside the chart rather than baked into the line.
     pub orgs: crate::threshing_floor::Orgs,
+    /// The wakes this window remembers: an agent's old shell pid, and the pid
+    /// of the pane it woke in. Read only to tell a caller holding an old pid
+    /// where its agent went ([`Snapshot::moved_answer`]), never to re-aim a
+    /// call at the new pane.
+    pub moved: Vec<Moved>,
+}
+
+/// An agent's rest, as `list_panes` reports it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dormancy {
+    Awake,
+    Resting,
+    Asleep,
+}
+
+impl Dormancy {
+    pub fn word(self) -> &'static str {
+        match self {
+            Dormancy::Awake => "awake",
+            Dormancy::Resting => "resting",
+            Dormancy::Asleep => "asleep",
+        }
+    }
+}
+
+/// One wake: the agent in conversation `agent` slept behind shell `from_pid`
+/// and woke in a fresh pane whose shell is `to_pid`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Moved {
+    pub from_pid: u32,
+    pub to_pid: u32,
+    pub agent: String,
 }
 
 /// Where an open document is drawn: floating over a pane's terminal, or on a
@@ -962,7 +1012,11 @@ impl Snapshot {
             let pid = value.as_u64().ok_or_else(|| {
                 "pid must be an unsigned integer; omit it to target your own pane".to_string()
             })?;
-            return u32::try_from(pid).map_err(|_| "pid is out of range".to_string());
+            let pid = u32::try_from(pid).map_err(|_| "pid is out of range".to_string())?;
+            return match self.moved_answer(pid) {
+                Some(why) => Err(why),
+                None => Ok(pid),
+            };
         }
         let Some(caller) = &self.caller else {
             return Err("no `pid`, and this connection did not say who is calling \
@@ -985,6 +1039,112 @@ impl Snapshot {
                      is not in this window's listing"
                 )
             })
+    }
+
+    /// When `pid` names no pane because the agent there slept and woke in a
+    /// fresh one: the sentence that says where it went. Follows a run of wakes
+    /// to the pane the agent is in now. Says nothing (`None`) when that pane is
+    /// gone or is one the caller cannot reach, so a stranger learns no more
+    /// than from any missing pid. Never a redirect: the call is refused either
+    /// way, because quietly re-aiming a write is how one agent's words would
+    /// land somewhere nobody chose.
+    fn moved_answer(&self, pid: u32) -> Option<String> {
+        if self.panes.iter().any(|p| p.pid == pid) {
+            return None;
+        }
+        let (mut at, mut agent) = (pid, None);
+        // Bounded by the record's length, so a loop in it cannot hang a call.
+        for _ in 0..self.moved.len() {
+            match self.moved.iter().rev().find(|m| m.from_pid == at) {
+                Some(m) => (at, agent) = (m.to_pid, Some(&m.agent)),
+                None => break,
+            }
+        }
+        let agent = agent?;
+        let now = self
+            .reachable(crate::threshing_floor::Reach::Read)
+            .into_iter()
+            .find(|p| p.pid == at)?;
+        let name = now
+            .name
+            .as_ref()
+            .map(|n| n.said.as_str())
+            .filter(|s| !s.is_empty());
+        Some(format!(
+            "pid {pid} is gone: the agent there slept and woke in a fresh pane, \
+             {} (pid {at}). Nothing was sent. Name it by `agent`: \"{agent}\", \
+             which lasts across sleep and wake, and call again.",
+            spoken(name, at)
+        ))
+    }
+
+    /// The pane a verb acts on when it is about another agent: by `agent`, the
+    /// conversation, looked up at the moment of the call so a sleep and a wake
+    /// in between change nothing; else by `pid`, a location that a wake
+    /// replaces. One or the other, never both: two names that could disagree
+    /// would leave the verb to pick.
+    fn named_target(&self, args: &Value, verb: &str) -> Result<u32, String> {
+        match (args.get("agent"), args.get("pid")) {
+            (Some(_), Some(_)) => Err(format!(
+                "{verb}: give `agent` or `pid`, not both. `agent` is the one that \
+                 lasts across sleep and wake"
+            )),
+            (Some(agent), None) => self.pane_of_agent(agent),
+            (None, Some(pid)) => {
+                let pid = pid.as_u64().ok_or_else(|| {
+                    format!("{verb}: `pid` must be an unsigned integer (see list_panes)")
+                })?;
+                let pid = u32::try_from(pid).map_err(|_| "pid is out of range".to_string())?;
+                match self.moved_answer(pid) {
+                    Some(why) => Err(why),
+                    None => Ok(pid),
+                }
+            }
+            (None, None) => Err(format!(
+                "{verb} needs the agent to act on: `agent`, its conversation id \
+                 from list_panes, which lasts across sleep and wake, or `pid`"
+            )),
+        }
+    }
+
+    /// [`Self::target_pane`] for a verb that defaults to the caller's own pane
+    /// but may name another agent by `agent`.
+    fn target_of(&self, args: &Value, verb: &str) -> Result<u32, String> {
+        if args.get("agent").is_some() {
+            self.named_target(args, verb)
+        } else {
+            self.target_pane(args.get("pid"))
+        }
+    }
+
+    /// The pane holding conversation `named` now, among the panes this caller
+    /// can reach. A pane the caller cannot reach answers exactly as a missing
+    /// one does, so the lookup says nothing about panes kept from it.
+    fn pane_of_agent(&self, named: &Value) -> Result<u32, String> {
+        let Some(id) = named
+            .as_str()
+            .map(str::trim)
+            .filter(|id| crate::session::safe_resume_id(id))
+        else {
+            return Err("`agent` must be a conversation id, as list_panes gives it".to_string());
+        };
+        let mut holders = self
+            .reachable(crate::threshing_floor::Reach::Read)
+            .into_iter()
+            .filter(|p| p.agent.as_deref() == Some(id));
+        match (holders.next(), holders.next()) {
+            (Some(p), None) => Ok(p.pid),
+            // The binder gives a conversation to one pane at most, so this is
+            // a broken window rather than a choice to make.
+            (Some(_), Some(_)) => Err(format!(
+                "two panes claim conversation {id}; name the one you mean by pid"
+            )),
+            (None, _) => Err(format!(
+                "no pane you can reach holds conversation {id} right now: the \
+                 agent may have ended, be asleep, or be closed to you. \
+                 list_panes shows the agents you can reach"
+            )),
+        }
     }
 
     /// The pane the caller is sitting in, for a verb that answers for that
@@ -1046,6 +1206,7 @@ impl Snapshot {
             documents: vec![],
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 }
@@ -1433,10 +1594,11 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane, from list_panes" },
+                    "agent": { "type": "string", "description": "The agent's conversation id, from list_panes `agent`. It names the agent wherever it is now, across sleep and wake; prefer it to pid." },
+                    "pid": { "type": "integer", "description": "pid of the pane, from list_panes. A location: it changes when the agent sleeps and wakes. Give agent or pid, not both." },
                     "limit": { "type": "integer", "description": "max events to return (default 20, max 200)" }
                 },
-                "required": ["pid"],
+                "required": [],
                 "additionalProperties": false
             }
         },
@@ -1545,6 +1707,7 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
+                    "agent": { "type": "string", "description": "Another agent to note, by its conversation id from list_panes `agent`; it lasts across sleep and wake. Give agent or pid, not both." },
                     "pid": { "type": "integer", "description": "pid of the pane to note, from list_panes. OMIT IT to note your own pane — the window works out which one you are calling from, which is more reliable than matching yourself in a listing." },
                     "title": { "type": "string", "description": "optional headline, up to 40 characters, drawn bigger and bolder (\"GET MILK!\")" },
                     "text": { "type": "string", "description": "the note itself — TEN words or fewer; what happened, or why this pane needs attention" },
@@ -1589,11 +1752,12 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "The pane to ask, from list_panes." },
+                    "agent": { "type": "string", "description": "The agent to ask, by its conversation id from list_panes `agent`. It names the agent wherever it is now, across sleep and wake; prefer it to pid." },
+                    "pid": { "type": "integer", "description": "The pane to ask, from list_panes. A location: it changes when the agent sleeps and wakes. Give agent or pid, not both." },
                     "question": { "type": "string", "description": "What you want to know, up to 4,000 characters. Kept out of every record; only its length and fingerprint are written." },
                     "copy": { "type": "boolean", "description": "Ask a read-only copy of the agent instead: its own conversation, forked so it can only read files, asked your question once and then stopped. It answers what the cheap reads cannot, and costs what the agent's context costs to read again (the answer says how many tokens). A copy over the person's press limit, or of unknown size, waits for their Yes on the rail. Starts in the background: read the answer with ask_answer and the ask_id. One copy at a time; a bypass line spends one prompt per copy. Only for an agent that has named its own conversation." }
                 },
-                "required": ["pid", "question"],
+                "required": ["question"],
                 "additionalProperties": false
             }
         },
@@ -1616,11 +1780,12 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "The pane to prompt, from list_panes." },
+                    "agent": { "type": "string", "description": "The agent to prompt, by its conversation id from list_panes `agent`. It names the agent wherever it is now, across sleep and wake; prefer it to pid." },
+                    "pid": { "type": "integer", "description": "The pane to prompt, from list_panes. A location: it changes when the agent sleeps and wakes. Give agent or pid, not both." },
                     "prompt": { "type": "string", "description": "What you want the agent to do, up to 32,000 characters. Every control character but newline and tab is removed; the window presses Enter." },
                     "key": { "type": "string", "description": "Your own name for this one assignment, up to 64 characters. Reuse the same key to recover a lost response: it reports the original attempt and never types a second turn, even if that attempt failed. For a deliberate retry after failure or new work, choose a new key. Inspect the worker first if the attempt may have been pasted or sent." }
                 },
-                "required": ["pid", "prompt"],
+                "required": ["prompt"],
                 "additionalProperties": false
             }
         },
@@ -1913,6 +2078,7 @@ fn provenance(tool: &str) -> Option<Provenance> {
             "panes[].name.place",
             "panes[].name.header",
             "panes[].name.said",
+            "panes[].agent",
             "panes[].mode",
             "panes[].cwd",
             "panes[].note.title",
@@ -2408,6 +2574,19 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .pane_id
                     .map(|id| format!("pane {id}"))
                     .unwrap_or_else(|| "pane —".to_string());
+                // An agent that is not awake says so beside its mode, because an
+                // asleep one's mode is the shell it left in the foreground.
+                let mode = match p.dormancy {
+                    Some(d) if d != Dormancy::Awake => format!("{} ({})", p.mode, d.word()),
+                    _ => p.mode.clone(),
+                };
+                // The conversation, when proven: the name that survives a wake,
+                // and what a verb about another agent should be given.
+                let agent = p
+                    .agent
+                    .as_deref()
+                    .map(|a| format!(" · agent {a}"))
+                    .unwrap_or_default();
                 // The name leads: it is what a person calls this pane, and what
                 // to say to one. The pane id and pid follow as locations.
                 let said = p
@@ -2417,8 +2596,8 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .filter(|s| !s.is_empty())
                     .unwrap_or("(unnamed)");
                 format!(
-                    "{said} — tab {} · {} · {} · {} · {} · {}{}{}",
-                    p.tab, pane, p.title, p.mode, cwd, sess, tool, note
+                    "{said} — tab {} · {}{} · {} · {} · {} · {}{}{}",
+                    p.tab, pane, agent, p.title, mode, cwd, sess, tool, note
                 )
             })
             .collect::<Vec<_>>()
@@ -2445,12 +2624,9 @@ where
         return tool_err("MCP exposure is disabled.");
     }
     let copy = args.get("copy").and_then(Value::as_bool) == Some(true);
-    let Some(target) = args
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|p| u32::try_from(p).ok())
-    else {
-        return tool_err("ask_agent requires an integer `pid` (see list_panes).");
+    let target = match snap.named_target(args, "ask_agent") {
+        Ok(pid) => pid,
+        Err(why) => return tool_err(&why),
     };
     let question = args
         .get("question")
@@ -2610,12 +2786,9 @@ where
     if !snap.config.enabled {
         return tool_err("MCP exposure is disabled.");
     }
-    let Some(target) = args
-        .get("pid")
-        .and_then(Value::as_u64)
-        .and_then(|p| u32::try_from(p).ok())
-    else {
-        return tool_err("prompt_agent requires an integer `pid` (see list_panes).");
+    let target = match snap.named_target(args, "prompt_agent") {
+        Ok(pid) => pid,
+        Err(why) => return tool_err(&why),
     };
     let Some(brief) = args.get("prompt").and_then(Value::as_str) else {
         return tool_err("prompt_agent requires `prompt`: what you want the agent to do.");
@@ -2758,11 +2931,9 @@ where
             "Event tailing is off — enable Events in the Threshing Floor (the agent counter, top right).",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("pane_events requires an integer `pid` (see list_panes).");
-    };
-    let Ok(pid) = u32::try_from(pid) else {
-        return tool_err("pid is out of range");
+    let pid = match snap.named_target(args, "pane_events") {
+        Ok(pid) => pid,
+        Err(why) => return tool_err(&why),
     };
     let limit = args
         .get("limit")
@@ -3011,7 +3182,7 @@ where
              TD_MCP_WRITE=1) to let an agent leave a note. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
-    let pid = match snap.target_pane(args.get("pid")) {
+    let pid = match snap.target_of(args, "leave_note") {
         Ok(pid) => u64::from(pid),
         Err(why) => return tool_err(&why),
     };
@@ -3767,6 +3938,19 @@ pub fn requires_snapshot(line: &str) -> bool {
         .unwrap_or(false)
 }
 
+/// Whether answering `line` needs each agent's conversation: `list_panes`,
+/// which reports it, and any call that names an agent by it. Binding panes to
+/// conversations reads transcript files, so a call that needs neither skips it.
+pub fn names_agents(line: &str) -> bool {
+    parse_req(line).is_some_and(|r| {
+        r.method == "tools/call"
+            && (r.params.get("name").and_then(Value::as_str) == Some("list_panes")
+                || r.params
+                    .get("arguments")
+                    .is_some_and(|a| a.get("agent").is_some()))
+    })
+}
+
 /// True for the `initialize` request — the transport flips the push feed live
 /// once the client has handshaken.
 pub fn is_initialize(line: &str) -> bool {
@@ -4409,6 +4593,8 @@ mod tests {
             },
             seat: None,
             name: None,
+            agent: None,
+            dormancy: None,
             grade: GradeReport::default(),
         }
     }
@@ -4532,6 +4718,7 @@ mod tests {
             documents: vec![],
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 
@@ -5781,6 +5968,215 @@ mod tests {
                 "model": { "layman": "done" } } }),
         );
         assert_eq!(out["isError"], true, "{}", text_of(&out));
+    }
+
+    /// A coordinator names its worker by conversation, and the name holds
+    /// across the worker's sleep and wake: the pid it had before the wake would
+    /// name nothing after it, but `agent` is looked up at the moment of each
+    /// call. Proven here on every verb that takes it.
+    #[test]
+    fn another_agent_is_found_by_its_conversation_across_a_wake() {
+        let mut s = asking_snap();
+        s.config.writable = true;
+        s.instance = None;
+        s.panes[0].agent = Some("w-conv-1".into());
+        let to = |s: &Snapshot| {
+            let seen = std::cell::RefCell::new(Vec::new());
+            let window = |call: &AskCall| -> AskReply {
+                seen.borrow_mut().push(call.clone());
+                AskReply::Refused(crate::threshing_floor::Refusal::Gone)
+            };
+            let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                ups.iter()
+                    .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                    .collect()
+            };
+            let run = |name: &str, args: Value| {
+                let l = json!({"id": 1, "method": "tools/call",
+                    "params": {"name": name, "arguments": args}})
+                .to_string();
+                resp(
+                    &handle_line_asking(&l, s, no_tail, apply, no_search, no_open, window).unwrap(),
+                )["result"]
+                    .clone()
+            };
+            let note = run("leave_note", json!({"agent": "w-conv-1", "text": "hi"}));
+            let events = run("pane_events", json!({"agent": "w-conv-1"}));
+            run("prompt_agent", json!({"agent": "w-conv-1", "prompt": "go"}));
+            run(
+                "ask_agent",
+                json!({"agent": "w-conv-1", "question": "how far?"}),
+            );
+            let targets: Vec<u32> = seen
+                .borrow()
+                .iter()
+                .map(|c| match c {
+                    AskCall::Prompt(r) => r.target,
+                    AskCall::Question(r) => r.target,
+                    other => panic!("{other:?}"),
+                })
+                .collect();
+            (
+                note["structuredContent"]["pid"].clone(),
+                events["structuredContent"]["pid"].clone(),
+                targets,
+            )
+        };
+        assert_eq!(to(&s), (json!(200), json!(200), vec![200, 200]));
+
+        // The wake: same conversation, fresh pane, fresh shell.
+        s.panes[0].pid = 300;
+        s.panes[0].pane_id = Some(17);
+        assert_eq!(to(&s), (json!(300), json!(300), vec![300, 300]));
+    }
+
+    /// A pid an agent held before its worker slept is answered with where the
+    /// worker woke, following two wakes in a row, on every verb that takes a
+    /// pid, and nothing reaches the window: the call is refused, never
+    /// re-aimed. A worker woken into a pane the caller cannot reach answers
+    /// exactly like a pid nobody ever held.
+    #[test]
+    fn an_old_pid_is_told_where_its_agent_woke_and_nothing_is_sent() {
+        let make = |moved: bool, hidden: bool| {
+            let mut s = asking_snap();
+            s.config.writable = true;
+            s.instance = None;
+            s.panes[0].pid = 300;
+            s.panes[0].name = Some(PaneNameReport {
+                place: "TD › MARKETING".into(),
+                header: "worker".into(),
+                said: "TD › MARKETING · worker".into(),
+            });
+            if hidden {
+                s.panes[0].access = crate::threshing_floor::AgentAccess::OffLimits;
+            }
+            if moved {
+                s.moved = vec![
+                    Moved {
+                        from_pid: 200,
+                        to_pid: 250,
+                        agent: "w-conv-1".into(),
+                    },
+                    Moved {
+                        from_pid: 250,
+                        to_pid: 300,
+                        agent: "w-conv-1".into(),
+                    },
+                ];
+            }
+            s
+        };
+        let s = make(true, false);
+        let reached = std::cell::Cell::new(0);
+        let run = |s: &Snapshot, name: &str, args: Value| {
+            let window = |_: &AskCall| -> AskReply {
+                reached.set(reached.get() + 1);
+                AskReply::Refused(crate::threshing_floor::Refusal::Gone)
+            };
+            let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                reached.set(reached.get() + ups.len());
+                ups.iter()
+                    .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                    .collect()
+            };
+            let l = json!({"id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": args}})
+            .to_string();
+            resp(&handle_line_asking(&l, s, no_tail, apply, no_search, no_open, window).unwrap())
+                ["result"]
+                .clone()
+        };
+        let calls = [
+            ("leave_note", json!({"pid": 200, "text": "hi"})),
+            ("pane_events", json!({"pid": 200})),
+            ("prompt_agent", json!({"pid": 200, "prompt": "go"})),
+            ("ask_agent", json!({"pid": 200, "question": "how far?"})),
+            (
+                "present_surface",
+                json!({"pid": 200, "surface": {"td": "0.1", "op": "retire", "id": "x"}}),
+            ),
+        ];
+        for (name, args) in calls.clone() {
+            let out = run(&s, name, args);
+            assert_eq!(out["isError"], true, "{name}");
+            let text = text_of(&out);
+            assert!(
+                text.contains("woke in a fresh pane, “TD › MARKETING · worker” (pid 300)"),
+                "{name}: {text}"
+            );
+            assert!(text.contains("\"w-conv-1\""), "{name}: {text}");
+        }
+        assert_eq!(reached.get(), 0, "an old pid reached the window");
+
+        // The same calls with the worker closed to the caller, and with no
+        // wake on record at all: word for word the same answers.
+        let (hidden, never) = (make(true, true), make(false, true));
+        for (name, args) in calls {
+            assert_eq!(
+                run(&hidden, name, args.clone()),
+                run(&never, name, args),
+                "{name}"
+            );
+        }
+    }
+
+    /// The lookup searches only panes the caller can reach, and a conversation
+    /// held by a pane closed to it answers in exactly the words of one nobody
+    /// holds: naming an agent must not be a way to learn a hidden one exists.
+    #[test]
+    fn an_unreachable_agent_reads_exactly_like_a_missing_one() {
+        let mut hidden = asking_snap();
+        hidden.panes[0].agent = Some("w-conv-1".into());
+        hidden.panes[0].access = crate::threshing_floor::AgentAccess::OffLimits;
+        let mut missing = asking_snap();
+        missing.panes.remove(0);
+        let args = json!({"agent": "w-conv-1"});
+        let a = call(&hidden, "pane_events", args.clone());
+        let b = call(&missing, "pane_events", args);
+        assert_eq!(a["isError"], true);
+        assert_eq!(a, b);
+        assert!(text_of(&a).contains("no pane you can reach holds conversation w-conv-1"));
+    }
+
+    /// One name per call. `agent` and `pid` together could disagree, and the
+    /// verb would have to pick; neither is a call with nobody to act on. A
+    /// conversation id is checked as one before it is looked up.
+    #[test]
+    fn an_agent_is_named_by_conversation_or_pid_never_both_or_neither() {
+        let mut s = asking_snap();
+        s.panes[0].agent = Some("w-conv-1".into());
+        for (args, says) in [
+            (json!({"agent": "w-conv-1", "pid": 200}), "not both"),
+            (json!({}), "needs the agent to act on"),
+            (json!({"agent": "x; rm -rf /"}), "must be a conversation id"),
+            (json!({"agent": 7}), "must be a conversation id"),
+        ] {
+            let out = call(&s, "pane_events", args.clone());
+            assert_eq!(out["isError"], true, "{args}");
+            assert!(text_of(&out).contains(says), "{args}: {}", text_of(&out));
+        }
+    }
+
+    /// The connection binds conversations only when an answer needs them:
+    /// `list_panes`, and a call that names an agent. Everything else skips
+    /// the transcript reads.
+    #[test]
+    fn only_a_listing_or_a_named_agent_pays_for_the_binding() {
+        let line = |name: &str, args: Value| {
+            json!({"id": 1, "method": "tools/call", "params": {"name": name, "arguments": args}})
+                .to_string()
+        };
+        assert!(names_agents(&line("list_panes", json!({}))));
+        assert!(names_agents(&line(
+            "prompt_agent",
+            json!({"agent": "a", "prompt": "p"})
+        )));
+        assert!(!names_agents(&line(
+            "prompt_agent",
+            json!({"pid": 2, "prompt": "p"})
+        )));
+        assert!(!names_agents(&line("get_pane_config", json!({}))));
+        assert!(!names_agents(r#"{"id":1,"method":"tools/list"}"#));
     }
 
     /// `list_panes` gives every pane the name a person uses — its place on the
@@ -7374,6 +7770,8 @@ mod tests {
             access: crate::threshing_floor::AgentAccess::Open,
             seat: None,
             name: None,
+            agent: None,
+            dormancy: None,
             grade: GradeReport::default(),
         };
         let hidden_agent = agent_pane(8, false);
@@ -7461,6 +7859,7 @@ mod tests {
         pane.title = INJECTION.into();
         pane.mode = INJECTION.into();
         pane.cwd = Some(INJECTION.into());
+        pane.agent = Some(INJECTION.into());
         pane.name = Some(PaneNameReport {
             place: INJECTION.into(),
             header: INJECTION.into(),

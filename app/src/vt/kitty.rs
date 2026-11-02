@@ -2,10 +2,11 @@
 //!
 //! A Kitty picture travels as an application program command, an APC:
 //! `ESC _ G <control> ; <payload> ESC \`. rio-vt parses those and keeps the
-//! pictures, and two things it does with them are unsafe in a terminal whose
+//! pictures, and three things it does with them are unsafe in a terminal whose
 //! output TD does not control, and worse in a session host, the process that
 //! holds every pane and is never restarted. The guard in front of rio-vt's
-//! parser stops both, without changing anything a well-behaved program sees.
+//! parser stops all three, without changing anything a well-behaved program
+//! sees.
 //!
 //! **An APC with no end.** rio-vt buffers every byte of an APC until it is
 //! terminated, with no limit, so a stream that opens one and never closes it —
@@ -24,11 +25,20 @@
 //! `t=f`, which it reads and leaves alone, and deletes the file itself, by
 //! kitty's rule, once the core has read it.
 //!
+//! **Uploads that never finish.** A picture may be sent in pieces, each saying
+//! `m=1` until the last. rio-vt keeps every unfinished upload until its last
+//! piece arrives or it has sat idle for ten seconds, with no limit on how many.
+//! The guard refuses a new upload while [`MAX_UPLOADS`] are still unfinished.
+//! It also takes the size key (`S=`) out of every piece of an upload: kitty's
+//! protocol gives that key a meaning only when reading a file, so a piece
+//! loses nothing by it.
+//!
 //! Everything else passes through as it arrived, and in the chunks it arrived
 //! in. The guard holds back only a picture command's control data, never more
 //! than [`MAX_CONTROL`] bytes, until its `;` says what the command is.
 
 use std::path::{Path, PathBuf};
+use std::time::{Duration, Instant};
 
 use base64::engine::general_purpose::STANDARD;
 use base64::Engine;
@@ -54,6 +64,25 @@ const MAX_PATH: usize = 8 * 1024;
 
 /// The marker kitty requires in the name of a temporary file it deletes.
 const MARKER: &str = "tty-graphics-protocol";
+
+/// Uploads the core may hold unfinished at once. kitty's protocol sends one
+/// picture's pieces before the next picture's, so a program keeping more than
+/// one or two open is not drawing pictures.
+pub(super) const MAX_UPLOADS: usize = 16;
+
+/// How long after its last piece the guard still counts an unfinished upload.
+/// rio-vt lets one go after ten seconds idle (`CHUNK_STALE_TIMEOUT`); a second
+/// longer here, so the guard never counts fewer uploads than the core holds.
+const UPLOAD_IDLE: Duration = Duration::from_secs(11);
+
+/// An unfinished upload, keyed the way rio-vt keys it: by the picture's id or
+/// number (`i=`, or else `I=`, which share one space there), or, for one that
+/// names neither, by when it began.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+enum Upload {
+    Named(u32),
+    Unnamed(u64),
+}
 
 /// Where the core's parser is, as far as the guard needs to know.
 #[derive(Debug, Default, Clone, Copy, PartialEq, Eq)]
@@ -92,6 +121,13 @@ pub(super) struct Guard {
     /// deleted once it has parsed them — which is not yet while a synchronized
     /// update holds them back. See [`Guard::delete_what_the_core_read`].
     handed_over: Vec<String>,
+    /// Uploads the core has been handed pieces of and not the last, each with
+    /// when it last grew. See [`Guard::admit`].
+    uploads: Vec<(Upload, Instant)>,
+    /// The upload a piece that names no picture continues, as the core pins it.
+    pinned: Option<Upload>,
+    /// Unnamed uploads begun so far, so that each is told apart.
+    unnamed: u64,
 }
 
 fn ends_a_string(byte: u8) -> bool {
@@ -177,6 +213,17 @@ impl Guard {
                     let Some(&next) = bytes.get(i) else {
                         break;
                     };
+                    // A command the core will read — one that is not being
+                    // cancelled — may begin, continue or finish an upload.
+                    if next != CAN && next != SUB && !self.admit(Instant::now()) {
+                        // Too many unfinished already. Nothing of it has
+                        // reached the core but the `ESC`, which a cancel takes
+                        // back, and `Swallowing` sees its end.
+                        emit(core, &[CAN]);
+                        self.held.clear();
+                        self.state = State::Swallowing;
+                        continue;
+                    }
                     if next == b';' {
                         i += 1;
                         pass = i;
@@ -297,6 +344,88 @@ impl Guard {
             .get(2..)
             .and_then(|control| std::str::from_utf8(control).ok())
             .is_some_and(|control| control.split(',').any(|p| p == pair))
+    }
+
+    /// Whether the held command may reach the core as far as uploads go, and,
+    /// for a piece of an upload, the command with its declared size taken out.
+    ///
+    /// Follows rio-vt's own bookkeeping (`kitty_graphics_protocol.rs`): a
+    /// command belongs to the upload its id names (`i=`, else `I=`), or, naming
+    /// neither, to the upload the last piece pinned, or else to a new one. A
+    /// piece saying `m=1` begins or continues its upload; any other command
+    /// finishes one that is open. rio-vt reads each key's last value, and so
+    /// does this. Where the two could part (an upload rio-vt drops for its size,
+    /// a command it rejects), the guard counts the upload as open until its
+    /// last piece or [`UPLOAD_IDLE`], so it never counts fewer than the core.
+    fn admit(&mut self, now: Instant) -> bool {
+        let Some(control) = self.held.get(2..).and_then(|c| std::str::from_utf8(c).ok()) else {
+            // Not text: the core cannot read it as a command either.
+            return true;
+        };
+        let pairs: Vec<&str> = control.split(',').collect();
+        let value = |key: &str| {
+            pairs
+                .iter()
+                .rev()
+                .find_map(|pair| pair.split_once('=').filter(|(k, _)| *k == key))
+                .map(|(_, value)| value)
+        };
+        let number = |key: &str| {
+            value(key)
+                .and_then(|v| v.parse::<u32>().ok())
+                .filter(|&n| n > 0)
+        };
+        let more = value("m") == Some("1");
+        let named = number("i").or_else(|| number("I")).map(Upload::Named);
+
+        self.uploads
+            .retain(|(_, grew)| now.duration_since(*grew) < UPLOAD_IDLE);
+        let uploads = &self.uploads;
+        if self
+            .pinned
+            .is_some_and(|pinned| !uploads.iter().any(|(open, _)| *open == pinned))
+        {
+            self.pinned = None;
+        }
+        let upload = named.or(self.pinned).unwrap_or_else(|| {
+            self.unnamed += 1;
+            Upload::Unnamed(self.unnamed)
+        });
+
+        if more {
+            if let Some(open) = self.uploads.iter_mut().find(|(open, _)| *open == upload) {
+                open.1 = now;
+            } else if self.uploads.len() >= MAX_UPLOADS {
+                return false;
+            } else {
+                self.uploads.push((upload, now));
+            }
+            self.pinned = Some(upload);
+            self.drop_declared_size();
+        } else if let Some(at) = self.uploads.iter().position(|(open, _)| *open == upload) {
+            self.uploads.remove(at);
+            self.pinned = None;
+        }
+        true
+    }
+
+    /// Takes every `S=` out of the held control data. On a piece of an upload
+    /// the size means nothing in kitty's protocol.
+    fn drop_declared_size(&mut self) {
+        let Some(control) = self.held.get(2..).and_then(|c| std::str::from_utf8(c).ok()) else {
+            return;
+        };
+        let declares = |pair: &&str| pair.split_once('=').is_some_and(|(key, _)| key == "S");
+        if !control.split(',').any(|pair| declares(&pair)) {
+            return;
+        }
+        let kept = control
+            .split(',')
+            .filter(|pair| !declares(pair))
+            .collect::<Vec<_>>()
+            .join(",");
+        self.held.truncate(2);
+        self.held.extend_from_slice(kept.as_bytes());
     }
 
     /// Whether a held `t=s` command names a shared-memory object the core can
@@ -688,5 +817,100 @@ mod tests {
             assert_eq!(guarded(&stream, &[cut]).0, whole, "cut at {cut}");
         }
         std::fs::remove_file(&path).ok();
+    }
+
+    /// Feed `stream` to `guard` whole; what the core was handed.
+    fn through(guard: &mut Guard, stream: &[u8]) -> Vec<u8> {
+        let mut out = Vec::new();
+        guard.feed(stream, &mut |bytes| out.extend_from_slice(bytes));
+        out
+    }
+
+    /// A guard holding the most uploads it allows, each named by its number.
+    fn full_of_uploads() -> Guard {
+        let mut guard = Guard::default();
+        for id in 1..=MAX_UPLOADS {
+            let piece = command(&format!("a=t,f=32,s=1,v=1,i={id},m=1"), b"rgba");
+            assert_eq!(
+                through(&mut guard, &piece),
+                piece,
+                "upload {id} of the limit"
+            );
+        }
+        guard
+    }
+
+    #[test]
+    fn a_piece_of_an_upload_never_tells_the_core_its_size() {
+        let stream = command("a=t,f=32,s=1,v=1,i=7,m=1,S=4096", b"rgba");
+        let bare = command("a=t,f=32,s=1,v=1,i=7,m=1", b"rgba");
+        for cut in 0..=stream.len() {
+            assert_eq!(guarded(&stream, &[cut]).0, bare, "cut at {cut}");
+        }
+        // A whole command reading a file keeps its size: there it says how
+        // much of the file to read, and the core checks it against its limit.
+        let file = command("a=t,t=f,S=4096", b"/a/file");
+        assert_eq!(guarded(&file, &[]).0, file);
+    }
+
+    #[test]
+    fn no_more_uploads_stay_unfinished_at_once_than_the_limit() {
+        let mut guard = full_of_uploads();
+        // One more while every one is still open: the core is told it is over
+        // before any of it arrives.
+        let extra = command(
+            &format!("a=t,f=32,s=1,v=1,i={},m=1", MAX_UPLOADS + 1),
+            b"rgba",
+        );
+        let refused = through(&mut guard, &extra);
+        assert_eq!(&refused[..2], &[ESC, CAN]);
+        assert!(!refused.windows(2).any(|w| w == b"_G"), "{refused:?}");
+        // The same wherever the chunks fall.
+        for cut in 0..=extra.len() {
+            let mut guard = full_of_uploads();
+            let mut out = Vec::new();
+            for part in [&extra[..cut], &extra[cut..]] {
+                guard.feed(part, &mut |bytes| out.extend_from_slice(bytes));
+            }
+            assert_eq!(out, refused, "cut at {cut}");
+        }
+        // A piece of one already open still goes through, and its last piece
+        // makes room for another.
+        let more = command("i=3,m=1", b"rgba");
+        assert_eq!(through(&mut guard, &more), more);
+        let last = command("i=3,m=0", b"rgba");
+        assert_eq!(through(&mut guard, &last), last);
+        assert_eq!(through(&mut guard, &extra), extra);
+    }
+
+    #[test]
+    fn an_upload_naming_no_picture_is_counted_and_finished_like_one_that_does() {
+        let mut guard = Guard::default();
+        let first = command("a=t,f=32,s=1,v=1,m=1", b"rgba");
+        assert_eq!(through(&mut guard, &first), first);
+        // The next piece names nothing, so it continues the upload just begun.
+        let piece = command("m=1", b"rgba");
+        assert_eq!(through(&mut guard, &piece), piece);
+        assert_eq!(guard.uploads.len(), 1);
+        let last = command("m=0", b"rgba");
+        assert_eq!(through(&mut guard, &last), last);
+        assert!(guard.uploads.is_empty());
+    }
+
+    #[test]
+    fn an_upload_left_idle_stops_counting_once_the_core_has_let_it_go() {
+        let mut guard = full_of_uploads();
+        let long_ago = Instant::now()
+            .checked_sub(UPLOAD_IDLE + Duration::from_secs(1))
+            .expect("a clock running for more than a few seconds");
+        for upload in &mut guard.uploads {
+            upload.1 = long_ago;
+        }
+        let next = command(
+            &format!("a=t,f=32,s=1,v=1,i={},m=1", MAX_UPLOADS + 1),
+            b"rgba",
+        );
+        assert_eq!(through(&mut guard, &next), next);
+        assert_eq!(guard.uploads.len(), 1);
     }
 }

@@ -103,6 +103,8 @@ mod session;
 mod skin;
 mod threshing_floor_view;
 mod uninstall;
+mod update;
+mod update_view;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -1726,6 +1728,10 @@ const TOP_BAR_H: f32 = 43.;
 /// its sides.
 const TOP_BAR_EMPTY_H: f32 = 1.;
 
+/// The first of GAUGES' drawn sliders that belongs to the cursor trail
+/// rather than the CRT's roll bar: lifetime, then light.
+const TRAIL_SLIDER: usize = 3;
+
 /// Whether the top bar has anything to show. Clean's UI set hides the mark,
 /// the Git notice and the agent counter; with the left bar open the tabs are
 /// listed there rather than across the top; and a window the compositor
@@ -1956,12 +1962,18 @@ struct Tab {
     /// different instruction and must not fall back through. See
     /// [`attention::resolve_level`]. Persisted.
     level: Option<attention::Priority>,
+    /// The letter this tab is pinned to: `alt+shift+<it>` jumps here wherever
+    /// the tab has been moved, filed or reordered. `None` is no pin, and the
+    /// chord is then the program's. Persisted with the tab, so it survives a
+    /// restart and a reattach. See [`keylayer::TabChord::Pinned`].
+    hotkey: Option<char>,
 }
 
 impl Tab {
     fn new(root: Node, name: Option<String>) -> Self {
         Self {
             level: None,
+            hotkey: None,
             root,
             name,
             focused: None,
@@ -1990,6 +2002,7 @@ impl Tab {
             group: self.group,
             project: self.project,
             level: self.level,
+            hotkey: self.hotkey,
         }
     }
 }
@@ -2009,6 +2022,8 @@ struct TabIdentity {
     /// A task closing its last pane has not stopped being the thing somebody
     /// promoted this morning.
     level: Option<attention::Priority>,
+    /// Nor has a task whose pane closed stopped being where its hotkey goes.
+    hotkey: Option<char>,
 }
 
 impl TabIdentity {
@@ -2017,6 +2032,7 @@ impl TabIdentity {
     fn onto(self, root: Node) -> Tab {
         Tab {
             level: self.level,
+            hotkey: self.hotkey,
             root,
             name: self.name,
             // re-read from the live focus each render; the pane this pointed at
@@ -2828,6 +2844,11 @@ struct StateFile {
     /// load, to the default rather than being collapsed into `false` on disk.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     left_bar: Option<bool>,
+    /// Whether `alt+1`…`alt+9` jump to tabs. `None` is nobody has said, which
+    /// draws as on — gnome-terminal and Konsole ship the same chord — and stays
+    /// `None` on disk until the switch in a tab's menu is pressed.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    tab_digits: Option<bool>,
     /// What chrome the window draws: the UI set it chose and the switches
     /// flipped by hand (see [`uiconfig`]). `None` is a file written before UI
     /// CONFIG existed, whose `left_bar` is read into the new switch once.
@@ -2988,6 +3009,7 @@ impl Default for StateFile {
             groups: Vec::new(),
             projects: Vec::new(),
             left_bar: None,
+            tab_digits: None,
             ui: None,
             looks: looks::Looks::default(),
             left_bar_w: None,
@@ -3040,6 +3062,9 @@ struct SavedTab {
     /// Absent = nobody set a level on this task, so it inherits.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     level: Option<SavedLevel>,
+    /// The letter `alt+shift+<it>` jumps here by; absent = no pin.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    hotkey: Option<char>,
     node: SavedNode,
 }
 
@@ -3401,6 +3426,7 @@ impl FrameJiggle {
 struct OsdEggs {
     crawl: bool,
     crt: bool,
+    trail: bool,
 }
 
 /// Which scope the open theme breakout is editing.
@@ -4513,6 +4539,68 @@ impl ReaderGlass {
     }
 }
 
+/// One wake the window performed: the shell pid the agent slept behind, its
+/// conversation, and the pane it woke in. `to_pid` is pinned when that pane is
+/// itself replaced by a later wake; until then the pid is read off the live
+/// pane, because a host-spawned pane learns its shell pid after it is built.
+/// Generic over the pane key so the bookkeeping is testable without a window.
+#[derive(Clone, Debug, PartialEq)]
+struct Wake<K> {
+    from_pid: u32,
+    agent: String,
+    to: K,
+    to_pid: Option<u32>,
+    at_ms: u64,
+}
+
+/// How long and how many wakes are remembered. A day covers an agent that
+/// slept overnight; past that, an old pid is answered like any missing one.
+const WAKE_KEEP_MS: u64 = 24 * 60 * 60 * 1000;
+const WAKE_KEEP: usize = 256;
+
+/// Note that the agent in pane `old` (shell `from_pid`) woke in pane `to`.
+/// A wake that had landed in `old` ends there now, so its pid is pinned.
+fn record_wake<K: Copy + PartialEq>(
+    woke: &mut Vec<Wake<K>>,
+    old: K,
+    from_pid: u32,
+    agent: String,
+    to: K,
+    now_ms: u64,
+) {
+    for w in woke
+        .iter_mut()
+        .filter(|w| w.to == old && w.to_pid.is_none())
+    {
+        w.to_pid = Some(from_pid);
+    }
+    woke.push(Wake {
+        from_pid,
+        agent,
+        to,
+        to_pid: None,
+        at_ms: now_ms,
+    });
+    woke.retain(|w| now_ms.saturating_sub(w.at_ms) < WAKE_KEEP_MS);
+    let over = woke.len().saturating_sub(WAKE_KEEP);
+    woke.drain(..over);
+}
+
+/// The wakes as the MCP snapshot carries them: each one's new pid, read live
+/// (`live`) where its pane still stands, else as pinned. A wake whose new pid
+/// is not known yet is left out rather than given a number.
+fn moves_of<K: Copy>(woke: &[Wake<K>], live: impl Fn(K) -> Option<u32>) -> Vec<mcp::Moved> {
+    woke.iter()
+        .filter_map(|w| {
+            Some(mcp::Moved {
+                from_pid: w.from_pid,
+                to_pid: live(w.to).or(w.to_pid)?,
+                agent: w.agent.clone(),
+            })
+        })
+        .collect()
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -4631,6 +4719,10 @@ struct Workspace {
     /// key receipts survive pruning and reopening without keeping the words.
     prompts: prompt::PromptBook,
     prompt_key_path: std::path::PathBuf,
+    /// The wakes this window performed, newest last: what tells an MCP caller
+    /// holding an agent's old pid where the agent went (`mcp_moves`). Held in
+    /// memory, a day at most; a restarted window has no old pids to explain.
+    woke: Vec<Wake<gpui::EntityId>>,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -4689,6 +4781,9 @@ struct Workspace {
     /// The ⚙ ADMIN panel is open: export, old builds, uninstall (see [`admin_view`]).
     admin_menu: bool,
     admin: admin_view::AdminState,
+    /// ⚙ CONFIG › UPDATES (see [`update_view`]).
+    update_menu: bool,
+    update: update_view::UpdateState,
     /// What step 1 of the bug report did while the panel was open: the report
     /// it wrote, or why it could not. Step 2 is offered only after a report
     /// exists, and closing the panel starts the ladder again.
@@ -4853,7 +4948,7 @@ struct Workspace {
     /// Which tracking-band slider (0=intensity,1=speed,2=size) is being dragged.
     track_drag: Option<usize>,
     /// Live tracking-slider rects, for ratio math during a drag.
-    track_bounds: [Arc<Mutex<Option<Bounds<Pixels>>>>; 3],
+    track_bounds: [Arc<Mutex<Option<Bounds<Pixels>>>>; 5],
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
@@ -4984,6 +5079,13 @@ struct Workspace {
     bay_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Which tab's config pane is open, if any (right-click / ctrl+click a tab).
     tab_menu: Option<usize>,
+    /// See [`StateFile::tab_digits`].
+    tab_digits: Option<bool>,
+    /// A tab's menu is waiting for the letter to pin it to.
+    hotkey_capture: Option<usize>,
+    /// Why the last letter offered could not be pinned, for the tab it was
+    /// offered to. Cleared by the next press.
+    hotkey_refused: Option<(usize, String)>,
     /// Window-space anchor for the open tab config pane.
     tab_menu_at: Option<Point<Pixels>>,
     /// Which group's own config menu is open (right-click its handle/pill), if
@@ -5180,6 +5282,10 @@ struct Workspace {
     /// state — so it can't clobber the layout of the window that owns the
     /// workspace.
     scratch: bool,
+    /// A test's scratch window that draws its spine anyway, so the spine can
+    /// be measured without a window that saves over the real session.
+    #[cfg(test)]
+    spine_in_scratch: bool,
     /// The session host this window is showing, if it is showing one.
     ///
     /// `None` is the ordinary window that owns its own terminals — still the
@@ -6420,6 +6526,7 @@ impl Workspace {
             asks: threshing_floor::AskBook::default(),
             prompts,
             prompt_key_path,
+            woke: Vec::new(),
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -6444,6 +6551,8 @@ impl Workspace {
             bug_menu: false,
             admin_menu: false,
             admin: Default::default(),
+            update_menu: false,
+            update: Default::default(),
             bug_report: None,
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
@@ -6572,6 +6681,9 @@ impl Workspace {
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
             bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
+            tab_digits: saved.tab_digits,
+            hotkey_capture: None,
+            hotkey_refused: None,
             tab_menu_at: None,
             group_menu: None,
             group_menu_at: None,
@@ -6633,6 +6745,8 @@ impl Workspace {
             // a demo window restores a layout (so `scratch` is false to take the
             // restore branch below) yet must never overwrite the real state
             scratch: scratch || demo,
+            #[cfg(test)]
+            spine_in_scratch: false,
             attach,
             should_move: false,
             ghosts: Vec::new(),
@@ -6708,6 +6822,7 @@ impl Workspace {
                 tab.group = t.group.filter(|g| live.contains(g));
                 tab.project = t.project.filter(|p| live_projects.contains(p));
                 tab.level = t.level.map(attention::Priority::from);
+                tab.hotkey = t.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -6779,6 +6894,24 @@ impl Workspace {
         // around it: a timer on the background executor, the work itself
         // already written (`refresh_usage` runs the collectors on the pool and
         // swaps the records in), and the loop ends with the window.
+        // update watch: the daily check a person can turn on in ⚙ CONFIG ›
+        // UPDATES. Off unless they did; when on, it looks five minutes after
+        // the window opens and every six hours after, asks GitHub at most once
+        // a day, and never does more than raise a notification.
+        cx.spawn(async move |this, cx| {
+            let mut wait = Duration::from_secs(300);
+            loop {
+                cx.background_executor().timer(wait).await;
+                wait = Duration::from_secs(6 * 3600);
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.update_daily_tick(cx))
+                    .is_err()
+                {
+                    break; // window gone
+                }
+            }
+        })
+        .detach();
         cx.spawn(async move |this, cx| {
             let mut wait = Duration::from_secs(USAGE_FIRST_SWEEP_SECS);
             loop {
@@ -7265,6 +7398,7 @@ impl Workspace {
             built.group = tab.group.filter(|g| live_groups.contains(g));
             built.project = tab.project.filter(|p| live_projects.contains(p));
             built.level = tab.level.map(attention::Priority::from);
+            built.hotkey = tab.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
             self.tabs.push(built);
         }
 
@@ -7921,6 +8055,18 @@ impl Workspace {
                 break;
             }
         }
+        // Remember the move, so a caller holding the old pid is told where
+        // the agent went instead of "no pane with pid".
+        if let Some(from_pid) = old.read(cx).shell_pid() {
+            record_wake(
+                &mut self.woke,
+                old_id,
+                from_pid,
+                asleep.session.clone(),
+                fresh.entity_id(),
+                prompt::now_ms(),
+            );
+        }
         // The shell that held the sleeper is no longer shown; end it.
         self.hangup(std::slice::from_ref(old), cx);
         if focus {
@@ -8455,6 +8601,7 @@ impl Workspace {
                     // too would be a second copy of one fact, free to rot.
                     project: t.project.filter(|_| t.group.is_none()),
                     level: t.level.map(SavedLevel::from),
+                    hotkey: t.hotkey,
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -8483,6 +8630,7 @@ impl Workspace {
                 })
                 .collect(),
             left_bar: Some(self.left_bar),
+            tab_digits: self.tab_digits,
             ui: Some(uiconfig::choice(cx)),
             looks: self.looks.clone(),
             rail_pinned: Some(self.rail_pinned),
@@ -8640,6 +8788,21 @@ impl Workspace {
     /// binds to, and the pointer to its on-disk tool-call transcript). The
     /// `exposed` flag applies the current policy. Strictly read-only: this never
     /// writes a byte to any PTY.
+    /// The wakes, as the MCP snapshot carries them (see [`moves_of`]).
+    fn mcp_moves(&self, cx: &App) -> Vec<mcp::Moved> {
+        let live = |id: gpui::EntityId| {
+            self.tabs.iter().find_map(|tab| {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                leaves
+                    .into_iter()
+                    .find(|l| l.entity_id() == id)
+                    .and_then(|l| l.read(cx).shell_pid())
+            })
+        };
+        moves_of(&self.woke, live)
+    }
+
     fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
         let mut out = vec![];
         let outer = theme::outer_choice(cx);
@@ -8649,7 +8812,15 @@ impl Workspace {
             for leaf in leaves {
                 let p = leaf.read(cx);
                 let rt = p.runtime();
-                let is_agent = p.mode.is_agent();
+                // Asleep agents too: they run a shell in the foreground, and
+                // judged by mode alone they read as gone (#1160).
+                let is_agent = p.counts_as_agent();
+                let asleep = p.rest.dormancy.asleep();
+                let dormancy = is_agent.then_some(match &p.rest.dormancy {
+                    agentrest::Dormancy::Awake => mcp::Dormancy::Awake,
+                    agentrest::Dormancy::Resting { .. } => mcp::Dormancy::Resting,
+                    agentrest::Dormancy::Asleep(_) => mcp::Dormancy::Asleep,
+                });
                 let title = p
                     .name
                     .clone()
@@ -8689,6 +8860,13 @@ impl Workspace {
                     name: Some(self.pane_name(leaf, cx))
                         .filter(|n| !n.full().is_empty())
                         .map(|n| mcp::PaneNameReport::from(&n)),
+                    // Which conversation, proven. An asleep agent's is its sleep
+                    // record, the id it reported when it went to sleep; an awake
+                    // one is stamped by the MCP connection
+                    // (`mcp_transport::stamp_agents`), off this thread, because
+                    // binding a pane to a transcript reads files.
+                    agent: asleep.map(|a| a.session.clone()),
+                    dormancy,
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),
@@ -12219,7 +12397,7 @@ impl Workspace {
         // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
         // so its off-limits mark does not stop the agent inside opening a
         // document in its own tab.
-        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
+        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).counts_as_agent()) {
             let _ = reply.send(format!(
                 "err pane {} is not exposed under the current policy",
                 request.pid
@@ -13044,6 +13222,107 @@ impl Workspace {
     }
 
     /// One row of a left-bar menu.
+    /// The spine's row menu for a tab: how a single key reaches it. The same
+    /// lines and the same three verbs as the tab menu's HOTKEYS (see
+    /// `tab_hotkey_lines`), because with the spine open this menu is the one a
+    /// right-click on a tab opens. The menu stays up while it waits for a
+    /// letter, so the answer — or the reason it was refused — lands in it.
+    fn bar_hotkey_rows(
+        &self,
+        i: usize,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> Vec<gpui::AnyElement> {
+        let ui = self.lang.strings().ui;
+        let (place, pin) = self.tab_hotkey_lines(i, cx);
+        let capturing = self.hotkey_capture == Some(i);
+        let digits = self.tab_digits_on();
+        let mut rows = vec![Self::bar_menu_rule(th, s).into_any_element()];
+        if let Some(line) = place {
+            rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
+        }
+        match pin {
+            Some(line) => {
+                rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
+                rows.push(
+                    Self::bar_menu_row(sk, s, ui.tab_menu_key_unpin, MenuTone::Plain)
+                        .id("bar-key-unpin")
+                        .debug_selector(|| "bar-key-unpin".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.tabs.get_mut(i) {
+                                    t.hotkey = None;
+                                }
+                                ws.hotkey_refused = None;
+                                ws.save(cx);
+                                cx.notify();
+                            }),
+                        )
+                        .into_any_element(),
+                );
+            }
+            None => rows.push(
+                Self::bar_menu_row(
+                    sk,
+                    s,
+                    if capturing {
+                        ui.tab_menu_key_press
+                    } else {
+                        ui.tab_menu_key_pin
+                    },
+                    MenuTone::Plain,
+                )
+                .id("bar-key-pin")
+                .debug_selector(|| "bar-key-pin".into())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.hotkey_capture = Some(i);
+                        ws.hotkey_refused = None;
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+            ),
+        }
+        if let Some((_, why)) = self.hotkey_refused.as_ref().filter(|(t, _)| *t == i) {
+            rows.push(
+                Self::bar_menu_row(sk, s, format!("\u{26a0} {why}"), MenuTone::Quiet)
+                    .into_any_element(),
+            );
+        }
+        rows.push(
+            Self::bar_menu_row(
+                sk,
+                s,
+                if digits {
+                    ui.tab_menu_key_digits_on
+                } else {
+                    ui.tab_menu_key_digits_off
+                },
+                MenuTone::Plain,
+            )
+            .id("bar-key-digits")
+            .debug_selector(|| "bar-key-digits".into())
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.tab_digits = Some(!ws.tab_digits_on());
+                    ws.save(cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element(),
+        );
+        rows
+    }
+
     fn bar_menu_row(
         sk: &skin::Skin,
         s: f32,
@@ -13474,6 +13753,7 @@ impl Workspace {
                             }),
                         ),
                     )
+                    .children(self.bar_hotkey_rows(i, th, &sk, s, cx))
                     .child(
                         Self::bar_menu_row(
                             &sk,
@@ -20176,6 +20456,173 @@ impl Workspace {
             )
     }
 
+    // ---- tab hotkeys -------------------------------------------------------
+    //
+    // Two kinds, because a tab has two kinds of address. `alt+1`…`alt+9` is a
+    // place: the Nth tab in the order the spine lists the whole session, folds
+    // ignored, so the numbers mean the same thing with the tree open or shut
+    // and whatever project you are standing in; `alt+9` is the last. A pin,
+    // `alt+shift+<letter>`, is a name: it is written on the tab, so it follows
+    // the tab through a drag, a filing and a restart.
+
+    /// Whether `alt+1`…`alt+9` jump. Unset is on.
+    fn tab_digits_on(&self) -> bool {
+        self.tab_digits.unwrap_or(true)
+    }
+
+    /// What this window's hotkeys hold, for the panes to decline.
+    fn held_tab_keys(&self) -> keylayer::TabKeys {
+        self.tabs.iter().filter_map(|t| t.hotkey).fold(
+            keylayer::TabKeys {
+                digits: self.tab_digits_on(),
+                pinned: 0,
+            },
+            keylayer::TabKeys::with_letter,
+        )
+    }
+
+    /// Every tab, in the order the spine lists them with nothing folded.
+    fn tabs_in_spine_order(&self, cx: &App) -> Vec<usize> {
+        let mut order: Vec<usize> = self
+            .tree_rows(false, cx)
+            .into_iter()
+            .filter_map(|r| match r {
+                tree::Row::Task { index, .. } => Some(index),
+                _ => None,
+            })
+            .filter(|&i| i < self.tabs.len())
+            .collect();
+        // Never lose a tab the tree did not list: it goes on the end.
+        for i in 0..self.tabs.len() {
+            if !order.contains(&i) {
+                order.push(i);
+            }
+        }
+        order
+    }
+
+    /// The position key that reaches tab `i`, if one does: 1…8 by place, and
+    /// 9 for the last tab.
+    fn tab_position_key(&self, i: usize, cx: &App) -> Option<usize> {
+        let order = self.tabs_in_spine_order(cx);
+        let at = order.iter().position(|&t| t == i)?;
+        if at < 8 {
+            Some(at + 1)
+        } else {
+            (at + 1 == order.len()).then_some(9)
+        }
+    }
+
+    /// The tab a hotkey reaches, if any.
+    fn tab_for_chord(&self, chord: keylayer::TabChord, cx: &App) -> Option<usize> {
+        match chord {
+            keylayer::TabChord::Position(9) => self.tabs_in_spine_order(cx).last().copied(),
+            keylayer::TabChord::Position(n) => self.tabs_in_spine_order(cx).get(n - 1).copied(),
+            keylayer::TabChord::Pinned(c) => self.tabs.iter().position(|t| t.hotkey == Some(c)),
+        }
+    }
+
+    /// The chord as a person reads it.
+    fn chord_label(chord: keylayer::TabChord) -> String {
+        match chord {
+            keylayer::TabChord::Position(n) => format!("Alt+{n}"),
+            keylayer::TabChord::Pinned(c) => format!("Alt+Shift+{}", c.to_ascii_uppercase()),
+        }
+    }
+
+    /// What a tab's menus say about reaching it: its place key while the
+    /// digits are on (or that it has none), and its pin, if it has one.
+    fn tab_hotkey_lines(&self, i: usize, cx: &App) -> (Option<String>, Option<String>) {
+        let ui = self.lang.strings().ui;
+        let place = self
+            .tab_digits_on()
+            .then(|| match self.tab_position_key(i, cx) {
+                Some(n) => lang::fill(
+                    ui.tab_menu_key_position,
+                    &[("key", &Self::chord_label(keylayer::TabChord::Position(n)))],
+                ),
+                None => ui.tab_menu_key_beyond.to_string(),
+            });
+        let pin = self.tabs.get(i).and_then(|t| t.hotkey).map(|c| {
+            lang::fill(
+                ui.tab_menu_key_pinned,
+                &[("key", &Self::chord_label(keylayer::TabChord::Pinned(c)))],
+            )
+        });
+        (place, pin)
+    }
+
+    /// Whether a menu for tab `i` is open to take the letter it is waiting for.
+    fn tab_menu_open_for(&self, i: usize) -> bool {
+        self.tab_menu == Some(i) || matches!(self.bar_menu, Some((BarMenu::Task(t), _)) if t == i)
+    }
+
+    /// Pin tab `i` to `alt+shift+<c>`, or say why not. A letter Terminal
+    /// Delight already answers is refused, and so is one another tab holds —
+    /// moving a pin silently would leave the other tab's owner pressing a key
+    /// that now goes somewhere else.
+    fn pin_tab_hotkey(&mut self, i: usize, c: char) -> Result<(), String> {
+        let ui = self.lang.strings().ui;
+        let c = c.to_ascii_lowercase();
+        let key = Self::chord_label(keylayer::TabChord::Pinned(c));
+        if keylayer::pin_is_taken(c) {
+            return Err(lang::fill(ui.tab_menu_key_taken_td, &[("key", &key)]));
+        }
+        if let Some((j, other)) = self
+            .tabs
+            .iter()
+            .enumerate()
+            .find(|(j, t)| *j != i && t.hotkey == Some(c))
+        {
+            let name = other
+                .name
+                .clone()
+                .unwrap_or_else(|| lang::fill(ui.tab_unnamed, &[("n", &(j + 1).to_string())]));
+            return Err(lang::fill(
+                ui.tab_menu_key_taken_tab,
+                &[("key", &key), ("tab", &name)],
+            ));
+        }
+        if let Some(t) = self.tabs.get_mut(i) {
+            t.hotkey = Some(c);
+        }
+        Ok(())
+    }
+
+    /// The tab menu is waiting for a letter: take the next key, whatever has
+    /// the focus, so the letter never reaches a terminal. Escape gives up.
+    fn hotkey_capture_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let Some(i) = self.hotkey_capture else {
+            return false;
+        };
+        if !self.tab_menu_open_for(i) {
+            self.hotkey_capture = None;
+            return false;
+        }
+        let key = ks.key.as_str();
+        if key == "escape" {
+            self.hotkey_capture = None;
+            cx.notify();
+            return true;
+        }
+        let mut chars = key.chars();
+        let letter = match (chars.next(), chars.next()) {
+            (Some(c), None) if c.is_ascii_alphabetic() => c,
+            // Modifiers alone arrive as their own key presses; wait them out.
+            _ => return true,
+        };
+        self.hotkey_capture = None;
+        self.hotkey_refused = match self.pin_tab_hotkey(i, letter) {
+            Ok(()) => {
+                self.save(cx);
+                None
+            }
+            Err(why) => Some((i, why)),
+        };
+        cx.notify();
+        true
+    }
+
     fn activate_tab(&mut self, i: usize, window: &mut Window, cx: &mut Context<Self>) {
         if self.focus_inline {
             self.close_focus_read(cx);
@@ -20435,6 +20882,7 @@ impl Workspace {
             || self.agents_menu
             || self.bug_menu
             || self.admin_menu
+            || self.update_menu
             || self.savings_menu
     }
 
@@ -20571,6 +21019,10 @@ impl Workspace {
         }
         if self.admin_menu {
             self.close_admin();
+            return true;
+        }
+        if self.update_menu {
+            self.close_updates();
             return true;
         }
         // Standalone modals (only one is ever open at a time; order is moot).
@@ -21176,6 +21628,15 @@ impl Workspace {
                     }
                 }
                 keylayer::Size::Pane(_) => {}
+            }
+            return;
+        }
+        // Alt+1…9 and the pinned Alt+Shift+letters. A focused terminal
+        // declines exactly the ones this window holds (see
+        // `keylayer::held_tab_chord`), so they arrive here whatever has focus.
+        if let Some(chord) = keylayer::held_tab_chord(ks.key.as_str(), m.alt, m.control, m.shift) {
+            if let Some(i) = self.tab_for_chord(chord, cx) {
+                self.activate_tab(i, window, cx);
             }
             return;
         }
@@ -22302,6 +22763,7 @@ impl Workspace {
                     // included: a task that loses a pane has not stopped being
                     // the thing the person promoted this morning.
                     level: t.level,
+                    hotkey: t.hotkey,
                     root,
                     name: t.name,
                     focused: t.focused,
@@ -22905,6 +23367,9 @@ impl Workspace {
         let Some(scope) = self.osd_menu.clone() else {
             return;
         };
+        if idx >= TRAIL_SLIDER {
+            return self.apply_cursor_trail(idx - TRAIL_SLIDER, v, cx);
+        }
         let seed = self.scope_track_seed(&scope, cx);
         let mut grade = self.choice_for(&scope, cx).grade;
         let mut d = grade.tracking.unwrap_or(seed);
@@ -22918,21 +23383,72 @@ impl Workspace {
         );
     }
 
-    /// One tracking-band slider (idx 0=intensity, 1=speed, 2=size). Writes the
-    /// active OSD scope's grade tracking (per-pane override + inherit, like the
-    /// other DISPLAY channels); the fill starts from the scope's current look.
+    /// Change the active OSD scope's cursor afterimage: dial 0 its lifetime,
+    /// dial 1 its light, each `0..=1` of its range. Only reachable while it is
+    /// on, so a drag never switches it on behind your back.
+    fn apply_cursor_trail(&mut self, dial: usize, v: f32, cx: &mut Context<Self>) {
+        self.edit_cursor_trail(cx, |t| match dial {
+            0 => t.ms = v.clamp(0.0, 1.0) * theme::CursorTrail::MAX_MS,
+            _ => t.intensity = v.clamp(0.0, 1.0),
+        });
+    }
+
+    /// Flip the active OSD scope's cursor afterimage. The first time, it comes
+    /// on at [`theme::CursorTrail::first`]; after that the switch keeps the dials.
+    fn toggle_cursor_trail(&mut self, cx: &mut Context<Self>) {
+        self.edit_cursor_trail(cx, |t| t.on = !t.on);
+    }
+
+    fn cycle_cursor_trail_style(&mut self, cx: &mut Context<Self>) {
+        self.edit_cursor_trail(cx, |t| {
+            t.style = match t.style {
+                theme::CursorTrailStyle::Afterimage => theme::CursorTrailStyle::Streak,
+                theme::CursorTrailStyle::Streak => theme::CursorTrailStyle::Afterimage,
+            }
+        });
+    }
+
+    fn edit_cursor_trail(
+        &mut self,
+        cx: &mut Context<Self>,
+        edit: impl FnOnce(&mut theme::CursorTrail),
+    ) {
+        let Some(scope) = self.osd_menu.clone() else {
+            return;
+        };
+        let mut grade = self.choice_for(&scope, cx).grade;
+        // Never set reads as off; the first press turns on the first trail.
+        let mut trail = grade.cursor_trail.unwrap_or(theme::CursorTrail {
+            on: false,
+            ..theme::CursorTrail::first()
+        });
+        edit(&mut trail);
+        grade.cursor_trail = Some(trail);
+        self.write_grade(
+            &scope,
+            grade,
+            theme::GradePins::only(theme::GradeChannel::CursorTrail),
+            cx,
+        );
+    }
+
+    /// One drawn slider over `0..=1`: indices below [`TRAIL_SLIDER`] are the
+    /// tracking band (0=intensity, 1=speed, 2=size), which writes the active
+    /// OSD scope's grade tracking (per-pane override + inherit, like the
+    /// other DISPLAY channels); the two from there are the cursor trail's.
+    /// The fill starts from the scope's current look.
     fn track_slider(
         &self,
         idx: usize,
         label: &str,
-        dials: [f32; 3],
+        value: f32,
         th: &theme::Theme,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let sk = skin::for_theme(cx, th, 1.);
         const TRACK: f32 = 108.;
         let store = self.track_bounds[idx].clone();
-        let frac = dials[idx].clamp(0.0, 1.0);
+        let frac = value.clamp(0.0, 1.0);
         div()
             .flex()
             .flex_row()
@@ -27697,6 +28213,36 @@ impl Workspace {
             // widens it (see `render_strip_head`). This row's glyphs and their
             // arrangement are the next pass.
             .child(div().flex_1().min_w_0())
+            // Unboxed, ADD PROJECT lives here, beside the TABS handle with a
+            // hairline between them: it is about the projects this tree lists,
+            // and with it up here the top bar has nothing of its own left to
+            // carry, so it folds to a margin the way it does for the boxed
+            // skins. Parker, 2026-11-02: *"ADD project should go WITH the left
+            // spine (adjescent and SEPARATED from tabs... this will eliminate
+            // the TOP rail"*. With the spine shut it goes back to the top
+            // corner, beside SPINE, since that is then the only way in.
+            .when(sk.unboxed(), |d| {
+                d.child(
+                    Self::bezel_btn_s(&sk, "ADD PROJECT", false, s)
+                        .id("spine-add-project")
+                        .debug_selector(|| "spine-add-project".into())
+                        .flex_none()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.new_project_with_terminal(window, cx);
+                            }),
+                        ),
+                )
+                .child(
+                    sk.rule_v()
+                        .debug_selector(|| "spine-add-project-rule".into())
+                        .flex_none()
+                        .h(px(14. * s))
+                        .mx(px(8. * s)),
+                )
+            })
             // UI CONFIG's left-bar header switch takes fold-all and + new
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
@@ -29744,6 +30290,11 @@ impl Workspace {
     /// outranks whatever the UI set asks for: Clean prefers tabs across the
     /// top, and a person who opens the tree under Clean keeps it open.
     fn set_left_bar(&mut self, on: bool, cx: &mut App) {
+        #[cfg(test)]
+        if self.spine_in_scratch {
+            self.left_bar = on;
+            return;
+        }
         self.left_bar = on && !self.scratch;
         if !self.scratch {
             uiconfig::flip(cx, uiconfig::Key::LeftBar, on);
@@ -29753,6 +30304,10 @@ impl Workspace {
     /// Whether the left bar is drawn this frame: the UI switch, except in a
     /// scratch or demo window, which never has one.
     fn left_bar_now(&self, cx: &App) -> bool {
+        #[cfg(test)]
+        if self.spine_in_scratch {
+            return self.left_bar;
+        }
         !self.scratch && uiconfig::shown(cx, uiconfig::Key::LeftBar)
     }
 
@@ -29965,6 +30520,10 @@ impl Render for Workspace {
         // (Clean asks for tabs across the top). Read once a frame, so the rest
         // of the pass — and the key handlers between passes — see one answer.
         self.left_bar = self.left_bar_now(cx);
+        // The tab hotkeys this window holds, for the panes to decline until
+        // the next pass: a pin added or a switch flipped notifies, so it lands
+        // before the next key does.
+        keylayer::hold_tab_keys(self.held_tab_keys());
         // A palette that has closed opens folded again next time.
         if self.theme_menu.is_none() && self.fold_open.is_some() {
             self.fold_open = None;
@@ -30137,6 +30696,7 @@ impl Render for Workspace {
                 || self.agents_menu
                 || self.bug_menu
                 || self.admin_menu
+                || self.update_menu
                 || self.savings_menu
                 || self.dead_menu
                 || self.group_menu.is_some()
@@ -30192,6 +30752,7 @@ impl Render for Workspace {
                     "notifications" => self.notif_menu = true,
                     "bug" => self.bug_menu = true,
                     "admin" => self.open_admin(cx),
+                    "updates" => self.open_updates(cx),
                     "language" => {
                         self.lang_picker = Some(LangPicker {
                             query: EditBuffer::seeded(""),
@@ -31347,8 +31908,9 @@ impl Render for Workspace {
         } else {
             tab_strip.into_any_element()
         };
-        let top_empty = !sk.unboxed()
-            && top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
+        // Unboxed skins fold too now: ADD PROJECT, the one thing they kept up
+        // here, rides on the spine while the spine is open.
+        let top_empty = top_bar_is_empty(self.left_bar, ui_mark, ui_notice, ui_counter, is_client);
         let bezel_top = sk
             .sheet()
             // min-height (not fixed): extra tab rows grow the bar downward.
@@ -31447,7 +32009,9 @@ impl Render for Workspace {
                     .flex_row()
                     .items_center()
                     .gap(px(8. * scale))
-                    .when(sk.unboxed(), |d| {
+                    // Only with the spine shut: open, it is on the spine's own
+                    // header (see `render_left_bar`), and this corner empties.
+                    .when(sk.unboxed() && !self.left_bar, |d| {
                         d.child(
                             Self::bezel_btn_s(&sk, "ADD PROJECT", false, scale)
                                 .id("minimal-add-project")
@@ -33212,9 +33776,9 @@ impl Render for Workspace {
                             cx,
                         ))
                         .child(self.slider_row(theme::GradeKey::Glare, t.d_glare, glare, &th, cx))
-                        .child(self.track_slider(0, t.d_roll, dials, &th, cx))
-                        .child(self.track_slider(1, t.d_roll_spd, dials, &th, cx))
-                        .child(self.track_slider(2, t.d_roll_size, dials, &th, cx))
+                        .child(self.track_slider(0, t.d_roll, dials[0], &th, cx))
+                        .child(self.track_slider(1, t.d_roll_spd, dials[1], &th, cx))
+                        .child(self.track_slider(2, t.d_roll_size, dials[2], &th, cx))
                         .child(
                             div()
                                 .id("track-reset")
@@ -33247,6 +33811,89 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
+            // ---- CURSOR TRAIL: the cursor's phosphor afterimage, behind the
+            // third collapsed row. Off until somebody turns it on; the style
+            // and its two dials appear only while it is on, as the tube's do,
+            // and keep their values when it goes off.
+            panel = panel.child(
+                egg_row("osd-egg-trail", self.osd_eggs.trail, t.d_trail_hdr).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.osd_eggs.trail = !ws.osd_eggs.trail;
+                        cx.notify();
+                    }),
+                ),
+            );
+            if self.osd_eggs.trail {
+                let trail = grade.cursor_trail.filter(|t| t.on);
+                let mut block = div().flex().flex_col().gap_1().child(
+                    Self::bezel_btn(
+                        &sk,
+                        &if trail.is_some() {
+                            format!("\u{25a3} {}", t.d_trail_on)
+                        } else {
+                            format!("\u{25a2} {}", t.d_trail_off)
+                        },
+                        trail.is_some(),
+                    )
+                    .id("osd-trail-switch")
+                    .debug_selector(|| "osd-trail-switch".into())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.toggle_cursor_trail(cx);
+                        }),
+                    ),
+                );
+                if let Some(trail) = trail {
+                    let style = match trail.style {
+                        theme::CursorTrailStyle::Afterimage => t.d_trail_afterimage,
+                        theme::CursorTrailStyle::Streak => t.d_trail_streak,
+                    };
+                    block = block
+                        .child(
+                            Self::bezel_btn(&sk, &format!("\u{21c4} {style}"), false)
+                                .id("osd-trail-style")
+                                .debug_selector(|| "osd-trail-style".into())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.cycle_cursor_trail_style(cx);
+                                    }),
+                                ),
+                        )
+                        .child(self.track_slider(
+                            TRAIL_SLIDER,
+                            t.d_trail_len,
+                            trail.ms / theme::CursorTrail::MAX_MS,
+                            &th,
+                            cx,
+                        ))
+                        .child(self.track_slider(
+                            TRAIL_SLIDER + 1,
+                            t.d_trail_light,
+                            trail.intensity,
+                            &th,
+                            cx,
+                        ));
+                    // Say why a trail that is on is not drawn, rather than
+                    // leave the switch reading as broken.
+                    let held = if self.choice_for(&scope, cx).id == theme::CLEAN {
+                        Some(t.d_trail_clean)
+                    } else if pane::reduced_motion() {
+                        Some(t.d_trail_still)
+                    } else {
+                        None
+                    };
+                    if let Some(why) = held {
+                        block = block.child(label(why));
+                    }
+                }
+                panel = panel.child(block);
+            }
             // full-screen scrim: click anywhere outside closes
             div()
                 .absolute()
@@ -33272,6 +33919,7 @@ impl Render for Workspace {
         let agents_overlay = self.render_agents_overlay(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
         let admin_overlay = self.render_admin_overlay(&th, cx);
+        let update_overlay = self.render_update_overlay(&th, cx);
         // The marquee, while it lives. It ages out on its own — nothing
         // clears it — and it keeps asking for frames so the bulbs chase and
         // the fade actually runs.
@@ -36008,6 +36656,16 @@ impl Render for Workspace {
                         }),
                     ),
                 )
+                .child(
+                    entry("\u{2b73}", s.ui.cfg_updates, "more-updates").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.more_menu = false;
+                            ws.open_updates(cx);
+                        }),
+                    ),
+                )
                 .child(entry("\u{1f9e9}", s.plugins, "more-plugins").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -36808,6 +37466,100 @@ impl Render for Workspace {
                     ),
                 );
 
+                // ---- hotkeys: the single keys that reach this tab ----------
+                // Its place key while the digits are on, its pin if it has one
+                // (or the button that takes the next letter as one), why the
+                // last letter was refused, and the window's digit switch.
+                let digits = self.tab_digits_on();
+                let capturing = self.hotkey_capture == Some(i);
+                let refused = self
+                    .hotkey_refused
+                    .as_ref()
+                    .filter(|(t, _)| *t == i)
+                    .map(|(_, why)| why.clone());
+                let note = |text: String| {
+                    div()
+                        .text_size(sk.text_px(10.))
+                        .text_color(th.text.alpha(0.85))
+                        .child(text)
+                };
+                let mut keys_box = div().flex().flex_col().gap_1().max_w(px(184.)).child(
+                    div()
+                        .text_size(sk.text_px(9.))
+                        .text_color(th.text.alpha(0.7))
+                        .child(ui.tab_menu_keys_hdr),
+                );
+                let (place_line, pin_line) = self.tab_hotkey_lines(i, cx);
+                if let Some(line) = place_line {
+                    keys_box = keys_box.child(note(line));
+                }
+                keys_box = match pin_line {
+                    Some(line) => keys_box.child(note(line)).child(
+                        Self::bezel_btn(&sk, ui.tab_menu_key_unpin, false)
+                            .id("tab-key-unpin")
+                            .debug_selector(|| "tab-key-unpin".into())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(t) = ws.tabs.get_mut(i) {
+                                        t.hotkey = None;
+                                    }
+                                    ws.hotkey_refused = None;
+                                    ws.save(cx);
+                                    cx.notify();
+                                }),
+                            ),
+                    ),
+                    None => keys_box.child(
+                        Self::bezel_btn(
+                            &sk,
+                            if capturing {
+                                ui.tab_menu_key_press
+                            } else {
+                                ui.tab_menu_key_pin
+                            },
+                            capturing,
+                        )
+                        .id("tab-key-pin")
+                        .debug_selector(|| "tab-key-pin".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.hotkey_capture = Some(i);
+                                ws.hotkey_refused = None;
+                                cx.notify();
+                            }),
+                        ),
+                    ),
+                };
+                if let Some(why) = refused {
+                    keys_box = keys_box.child(note(format!("\u{26a0} {why}")));
+                }
+                keys_box = keys_box.child(
+                    Self::bezel_btn(
+                        &sk,
+                        if digits {
+                            ui.tab_menu_key_digits_on
+                        } else {
+                            ui.tab_menu_key_digits_off
+                        },
+                        digits,
+                    )
+                    .id("tab-key-digits")
+                    .debug_selector(|| "tab-key-digits".into())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.tab_digits = Some(!ws.tab_digits_on());
+                            ws.save(cx);
+                            cx.notify();
+                        }),
+                    ),
+                );
+
                 let panel = div()
                     .absolute()
                     .left(px(f32::from(at.x)))
@@ -36838,7 +37590,8 @@ impl Render for Workspace {
                     .child(swatches)
                     .child(div().flex().flex_row().justify_end().child(clear))
                     .child(group_box)
-                    .child(project_box);
+                    .child(project_box)
+                    .child(keys_box);
                 // full-window scrim: a click anywhere else dismisses the pane
                 Some(
                     div()
@@ -37721,6 +38474,10 @@ impl Render for Workspace {
             // when the pane it reads does not hold the keyboard, and otherwise by
             // that pane, which has to hear the Esc (`escape_closes_the_reader`).
             .capture_key_down(cx.listener(|ws, ev: &KeyDownEvent, window, cx| {
+                if ws.hotkey_capture_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ws.threshing_floor_capture_key(&ev.keystroke, window, cx) {
                     cx.stop_propagation();
                     return;
@@ -37840,6 +38597,7 @@ impl Render for Workspace {
                     .children(agents_overlay)
                     .children(bug_overlay)
                     .children(admin_overlay)
+                    .children(update_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -37884,6 +38642,36 @@ impl Render for Workspace {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    use super::{moves_of, record_wake, Wake, WAKE_KEEP_MS};
+
+    /// Two wakes in a row: the first wake's pane is replaced by the second,
+    /// so its pid is pinned and the chain still runs from the first old pid to
+    /// the pane the agent is in now. A wake whose new pid is not known yet is
+    /// left out rather than numbered, and the record forgets after a day.
+    #[test]
+    fn wakes_chain_pin_and_expire() {
+        let mut woke: Vec<Wake<u64>> = Vec::new();
+        record_wake(&mut woke, 1, 200, "c".into(), 2, 1_000);
+        record_wake(&mut woke, 2, 250, "c".into(), 3, 2_000);
+        assert_eq!(woke[0].to_pid, Some(250), "the first wake's pane is pinned");
+        assert_eq!(woke[1].to_pid, None, "the second pane is still standing");
+        let live = |k: u64| (k == 3).then_some(300);
+        let moves = moves_of(&woke, live);
+        assert_eq!(
+            moves
+                .iter()
+                .map(|m| (m.from_pid, m.to_pid))
+                .collect::<Vec<_>>(),
+            [(200, 250), (250, 300)]
+        );
+        // The newest pane has no pid yet: that wake is not given a number.
+        assert_eq!(moves_of(&woke, |_| None).len(), 1);
+        // A day on, both are forgotten when the next is recorded.
+        record_wake(&mut woke, 9, 900, "d".into(), 10, 2_000 + WAKE_KEEP_MS);
+        assert_eq!(woke.len(), 1);
+        assert_eq!(woke[0].from_pid, 900);
+    }
+
     #[test]
     fn a_selected_surface_survives_state_serialisation_without_rewriting_the_theme() {
         let mut saved = StateFile::default();
@@ -37929,6 +38717,7 @@ mod tests {
             v.model_label = Some("SOL 6 XHIGH".into());
         });
         ws.update(cx, |ws, cx| {
+            ws.spine_in_scratch = true;
             ws.set_left_bar(true, cx);
             *ws.bay_bounds.lock().unwrap() = Some(Bounds::new(
                 point(px(10.), px(700.)),
@@ -37943,10 +38732,55 @@ mod tests {
             });
         };
         draw(cx);
-        assert!(cx.debug_bounds("minimal-add-project").is_some());
+        // Spine open: ADD PROJECT rides the spine's header, to the left of
+        // TABS with a rule between, and the top corner no longer carries it.
+        let spine_add = cx
+            .debug_bounds("spine-add-project")
+            .expect("ADD PROJECT is on the spine");
+        let rule = cx
+            .debug_bounds("spine-add-project-rule")
+            .expect("a rule separates it from TABS");
+        assert!(
+            spine_add.right() <= rule.left(),
+            "ADD PROJECT, then the rule"
+        );
+        assert!(cx.debug_bounds("minimal-add-project").is_none());
+        // With the spine open its row menu is a tab's right-click, so the
+        // hotkeys are offered there: press "pin a hotkey", type a letter, and
+        // the tab carries it; a letter the window owns is refused in the menu.
+        ws.update(cx, |ws, cx| {
+            ws.bar_menu = Some((BarMenu::Task(0), point(px(60.), px(80.))));
+            cx.notify();
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("bar-key-digits").is_some());
+        let pin = cx.debug_bounds("bar-key-pin").expect("pin row");
+        cx.simulate_click(pin.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.hotkey_capture), Some(0));
+        cx.simulate_keystrokes("w");
+        draw(cx);
+        let refused = ws.read_with(cx, |ws, _| ws.hotkey_refused.clone());
+        assert!(refused.is_some_and(|(t, why)| t == 0 && why.contains("Alt+Shift+W")));
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), None);
+        let pin = cx.debug_bounds("bar-key-pin").expect("pin row");
+        cx.simulate_click(pin.center(), gpui::Modifiers::default());
+        cx.simulate_keystrokes("q");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), Some('q'));
+        assert!(
+            cx.debug_bounds("bar-key-unpin").is_some(),
+            "the pin shows, with its undo"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.bar_menu = None;
+            cx.notify();
+        });
+        draw(cx);
         ws.update(cx, |ws, cx| ws.set_left_bar(false, cx));
         draw(cx);
         assert!(cx.debug_bounds("minimal-add-project").is_some());
+        assert!(cx.debug_bounds("spine-add-project").is_none());
         assert!(cx.debug_bounds("show-left-bar").is_some());
         assert!(cx.debug_bounds("pane-model").is_some());
         assert!(ws.read_with(cx, |ws, _| ws.bay_bounds.lock().unwrap().is_none()));
@@ -37965,6 +38799,158 @@ mod tests {
         );
         draw(cx);
         assert!(pane.update(cx, |v, cx| v.layers_up(cx).header_menu));
+    }
+
+    /// One keystroke reaches a tab: Alt+N by place in the spine's order and
+    /// Alt+9 the last, pressed through a focused terminal; a pin follows its
+    /// tab through a reorder and a save; a letter the window already answers,
+    /// or another tab holds, is refused; and with the digits off Alt+N is the
+    /// program's again.
+    #[gpui::test]
+    fn a_single_key_reaches_a_tab_by_place_or_by_pin(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        for _ in 0..2 {
+            let _fork = crate::testsync::forks_and_locks();
+            // Not `new_tab`: that is debounced against a double press, and it
+            // opens a name box that would take the keys below.
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx)
+                })
+            });
+        }
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(cx);
+        let active = |cx: &mut gpui::VisualTestContext| ws.read_with(cx, |ws, _| ws.active);
+        // A terminal holds the keyboard, as it does in use: every chord below
+        // has to be declined by it to reach the window at all.
+        let focus = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.focus_active(w, cx)));
+            cx.run_until_parked();
+            let held = cx.update(|w, cx| {
+                ws.read(cx)
+                    .every_view()
+                    .iter()
+                    .any(|p| p.focus_handle(cx).is_focused(w))
+            });
+            assert!(held, "a terminal has the keyboard");
+        };
+        focus(cx);
+        // Where a new tab is seated is not this test's business; the spine's
+        // order is what the numbers follow.
+        let order = ws.read_with(cx, |ws, cx| ws.tabs_in_spine_order(cx));
+        assert_eq!(order.len(), 3);
+
+        cx.simulate_keystrokes("alt-1");
+        assert_eq!(active(cx), order[0], "alt+1 is the first tab");
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-9");
+        assert_eq!(
+            active(cx),
+            order[2],
+            "alt+9 is the last, however many there are"
+        );
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-2");
+        assert_eq!(active(cx), order[1]);
+        let shown = ws.read_with(cx, |ws, cx| {
+            order
+                .iter()
+                .map(|&i| ws.tab_position_key(i, cx))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(shown, vec![Some(1), Some(2), Some(3)]);
+        // That the terminal does not ALSO receive a held chord is proved where
+        // it is decided: `keylayer`'s routing test and the encoder test
+        // `a_held_tab_hotkey_is_never_written_to_the_terminal`. This harness
+        // cannot see it — `Keystroke::parse` leaves `key_char` empty, so no
+        // alt chord encodes to bytes here, held or not.
+
+        // Pin the first tab to M, then move it to the end: the pin goes too.
+        ws.update(cx, |ws, _| ws.pin_tab_hotkey(0, 'M'))
+            .expect("M is free");
+        ws.update(cx, |ws, cx| {
+            ws.active = 0;
+            ws.nudge_active_tab(1, cx);
+            ws.nudge_active_tab(1, cx);
+        });
+        let moved = ws.read_with(cx, |ws, _| {
+            ws.tabs.iter().position(|t| t.hotkey == Some('m'))
+        });
+        assert_eq!(moved, Some(2), "the pin travelled with its tab");
+        ws.update(cx, |ws, cx| {
+            ws.active = 0;
+            cx.notify();
+        });
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-shift-m");
+        assert_eq!(active(cx), 2, "alt+shift+m found the tab where it went");
+
+        // Refusals name the reason, and change nothing.
+        let taken_by_tab = ws.update(cx, |ws, _| ws.pin_tab_hotkey(0, 'm'));
+        assert!(taken_by_tab.is_err_and(|why| why.contains("Alt+Shift+M")));
+        let taken_by_td = ws.update(cx, |ws, _| ws.pin_tab_hotkey(0, 'w'));
+        assert!(taken_by_td.is_err(), "alt+w closes the pane");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), None);
+
+        // Saved with the tab, and read back.
+        let state = ws.read_with(cx, |ws, cx| ws.build_state(cx));
+        let back: StateFile = toml::from_str(&toml::to_string(&state).unwrap()).unwrap();
+        assert_eq!(
+            back.tabs.iter().map(|t| t.hotkey).collect::<Vec<_>>(),
+            vec![None, None, Some('m')]
+        );
+        assert_eq!(
+            back.tab_digits, None,
+            "an unasked switch stays unasked on disk"
+        );
+
+        // Digits off: alt+1 is the program's, and the tab stays put.
+        ws.update(cx, |ws, cx| {
+            ws.tab_digits = Some(false);
+            cx.notify();
+        });
+        draw(cx);
+        focus(cx);
+        let before = active(cx);
+        cx.simulate_keystrokes("alt-1");
+        assert_eq!(active(cx), before, "the window did not move");
+        assert!(!keylayer::tab_keys().digits);
+        keylayer::hold_tab_keys(keylayer::TabKeys::default());
     }
 
     #[gpui::test]
@@ -40821,6 +41807,12 @@ mod tests {
         assert!(TOP_BAR_EMPTY_H < TOP_BAR_H);
         // And the bar reads it: its height, padding and corner all follow.
         let src = shipped_code();
+        // Every skin folds, unboxed ones included: their ADD PROJECT is on the
+        // spine while the spine is open (2026-11-02).
+        assert!(
+            src.contains("let top_empty = top_bar_is_empty("),
+            "the fold must not be skipped for a skin"
+        );
         let at = src.find("let bezel_top =").expect("bezel_top");
         let top = &src[at..at + src[at..].find("\n        let ").expect("end")];
         for piece in [
@@ -41805,6 +42797,7 @@ mod tests {
 
     fn tab_of(node: SavedNode) -> SavedTab {
         SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -42932,8 +43925,9 @@ mod tests {
         // site that is always the caller's own pane.
         assert_eq!(code.matches("threshing_floor::policy_admits(").count(), 1);
         let open = live_fn("fn mcp_open(");
-        assert!(open
-            .contains("threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
+        assert!(open.contains(
+            "threshing_floor::policy_admits(&self.mcp, leaf.read(cx).counts_as_agent())"
+        ));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
             writes.contains("threshing_floor::may_write_live(")
@@ -43426,6 +44420,7 @@ mod tests {
     #[test]
     fn a_leafs_pane_id_survives_a_round_trip_and_an_old_file_reads_absent() {
         let with_id = SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -43686,6 +44681,7 @@ mod tests {
             }],
             tabs: vec![
                 SavedTab {
+                    hotkey: None,
                     level: None,
                     name: Some("build".into()),
                     color: None,
@@ -43695,6 +44691,7 @@ mod tests {
                     node: leaf_with(None, "/work", None),
                 },
                 SavedTab {
+                    hotkey: None,
                     level: None,
                     name: Some("loose".into()),
                     color: None,
@@ -45641,6 +46638,7 @@ mod tests {
             [
                 ("admin", &["help"][..]),
                 ("uninstall", &["help"][..]),
+                ("update", &["help"][..]),
                 ("restricted", &["help"][..]),
                 ("skin", &["--list"][..]),
                 ("conversation", &["zzz-no-such-conversation"][..]),
@@ -45773,6 +46771,7 @@ mod tests {
             out
         };
         let tab = |node: SavedNode| SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -45845,6 +46844,7 @@ mod tests {
             document: None,
         };
         let tab = |node: SavedNode| SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -45931,6 +46931,7 @@ mod tests {
             document: None,
         };
         let tab = |node: SavedNode| SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -45995,6 +46996,7 @@ mod tests {
             document: None,
         };
         let tab = |node: SavedNode| SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -46223,6 +47225,7 @@ mod tests {
             document: None,
         };
         let tab = |node: SavedNode| SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -46518,6 +47521,7 @@ cwd = "/z"
             "custom name lost on save"
         );
         let toml = toml::to_string(&SavedTab {
+            hotkey: None,
             level: None,
             name: None,
             color: None,
@@ -46549,6 +47553,7 @@ cwd = "/z"
                 ..Default::default()
             });
             let text = toml::to_string(&SavedTab {
+                hotkey: None,
                 level: None,
                 name: None,
                 color: None,
@@ -46887,6 +47892,7 @@ warp = 1.5
             track: None,
             tabs: vec![SavedTab {
                 level: None,
+                hotkey: None,
                 name: None,
                 color: None,
                 text_color: None,
@@ -46941,6 +47947,7 @@ warp = 1.5
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                hotkey: None,
                 level: None,
                 name: Some("agents".into()),
                 color: None,
@@ -47009,6 +48016,7 @@ warp = 1.5
             track: None,
             tabs: vec![
                 SavedTab {
+                    hotkey: None,
                     level: None,
                     name: Some("HOME".into()),
                     color: Some("#aa3344".into()),
@@ -47018,6 +48026,7 @@ warp = 1.5
                     project: None,
                 },
                 SavedTab {
+                    hotkey: None,
                     level: None,
                     name: Some("loose".into()),
                     color: None,
@@ -47785,6 +48794,7 @@ node = "Leaf"
             warp: theme::WARP_DEFAULT,
             track: None,
             tabs: vec![SavedTab {
+                hotkey: None,
                 level: None,
                 name: None,
                 color: None,
@@ -48304,6 +49314,8 @@ Usage:
   terminal-delight uninstall preview|plan|run
                                  what a removal would do, the plan to review, and
                                  the worker that carries a reviewed plan out
+  terminal-delight update [status|check|install|rollback|channel|backups]
+                                 update from the stable or dev channel, or go back
   terminal-delight admin export|builds|guard|protect
                                  export settings, list or prune old builds, and
                                  protect this machine from uninstall
@@ -48331,6 +49343,7 @@ Usage:
 Options:
   -h, --help                     show this
   -V, --version                  show the version
+      --build-info               this build's version, commit and wire, as JSON
 
 Environment:
   TD_SCRATCH=1                   force a throwaway window that never claims a session
@@ -48351,21 +49364,59 @@ Environment:
 /// internal `--td-emit-demo` are dispatched above (that last one diverges, so it
 /// never reaches here), and a bare positional is deliberately left alone so a
 /// future "open in this directory" argument does not have to fight the gate.
+/// Install a staged update and run it in this process's place, when one is
+/// waiting and no session host anywhere on this machine would be left
+/// speaking an older wire. Returns only when it did not.
+fn cold_start_update(argv: &[String]) {
+    use std::os::unix::process::CommandExt;
+    let Ok(roots) = uninstall::roots::Roots::current() else {
+        return;
+    };
+    if update::load_record(&roots).pending.is_none() {
+        return;
+    }
+    let Ok(exe) = std::env::current_exe() else {
+        return;
+    };
+    if let Some(entry) =
+        update::apply_pending_at_cold_start(&roots, &exe, &update::Sessions::now(None))
+    {
+        let err = std::process::Command::new(&entry)
+            .args(argv.get(1..).unwrap_or_default())
+            .exec();
+        eprintln!(
+            "terminal-delight: installed the update but could not start {}: {err}",
+            entry.display()
+        );
+    }
+}
+
 fn flag_reply(first: Option<&str>) -> Option<(String, i32)> {
     match first {
         Some("--version" | "-V") => {
             // The core is named because a window can outlive the build it was
             // started from, and which emulator a running process has is the
             // first question when a pane draws something wrong.
+            // The commit too, now that the build carries one: the version
+            // alone reads the same three days of dev commits later.
+            let me = update::BuildInfo::this();
+            let commit = match (me.short_sha(), me.dirty) {
+                (Some(s), Some(true)) => format!(", commit {s}+dirty"),
+                (Some(s), _) => format!(", commit {s}"),
+                (None, _) => String::new(),
+            };
             Some((
                 format!(
-                    "terminal-delight {} (terminal core: {})",
+                    "terminal-delight {} (terminal core: {}{commit})",
                     env!("CARGO_PKG_VERSION"),
                     vt::CORE_NAME
                 ),
                 0,
             ))
         }
+        // What the updater asks a downloaded build before installing it: one
+        // line of JSON, and nothing started.
+        Some("--build-info") => Some((update::build_info_json(), 0)),
         Some("--help" | "-h") => Some((USAGE.to_string(), 0)),
         Some(flag) if flag.starts_with('-') => Some((
             format!("terminal-delight: unrecognised option `{flag}`\n\n{USAGE}"),
@@ -48561,6 +49612,9 @@ enum Verb {
     Briefing,
     /// Preview, plan and carry out a removal of Terminal Delight.
     Uninstall,
+    /// Find, check, install and roll back builds from the stable or dev
+    /// channel (see [`update`]); what ⚙ CONFIG › UPDATES does, from a terminal.
+    Update,
     /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
     Admin,
 }
@@ -48608,6 +49662,12 @@ const VERBS: &[VerbSpec] = &[
     VerbSpec {
         word: "uninstall",
         verb: Verb::Uninstall,
+        typed: true,
+        piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "update",
+        verb: Verb::Update,
         typed: true,
         piping: Piping::Streams(&["help"]),
     },
@@ -48875,6 +49935,7 @@ fn main() {
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
+                Verb::Update => update::run_cli(&argv[2..]),
                 Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);
@@ -48960,6 +50021,13 @@ fn main() {
         (key, claim, None)
     } else {
         let resolved = instance::resolve_session_hosted();
+        // A cold start — no session host to keep — is when an update that
+        // changes the window↔host wire installs, if one is staged. The new
+        // build then runs in this one's place; any failure leaves this build
+        // to carry on and says why in the log.
+        if matches!(resolved.route, instance::Route::SpawnHost) {
+            cold_start_update(&argv);
+        }
         // No lock is consulted here any more. A hosted window writes nothing —
         // it hands its layout to the host — so the claim that decides who may
         // write a session file has no bearing on whether this window may show

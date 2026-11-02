@@ -7,6 +7,41 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Update Terminal Delight from inside TD
+
+- ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a
+  newer build on the channel you choose. Stable is published releases. Dev is
+  the rolling build of the development branch, marked experimental and named
+  by its exact commit and date. Nothing is downloaded until you press Update,
+  and the channel changes only when you change it.
+- A download is checked against the checksum published beside it,
+  smoke-checked by running it far enough to say what it is, and installed
+  beside the old build only when all three checks pass. It is never described
+  as signed: nothing is signed yet. A release with no checksum is shown with
+  a link and never installed in-app.
+- An update restarts only the window. The session host keeps every terminal
+  and agent. A build that changes how the window talks to the host is staged
+  instead, and installs at the next cold start. **Restart everything now**
+  installs it at once; it states how many terminals that ends and asks twice.
+- Before any install or rollback, your settings and the small records (the
+  Threshing Floor, agent records, notes, handovers) are copied into a verified
+  backup in `~/.local/share/terminal-delight-backups/`. **Roll back** returns
+  to the build the last install replaced, and can itself be undone.
+- An AppImage is replaced in place, with `<name>.previous` kept beside it. A
+  launcher build gets a new `td-<commit>-<channel>` in the build library and a
+  repointed launcher, under the same deploy lock the swap tool takes. A source
+  checkout is shown its commit and uncommitted changes, plus the commands to
+  run; TD never pulls or rebuilds it. A package-owned install is left to its
+  package manager.
+- `terminal-delight --version` now names the commit, and `--build-info` prints
+  the version, commit, date, dirty state and the window↔host wire fingerprint
+  as JSON.
+- An optional daily check, off unless you turn it on, raises a desktop
+  notification once per new build. It never downloads anything.
+- CI publishes every green push to a `dev/*` branch as the `dev-build`
+  prerelease, which carries the AppImage, its checksum and a `build.json` that
+  names the commit.
+
 ### Briefs and judgement calls
 
 - Agents Terminal Delight briefs are now pointed at the briefing skill instead
@@ -33,6 +68,27 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   no longer post its reply card, because the pid it remembered was gone.
 - The launch briefing tells agents to name panes by name, and never to carry a
   pane number or pid from one turn to the next.
+- An agent can name another agent by its conversation instead of its pid.
+  `list_panes` gives each agent an `agent` field (its conversation id, filled
+  only when the window can prove it, never guessed), and `prompt_agent`,
+  `ask_agent`, `pane_events` and `leave_note` accept `agent`, looked up at the
+  moment of the call. A coordinator's worker that sleeps and wakes into a fresh
+  pane is still found; its old pid is not.
+- A pid an agent held before its worker slept and woke is answered with where
+  the worker went: its pane's name, its new pid, and the `agent` to name it by
+  next time. Nothing is sent; the call is never moved to the new pane. The
+  window remembers its wakes for a day, and a worker woken into a pane closed
+  to the caller is answered like any missing pid.
+- A woken agent is told, at the start of the session it wakes into, that its
+  pane number and pid are new and what to use instead. The wake script marks
+  it, and the session-start briefing hook says it once, whether or not the
+  launcher briefed the agent.
+- An asleep agent is listed as an agent that is asleep, not as a plain shell.
+  `list_panes` reports it with `is_agent: true`, a `dormancy` of `awake`,
+  `resting` or `asleep` (absent for a pane that is not an agent), and the
+  conversation it will resume as its `agent`, so it can be found and prompted
+  by name while it sleeps. The window's own access rules count it as an agent
+  too.
 
 ### Artifact chip
 
@@ -406,6 +462,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Security for 0.5.0 development
 
+- **A program cannot make a pane keep picture uploads open without limit.**
+  A picture sent in pieces stays unfinished until its last piece arrives, and
+  nothing capped how many could be open at once. At most 16 are now kept; a
+  further one is refused until one finishes or sits idle. A pane's host keeps
+  running the build it started with, so terminals opened before an update are
+  covered once the host next starts. (#1259)
 - **No agent prompts another without a line a person drew.** `ask_agent` asks
   only along a Threshing Floor line that reaches `ask`, or a bypass a person granted on
   the rail, and a pane nobody seated is never asked. A seated pane is hidden from

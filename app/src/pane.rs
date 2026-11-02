@@ -20,6 +20,7 @@ mod bench;
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
 mod grid_paint;
+pub(crate) use grid_paint::reduced_motion;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
@@ -3844,17 +3845,7 @@ const INPUT_ROWS_MAX: usize = 12;
 /// agent at rest those rows are the end of its reply, which the transcript
 /// already shows.
 fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
-    let border = |r: &GridRow| {
-        let marks = r.line.text.chars().filter(|c| !c.is_whitespace());
-        let mut n = 0;
-        for c in marks {
-            if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
-                return false;
-            }
-            n += 1;
-        }
-        n >= 10
-    };
+    let border = |r: &GridRow| is_box_border(&r.line.text);
     let blank = |r: &GridRow| r.line.text.trim().is_empty();
     let status = |r: &GridRow| {
         let t = r.line.text.trim_start();
@@ -3882,6 +3873,120 @@ fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
         .map_or(bottom + 1, |e| e + 1);
     let end = end.max(bottom + 1).min(start + INPUT_ROWS_MAX);
     Some(start..end)
+}
+
+/// A row an agent draws its input box with: every mark box drawing — Claude
+/// Code's two long rules, or a rounded box's top and bottom — and at least ten
+/// of them, so a short rule inside a reply is not taken for one.
+fn is_box_border(text: &str) -> bool {
+    let mut n = 0;
+    for c in text.chars().filter(|c| !c.is_whitespace()) {
+        if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
+            return false;
+        }
+        n += 1;
+    }
+    n >= 10
+}
+
+/// What the person has typed into an agent's prompt, read off the screen, for
+/// the ctrl+c that clears it to put on the clipboard first.
+///
+/// Parker, 2026-11-02: ctrl+c clears the prompt in Claude Code and Codex, which
+/// is useful, *"but fatfingering is a REAL AND AWEFUL PAIN POINT"* — a long
+/// prompt gone on one stray chord. So in a TD pane that chord is a cut.
+///
+/// `rows` are the screen's rows with every DIM cell already blanked, because
+/// both agents draw their empty-prompt placeholder dim and their typed text
+/// plain — captured off the real programs the same day: Codex writes
+/// `› ESC[2mAsk Codex to do anything`, Claude Code `❯ ESC[2mTry "fix
+/// typecheck errors"`. Without that, ctrl+c on an empty prompt would put the
+/// placeholder over whatever the person had on the clipboard.
+///
+/// The prompt is the caret row (`❯`, `›` or `> `) whose block holds the cursor
+/// — both agents park the cursor in their prompt, and that is what tells it
+/// apart from the same caret echoing an earlier turn in the scrollback above.
+/// The block runs down to the box's closing rule (Claude Code, which draws
+/// one), or else to the first blank row below the cursor (Codex, which leaves a
+/// blank before its footer); a row not indented under the caret ends it, which
+/// is how the agent's own words below an echoed turn stop the block short of
+/// the cursor. Continuation rows lose the caret's indent, and rows
+/// the agent broke only for width are joined back, as a selection copy does.
+fn agent_draft(rows: &[String], cursor: usize, cols: usize) -> Option<String> {
+    let inner = |r: &str| -> String {
+        let t = r.trim_end().trim_end_matches('│').trim_end();
+        t.strip_prefix('│').unwrap_or(t).to_string()
+    };
+    let caret_at = |r: &str| -> Option<usize> {
+        let r = inner(r);
+        let lead = r.chars().take_while(|c| c.is_whitespace()).count();
+        let mut rest = r.chars().skip(lead);
+        let caret = rest.next()?;
+        if !matches!(caret, '❯' | '›' | '>') {
+            return None;
+        }
+        match rest.next() {
+            None => Some(lead + 1),
+            Some(' ' | '\u{a0}') if !(caret == '>' && rest.next() == Some('>')) => Some(lead + 2),
+            _ => None,
+        }
+    };
+    let first = (0..=cursor.min(rows.len().checked_sub(1)?))
+        .rev()
+        .find(|&k| caret_at(&rows[k]).is_some())?;
+    let indent = caret_at(&rows[first])?;
+    let boxed = first > 0 && is_box_border(&rows[first - 1]);
+    let mut end = first + 1;
+    while end < rows.len() && !is_box_border(&rows[end]) {
+        let row = inner(&rows[end]);
+        let blank = row.trim().is_empty();
+        let under = row.chars().take_while(|c| c.is_whitespace()).count() >= indent;
+        if !blank && !under || !boxed && blank && end > cursor {
+            break;
+        }
+        end += 1;
+    }
+    if cursor >= end {
+        return None;
+    }
+    let mut lines: Vec<String> = rows[first..end]
+        .iter()
+        .map(|r| {
+            let r = inner(r);
+            let pad = r
+                .chars()
+                .take(indent)
+                .take_while(|c| c.is_whitespace())
+                .count();
+            r.chars()
+                .skip(pad)
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    lines[0] = inner(&rows[first])
+        .chars()
+        .skip(indent)
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    // `❯ 1. Yes` is a menu's cursor, not a prompt: a picker on screen has no
+    // draft to save, and its option is not worth the person's clipboard.
+    let digits = lines[0].chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 && lines[0][digits..].starts_with(". ") {
+        return None;
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(reflow_wrapped_copy(
+        &lines.join("\n"),
+        cols.saturating_sub(indent),
+    ))
 }
 
 /// One matched line inside a pane's grid: its absolute grid line index, the line
@@ -4870,7 +4975,9 @@ impl TerminalView {
     pub(crate) fn party(&self) -> crate::threshing_floor::Party {
         crate::threshing_floor::Party {
             seat: self.seat,
-            is_agent: self.mode.is_agent(),
+            // An asleep agent is still an agent: its conversation is kept and
+            // one key brings it back, so the rules treat it as one (#1160).
+            is_agent: self.counts_as_agent(),
             access: self.agent_access,
         }
     }
@@ -7937,6 +8044,11 @@ impl TerminalView {
             self.paste_clipboard(cx);
             return Handled::Declined;
         }
+        // Ctrl+C clears an agent's prompt; take what it clears to the
+        // clipboard first, so a stray one costs nothing. The ^C still goes.
+        if k.control && !k.shift && !k.alt && k.key == "c" {
+            self.save_agent_draft(cx);
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
@@ -8698,6 +8810,46 @@ impl TerminalView {
             return None;
         }
         Some(reflow_wrapped_copy(&raw, self.grid.cols))
+    }
+
+    /// Put the agent's typed prompt on the clipboard, if it has one: the ctrl+c
+    /// that is about to clear it becomes a cut (see [`agent_draft`]). A shell,
+    /// an empty prompt or a screen with no prompt leaves the clipboard alone.
+    fn save_agent_draft(&self, cx: &mut Context<Self>) {
+        if !self.mode.is_agent() {
+            return;
+        }
+        let (rows, cursor) = {
+            let term = self.session.term.lock();
+            let mut rows = Vec::with_capacity(term.screen_lines());
+            term.for_each_row(Line(0), term.bottommost_line(), |_, cells| {
+                rows.push(
+                    cells
+                        .iter()
+                        .filter(|c| {
+                            !c.flags.intersects(
+                                Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER,
+                            )
+                        })
+                        .map(|c| {
+                            if c.flags.contains(Flags::DIM) || c.c == '\0' {
+                                ' '
+                            } else {
+                                c.c
+                            }
+                        })
+                        .collect::<String>(),
+                )
+            });
+            (rows, term.cursor().point.line.0)
+        };
+        let Ok(cursor) = usize::try_from(cursor) else {
+            return;
+        };
+        if let Some(text) = agent_draft(&rows, cursor, self.grid.cols) {
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
     }
 
     fn copy_selection(&self, cx: &mut Context<Self>) {
@@ -10639,6 +10791,11 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         if crate::keylayer::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
+        // A tab hotkey the window holds leaves too. One it does not hold —
+        // digits switched off, a letter nobody pinned — is the program's.
+        if crate::keylayer::held_tab_chord(ks.key.as_str(), m.alt, m.control, m.shift).is_some() {
+            return None;
+        }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
         let base = ks.key_char.as_ref().map(|s| s.as_bytes().to_vec())?;
         let mut out = vec![0x1b];
@@ -11386,6 +11543,24 @@ impl Render for TerminalView {
             self.paint_inverted = false;
             self.paint_to_grid = None;
         }
+        // The cell the block cursor was painted in, after the rows above moved:
+        // what the cursor's afterimage remembers. Read off the memo the rows
+        // came from, never off the terminal again, so it is this frame's.
+        let cursor_cell = (!lines.is_empty())
+            .then(|| self.styled_memo.borrow())
+            .and_then(|memo| {
+                let key = &memo.as_ref()?.key;
+                if !key.show_cursor {
+                    return None;
+                }
+                let g = key.cursor.point.line.0 + key.display_offset as i32;
+                let g = usize::try_from(g).ok().filter(|&g| g < self.grid.rows)?;
+                let p = match &self.paint_to_grid {
+                    Some(perm) => perm.iter().position(|&r| r == g)?,
+                    None => g + self.paint_offset,
+                };
+                (p < lines.len()).then_some((p, key.cursor.point.column.0))
+            });
         let ps = crate::lang::current().strings();
         // UI CONFIG, the PANES layer: one config for every pane — no pane is in
         // charge of its own. The title, the state word and ⋯ are not switches.
@@ -12897,6 +13072,7 @@ impl Render for TerminalView {
                                         history.grade.off_cursor_linger_ms = None;
                                         history.grade.inactive_cursor_linger_ms = None;
                                         history.grade.inactive_off_cursor_linger_ms = None;
+                                        history.grade.cursor_trail = None;
                                         history
                                     },
                                     offset: self.session.term.lock().display_offset(),
@@ -12910,6 +13086,17 @@ impl Render for TerminalView {
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                                 bands: std::rc::Rc::new(bands),
                                 band_ink: (sk.ink.rule_strong, sk.ink.rule),
+                                cursor: cursor_cell,
+                                // A crawl centres its rows, so grid columns no
+                                // longer place a cell; the desktop's ask for less
+                                // motion holds it off too. Clean has already
+                                // dropped it from `th`.
+                                cursor_trail: th
+                                    .grade
+                                    .cursor_trail
+                                    .filter(|t| t.lifetime().is_some())
+                                    .filter(|_| !th.crawl && !grid_paint::reduced_motion()),
+                                cursor_ink: graded(th.cursor, &th.grade, Channel::Bg),
                             },
                             cx,
                         );
@@ -14472,6 +14659,113 @@ mod tests {
     }
 
     const RULE: &str = "────────────────────────────────────────────────";
+
+    fn draft_of(rows: &[&str], cursor: usize) -> Option<String> {
+        let rows: Vec<String> = rows.iter().map(|r| r.to_string()).collect();
+        agent_draft(&rows, cursor, 100)
+    }
+
+    /// Ctrl+C clears an agent's prompt, and in a TD pane it saves what it
+    /// clears: the typed words, from the caret block the cursor sits in, in
+    /// Codex's unboxed composer and Claude Code's ruled box alike — a blank line
+    /// typed into the draft included, the footer under it not.
+    #[test]
+    fn ctrl_c_saves_the_prompt_the_cursor_is_in() {
+        let codex = [
+            "› an earlier turn, echoed",
+            "",
+            "• the reply to it",
+            "",
+            "› fix the login bug",
+            "  and the logout one",
+            "",
+            "  ? for shortcuts                    100% context left",
+        ];
+        assert_eq!(
+            draft_of(&codex, 5).as_deref(),
+            Some("fix the login bug\nand the logout one"),
+            "the composer, not the echoed turn above it"
+        );
+
+        let claude = [
+            "❯ an earlier turn",
+            "",
+            RULE,
+            "❯\u{a0}first line",
+            "  second",
+            "",
+            "  fourth",
+            RULE,
+            "  ? for shortcuts",
+        ];
+        assert_eq!(
+            draft_of(&claude, 4).as_deref(),
+            Some("first line\nsecond\n\nfourth"),
+            "inside the rules, blank line kept"
+        );
+
+        let rounded = [
+            "╭──────────────────────────────────────╮",
+            "│ > what now                           │",
+            "╰──────────────────────────────────────╯",
+        ];
+        assert_eq!(draft_of(&rounded, 1).as_deref(), Some("what now"));
+    }
+
+    /// The other half of the promise: ctrl+c leaves the clipboard alone when
+    /// there is nothing typed. An empty prompt arrives with its dim placeholder
+    /// already blanked, so it is a bare caret; a menu's `❯ 1.` is not a prompt;
+    /// and a cursor below an echoed turn, with the agent's words between, does
+    /// not reach back up and take that turn.
+    #[test]
+    fn ctrl_c_saves_nothing_from_an_empty_prompt_or_a_menu() {
+        let empty_codex = ["› an earlier turn", "", "›", "", "  ? for shortcuts"];
+        assert_eq!(
+            draft_of(&empty_codex, 2),
+            None,
+            "Codex, placeholder blanked"
+        );
+
+        let empty_claude = [
+            "❯ an earlier turn",
+            "",
+            RULE,
+            "❯\u{a0}",
+            RULE,
+            "  ? for shortcuts",
+        ];
+        assert_eq!(
+            draft_of(&empty_claude, 3),
+            None,
+            "Claude Code, placeholder blanked"
+        );
+
+        let menu = [
+            "Do you want to make this edit?",
+            "❯ 1. Yes",
+            "  2. No",
+            "Esc to cancel",
+        ];
+        assert_eq!(draft_of(&menu, 1), None, "a menu's cursor");
+
+        let below = [
+            "❯ fix the login bug",
+            "  and the logout one",
+            "I'll start with the session cookie.",
+            "Do you want to proceed?",
+            "  1. Yes",
+        ];
+        assert_eq!(
+            draft_of(&below, 4),
+            None,
+            "an echoed turn is not reached back to"
+        );
+        assert_eq!(
+            draft_of(&["$ cargo test", "ok"], 1),
+            None,
+            "no caret at all"
+        );
+    }
 
     /// The reader's foot finds Claude Code's input box by its two long rules,
     /// and carries the status line above it while the agent works — and only
@@ -17675,6 +17969,54 @@ mod tests {
             erase_run_keys(&row, 2, 5, 7, false),
             Some(walk_then_rub(1, 2))
         );
+    }
+
+    /// A tab hotkey the window holds never reaches the terminal as bytes,
+    /// and one it does not hold is the program's ESC-prefixed key as ever.
+    /// `key_char` supplied, as gpui fills it at runtime: without it the alt
+    /// arm returns `None` for every key and this would pass for nothing.
+    #[test]
+    fn a_held_tab_hotkey_is_never_written_to_the_terminal() {
+        let alt = |c: &str, shift: bool| {
+            let mut k = Keystroke::parse(&if shift {
+                format!("alt-shift-{c}")
+            } else {
+                format!("alt-{c}")
+            })
+            .unwrap();
+            k.key_char = Some(if shift {
+                c.to_uppercase()
+            } else {
+                c.to_string()
+            });
+            keystroke_bytes(&k)
+        };
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        assert_eq!(
+            alt("3", false),
+            Some(b"\x1b3".to_vec()),
+            "unheld: readline's"
+        );
+        assert_eq!(
+            alt("m", true),
+            Some(b"\x1bM".to_vec()),
+            "unpinned: the program's"
+        );
+        crate::keylayer::hold_tab_keys(
+            crate::keylayer::TabKeys {
+                digits: true,
+                pinned: 0,
+            }
+            .with_letter('m'),
+        );
+        assert_eq!(alt("3", false), None);
+        assert_eq!(alt("m", true), None);
+        assert_eq!(
+            alt("q", true),
+            Some(b"\x1bQ".to_vec()),
+            "only the pinned letter"
+        );
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
     }
 
     #[test]

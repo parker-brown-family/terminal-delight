@@ -3366,6 +3366,16 @@ const DELEGATION_PARAGRAPH: &str = "Use help when its likely contribution justif
      permissions before contacting a teammate, avoid duplicating work already underway, and check \
      delegated results. Ordinary choices need no score, written justification, or routing report.";
 
+/// What an agent is told at the start of the session it woke into: a sleep
+/// ended its process and a wake started it again in a fresh pane, so every
+/// pane number and pid it remembers from before is stale. Said once, through
+/// the session-start hook ([`crate::briefhook::briefing_for`]).
+pub const WOKE_PARAGRAPH: &str = "YOU WOKE IN A FRESH PANE. Terminal Delight put you to \
+     sleep and has woken you into a new pane, so your pane number and your pane's pid \
+     have changed, and any pane number or pid you remember from before the sleep is \
+     stale. Leave `pid` out for your own pane; name another agent by its `agent` from \
+     `list_panes`; and when you tell a person about a pane, use its name.";
+
 /// How an agent names a pane, to a person and to Terminal Delight.
 ///
 /// Parker, 2026-11-02: agents should "never tell a HUMAN pane 33"; they say
@@ -3379,7 +3389,9 @@ pub const NAMING_PARAGRAPH: &str = "NAMING PANES. When you tell a person about a
      line to use. Never say \"pane 33\" or a pid to a person. Pane numbers and pids \
      are locations, and they change when an agent sleeps and wakes into a fresh pane, \
      so never remember one across turns: every verb that acts on your own pane works \
-     out which pane is calling, so leave `pid` out for your own pane.";
+     out which pane is calling, so leave `pid` out for your own pane. To act on \
+     another agent, give the verb its `agent` from `list_panes` (its conversation, \
+     which lasts across sleep and wake), not its pid.";
 
 /// The briefing's paragraph on the Threshing Floor: what a line is, how an
 /// agent learns its own, how to answer a prompt that arrives along one, and
@@ -4835,6 +4847,7 @@ mod tests {
         );
         assert!(NAMING_PARAGRAPH.contains("name.said"));
         assert!(NAMING_PARAGRAPH.contains("leave `pid` out"));
+        assert!(NAMING_PARAGRAPH.contains("its `agent` from `list_panes`"));
     }
 
     /// **The transports are RANKED, and the fence is last.**
