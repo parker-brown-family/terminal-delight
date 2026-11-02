@@ -4732,3 +4732,62 @@ fn ctrl_c_on_an_empty_prompt_or_in_a_shell_keeps_the_clipboard(cx: &mut TestAppC
         "a shell"
     );
 }
+
+/// Ctrl+C keeps the screenshots too. TD pastes a picture into an agent's
+/// prompt as the path of the file it saved, the agent turns that path into
+/// `[Image #1]`, and the ctrl+c that clears the prompt copies the file's path
+/// back where the tag was. The stand-in turns bracketed paste on, as both
+/// agents do, and draws the tag once the paste's closing marker arrives — the
+/// second `~`, `ESC[201~` — which is what Claude Code was seen to do.
+#[gpui::test]
+fn ctrl_c_copies_a_pasted_screenshot_back_as_its_file(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[?2004h\\033[1m›\\033[22m look at '; \
+         n=0; while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' '); \
+         case $c in 7e) n=$((n+1)); [ $n = 2 ] && printf '\\033[36m[Image #1]\\033[39m please';; \
+         03) printf '\\r\\n 03\\r\\n'; break;; esac; done; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Claude);
+    let shot = std::path::PathBuf::from("/tmp/td-shots/pasted-1.png");
+    pane.view
+        .update(pane.cx, |v, cx| v.paste_image_paths(&[shot], cx));
+    pane.wait_for("please");
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("look at /tmp/td-shots/pasted-1.png please")
+    );
+}
+
+/// Only a picture is tracked. A path the agent might turn into a tag but TD
+/// cannot vouch for — here a text file — leaves the tag as the agent drew it,
+/// because a wrong file on the clipboard is worse than none.
+#[gpui::test]
+fn ctrl_c_never_gives_a_tag_a_file_that_is_not_a_picture(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[?2004h\\033[1m›\\033[22m look at '; \
+         n=0; while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' '); \
+         case $c in 7e) n=$((n+1)); [ $n = 2 ] && printf '\\033[36m[Image #1]\\033[39m please';; \
+         03) printf '\\r\\n 03\\r\\n'; break;; esac; done; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    let notes = std::path::PathBuf::from("/tmp/td-shots/notes.txt");
+    pane.view
+        .update(pane.cx, |v, cx| v.paste_image_paths(&[notes], cx));
+    pane.wait_for("please");
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("look at [Image #1] please")
+    );
+}
