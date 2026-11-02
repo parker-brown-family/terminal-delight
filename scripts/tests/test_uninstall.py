@@ -458,11 +458,94 @@ if op != 'get': path.write_text(json.dumps(d))
         expected = table.read_bytes()
         table.write_bytes(b"missing historical hashes\n")
         self.assertNotEqual(self.run_script("known-hashes.sh", "--check").returncode, 0)
+        # Any row of this branch's own history missing is a failure, even one.
+        rows = expected.decode().splitlines(keepends=True)
+        for dropped in (0, len(rows) - 1):
+            table.write_text("".join(rows[:dropped] + rows[dropped + 1:]))
+            p = self.run_script("known-hashes.sh", "--check")
+            self.assertNotEqual(p.returncode, 0, f"dropping {rows[dropped]!r} passed")
+            self.assertIn("this branch's history", p.stderr)
+        # Sorted, so only the format rule can refuse it.
+        table.write_text("".join(sorted(rows + ["0" * 64 + "  scripts/not-a-hashed-file\n"])))
+        p = self.run_script("known-hashes.sh", "--check")
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("not '<sha256>  <hashed path>'", p.stderr)
+        table.write_text("".join(reversed(rows)))
+        self.assertNotEqual(self.run_script("known-hashes.sh", "--check").returncode, 0)
+        # Regenerating scans every branch this checkout has, so it may add rows
+        # from other branches; it never drops this branch's own.
         p = self.run_script("known-hashes.sh")
         self.assertEqual(p.returncode, 0, p.stderr)
-        self.assertEqual(table.read_bytes(), expected)
+        self.assertTrue(set(rows) <= set(table.read_text().splitlines(keepends=True)))
+        self.assertEqual(self.run_script("known-hashes.sh", "--check").returncode, 0)
+        table.write_bytes(expected)
         (self.repo / "scripts/td-agent-hooks").write_text("uncommitted replacement")
         self.assertNotEqual(self.run_script("known-hashes.sh", "--check").returncode, 0)
+
+    def test_known_hash_check_ignores_other_branches_until_their_change_arrives(self):
+        # Issue 1253: a new keys.html committed on ANOTHER branch turned every
+        # pull request into dev/0.5.0 red. Reproduce it in a throwaway clone
+        # that shares the real history's objects but writes only to itself.
+        clone = self.root / "clone"
+        head = subprocess.check_output(["git", "rev-parse", "HEAD"], cwd=REPO).decode().strip()
+        g = lambda *a: subprocess.run(["git", "-c", "user.name=t", "-c", "user.email=t@t", *a],
+                                      cwd=clone, capture_output=True, text=True, check=True).stdout
+        subprocess.run(["git", "clone", "-q", "--shared", "--no-checkout", str(REPO), str(clone)], check=True)
+        g("sparse-checkout", "set", "--no-cone", "/app/src/uninstall/known_hashes.txt", "/scripts/td-*",
+          "/plugins/", "/docsite/pages/keys.html", "/packaging/")
+        g("checkout", "-q", "--detach", head)
+        script = clone / "scripts/known-hashes.sh"
+
+        def run(*args):
+            # Put the script under test back before every run: it sits outside
+            # the sparse set, so a checkout to a commit whose copy matches it
+            # deletes it as a clean file (as CI's merge commit does).
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_bytes((self.repo / "scripts/known-hashes.sh").read_bytes())
+            script.chmod(0o755)
+            return subprocess.run([str(script), *args], capture_output=True, text=True)
+        check = lambda: run("--check")
+        p = check()
+        self.assertEqual(p.returncode, 0, p.stderr)
+
+        g("checkout", "-q", "-b", "elsewhere")
+        keys = clone / "docsite/pages/keys.html"
+        keys.write_text(keys.read_text() + "<!-- a docs change on another branch -->\n")
+        g("commit", "-qam", "keys.html changes on another branch")
+        side = hashlib.sha256(keys.read_bytes()).hexdigest()
+        g("checkout", "-q", "--detach", head)
+        self.assertNotIn(side, (clone / "app/src/uninstall/known_hashes.txt").read_text())
+        p = check()
+        self.assertEqual(p.returncode, 0, "another branch's commit turned this branch red: " + p.stderr)
+
+        # The pull request that brings the change here is the one that fails...
+        g("merge", "-q", "--ff-only", "elsewhere")
+        p = check()
+        self.assertNotEqual(p.returncode, 0)
+        self.assertIn("this branch's history", p.stderr)
+        # ...and regenerating the table is what makes it pass.
+        self.assertEqual(run().returncode, 0)
+        self.assertIn(side, (clone / "app/src/uninstall/known_hashes.txt").read_text())
+        p = check()
+        self.assertEqual(p.returncode, 0, p.stderr)
+        g("commit", "-qam", "the table learns the merged version")
+
+        # A tagged release is different: whatever it shipped is on real
+        # machines, so its versions are this branch's business even when the
+        # tag sits on another line (0.4's tags live on release/0.4, not dev).
+        merged = g("rev-parse", "HEAD").strip()
+        g("checkout", "-q", "-b", "release-line")
+        keys.write_text(keys.read_text() + "<!-- shipped from a release line -->\n")
+        g("commit", "-qam", "keys.html as a release shipped it")
+        shipped = hashlib.sha256(keys.read_bytes()).hexdigest()
+        g("tag", "v99.0.0-test")
+        g("checkout", "-q", "--detach", merged)
+        p = check()
+        self.assertNotEqual(p.returncode, 0, "a tagged release's version was not required")
+        self.assertEqual(run().returncode, 0)
+        self.assertIn(shipped, (clone / "app/src/uninstall/known_hashes.txt").read_text())
+        p = check()
+        self.assertEqual(p.returncode, 0, p.stderr)
 
     def test_failed_replace_discards_snapshot_and_uncommitted_backup(self):
         ours = self.hook("td-agent-hooks")
