@@ -13,6 +13,8 @@
 //!   said it had none. Absent when git could not be asked.
 //! - `TD_BUILD_WIRE`: a fingerprint of everything a window and a session host
 //!   must agree on to share terminals (see [`wire_fingerprint`]). Always set.
+//! - `TD_BUILD_WIRE_PROTO`: the part of that fingerprint a replay cannot test,
+//!   the protocol modules alone (see [`proto_fingerprint`]). Always set.
 //!
 //! An unset fact is left unset rather than written as an empty string or a
 //! zero, so the binary can say "unknown" instead of inventing an answer.
@@ -83,6 +85,54 @@ fn main() {
         "cargo:rustc-env=TD_BUILD_WIRE={}",
         wire_fingerprint(&manifest, core)
     );
+    println!(
+        "cargo:rustc-env=TD_BUILD_WIRE_PROTO={}",
+        proto_fingerprint(&manifest)
+    );
+}
+
+/// The files the window and host exchange messages through, rather than the
+/// terminal core both of them parse a byte stream with: the control protocol,
+/// the snapshot encoding and its grid hash, pictures, and the close report the
+/// pump sends.
+const PROTO_FILES: [&str; 4] = [
+    "hostproto.rs",
+    "gridwire.rs",
+    "picturewire.rs",
+    "vt/pump.rs",
+];
+
+/// A short hash of [`PROTO_FILES`], normalised as [`wire_fingerprint`] is.
+///
+/// A replay of a real host's capture (`scripts/wire-attest.sh`) proves that a
+/// new core reads an old host's bytes into the same screen. It says nothing
+/// about a changed control verb or a changed snapshot format, so CI attests a
+/// build only against one whose protocol fingerprint is equal to its own.
+fn proto_fingerprint(manifest: &Path) -> String {
+    let src = manifest.join("src");
+    let files: Vec<PathBuf> = PROTO_FILES.iter().map(|f| src.join(f)).collect();
+    let h = hash_sources(&src, &files);
+    let digest = h.finalize();
+    digest.iter().take(8).map(|b| format!("{b:02x}")).collect()
+}
+
+/// Each file's path under `src` and its normalised text, in the given order.
+fn hash_sources(src: &Path, files: &[PathBuf]) -> Sha256 {
+    let mut h = Sha256::new();
+    for f in files {
+        println!("cargo:rerun-if-changed={}", f.display());
+        let name = f
+            .strip_prefix(src)
+            .unwrap_or(f)
+            .to_string_lossy()
+            .to_string();
+        h.update(name.as_bytes());
+        h.update([0]);
+        let text = std::fs::read_to_string(f).unwrap_or_default();
+        h.update(normalise(&text).as_bytes());
+        h.update([0]);
+    }
+    h
 }
 
 /// A short hash of what decides whether a new window can attach to an old
@@ -120,20 +170,7 @@ fn wire_fingerprint(manifest: &Path, core: &str) -> String {
         }
     }
     files.sort();
-    let mut h = Sha256::new();
-    for f in &files {
-        println!("cargo:rerun-if-changed={}", f.display());
-        let name = f
-            .strip_prefix(&src)
-            .unwrap_or(f)
-            .to_string_lossy()
-            .to_string();
-        h.update(name.as_bytes());
-        h.update([0]);
-        let text = std::fs::read_to_string(f).unwrap_or_default();
-        h.update(normalise(&text).as_bytes());
-        h.update([0]);
-    }
+    let mut h = hash_sources(&src, &files);
     let lock = manifest.join("Cargo.lock");
     println!("cargo:rerun-if-changed={}", lock.display());
     let lock = std::fs::read_to_string(lock).unwrap_or_default();

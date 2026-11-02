@@ -417,22 +417,67 @@ jobs:
           name: terminal-delight-x86_64.AppImage
           path: dist
 
-      - name: Verify the digest and describe the build
+      - name: Verify the digest
+        if: steps.newest.outputs.publish == 'true'
+        run: cd dist && sha256sum --check terminal-delight-x86_64.AppImage.sha256
+
+      # The updater counts a new build as sharing a window's wire only when a
+      # hash of the wire's source matches, so every terminal-core change would
+      # otherwise reach Dev installs as a cold start. Here the build being
+      # replaced stands up a real session host, the new build replays a
+      # capture of it, and a passing replay (with its mutated controls
+      # refused) lists the old wire in build.json's compatible_with. The
+      # updater then offers "Restart window" to a window on that wire whose
+      # hosts all run its own bytes (app/src/update.rs, compat_attested).
+      # Anything short of a clean pass publishes no attestation, which leaves
+      # the conservative hash in charge; it never fails the job.
+      - name: Attest the wire against the build it replaces
+        if: steps.newest.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo '{}' > attest.json
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxcb1 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 || echo "::warning::could not install the runtime libraries"
+          mkdir -p wire/new wire/old
+          (cd wire/new && ../../dist/terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null)
+          if ! gh release download dev-build -p terminal-delight-x86_64.AppImage -D wire/old; then
+            echo "::notice::no dev build to attest against"
+            exit 0
+          fi
+          chmod +x wire/old/terminal-delight-x86_64.AppImage
+          (cd wire/old && ./terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null)
+          set +e
+          scripts/wire-attest.sh wire/old/squashfs-root/usr/bin/terminal-delight \
+            wire/new/squashfs-root/usr/bin/terminal-delight "$RUNNER_TEMP/wire-attest" > attest.out
+          code=$?
+          set -e
+          case $code in
+            0) cp attest.out attest.json; echo "attested:"; cat attest.json ;;
+            3) echo "::notice::no wire attestation (see the log above)" ;;
+            *) echo "::warning::the wire attestation failed (exit $code); this build is published without one" ;;
+          esac
+
+      - name: Describe the build
         if: steps.newest.outputs.publish == 'true'
         run: |
-          cd dist
-          sha256sum --check terminal-delight-x86_64.AppImage.sha256
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' ../app/Cargo.toml | head -1)"
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -1)"
           date="$(git log -1 --format=%cI "$GITHUB_SHA")"
+          wire="$(wire/new/squashfs-root/usr/bin/terminal-delight --build-info | jq -r '.wire // empty')"
           jq -n \
             --arg sha "$GITHUB_SHA" \
             --arg date "$date" \
             --arg branch "$GITHUB_REF_NAME" \
             --arg version "$version" \
             --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run}' \
-            > build.json
-          cat build.json
+            --arg wire "$wire" \
+            --slurpfile attest attest.json \
+            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run,
+              wire: (if $wire == "" then null else $wire end),
+              compatible_with: (if $attest[0].wire == $wire then ($attest[0].compatible_with // []) else [] end),
+              attestation: (if $attest[0].wire == $wire then $attest[0].against else null end)}' \
+            > dist/build.json
+          cat dist/build.json
 
       - name: Replace the dev-build prerelease
         if: steps.newest.outputs.publish == 'true'
