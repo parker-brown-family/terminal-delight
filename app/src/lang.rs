@@ -3023,6 +3023,9 @@ mod tests {
     /// terms the interface names (CONCUR, ELI5), and templates that are only
     /// placeholders and symbols.
     const SAME_AS_ENGLISH: &[&str] = &[
+        // German says UPDATES too, and French spells STABLE the same way.
+        "chrome.cfg_updates",
+        "chrome.upd_stable",
         // Names, not words: Parker's CONFIG menu and UI CONFIG section, and the
         // face chips, which read TERM | BENCH in every language.
         "chrome.cfg_config",

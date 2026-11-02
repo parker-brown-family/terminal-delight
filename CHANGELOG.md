@@ -7,6 +7,41 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Update Terminal Delight from inside TD
+
+- ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a
+  newer build on the channel you choose. Stable is published releases. Dev is
+  the rolling build of the development branch, marked experimental and named
+  by its exact commit and date. Nothing is downloaded until you press Update,
+  and the channel changes only when you change it.
+- A download is checked against the checksum published beside it,
+  smoke-checked by running it far enough to say what it is, and installed
+  beside the old build only when all three checks pass. It is never described
+  as signed: nothing is signed yet. A release with no checksum is shown with
+  a link and never installed in-app.
+- An update restarts only the window. The session host keeps every terminal
+  and agent. A build that changes how the window talks to the host is staged
+  instead, and installs at the next cold start. **Restart everything now**
+  installs it at once; it states how many terminals that ends and asks twice.
+- Before any install or rollback, your settings and the small records (the
+  Threshing Floor, agent records, notes, handovers) are copied into a verified
+  backup in `~/.local/share/terminal-delight-backups/`. **Roll back** returns
+  to the build the last install replaced, and can itself be undone.
+- An AppImage is replaced in place, with `<name>.previous` kept beside it. A
+  launcher build gets a new `td-<commit>-<channel>` in the build library and a
+  repointed launcher, under the same deploy lock the swap tool takes. A source
+  checkout is shown its commit and uncommitted changes, plus the commands to
+  run; TD never pulls or rebuilds it. A package-owned install is left to its
+  package manager.
+- `terminal-delight --version` now names the commit, and `--build-info` prints
+  the version, commit, date, dirty state and the window↔host wire fingerprint
+  as JSON.
+- An optional daily check, off unless you turn it on, raises a desktop
+  notification once per new build. It never downloads anything.
+- CI publishes every green push to a `dev/*` branch as the `dev-build`
+  prerelease, which carries the AppImage, its checksum and a `build.json` that
+  names the commit.
+
 ### Briefs and judgement calls
 
 - Agents Terminal Delight briefs are now pointed at the briefing skill instead
