@@ -30,6 +30,133 @@ pub(super) struct Snapshot {
     pub bands: std::rc::Rc<styling::Bands>,
     /// The ink of a band's rules, then of a note's box.
     pub band_ink: (Hsla, Hsla),
+    /// The PAINTED cell the block cursor was drawn in this frame, `(row,
+    /// column)`, or `None` when no cursor was drawn.
+    pub cursor: Option<(usize, usize)>,
+    /// The cursor afterimage to draw, already resolved: `None` when it is
+    /// off, held by Clean, crawling, or the desktop asked for less motion.
+    pub cursor_trail: Option<theme::CursorTrail>,
+    /// The cursor's own graded ink, which its afterimage fades from.
+    pub cursor_ink: Hsla,
+}
+
+/// Where the cursor stood, fading. One block cell; a streak is several.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CursorGhost {
+    pub row: usize,
+    pub column: usize,
+    born: Instant,
+    lifetime: Duration,
+    intensity: f32,
+}
+
+impl CursorGhost {
+    /// Light left, `0..=intensity`: squared like the text's ordinary fade, so
+    /// most of it goes early and the tail is a faint glimmer.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        let age = now.saturating_duration_since(self.born).as_secs_f32();
+        let left = (1.0 - age / self.lifetime.as_secs_f32()).clamp(0.0, 1.0);
+        self.intensity * left * left
+    }
+
+    fn alive(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.born) < self.lifetime
+    }
+}
+
+/// The most afterimages alive at once. A program repainting the screen
+/// can move the cursor hundreds of times a second; past this the oldest go.
+const CURSOR_GHOSTS_MAX: usize = 64;
+
+/// How long a hidden cursor still counts as standing where it was last drawn.
+/// Long enough to bridge a line editor's redraw, short enough that a cursor
+/// a program hid on purpose does not leave a trail when it comes back.
+const CURSOR_HIDDEN_GRACE: Duration = Duration::from_millis(250);
+
+/// The most of the cursor's light an afterimage keeps: it is drawn over the
+/// letters, and the character beneath it has to stay legible.
+const CURSOR_GHOST_OVER: f32 = 0.5;
+
+/// Record the cursor leaving `from` for `to`. An afterimage is one ghost at
+/// `from`; a streak along one row is a ghost in every cell it crossed, the far
+/// end born earliest so it goes dark first. Paint only: nothing here reads or
+/// writes the terminal.
+pub(super) fn cursor_moved(
+    ghosts: &mut std::collections::VecDeque<CursorGhost>,
+    from: (usize, usize),
+    to: (usize, usize),
+    trail: theme::CursorTrail,
+    now: Instant,
+) {
+    let Some(lifetime) = trail.lifetime() else {
+        ghosts.clear();
+        return;
+    };
+    let intensity = trail.intensity.clamp(0.0, 1.0);
+    let cells: Vec<(usize, Duration)> = match trail.style {
+        theme::CursorTrailStyle::Streak if from.0 == to.0 && from.1 != to.1 => {
+            // Nearest the cursor first, capped, so a long jump smears only
+            // the stretch it lands from.
+            let span = from
+                .1
+                .abs_diff(to.1)
+                .min(theme::CursorTrail::STREAK_MAX_CELLS);
+            let toward_from = |i: usize| {
+                if from.1 < to.1 {
+                    to.1 - i
+                } else {
+                    to.1 + i
+                }
+            };
+            (1..=span)
+                .map(|i| {
+                    // The far end is older by up to half a lifetime.
+                    let head = lifetime.mul_f32(0.5 * (i - 1) as f32 / span as f32);
+                    (toward_from(i), head)
+                })
+                .collect()
+        }
+        _ => vec![(from.1, Duration::ZERO)],
+    };
+    for (column, head) in cells {
+        // A cell already glowing is relit rather than stacked.
+        ghosts.retain(|g| !(g.row == from.0 && g.column == column));
+        ghosts.push_back(CursorGhost {
+            row: from.0,
+            column,
+            born: now.checked_sub(head).unwrap_or(now),
+            lifetime,
+            intensity,
+        });
+    }
+    // Never on the cell the cursor now occupies: the live block is there.
+    ghosts.retain(|g| (g.row, g.column) != to);
+    while ghosts.len() > CURSOR_GHOSTS_MAX {
+        ghosts.pop_front();
+    }
+}
+
+/// The desktop asked for less motion, read once. `TD_REDUCED_MOTION=1` (or
+/// `0`) decides it outright; otherwise the GNOME interface switch that GTK
+/// apps and portals honour, `enable-animations`, read through `gsettings`.
+/// Asked only while a cursor trail is on, so a window that never turns one
+/// on never runs the command.
+pub(crate) fn reduced_motion() -> bool {
+    static REDUCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REDUCED.get_or_init(|| {
+        match std::env::var("TD_REDUCED_MOTION").ok().as_deref() {
+            Some("1" | "true" | "yes") => return true,
+            Some("0" | "false" | "no") => return false,
+            _ => {}
+        }
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "enable-animations"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false")
+    })
 }
 
 /// The lines that stand in for an agent's tinted fills: one rule above and one
@@ -117,6 +244,13 @@ pub(super) fn bleed_runs(runs: &[TextRun], alpha: f32) -> Vec<TextRun> {
 pub(super) struct GridPaint {
     snapshot: Snapshot,
     trail: afterglow::Trail,
+    cursor_ghosts: std::collections::VecDeque<CursorGhost>,
+    /// Where a cursor that is hidden right now was last drawn, and when it
+    /// went. A program may hide the cursor while it redraws, so the frame
+    /// before a move can be one with no cursor in it; the afterimage starts
+    /// from here instead, within [`CURSOR_HIDDEN_GRACE`] of the hiding. A
+    /// cursor that is showing needs none of this: the last frame says where.
+    last_cursor: Option<((usize, usize), Instant)>,
     live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
     pub renders: std::rc::Rc<std::cell::Cell<usize>>,
@@ -141,11 +275,13 @@ struct LiveGrid {
 
 impl GridPaint {
     pub fn is_animating(&self) -> bool {
-        !self.trail.glyphs.is_empty()
+        !self.trail.glyphs.is_empty() || !self.cursor_ghosts.is_empty()
     }
 
     pub fn clear_afterglow(&mut self) {
         self.trail.clear();
+        self.cursor_ghosts.clear();
+        self.last_cursor = None;
         self.snapshot.context = None;
     }
 
@@ -155,6 +291,19 @@ impl GridPaint {
         if view.read(cx).snapshot != snapshot {
             let previous = view.read(cx);
             let mut trail = previous.trail.clone();
+            let mut cursor_ghosts = previous.cursor_ghosts.clone();
+            let now = cx.background_executor().now();
+            // Where the cursor stood: the last frame's, however long it sat
+            // there, or else where it was hidden, if that was moments ago.
+            let hidden = previous
+                .last_cursor
+                .filter(|(_, at)| now.saturating_duration_since(*at) < CURSOR_HIDDEN_GRACE);
+            let from = previous.snapshot.cursor.or(hidden.map(|(at, _)| at));
+            let mut last_cursor = match (snapshot.cursor, previous.snapshot.cursor) {
+                (Some(_), _) => None,
+                (None, Some(was)) => Some((was, now)),
+                (None, None) => hidden,
+            };
             let compatible = previous.snapshot.context.is_some()
                 && previous.snapshot.context == snapshot.context
                 && previous.snapshot.cell_h == snapshot.cell_h
@@ -179,8 +328,19 @@ impl GridPaint {
                                 .max(afterglow::MIN_GLYPH_BUDGET)
                         }),
                 );
+                // The cursor's afterimage, from where it stood to where it is
+                // drawn now.
+                match (snapshot.cursor_trail, from, snapshot.cursor) {
+                    (None, ..) => cursor_ghosts.clear(),
+                    (Some(cursor_trail), Some(from), Some(to)) if from != to => {
+                        cursor_moved(&mut cursor_ghosts, from, to, cursor_trail, now);
+                    }
+                    _ => {}
+                }
             } else {
                 trail.clear();
+                cursor_ghosts.clear();
+                last_cursor = None;
             }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
@@ -211,6 +371,8 @@ impl GridPaint {
             *view = cx.new(|_| Self {
                 snapshot,
                 trail,
+                cursor_ghosts,
+                last_cursor,
                 live: Some(live),
                 #[cfg(test)]
                 renders,
@@ -227,10 +389,12 @@ impl Render for GridPaint {
         }
         let now = cx.background_executor().now();
         self.trail.prune(now);
-        if !self.trail.glyphs.is_empty() {
+        self.cursor_ghosts.retain(|g| g.alive(now));
+        if self.is_animating() {
             window.request_animation_frame();
         }
         let s = &self.snapshot;
+        let ink = s.cursor_ink;
         div()
             .relative()
             .w_full()
@@ -263,6 +427,19 @@ impl Render for GridPaint {
                     .h(px(s.cell_h))
                     .whitespace_nowrap()
                     .child(StyledText::new(ghost.text).with_runs(ghost.runs))
+            }))
+            // Over the letters, at most half the cursor's own light, so the
+            // character under a fading block still reads. It was drawn under
+            // them first, and on the private-display rig a block behind text
+            // never showed: only the blank cells past a line's end glowed.
+            .children(self.cursor_ghosts.iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .w(px(s.cell_w))
+                    .h(px(s.cell_h))
+                    .bg(ink.alpha(ink.a * CURSOR_GHOST_OVER * ghost.alpha(now)))
             }))
             // A crawl centres every line, so grid columns no longer place them.
             .when(!s.crawl, |d| d.children(band_lines(s)))
@@ -911,6 +1088,181 @@ mod tests {
             .trail
             .glyphs
             .is_empty()));
+    }
+
+    /// The cursor's afterimage: where the block stood keeps light after it
+    /// moves, never where it now is, fades out on its own clock, and leaves
+    /// nothing when the trail is off. The terminal's cursor is untouched.
+    #[gpui::test]
+    fn a_moved_cursor_leaves_an_afterimage_that_fades(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        let trail = theme::CursorTrail {
+            ms: 200.0,
+            ..theme::CursorTrail::first()
+        };
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_trail = Some(trail);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[2J\x1b[3;5H");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        let at = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                let g = v.grid_paint.read(cx);
+                (
+                    g.snapshot.cursor,
+                    g.cursor_ghosts
+                        .iter()
+                        .map(|c| (c.row, c.column))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        };
+        let (before, ghosts) = at(&mut pane);
+        let before = before.expect("a drawn cursor");
+        assert!(ghosts.is_empty(), "nothing moved yet");
+        let cursor_before = pane.read(|v| v.session.term.lock().renderable_content().cursor.point);
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[3;12H"));
+        pane.redraw();
+        let (after, ghosts) = at(&mut pane);
+        let after = after.expect("a drawn cursor");
+        assert_ne!(before, after);
+        assert_eq!(ghosts, vec![before], "one afterimage, where it was");
+        assert!(!ghosts.contains(&after), "never under the live cursor");
+        // Paint only: the terminal's cursor is where the program put it.
+        let cursor_after = pane.read(|v| v.session.term.lock().renderable_content().cursor.point);
+        assert_eq!(cursor_after.column.0, 11);
+        assert_eq!(cursor_after.line, cursor_before.line);
+        // A line editor hides the cursor while it redraws, so the frame before
+        // a move often has none: the afterimage starts where it was last drawn.
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[?25l"));
+        pane.redraw();
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[3;20H\x1b[?25h"));
+        pane.redraw();
+        let (hidden_hop, ghosts) = at(&mut pane);
+        assert!(
+            ghosts.contains(&after),
+            "a hidden redraw lost the afterimage: {ghosts:?} {hidden_hop:?}"
+        );
+        // It goes dark on its own clock.
+        pane.cx.executor().advance_clock(Duration::from_millis(250));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(
+            at(&mut pane).1.is_empty(),
+            "the afterimage outlived its lifetime"
+        );
+        // Switched off, a move leaves nothing — and the switch keeps the dials.
+        pane.view.update(pane.cx, |v, cx| {
+            if let Some(g) = v.appearance.grade.as_mut() {
+                g.cursor_trail = Some(theme::CursorTrail { on: false, ..trail });
+            }
+            cx.notify();
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[5;2H"));
+        pane.redraw();
+        assert!(at(&mut pane).1.is_empty(), "off means off");
+    }
+
+    /// A carriage return back over a line of text leaves its afterimage too.
+    #[gpui::test]
+    fn a_return_over_text_leaves_an_afterimage(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_trail = Some(theme::CursorTrail::first());
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[3;1Hecho the cursor leaves a trail");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        // A person reads before pressing Home: the cursor has sat still for
+        // seconds, and where it sat is still where the afterimage starts.
+        pane.cx.executor().advance_clock(Duration::from_secs(2));
+        pane.read(|v| v.session.term.lock().advance(b"\r"));
+        pane.redraw();
+        let (cursor, ghosts) = pane.view.read_with(pane.cx, |v, cx| {
+            let g = v.grid_paint.read(cx);
+            (g.snapshot.cursor, g.cursor_ghosts.len())
+        });
+        assert_eq!(cursor.map(|c| c.1), Some(0));
+        assert_eq!(ghosts, 1, "the return left no afterimage");
+    }
+
+    /// A streak lights every cell the cursor crossed on its row, nearest
+    /// first, the far end older so it goes dark first; capped, so a jump
+    /// across a wide line never lays a bar of light down it. Another row, or
+    /// the afterimage style, is one block.
+    #[test]
+    fn a_streak_lights_the_cells_crossed_and_an_afterimage_one() {
+        use std::collections::VecDeque;
+        let now = Instant::now();
+        let streak = theme::CursorTrail {
+            style: theme::CursorTrailStyle::Streak,
+            ..theme::CursorTrail::first()
+        };
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 3), (2, 7), streak, now);
+        let cells: Vec<_> = ghosts.iter().map(|g| (g.row, g.column)).collect();
+        assert_eq!(cells, vec![(2, 6), (2, 5), (2, 4), (2, 3)]);
+        let far = ghosts.iter().find(|g| g.column == 3).unwrap();
+        let near = ghosts.iter().find(|g| g.column == 6).unwrap();
+        assert!(far.alpha(now) < near.alpha(now), "the far end fades first");
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 0), (2, 200), streak, now);
+        assert_eq!(ghosts.len(), theme::CursorTrail::STREAK_MAX_CELLS);
+        assert!(ghosts
+            .iter()
+            .all(|g| g.column >= 200 - theme::CursorTrail::STREAK_MAX_CELLS));
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 3), (4, 7), streak, now);
+        assert_eq!(ghosts.len(), 1, "another row is one block");
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(
+            &mut ghosts,
+            (2, 3),
+            (2, 7),
+            theme::CursorTrail::first(),
+            now,
+        );
+        assert_eq!(
+            ghosts.iter().map(|g| (g.row, g.column)).collect::<Vec<_>>(),
+            vec![(2, 3)]
+        );
+
+        // Back over a glowing cell: the live cursor's own cell never glows.
+        cursor_moved(
+            &mut ghosts,
+            (2, 7),
+            (2, 3),
+            theme::CursorTrail::first(),
+            now,
+        );
+        assert!(ghosts.iter().all(|g| (g.row, g.column) != (2, 3)));
+
+        // Zero light or zero time is nothing to draw, and clears what was.
+        let dark = theme::CursorTrail {
+            intensity: 0.0,
+            ..theme::CursorTrail::first()
+        };
+        cursor_moved(&mut ghosts, (1, 1), (1, 2), dark, now);
+        assert!(ghosts.is_empty());
     }
 
     /// The bleed is each run's own colour, fainter, with nothing that would

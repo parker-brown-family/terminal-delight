@@ -20,6 +20,7 @@ mod bench;
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
 mod grid_paint;
+pub(crate) use grid_paint::reduced_motion;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
@@ -10641,6 +10642,11 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         if crate::keylayer::window_chord(ks.key.as_str(), m.alt, m.control) {
             return None;
         }
+        // A tab hotkey the window holds leaves too. One it does not hold —
+        // digits switched off, a letter nobody pinned — is the program's.
+        if crate::keylayer::held_tab_chord(ks.key.as_str(), m.alt, m.control, m.shift).is_some() {
+            return None;
+        }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
         let base = ks.key_char.as_ref().map(|s| s.as_bytes().to_vec())?;
         let mut out = vec![0x1b];
@@ -11388,6 +11394,24 @@ impl Render for TerminalView {
             self.paint_inverted = false;
             self.paint_to_grid = None;
         }
+        // The cell the block cursor was painted in, after the rows above moved:
+        // what the cursor's afterimage remembers. Read off the memo the rows
+        // came from, never off the terminal again, so it is this frame's.
+        let cursor_cell = (!lines.is_empty())
+            .then(|| self.styled_memo.borrow())
+            .and_then(|memo| {
+                let key = &memo.as_ref()?.key;
+                if !key.show_cursor {
+                    return None;
+                }
+                let g = key.cursor.point.line.0 + key.display_offset as i32;
+                let g = usize::try_from(g).ok().filter(|&g| g < self.grid.rows)?;
+                let p = match &self.paint_to_grid {
+                    Some(perm) => perm.iter().position(|&r| r == g)?,
+                    None => g + self.paint_offset,
+                };
+                (p < lines.len()).then_some((p, key.cursor.point.column.0))
+            });
         let ps = crate::lang::current().strings();
         // UI CONFIG, the PANES layer: one config for every pane — no pane is in
         // charge of its own. The title, the state word and ⋯ are not switches.
@@ -12899,6 +12923,7 @@ impl Render for TerminalView {
                                         history.grade.off_cursor_linger_ms = None;
                                         history.grade.inactive_cursor_linger_ms = None;
                                         history.grade.inactive_off_cursor_linger_ms = None;
+                                        history.grade.cursor_trail = None;
                                         history
                                     },
                                     offset: self.session.term.lock().display_offset(),
@@ -12912,6 +12937,17 @@ impl Render for TerminalView {
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
                                 bands: std::rc::Rc::new(bands),
                                 band_ink: (sk.ink.rule_strong, sk.ink.rule),
+                                cursor: cursor_cell,
+                                // A crawl centres its rows, so grid columns no
+                                // longer place a cell; the desktop's ask for less
+                                // motion holds it off too. Clean has already
+                                // dropped it from `th`.
+                                cursor_trail: th
+                                    .grade
+                                    .cursor_trail
+                                    .filter(|t| t.lifetime().is_some())
+                                    .filter(|_| !th.crawl && !grid_paint::reduced_motion()),
+                                cursor_ink: graded(th.cursor, &th.grade, Channel::Bg),
                             },
                             cx,
                         );
@@ -17677,6 +17713,54 @@ mod tests {
             erase_run_keys(&row, 2, 5, 7, false),
             Some(walk_then_rub(1, 2))
         );
+    }
+
+    /// A tab hotkey the window holds never reaches the terminal as bytes,
+    /// and one it does not hold is the program's ESC-prefixed key as ever.
+    /// `key_char` supplied, as gpui fills it at runtime: without it the alt
+    /// arm returns `None` for every key and this would pass for nothing.
+    #[test]
+    fn a_held_tab_hotkey_is_never_written_to_the_terminal() {
+        let alt = |c: &str, shift: bool| {
+            let mut k = Keystroke::parse(&if shift {
+                format!("alt-shift-{c}")
+            } else {
+                format!("alt-{c}")
+            })
+            .unwrap();
+            k.key_char = Some(if shift {
+                c.to_uppercase()
+            } else {
+                c.to_string()
+            });
+            keystroke_bytes(&k)
+        };
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        assert_eq!(
+            alt("3", false),
+            Some(b"\x1b3".to_vec()),
+            "unheld: readline's"
+        );
+        assert_eq!(
+            alt("m", true),
+            Some(b"\x1bM".to_vec()),
+            "unpinned: the program's"
+        );
+        crate::keylayer::hold_tab_keys(
+            crate::keylayer::TabKeys {
+                digits: true,
+                pinned: 0,
+            }
+            .with_letter('m'),
+        );
+        assert_eq!(alt("3", false), None);
+        assert_eq!(alt("m", true), None);
+        assert_eq!(
+            alt("q", true),
+            Some(b"\x1bQ".to_vec()),
+            "only the pinned letter"
+        );
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
     }
 
     #[test]
