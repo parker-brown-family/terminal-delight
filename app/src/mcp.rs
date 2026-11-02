@@ -201,6 +201,13 @@ pub struct PaneInfo {
     /// another.
     #[serde(default)]
     pub agent: Option<String>,
+    /// Whether the agent is awake, resting (frozen, its memory pushed out) or
+    /// asleep (ended, its conversation kept, one key or a prompt brings it
+    /// back). An asleep agent runs a plain shell in the foreground and is
+    /// still an agent: `is_agent` is true for it. `None` (null) for a pane
+    /// that is not an agent, never "awake".
+    #[serde(default)]
+    pub dormancy: Option<Dormancy>,
     /// The pane's *effective* grade — what it actually renders with (its own
     /// override, else the inherited outer) — in the config API's percentages
     /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
@@ -769,6 +776,25 @@ pub struct Snapshot {
     /// where its agent went ([`Snapshot::moved_answer`]), never to re-aim a
     /// call at the new pane.
     pub moved: Vec<Moved>,
+}
+
+/// An agent's rest, as `list_panes` reports it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Serialize, Deserialize)]
+#[serde(rename_all = "snake_case")]
+pub enum Dormancy {
+    Awake,
+    Resting,
+    Asleep,
+}
+
+impl Dormancy {
+    pub fn word(self) -> &'static str {
+        match self {
+            Dormancy::Awake => "awake",
+            Dormancy::Resting => "resting",
+            Dormancy::Asleep => "asleep",
+        }
+    }
 }
 
 /// One wake: the agent in conversation `agent` slept behind shell `from_pid`
@@ -2548,6 +2574,12 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .pane_id
                     .map(|id| format!("pane {id}"))
                     .unwrap_or_else(|| "pane —".to_string());
+                // An agent that is not awake says so beside its mode, because an
+                // asleep one's mode is the shell it left in the foreground.
+                let mode = match p.dormancy {
+                    Some(d) if d != Dormancy::Awake => format!("{} ({})", p.mode, d.word()),
+                    _ => p.mode.clone(),
+                };
                 // The conversation, when proven: the name that survives a wake,
                 // and what a verb about another agent should be given.
                 let agent = p
@@ -2565,7 +2597,7 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .unwrap_or("(unnamed)");
                 format!(
                     "{said} — tab {} · {}{} · {} · {} · {} · {}{}{}",
-                    p.tab, pane, agent, p.title, p.mode, cwd, sess, tool, note
+                    p.tab, pane, agent, p.title, mode, cwd, sess, tool, note
                 )
             })
             .collect::<Vec<_>>()
@@ -4562,6 +4594,7 @@ mod tests {
             seat: None,
             name: None,
             agent: None,
+            dormancy: None,
             grade: GradeReport::default(),
         }
     }
@@ -7738,6 +7771,7 @@ mod tests {
             seat: None,
             name: None,
             agent: None,
+            dormancy: None,
             grade: GradeReport::default(),
         };
         let hidden_agent = agent_pane(8, false);

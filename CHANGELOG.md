@@ -48,6 +48,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   pane number and pid are new and what to use instead. The wake script marks
   it, and the session-start briefing hook says it once, whether or not the
   launcher briefed the agent.
+- An asleep agent is listed as an agent that is asleep, not as a plain shell.
+  `list_panes` reports it with `is_agent: true`, a `dormancy` of `awake`,
+  `resting` or `asleep` (absent for a pane that is not an agent), and the
+  conversation it will resume as its `agent`, so it can be found and prompted
+  by name while it sleeps. The window's own access rules count it as an agent
+  too.
 
 ### Artifact chip
 

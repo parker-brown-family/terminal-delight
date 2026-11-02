@@ -8743,7 +8743,15 @@ impl Workspace {
             for leaf in leaves {
                 let p = leaf.read(cx);
                 let rt = p.runtime();
-                let is_agent = p.mode.is_agent();
+                // Asleep agents too: they run a shell in the foreground, and
+                // judged by mode alone they read as gone (#1160).
+                let is_agent = p.counts_as_agent();
+                let asleep = p.rest.dormancy.asleep();
+                let dormancy = is_agent.then_some(match &p.rest.dormancy {
+                    agentrest::Dormancy::Awake => mcp::Dormancy::Awake,
+                    agentrest::Dormancy::Resting { .. } => mcp::Dormancy::Resting,
+                    agentrest::Dormancy::Asleep(_) => mcp::Dormancy::Asleep,
+                });
                 let title = p
                     .name
                     .clone()
@@ -8783,10 +8791,13 @@ impl Workspace {
                     name: Some(self.pane_name(leaf, cx))
                         .filter(|n| !n.full().is_empty())
                         .map(|n| mcp::PaneNameReport::from(&n)),
-                    // Which conversation, proven: stamped by the MCP connection
+                    // Which conversation, proven. An asleep agent's is its sleep
+                    // record, the id it reported when it went to sleep; an awake
+                    // one is stamped by the MCP connection
                     // (`mcp_transport::stamp_agents`), off this thread, because
                     // binding a pane to a transcript reads files.
-                    agent: None,
+                    agent: asleep.map(|a| a.session.clone()),
+                    dormancy,
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),
@@ -12317,7 +12328,7 @@ impl Workspace {
         // Always the caller's own pane (`caller_pane` in mcp.rs resolved it),
         // so its off-limits mark does not stop the agent inside opening a
         // document in its own tab.
-        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent()) {
+        if !threshing_floor::policy_admits(&self.mcp, leaf.read(cx).counts_as_agent()) {
             let _ = reply.send(format!(
                 "err pane {} is not exposed under the current policy",
                 request.pid
@@ -43060,8 +43071,9 @@ mod tests {
         // site that is always the caller's own pane.
         assert_eq!(code.matches("threshing_floor::policy_admits(").count(), 1);
         let open = live_fn("fn mcp_open(");
-        assert!(open
-            .contains("threshing_floor::policy_admits(&self.mcp, leaf.read(cx).mode.is_agent())"));
+        assert!(open.contains(
+            "threshing_floor::policy_admits(&self.mcp, leaf.read(cx).counts_as_agent())"
+        ));
         let writes = live_fn("fn apply_mcp_config(");
         assert!(
             writes.contains("threshing_floor::may_write_live(")

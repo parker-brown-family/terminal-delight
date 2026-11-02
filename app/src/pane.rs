@@ -4870,7 +4870,9 @@ impl TerminalView {
     pub(crate) fn party(&self) -> crate::threshing_floor::Party {
         crate::threshing_floor::Party {
             seat: self.seat,
-            is_agent: self.mode.is_agent(),
+            // An asleep agent is still an agent: its conversation is kept and
+            // one key brings it back, so the rules treat it as one (#1160).
+            is_agent: self.counts_as_agent(),
             access: self.agent_access,
         }
     }
