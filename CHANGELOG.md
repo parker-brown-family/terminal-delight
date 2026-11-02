@@ -272,6 +272,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Upgrading from 0.4.0 (0.5.0 development)
 
+- **The terminal core is rio-vt 0.5.29.** Replacing the window keeps every
+  terminal running on its existing host, which keeps the core it started with
+  until it next starts, and the two agree screen for screen. rio-vt 0.5.29
+  stopped holding back the output of a synchronized update and leaves that to
+  the renderer; Terminal Delight now holds it back itself, by 0.5.28's rules,
+  so a frame is still drawn whole and a window on either core reads a host's
+  screen the same way. Building from source needs Rust 1.99.1, which
+  `rust-toolchain.toml` names and rustup fetches on first use. (#PR_BUMP)
 - **Markdown review notes now keep their source evidence.** A new note records the
   quotation, neighbouring passages and SHA-256 of the document as it was read.
   Notes stores advance to format 2 on the next successful save. Existing notes
