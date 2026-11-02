@@ -617,6 +617,7 @@ mod tests {
                 seat: None,
                 name: None,
                 agent: None,
+                dormancy: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
