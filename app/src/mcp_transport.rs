@@ -595,6 +595,7 @@ mod tests {
                 reach: None,
                 access: crate::threshing_floor::AgentAccess::Open,
                 seat: None,
+                name: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
