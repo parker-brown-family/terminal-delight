@@ -4019,6 +4019,7 @@ mod tests {
             lit.grade.image_glow = Some(0.6);
             lit.grade.phosphor = 2.5;
             lit.grade.cursor_linger_ms = Some(200.0);
+            lit.grade.cursor_trail = Some(CursorTrail::first());
             let held = resolve(cx, &lit);
             assert!(!held.crt, "the tube is held off");
             assert_eq!(held.warp, 0.0);
@@ -4035,6 +4036,10 @@ mod tests {
             }
             assert_eq!(held.grade.phosphor, 0.0, "no halo on lit borders");
             assert_eq!(held.glow, 0.0, "no bloom on cards or the frame");
+            assert_eq!(
+                held.grade.cursor_trail, None,
+                "no afterimage behind the cursor"
+            );
             assert_eq!(lit.grade.image_glow, Some(0.6), "the dial is kept");
 
             let hacker = ThemeChoice {
@@ -4045,6 +4050,11 @@ mod tests {
             assert!(on.crt && on.warp > 0.0, "the tube comes back as it was");
             assert!((on.grade.letter_glow_for_focus(true, on.terminal_light) - 0.6).abs() < 1e-6);
             assert_eq!(on.grade.phosphor, 2.5);
+            assert_eq!(
+                on.grade.cursor_trail,
+                Some(CursorTrail::first()),
+                "and the trail"
+            );
         });
     }
 
@@ -4788,7 +4798,8 @@ mod tests {
         // the whole set: pin exactly one, and only that one may leave `base`.
         let base = Grade::neutral();
         let own = Grade {
-            cursor_trail: None,
+            // neutral() has never turned the trail on, so the walk sets one.
+            cursor_trail: Some(CursorTrail::first()),
             brightness: 0.1,
             contrast: 0.2,
             colour: 0.3,

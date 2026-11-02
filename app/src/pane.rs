@@ -17713,6 +17713,54 @@ mod tests {
         );
     }
 
+    /// A tab hotkey the window holds never reaches the terminal as bytes,
+    /// and one it does not hold is the program's ESC-prefixed key as ever.
+    /// `key_char` supplied, as gpui fills it at runtime: without it the alt
+    /// arm returns `None` for every key and this would pass for nothing.
+    #[test]
+    fn a_held_tab_hotkey_is_never_written_to_the_terminal() {
+        let alt = |c: &str, shift: bool| {
+            let mut k = Keystroke::parse(&if shift {
+                format!("alt-shift-{c}")
+            } else {
+                format!("alt-{c}")
+            })
+            .unwrap();
+            k.key_char = Some(if shift {
+                c.to_uppercase()
+            } else {
+                c.to_string()
+            });
+            keystroke_bytes(&k)
+        };
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        assert_eq!(
+            alt("3", false),
+            Some(b"\x1b3".to_vec()),
+            "unheld: readline's"
+        );
+        assert_eq!(
+            alt("m", true),
+            Some(b"\x1bM".to_vec()),
+            "unpinned: the program's"
+        );
+        crate::keylayer::hold_tab_keys(
+            crate::keylayer::TabKeys {
+                digits: true,
+                pinned: 0,
+            }
+            .with_letter('m'),
+        );
+        assert_eq!(alt("3", false), None);
+        assert_eq!(alt("m", true), None);
+        assert_eq!(
+            alt("q", true),
+            Some(b"\x1bQ".to_vec()),
+            "only the pinned letter"
+        );
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+    }
+
     #[test]
     fn keystroke_bytes_encodes_the_pty_protocol() {
         let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());

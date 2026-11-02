@@ -38513,6 +38513,20 @@ mod tests {
         };
         draw(cx);
         let active = |cx: &mut gpui::VisualTestContext| ws.read_with(cx, |ws, _| ws.active);
+        // A terminal holds the keyboard, as it does in use: every chord below
+        // has to be declined by it to reach the window at all.
+        let focus = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.focus_active(w, cx)));
+            cx.run_until_parked();
+            let held = cx.update(|w, cx| {
+                ws.read(cx)
+                    .every_view()
+                    .iter()
+                    .any(|p| p.focus_handle(cx).is_focused(w))
+            });
+            assert!(held, "a terminal has the keyboard");
+        };
+        focus(cx);
         // Where a new tab is seated is not this test's business; the spine's
         // order is what the numbers follow.
         let order = ws.read_with(cx, |ws, cx| ws.tabs_in_spine_order(cx));
@@ -38521,6 +38535,7 @@ mod tests {
         cx.simulate_keystrokes("alt-1");
         assert_eq!(active(cx), order[0], "alt+1 is the first tab");
         draw(cx);
+        focus(cx);
         cx.simulate_keystrokes("alt-9");
         assert_eq!(
             active(cx),
@@ -38528,6 +38543,7 @@ mod tests {
             "alt+9 is the last, however many there are"
         );
         draw(cx);
+        focus(cx);
         cx.simulate_keystrokes("alt-2");
         assert_eq!(active(cx), order[1]);
         let shown = ws.read_with(cx, |ws, cx| {
@@ -38537,6 +38553,11 @@ mod tests {
                 .collect::<Vec<_>>()
         });
         assert_eq!(shown, vec![Some(1), Some(2), Some(3)]);
+        // That the terminal does not ALSO receive a held chord is proved where
+        // it is decided: `keylayer`'s routing test and the encoder test
+        // `a_held_tab_hotkey_is_never_written_to_the_terminal`. This harness
+        // cannot see it — `Keystroke::parse` leaves `key_char` empty, so no
+        // alt chord encodes to bytes here, held or not.
 
         // Pin the first tab to M, then move it to the end: the pin goes too.
         ws.update(cx, |ws, _| ws.pin_tab_hotkey(0, 'M'))
@@ -38555,6 +38576,7 @@ mod tests {
             cx.notify();
         });
         draw(cx);
+        focus(cx);
         cx.simulate_keystrokes("alt-shift-m");
         assert_eq!(active(cx), 2, "alt+shift+m found the tab where it went");
 
@@ -38583,9 +38605,11 @@ mod tests {
             cx.notify();
         });
         draw(cx);
+        focus(cx);
+        let before = active(cx);
         cx.simulate_keystrokes("alt-1");
-        assert_eq!(active(cx), 2, "alt+1 went to the terminal");
-        assert_eq!(keylayer::tab_keys().digits, false);
+        assert_eq!(active(cx), before, "the window did not move");
+        assert!(!keylayer::tab_keys().digits);
         keylayer::hold_tab_keys(keylayer::TabKeys::default());
     }
 
