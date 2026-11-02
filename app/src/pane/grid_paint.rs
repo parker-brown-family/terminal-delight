@@ -68,6 +68,11 @@ impl CursorGhost {
 /// can move the cursor hundreds of times a second; past this the oldest go.
 const CURSOR_GHOSTS_MAX: usize = 64;
 
+/// How long a hidden cursor still counts as standing where it was last drawn.
+/// Long enough to bridge a line editor's redraw, short enough that a cursor
+/// a program hid on purpose does not leave a trail when it comes back.
+const CURSOR_HIDDEN_GRACE: Duration = Duration::from_millis(250);
+
 /// Record the cursor leaving `from` for `to`. An afterimage is one ghost at
 /// `from`; a streak along one row is a ghost in every cell it crossed, the far
 /// end born earliest so it goes dark first. Paint only: nothing here reads or
@@ -236,6 +241,11 @@ pub(super) struct GridPaint {
     snapshot: Snapshot,
     trail: afterglow::Trail,
     cursor_ghosts: std::collections::VecDeque<CursorGhost>,
+    /// Where the cursor was last drawn, and when. A line editor hides the
+    /// cursor while it redraws (zsh does on Home, End and every word jump),
+    /// so the frame before a move is often one with no cursor in it; the
+    /// afterimage starts from here instead, within [`CURSOR_HIDDEN_GRACE`].
+    last_cursor: Option<((usize, usize), Instant)>,
     live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
     pub renders: std::rc::Rc<std::cell::Cell<usize>>,
@@ -266,6 +276,7 @@ impl GridPaint {
     pub fn clear_afterglow(&mut self) {
         self.trail.clear();
         self.cursor_ghosts.clear();
+        self.last_cursor = None;
         self.snapshot.context = None;
     }
 
@@ -276,6 +287,10 @@ impl GridPaint {
             let previous = view.read(cx);
             let mut trail = previous.trail.clone();
             let mut cursor_ghosts = previous.cursor_ghosts.clone();
+            let now = cx.background_executor().now();
+            let mut last_cursor = previous
+                .last_cursor
+                .filter(|(_, at)| now.saturating_duration_since(*at) < CURSOR_HIDDEN_GRACE);
             let compatible = previous.snapshot.context.is_some()
                 && previous.snapshot.context == snapshot.context
                 && previous.snapshot.cell_h == snapshot.cell_h
@@ -300,28 +315,26 @@ impl GridPaint {
                                 .max(afterglow::MIN_GLYPH_BUDGET)
                         }),
                 );
-                // The cursor's afterimage, read off the two frames' painted
-                // cells. A redraw that hides the cursor leaves none.
+                // The cursor's afterimage, from where it was last drawn to
+                // where it is drawn now; see `last_cursor`.
                 match (
                     snapshot.cursor_trail,
-                    previous.snapshot.cursor,
+                    last_cursor.map(|(at, _)| at),
                     snapshot.cursor,
                 ) {
                     (None, ..) => cursor_ghosts.clear(),
                     (Some(cursor_trail), Some(from), Some(to)) if from != to => {
-                        cursor_moved(
-                            &mut cursor_ghosts,
-                            from,
-                            to,
-                            cursor_trail,
-                            cx.background_executor().now(),
-                        );
+                        cursor_moved(&mut cursor_ghosts, from, to, cursor_trail, now);
                     }
                     _ => {}
                 }
             } else {
                 trail.clear();
                 cursor_ghosts.clear();
+                last_cursor = None;
+            }
+            if let Some(at) = snapshot.cursor {
+                last_cursor = Some((at, now));
             }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
@@ -353,6 +366,7 @@ impl GridPaint {
                 snapshot,
                 trail,
                 cursor_ghosts,
+                last_cursor,
                 live: Some(live),
                 #[cfg(test)]
                 renders,
@@ -1116,6 +1130,17 @@ mod tests {
         let cursor_after = pane.read(|v| v.session.term.lock().renderable_content().cursor.point);
         assert_eq!(cursor_after.column.0, 11);
         assert_eq!(cursor_after.line, cursor_before.line);
+        // A line editor hides the cursor while it redraws, so the frame before
+        // a move often has none: the afterimage starts where it was last drawn.
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[?25l"));
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[3;20H\x1b[?25h"));
+        pane.redraw();
+        let (hidden_hop, ghosts) = at(&mut pane);
+        assert!(
+            ghosts.contains(&after),
+            "a hidden redraw lost the afterimage: {ghosts:?} {hidden_hop:?}"
+        );
         // It goes dark on its own clock.
         pane.cx.executor().advance_clock(Duration::from_millis(250));
         pane.cx.update(|window, _| window.refresh());
