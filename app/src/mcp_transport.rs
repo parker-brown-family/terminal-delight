@@ -295,6 +295,7 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         documents: ws.mcp_documents(cx),
         chart: ws.chart.clone(),
         orgs: ws.floor_orgs.clone(),
+        moved: ws.mcp_moves(cx),
     }
 }
 
@@ -631,6 +632,7 @@ mod tests {
             documents: vec![],
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 

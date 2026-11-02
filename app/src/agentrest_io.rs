@@ -295,7 +295,10 @@ pub fn wake_script(argv: &[String]) -> String {
          # memory group, so the agent is born in it and every page it touches is\n\
          # charged where rest can reach it.\n\
          for _ in $(seq 60); do read -r cg < /proc/self/cgroup; case $cg in *td-pane-*) break ;; esac; sleep 0.05; done\n\
+         # Tell the agent's session-start hook it woke: its pane and pid are new.\n\
+         export {}=1\n\
          exec {}\n",
+        crate::briefhook::WOKE_ENV,
         line.join(" ")
     )
 }

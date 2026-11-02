@@ -39,6 +39,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   `ask_agent`, `pane_events` and `leave_note` accept `agent`, looked up at the
   moment of the call. A coordinator's worker that sleeps and wakes into a fresh
   pane is still found; its old pid is not.
+- A pid an agent held before its worker slept and woke is answered with where
+  the worker went: its pane's name, its new pid, and the `agent` to name it by
+  next time. Nothing is sent; the call is never moved to the new pane. The
+  window remembers its wakes for a day, and a worker woken into a pane closed
+  to the caller is answered like any missing pid.
+- A woken agent is told, at the start of the session it wakes into, that its
+  pane number and pid are new and what to use instead. The wake script marks
+  it, and the session-start briefing hook says it once, whether or not the
+  launcher briefed the agent.
 
 ### Artifact chip
 

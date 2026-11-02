@@ -44,6 +44,11 @@ use std::path::{Path, PathBuf};
 /// effect, and `uninstall` finds exactly its own entry and nobody else's.
 pub const MARKER: &str = "# terminal-delight:briefing";
 
+/// Set by a wake script ([`crate::agentrest_io::wake_script`]) for the agent it
+/// starts again: the agent woke in a fresh pane, so it is told its pane number
+/// and pid are new ([`crate::surface::WOKE_PARAGRAPH`]).
+pub const WOKE_ENV: &str = "TD_WOKE";
+
 /// The briefing a typed agent is owed, or `None` when it is owed nothing.
 ///
 /// `env` reads the hook's environment, which is the agent's, which is the
@@ -61,12 +66,20 @@ pub fn briefing_for(
     kit_root: Option<&Path>,
 ) -> Option<String> {
     let session = env("TD_SESSION").filter(|s| !s.trim().is_empty())?;
+    // A woken agent is told it moved even when the launcher briefed it: the
+    // briefing it carries cannot know a wake happened.
+    let woke = env(WOKE_ENV).as_deref() == Some("1");
     if env(crate::launcher::BRIEFED_ENV).as_deref() == Some("1") {
-        return None;
+        return woke.then(|| crate::surface::WOKE_PARAGRAPH.to_string());
     }
     let dir = surfaces_root.join(crate::surfacefeed::sanitise(&session));
     let skill = kit_root.and_then(|root| crate::briefkit::write(root).ok());
-    Some(crate::launcher::session_briefing(&dir, skill.as_deref()))
+    let briefing = crate::launcher::session_briefing(&dir, skill.as_deref());
+    Some(if woke {
+        format!("{}\n\n{briefing}", crate::surface::WOKE_PARAGRAPH)
+    } else {
+        briefing
+    })
 }
 
 /// Where Claude Code keeps its user settings: `$CLAUDE_SETTINGS` (the name
@@ -596,6 +609,30 @@ mod tests {
         let d = scratch("twice");
         let env = env_of(&[("TD_SESSION", "work"), (crate::launcher::BRIEFED_ENV, "1")]);
         assert_eq!(briefing_for(env, &d, Some(&d.join("kit"))), None);
+    }
+
+    /// A woken agent is told, once, at the start of the session it wakes into,
+    /// that its pane and pid are new and what to do about it, whether or not
+    /// the launcher briefed it. The wake script is what marks it woken.
+    #[test]
+    fn a_woken_agent_is_told_it_moved() {
+        let d = scratch("woke");
+        let woke = (WOKE_ENV, "1");
+        let briefed = (crate::launcher::BRIEFED_ENV, "1");
+        let typed = briefing_for(env_of(&[("TD_SESSION", "work"), woke]), &d, None).unwrap();
+        assert!(typed.starts_with(crate::surface::WOKE_PARAGRAPH), "{typed}");
+        assert!(typed.contains("WORKBENCH"), "and still the whole briefing");
+        let launched = briefing_for(env_of(&[("TD_SESSION", "work"), woke, briefed]), &d, None);
+        assert_eq!(launched.as_deref(), Some(crate::surface::WOKE_PARAGRAPH));
+        let script =
+            crate::agentrest_io::wake_script(&["claude".into(), "--resume".into(), "c".into()]);
+        let export = script
+            .find(&format!("export {WOKE_ENV}=1"))
+            .expect("the wake marks it");
+        assert!(
+            export < script.find("exec ").unwrap(),
+            "before the agent starts"
+        );
     }
 
     /// No kit, still a briefing — about the bench, without the paragraph that
