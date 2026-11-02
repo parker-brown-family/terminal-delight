@@ -19,6 +19,7 @@ mod bench;
 /// The document half of this view — the floating square and the Document
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
+mod draft_images;
 mod grid_paint;
 pub(crate) use grid_paint::reduced_motion;
 /// What this pane's agent handed over: the header chip, the history page and
@@ -3096,6 +3097,9 @@ pub struct TerminalView {
     /// half-typed here (`prompt::QUIET_MS`). A `Cell`, because the paste path
     /// borrows the pane shared.
     person_key_ms: std::cell::Cell<Option<u64>>,
+    /// Which file each `[Image #n]` in the agent's prompt was pasted from,
+    /// so the ctrl+c that clears the prompt copies the screenshots back too.
+    draft_images: RefCell<draft_images::DraftImages>,
     /// When this pane's own scan last saw a turn begin, in ms since the epoch:
     /// a prompt's worker took it if a turn began after Enter, even one that
     /// began and ended between two of the prompt clock's looks.
@@ -3831,6 +3835,10 @@ fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
 /// The most rows the FOCUS reader's foot shows: a pasted wall of input still
 /// leaves the conversation room.
 const INPUT_ROWS_MAX: usize = 12;
+
+/// How often the screen is read for the tag a pasted picture becomes, while
+/// one is awaited (see `TerminalView::paste_image_paths`).
+const DRAFT_IMAGE_LOOK: Duration = Duration::from_millis(50);
 
 /// Where an agent's input box is on a screen: from the status line just above
 /// its top border to the last row with anything on it. `None` when the screen
@@ -5482,6 +5490,7 @@ impl TerminalView {
             ctx_menu: None,
             bell: false,
             person_key_ms: std::cell::Cell::new(None),
+            draft_images: RefCell::default(),
             turn_began_ms: None,
             needs_input: false,
             answered_on: None,
@@ -8049,6 +8058,11 @@ impl TerminalView {
         if k.control && !k.shift && !k.alt && k.key == "c" {
             self.save_agent_draft(cx);
         }
+        // Enter sends an agent's prompt, and its pictures go with it: a tag in
+        // the next prompt is never one of these files.
+        if k.key == "enter" && !k.control && !k.shift && !k.alt && self.mode.is_agent() {
+            self.draft_images.borrow_mut().clear();
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
@@ -8819,6 +8833,22 @@ impl TerminalView {
         if !self.mode.is_agent() {
             return;
         }
+        let draft = self.agent_draft_now();
+        let mut images = self.draft_images.borrow_mut();
+        if let Some(text) = draft {
+            // One last look first: a ctrl+c straight after a paste can beat
+            // the watcher to the tag the agent has just drawn.
+            images.observe(&draft_images::tag_set(&text), Instant::now());
+            let text = images.restore(&text);
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+        images.clear();
+    }
+
+    /// The words typed into the agent's prompt as the screen shows them now
+    /// (see [`agent_draft`]), or `None` when there is no prompt to read.
+    fn agent_draft_now(&self) -> Option<String> {
         let (rows, cursor) = {
             let term = self.session.term.lock();
             let mut rows = Vec::with_capacity(term.screen_lines());
@@ -8843,13 +8873,51 @@ impl TerminalView {
             });
             (rows, term.cursor().point.line.0)
         };
-        let Ok(cursor) = usize::try_from(cursor) else {
-            return;
-        };
-        if let Some(text) = agent_draft(&rows, cursor, self.grid.cols) {
-            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
-            cx.write_to_primary(ClipboardItem::new_string(text));
+        let cursor = usize::try_from(cursor).ok()?;
+        agent_draft(&rows, cursor, self.grid.cols)
+    }
+
+    /// Paste image files' paths into the terminal, and in an agent's prompt
+    /// remember which `[Image #n]` each one becomes (see `draft_images`).
+    ///
+    /// The tags on screen are read before the paste goes, so a tag already
+    /// there is never taken for this one; a watcher then looks every
+    /// [`DRAFT_IMAGE_LOOK`] until the agent has drawn the new tags or
+    /// `draft_images::WAIT` runs out. It runs only after an image paste.
+    fn paste_image_paths(&self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        let text = crate::workbench::paths_as_words(paths);
+        if self.mode.is_agent() && draft_images::trackable(paths) {
+            let before = self
+                .agent_draft_now()
+                .map(|d| draft_images::tag_set(&d))
+                .unwrap_or_default();
+            let now = Instant::now();
+            let mut images = self.draft_images.borrow_mut();
+            for path in paths {
+                images.pasted(path.display().to_string(), before.clone(), now);
+            }
+            if !images.watching {
+                images.watching = true;
+                cx.spawn(async move |this, cx| loop {
+                    cx.background_executor().timer(DRAFT_IMAGE_LOOK).await;
+                    let waiting = this.update(cx, |view, _| {
+                        let tags = view
+                            .agent_draft_now()
+                            .map(|d| draft_images::tag_set(&d))
+                            .unwrap_or_default();
+                        let mut images = view.draft_images.borrow_mut();
+                        let waiting = images.observe(&tags, Instant::now());
+                        images.watching = waiting;
+                        waiting
+                    });
+                    if !matches!(waiting, Ok(true)) {
+                        break;
+                    }
+                })
+                .detach();
+            }
         }
+        self.paste_text(&text);
     }
 
     fn copy_selection(&self, cx: &mut Context<Self>) {
@@ -8914,7 +8982,7 @@ impl TerminalView {
         }
         if self.clipboard_holds_an_image() {
             if let Some(path) = self.clipboard_image_path() {
-                self.paste_text(&crate::workbench::paths_as_words(&[path.into()]));
+                self.paste_image_paths(&[path.into()], cx);
             } else {
                 eprintln!("terminal-delight: could not read the clipboard image");
             }
