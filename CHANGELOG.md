@@ -44,6 +44,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   next time. Nothing is sent; the call is never moved to the new pane. The
   window remembers its wakes for a day, and a worker woken into a pane closed
   to the caller is answered like any missing pid.
+- A woken agent is told, at the start of the session it wakes into, that its
+  pane number and pid are new and what to use instead. The wake script marks
+  it, and the session-start briefing hook says it once, whether or not the
+  launcher briefed the agent.
 
 ### Artifact chip
 
