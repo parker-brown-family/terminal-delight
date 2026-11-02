@@ -44,6 +44,7 @@ this document. Run it when managing the release; do not assume a timer ran it.
 |---|---|---|---|
 | **Stable** | `v0.4.0` | The release the install page serves | Everyone following the install instructions (`releases/latest`) |
 | **Candidate** | `v0.4.0-rc.1` | A preview of the next stable, marked *pre-release* on GitHub | People who pick it from the releases page on purpose |
+| **Dev build** | `dev-build` (moves) | The newest green commit of a `dev/*` branch, a *pre-release* replaced on every push | People who choose the Dev channel in ⚙ CONFIG › UPDATES |
 
 `main` is where finished work is integrated. It is kept buildable and green, and
 it is not a channel: nobody outside the project is pointed at it. A release is a
@@ -110,6 +111,19 @@ policy and the AppImage build. It then applies
   until a person promotes it.
 
 Every release carries the AppImage's SHA-256 and the commit it was built from.
+
+The `dev-build` job runs on every push to a `dev/*` branch, after the same
+checks. It replaces the files of the rolling `dev-build` pre-release, moves its
+tag, and uploads `build.json` last. That file names the commit, its date and the
+branch. The Dev channel in the app reads it, and refuses a download whose build
+names a different commit. The stable channel skips `dev-build` twice over: it is
+a pre-release, and it is never *latest*.
+
+**A release that fixes something inside the session host** (a parsing guard, a
+host-side security fix) says so with the line `TD-Host-Restart: recommended` in
+its notes. The UPDATES panel then tells the person that their terminals are
+covered only once they restart everything, because a window-only update leaves
+the old host parsing.
 `bash scripts/test-release-meta.sh` proves the policy against fixtures. CI runs it
 on every pull request, so the policy can change only by changing that test too.
 

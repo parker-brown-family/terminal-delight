@@ -369,3 +369,66 @@ jobs:
             dist/terminal-delight-x86_64.AppImage
             dist/terminal-delight-x86_64.AppImage.sha256
           fail_on_unmatched_files: true
+
+  dev-build:
+    name: Dev build (dev branches only)
+    # The Dev channel of ⚙ CONFIG › UPDATES installs from here: one rolling
+    # prerelease, tagged dev-build, replaced on every push to a dev/* branch
+    # once every check has passed. Run artifacts sit behind a GitHub login even
+    # on a public repository, so without this a dev build would exist only for
+    # people signed in. It is a prerelease, never Latest, and the stable
+    # channel skips it by both.
+    #
+    # build.json is what the updater reads first: the commit, its date and the
+    # branch. It is uploaded last, so a client that reads a new build.json
+    # always finds the AppImage it describes; one that reads an old build.json
+    # beside a new AppImage refuses the download, because the build inside
+    # names a different commit (app/src/update.rs, prepare_in).
+    needs: [rust, js, supply-chain, release-policy, package]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/dev/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # replace the dev-build prerelease's files and move its tag
+    concurrency:
+      group: dev-build
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: terminal-delight-x86_64.AppImage
+          path: dist
+
+      - name: Verify the digest and describe the build
+        run: |
+          cd dist
+          sha256sum --check terminal-delight-x86_64.AppImage.sha256
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' ../app/Cargo.toml | head -1)"
+          date="$(git log -1 --format=%cI "$GITHUB_SHA")"
+          jq -n \
+            --arg sha "$GITHUB_SHA" \
+            --arg date "$date" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg version "$version" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run}' \
+            > build.json
+          cat build.json
+
+      - name: Replace the dev-build prerelease
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Rolling development build of \`$GITHUB_REF_NAME\` at \`$GITHUB_SHA\`. Experimental: it passed CI, and nobody has lived on it for a week. Terminal Delight installs it from ⚙ CONFIG › UPDATES on the Dev channel; the stable channel never offers it."
+          if gh release view dev-build >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/dev-build" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh release create dev-build --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Development build" --notes "$notes"
+          fi
+          gh release upload dev-build \
+            dist/terminal-delight-x86_64.AppImage \
+            dist/terminal-delight-x86_64.AppImage.sha256 --clobber
+          gh release upload dev-build dist/build.json --clobber
+          gh release edit dev-build --prerelease --latest=false --title "Development build ($GITHUB_REF_NAME)" --notes "$notes"

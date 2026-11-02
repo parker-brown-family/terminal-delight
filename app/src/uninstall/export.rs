@@ -26,6 +26,7 @@ const MACHINE: &str = "bound to this machine";
 const SESSION_BACKUPS: &str = "older copies of sessions; the current sessions are included";
 const OTHER_SETTINGS: &str = "copy of another program's settings";
 const NOT_REGULAR: &str = "not a regular file";
+const NOT_IN_UPDATE_BACKUP: &str = "history an update only adds to; not part of an update backup";
 
 const HELP: &str = "Usage: terminal-delight admin export [--records] [--to DIR] [--json]
 
@@ -158,6 +159,9 @@ impl Tree {
 
 #[derive(Default)]
 struct Found {
+    /// When set, only these top-level entries of the state tree are copied:
+    /// what an update backup carries (`update::BACKED_UP_RECORDS`).
+    only_state: Option<&'static [&'static str]>,
     files: Vec<FileEntry>,
     symlinks: Vec<LinkEntry>,
     excluded: Vec<Excluded>,
@@ -177,6 +181,29 @@ pub(crate) fn export(
     td_version: &str,
     hostname: Option<&str>,
 ) -> Result<ExportReport, String> {
+    export_with(roots, opts, td_version, hostname, None)
+}
+
+/// [`export`] with only the named top-level records copied from the state
+/// tree; the rest is listed in the manifest as left out. The settings backup
+/// an update takes is this, so it is verified exactly as an export is.
+pub(crate) fn export_only_records(
+    roots: &Roots,
+    opts: &ExportOptions,
+    td_version: &str,
+    hostname: Option<&str>,
+    only: &'static [&'static str],
+) -> Result<ExportReport, String> {
+    export_with(roots, opts, td_version, hostname, Some(only))
+}
+
+fn export_with(
+    roots: &Roots,
+    opts: &ExportOptions,
+    td_version: &str,
+    hostname: Option<&str>,
+    only_state: Option<&'static [&'static str]>,
+) -> Result<ExportReport, String> {
     check_stamp(&opts.stamp)?;
     let dest: PathBuf = match &opts.dest {
         Some(d) => d.components().collect(),
@@ -191,7 +218,7 @@ pub(crate) fn export(
     fs::create_dir(&partial).map_err(|e| format!("cannot create {}: {e}", partial.display()))?;
     let result = fs::set_permissions(&partial, fs::Permissions::from_mode(0o700))
         .map_err(|e| format!("cannot set the mode of {}: {e}", partial.display()))
-        .and_then(|_| build(roots, opts, td_version, hostname, &partial))
+        .and_then(|_| build(roots, opts, td_version, hostname, &partial, only_state))
         .and_then(|report| {
             // Checked again because rename would quietly replace an empty
             // directory created there since the export began.
@@ -251,8 +278,12 @@ fn build(
     td_version: &str,
     hostname: Option<&str>,
     partial: &Path,
+    only_state: Option<&'static [&'static str]>,
 ) -> Result<ExportReport, String> {
-    let mut found = Found::default();
+    let mut found = Found {
+        only_state,
+        ..Found::default()
+    };
     let config = copy_root(Tree::Config, &roots.config, partial, &mut found)?;
     let state = if opts.records {
         copy_root(Tree::State, &roots.state, partial, &mut found)?
@@ -372,6 +403,20 @@ fn walk(
         let meta = fs::symlink_metadata(&path)
             .map_err(|e| format!("cannot read {}: {e}", path.display()))?;
         let kind = meta.file_type();
+        let left_out = matches!(tree, Tree::State)
+            && !rel.contains('/')
+            && found
+                .only_state
+                .is_some_and(|only| !only.contains(&rel.as_str()));
+        if left_out {
+            // Named once at the top, not file by file: the history it holds
+            // runs to thousands of files and none of them is read.
+            found.excluded.push(Excluded {
+                path: label(tree, &rel),
+                reason: NOT_IN_UPDATE_BACKUP,
+            });
+            continue;
+        }
         let reason = inherited.or_else(|| tree.subtree(&rel)).or_else(|| {
             if kind.is_dir() {
                 None
