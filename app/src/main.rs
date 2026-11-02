@@ -48406,7 +48406,9 @@ fn cold_start_update(argv: &[String]) {
     let Ok(exe) = std::env::current_exe() else {
         return;
     };
-    if let Some(entry) = update::apply_pending_at_cold_start(&roots, &exe, update::live_hosts()) {
+    if let Some(entry) =
+        update::apply_pending_at_cold_start(&roots, &exe, &update::Sessions::now(None))
+    {
         let err = std::process::Command::new(&entry)
             .args(argv.get(1..).unwrap_or_default())
             .exec();

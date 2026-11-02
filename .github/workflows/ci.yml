@@ -395,12 +395,30 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
+      # One rolling build serves the Dev channel, so only the newest dev/*
+      # branch publishes it. An older dev branch still taking fixes would
+      # otherwise replace it, and every Dev install would be offered a step
+      # back as an update.
+      - name: Publish only from the newest dev branch
+        id: newest
+        run: |
+          newest="$(git ls-remote --heads origin 'refs/heads/dev/*' | sed 's|.*refs/heads/||' | sort -V | tail -1)"
+          echo "newest dev branch: $newest"
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$GITHUB_REF_NAME is not the newest dev branch ($newest); the dev build is not replaced"
+          fi
+
       - uses: actions/download-artifact@v4
+        if: steps.newest.outputs.publish == 'true'
         with:
           name: terminal-delight-x86_64.AppImage
           path: dist
 
       - name: Verify the digest and describe the build
+        if: steps.newest.outputs.publish == 'true'
         run: |
           cd dist
           sha256sum --check terminal-delight-x86_64.AppImage.sha256
@@ -417,6 +435,7 @@ jobs:
           cat build.json
 
       - name: Replace the dev-build prerelease
+        if: steps.newest.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: |

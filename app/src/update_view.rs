@@ -18,19 +18,20 @@ pub(crate) struct UpdateState {
     install: Option<Install>,
     busy: bool,
     check: Option<Result<Check, String>>,
-    /// A checked download whose wire differs, waiting for a choice.
+    /// A checked download staged for a cold start, from this panel.
     prepared: Option<Prepared>,
-    /// What the last install or rollback did: the panel then offers Restart.
+    /// What the last window-only install or rollback did: the panel then
+    /// offers Restart window. Anything else is never installed from here
+    /// while a host runs (see `update::Sessions::allow`).
     installed: Option<Installed>,
-    /// Whether that install keeps the session host.
-    installed_compat: Option<Compat>,
     error: Option<String>,
     armed_full: bool,
     armed_older: bool,
-    /// Other TD sessions with a live host, counted when the panel opens. A
-    /// full restart refuses while there are any: their next window would meet
-    /// a host speaking the old wire.
-    others: usize,
+    armed_rollback: bool,
+    /// The machine's session hosts, read in the background when the panel
+    /// opens: whether a swap may happen with them running, and how many other
+    /// sessions a full restart would leave behind. Absent until read.
+    sessions: Option<update::Sessions>,
 }
 
 impl Workspace {
@@ -39,23 +40,46 @@ impl Workspace {
         let u = &mut self.update;
         u.armed_full = false;
         u.armed_older = false;
+        u.armed_rollback = false;
         u.error = None;
         if let Ok(roots) = Roots::current() {
             u.choices = update::load_choices(&roots);
             u.record = update::load_record(&roots);
             let exe = std::env::current_exe().unwrap_or_default();
-            let image = std::env::var_os("APPIMAGE").map(std::path::PathBuf::from);
-            u.install = Some(update::detect(&roots, &exe, image.as_deref()));
+            let (image, dir) = update::appimage_env();
+            u.install = Some(update::detect(
+                &roots,
+                &exe,
+                image.as_deref(),
+                dir.as_deref(),
+            ));
         }
-        self.update.others =
-            update::live_hosts().saturating_sub(usize::from(self.attach.is_some()));
+        self.update_read_sessions(cx);
         cx.notify();
+    }
+
+    /// Read the session hosts off the main thread: vouching for one hashes
+    /// the program it runs.
+    fn update_read_sessions(&mut self, cx: &mut Context<Self>) {
+        let own = instance::key().to_string();
+        cx.spawn(async move |this, cx| {
+            let s = cx
+                .background_executor()
+                .spawn(async move { update::Sessions::now(Some(&own)) })
+                .await;
+            let _ = this.update(cx, |ws, cx| {
+                ws.update.sessions = Some(s);
+                cx.notify();
+            });
+        })
+        .detach();
     }
 
     pub(crate) fn close_updates(&mut self) {
         self.update_menu = false;
         self.update.armed_full = false;
         self.update.armed_older = false;
+        self.update.armed_rollback = false;
     }
 
     /// Terminals in this window: what a full restart would end.
@@ -70,13 +94,20 @@ impl Workspace {
             .sum()
     }
 
+    /// Other sessions with a host running; unknown until the read is back.
+    fn update_others(&self) -> Option<usize> {
+        self.update
+            .sessions
+            .as_ref()
+            .map(|s| s.others(Some(instance::key())))
+    }
+
     fn update_set_channel(&mut self, channel: Channel, cx: &mut Context<Self>) {
         let Ok(roots) = Roots::current() else { return };
-        let mut c = self.update.choices.clone();
-        c.channel = channel;
-        match update::save_choices(&roots, &c) {
-            Ok(()) => {
+        match update::set_channel(&roots, channel) {
+            Ok(c) => {
                 self.update.choices = c;
+                self.update.record = update::load_record(&roots);
                 self.update.check = None;
                 self.update.prepared = None;
                 self.update.armed_older = false;
@@ -133,8 +164,9 @@ impl Workspace {
         .detach();
     }
 
-    /// Download, check and — when the wire matches — install the offer. A
-    /// build whose wire differs is staged and the choice is put to the person.
+    /// Download, check and install the offer when every running host can
+    /// take the new window; otherwise stage it and put the choice to the
+    /// person (a cold start, or Restart everything).
     fn update_install(&mut self, cx: &mut Context<Self>) {
         let Some(Ok(Check {
             offer: Some(offer), ..
@@ -149,6 +181,7 @@ impl Workspace {
             return;
         }
         let offer = offer.clone();
+        let session = instance::key().to_string();
         self.update.busy = true;
         self.update.error = None;
         self.update.armed_older = false;
@@ -160,29 +193,29 @@ impl Workspace {
                     let roots = Roots::current()?;
                     let this_build = BuildInfo::this();
                     let p = update::prepare(&roots, &offer, &this_build)?;
-                    if p.compat == Compat::Same {
-                        let done = update::install(&roots, &install, &p, &this_build, false)?;
+                    let sessions = update::Sessions::now(Some(&session));
+                    if sessions.needs_cold_start(p.compat) {
+                        update::stage(&roots, &p, &install)?;
+                        Ok::<_, String>((None, Some(p), sessions))
+                    } else {
+                        let done = update::install(&roots, &install, &p, &this_build, &sessions)?;
                         let _ = std::fs::remove_dir_all(
                             p.image
                                 .parent()
                                 .unwrap_or(std::path::Path::new("/nonexistent")),
                         );
-                        Ok::<_, String>((Some(done), None))
-                    } else {
-                        update::stage(&roots, &p)?;
-                        Ok((None, Some(p)))
+                        Ok((Some(done), None, sessions))
                     }
                 })
                 .await;
             let _ = this.update(cx, |ws, cx| {
                 ws.update.busy = false;
                 match done {
-                    Ok((Some(done), _)) => {
-                        ws.update.installed = Some(done);
-                        ws.update.installed_compat = Some(Compat::Same);
+                    Ok((done, prepared, sessions)) => {
+                        ws.update.installed = done;
+                        ws.update.prepared = prepared;
+                        ws.update.sessions = Some(sessions);
                     }
-                    Ok((None, Some(p))) => ws.update.prepared = Some(p),
-                    Ok((None, None)) => {}
                     Err(e) => ws.update.error = Some(e),
                 }
                 if let Ok(roots) = Roots::current() {
@@ -194,33 +227,61 @@ impl Workspace {
         .detach();
     }
 
+    /// Whether going back needs the session host stopped first; unknown
+    /// until the host read is back, and then treated as needing it.
+    fn update_rollback_needs_full(&self) -> bool {
+        let Some(kept) = &self.update.record.previous else {
+            return false;
+        };
+        let compat = update::rollback_compat(&BuildInfo::this(), kept);
+        self.update
+            .sessions
+            .as_ref()
+            .is_none_or(|s| s.needs_cold_start(compat))
+    }
+
     fn update_rollback(&mut self, cx: &mut Context<Self>) {
         let Some(install) = self.update.install.clone() else {
             return;
         };
-        let Some(kept) = self.update.record.previous.clone() else {
+        if self.update.busy || self.update.record.previous.is_none() {
             return;
-        };
-        if self.update.busy {
+        }
+        if self.update_rollback_needs_full() {
+            // The kept build cannot take this session's host, or another
+            // session's host cannot be vouched for: going back means ending
+            // the terminals, so it asks twice and then goes the full way.
+            if !self.update.armed_rollback {
+                self.update.armed_rollback = true;
+                cx.notify();
+                return;
+            }
+            self.update.armed_rollback = false;
+            self.update_stop_host_then(cx, move |roots, sessions| {
+                let exe = std::env::current_exe().unwrap_or_default();
+                let (image, dir) = update::appimage_env();
+                let inst = update::detect(roots, &exe, image.as_deref(), dir.as_deref());
+                update::rollback(roots, &inst, &BuildInfo::this(), sessions).map(|d| d.entry)
+            });
             return;
         }
         let this_build = BuildInfo::this();
-        let compat = update::rollback_compat(&this_build, &kept);
+        let session = instance::key().to_string();
         self.update.busy = true;
         self.update.error = None;
         cx.notify();
         cx.spawn(async move |this, cx| {
             let done = cx
                 .background_executor()
-                .spawn(async move { update::rollback(&Roots::current()?, &install, &this_build) })
+                .spawn(async move {
+                    let sessions = update::Sessions::now(Some(&session));
+                    update::rollback(&Roots::current()?, &install, &this_build, &sessions)
+                })
                 .await;
             let _ = this.update(cx, |ws, cx| {
                 ws.update.busy = false;
                 match done {
-                    Ok(done) => {
-                        ws.update.installed = Some(done);
-                        ws.update.installed_compat = Some(compat);
-                    }
+                    Ok(done) => ws.update.installed = Some(done),
                     Err(e) => ws.update.error = Some(e),
                 }
                 if let Ok(roots) = Roots::current() {
@@ -254,10 +315,7 @@ impl Workspace {
         }
     }
 
-    /// Install a staged or just-installed build whose wire differs, stop the
-    /// session host — which ends its terminals, as the button says — and
-    /// start the new build in a fresh window. Asks twice. Refuses while other
-    /// TD sessions run, because their next window would meet an old host.
+    /// Install the staged build the full way. Asks twice.
     fn update_restart_everything(&mut self, cx: &mut Context<Self>) {
         if !self.update.armed_full {
             self.update.armed_full = true;
@@ -265,11 +323,37 @@ impl Workspace {
             return;
         }
         self.update.armed_full = false;
-        let others = update::live_hosts().saturating_sub(usize::from(self.attach.is_some()));
+        self.update_stop_host_then(cx, |roots, sessions| {
+            let exe = std::env::current_exe().unwrap_or_default();
+            update::apply_pending_at_cold_start(roots, &exe, sessions)
+                .ok_or_else(|| "the staged build was not installed; see the window log".to_string())
+        });
+    }
+
+    /// The full way: stop this session's host — which ends its terminals, as
+    /// the button said — wait until it has gone, swap with no host running,
+    /// and start a fresh window. Nothing is swapped while the host still runs,
+    /// and nothing at all is done while another session runs: its next window
+    /// would meet a host speaking the old wire.
+    ///
+    /// When the swap fails after the host has stopped, the window is started
+    /// again on the build it had, so the person gets their saved layout back
+    /// rather than an empty desktop; the reason is in the window log.
+    fn update_stop_host_then(
+        &mut self,
+        cx: &mut Context<Self>,
+        swap: impl FnOnce(&Roots, &update::Sessions) -> Result<std::path::PathBuf, String>,
+    ) {
+        let own = instance::key();
+        let others = update::Sessions::now(Some(own)).others(Some(own));
         if others > 0 {
-            self.update.error = Some(format!(
-                "{others} other Terminal Delight sessions are running"
-            ));
+            self.update.error = Some(
+                self.lang
+                    .strings()
+                    .ui
+                    .upd_full_blocked
+                    .replace("{n}", &others.to_string()),
+            );
             cx.notify();
             return;
         }
@@ -281,32 +365,40 @@ impl Workspace {
                 return;
             }
         };
-        let entry = if let Some(i) = &self.update.installed {
-            Some(i.entry.clone())
-        } else {
-            let exe = std::env::current_exe().unwrap_or_default();
-            update::apply_pending_at_cold_start(&roots, &exe, 0)
-        };
-        let Some(entry) = entry else {
-            self.update.error =
-                Some("the staged build could not be installed; see the window log".into());
-            cx.notify();
-            return;
-        };
         if let Some(attach) = &self.attach {
             if let Err(e) = attach.link.shutdown() {
                 self.update.error = Some(format!("the session host did not stop: {e}"));
                 cx.notify();
                 return;
             }
-        }
-        match update::relaunch_after_exit(&entry, instance::key()) {
-            Ok(()) => cx.quit(),
-            Err(e) => {
-                self.update.error = Some(e);
-                cx.notify();
+            let deadline = Instant::now() + Duration::from_secs(5);
+            while !matches!(hostctl::probe_host(own), hostctl::HostProbe::NoSocket)
+                && Instant::now() < deadline
+            {
+                std::thread::sleep(Duration::from_millis(50));
             }
         }
+        let fallback = self
+            .update
+            .install
+            .as_ref()
+            .and_then(Install::entry)
+            .or_else(|| std::env::current_exe().ok());
+        let entry = match swap(&roots, &update::Sessions::now(Some(own))) {
+            Ok(entry) => Some(entry),
+            Err(e) => {
+                eprintln!(
+                    "terminal-delight: the update did not install after the host stopped: {e}"
+                );
+                fallback
+            }
+        };
+        if let Some(entry) = entry {
+            if let Err(e) = update::relaunch_after_exit(&entry, own) {
+                eprintln!("terminal-delight: {e}");
+            }
+        }
+        cx.quit();
     }
 
     /// The opt-in daily check, run from the window's timer: at most once a
@@ -713,7 +805,7 @@ impl Workspace {
                     .replace("{path}", &done.backup.display().to_string()),
                 false,
             ));
-            if u.installed_compat == Some(Compat::Same) {
+            {
                 let mut losses = vec![];
                 if self.attach.is_none() {
                     losses.push(ui.upd_loss_unhosted.to_string());
@@ -745,12 +837,6 @@ impl Workspace {
                     ui.upd_later.replace("{version}", &done.describe),
                     false,
                 ));
-            } else {
-                panel = panel.child(note(
-                    ui.upd_wire_warn.replace("{n}", &panes.to_string()),
-                    true,
-                ));
-                panel = self.full_restart_row(panel, &row, panes, cx);
             }
         }
 
@@ -762,27 +848,49 @@ impl Workspace {
             .map(|p| p.offer.describe())
             .or_else(|| u.record.pending.as_ref().map(|p| p.describe.clone()));
         if let (Some(staged), None) = (staged, &u.installed) {
-            panel = panel
-                .child(note(
+            // Staged for a different wire, or because another session's host
+            // runs a build nothing here can vouch for; only the first ends
+            // this window's terminals on a full restart, so only it says so.
+            let wire = u.prepared.as_ref().is_none_or(|p| p.compat != Compat::Same);
+            if wire {
+                panel = panel.child(note(
                     ui.upd_wire_warn.replace("{n}", &panes.to_string()),
                     true,
-                ))
-                .child(note(ui.upd_staged.replace("{version}", &staged), false));
+                ));
+            }
+            panel = panel.child(note(ui.upd_staged.replace("{version}", &staged), false));
             panel = self.full_restart_row(panel, &row, panes, cx);
         }
 
         // The way back.
         if let (Some(kept), true, None) = (&u.record.previous, installable, &u.installed) {
+            // Going back the full way ends this session's terminals, so it
+            // says how many and asks twice, as a staged install does; and like
+            // one it is not offered while another session runs.
+            let full = self.update_rollback_needs_full();
+            let others = self.update_others().unwrap_or(0);
+            let n = panes.to_string();
+            let blurb = match (full, u.armed_rollback) {
+                (false, _) => ui.upd_rollback_blurb.to_string(),
+                (true, false) => ui.upd_full_blurb.replace("{n}", &n),
+                (true, true) => ui.upd_full_confirm.replace("{n}", &n),
+            };
+            if full && others > 0 {
+                panel = panel.child(note(
+                    ui.upd_full_blocked.replace("{n}", &others.to_string()),
+                    false,
+                ));
+            }
             panel = panel.child(
                 row(
                     "\u{21b6}",
                     ui.upd_rollback_name.replace("{version}", &kept.describe),
-                    ui.upd_rollback_blurb.into(),
-                    !u.busy,
-                    false,
+                    blurb,
+                    !u.busy && !(full && others > 0),
+                    full,
                     "update-rollback",
                 )
-                .when(!u.busy, |d| {
+                .when(!u.busy && !(full && others > 0), |d| {
                     d.on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -851,7 +959,7 @@ impl Workspace {
         R: Fn(&str, String, String, bool, bool, &'static str) -> gpui::Stateful<gpui::Div>,
     {
         let ui = self.lang.strings().ui;
-        let others = self.update.others;
+        let others = self.update_others().unwrap_or(0);
         if others > 0 {
             return panel.child(div().text_size(px(10.)).child(SharedString::from(
                 ui.upd_full_blocked.replace("{n}", &others.to_string()),

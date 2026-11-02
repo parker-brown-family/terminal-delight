@@ -277,6 +277,10 @@ pub(crate) struct Pending {
     pub(crate) describe: String,
     pub(crate) channel: Channel,
     pub(crate) sha256: String,
+    /// What a new window started from when this was staged. A different
+    /// answer at the cold start means the install was moved on another way.
+    #[serde(default)]
+    pub(crate) over: Option<String>,
 }
 
 fn choices_path(roots: &Roots) -> PathBuf {
@@ -363,16 +367,35 @@ impl Install {
     }
 }
 
+/// The `APPIMAGE` and `APPDIR` an AppImage's runtime sets, from this process.
+pub(crate) fn appimage_env() -> (Option<PathBuf>, Option<PathBuf>) {
+    (
+        std::env::var_os("APPIMAGE").map(PathBuf::from),
+        std::env::var_os("APPDIR").map(PathBuf::from),
+    )
+}
+
 /// Work out the install from the running executable and the environment.
-pub(crate) fn detect(roots: &Roots, exe: &Path, appimage: Option<&Path>) -> Install {
-    if let Some(image) = appimage.filter(|p| p.is_absolute() && p.is_file()) {
+///
+/// `APPIMAGE` alone is not trusted: every terminal an AppImage TD opens
+/// inherits it, so a launcher build started from one of those panes would
+/// otherwise replace an AppImage it is not running from. It counts only when
+/// this program lives inside the image's mount, `APPDIR`.
+pub(crate) fn detect(
+    roots: &Roots,
+    exe: &Path,
+    appimage: Option<&Path>,
+    appdir: Option<&Path>,
+) -> Install {
+    let canon = |p: &Path| fs::canonicalize(p).ok();
+    let exe_c = canon(exe).unwrap_or_else(|| exe.to_path_buf());
+    let inside = appdir.and_then(canon).is_some_and(|d| exe_c.starts_with(d));
+    if let Some(image) = appimage.filter(|p| inside && p.is_absolute() && p.is_file()) {
         return Install::AppImage {
             image: image.to_path_buf(),
         };
     }
     let launcher = roots.bin.join("terminal-delight");
-    let canon = |p: &Path| fs::canonicalize(p).ok();
-    let exe_c = canon(exe).unwrap_or_else(|| exe.to_path_buf());
     let lib_c = canon(&roots.builds).unwrap_or_else(|| roots.builds.clone());
     if exe_c.starts_with(&lib_c) {
         let target = fs::read_link(&launcher).ok().map(|t| {
@@ -661,21 +684,8 @@ fn check_stable(this: &BuildInfo) -> Result<Check, String> {
 /// Compare the running commit with `target` through GitHub, falling back to
 /// version order when the commit is unknown or GitHub does not know it.
 fn relate(this: &BuildInfo, target: &str, target_version: &Version) -> (Relation, Option<u64>) {
-    if let Some(sha) = &this.sha {
-        let url = format!("{}/repos/{REPO}/compare/{sha}...{target}", api_base());
-        if let Ok(c) = fetch_json(&url) {
-            let ahead = c["ahead_by"].as_u64();
-            let r = match c["status"].as_str() {
-                Some("identical") => Some(Relation::Same),
-                Some("ahead") => Some(Relation::Newer),
-                Some("behind") => Some(Relation::Older),
-                Some("diverged") => Some(Relation::Diverged),
-                _ => None,
-            };
-            if let Some(r) = r {
-                return (r, ahead);
-            }
-        }
+    if let Some(r) = this.sha.as_deref().and_then(|sha| compare(sha, target)) {
+        return r;
     }
     match Version::parse(&this.version) {
         Some(mine) if *target_version > mine => (Relation::Newer, None),
@@ -683,6 +693,21 @@ fn relate(this: &BuildInfo, target: &str, target_version: &Version) -> (Relation
         Some(_) => (Relation::Older, None),
         None => (Relation::Unknown, None),
     }
+}
+
+/// How `target` relates to the commit `from`, as GitHub's compare answers;
+/// `None` when it could not say.
+fn compare(from: &str, target: &str) -> Option<(Relation, Option<u64>)> {
+    let url = format!("{}/repos/{REPO}/compare/{from}...{target}", api_base());
+    let c = fetch_json(&url).ok()?;
+    let r = match c["status"].as_str()? {
+        "identical" => Relation::Same,
+        "ahead" => Relation::Newer,
+        "behind" => Relation::Older,
+        "diverged" => Relation::Diverged,
+        _ => return None,
+    };
+    Some((r, c["ahead_by"].as_u64()))
 }
 
 /// What CI writes beside a dev build.
@@ -721,17 +746,15 @@ fn check_dev(this: &BuildInfo) -> Result<Check, String> {
         return Err("the dev build's build.json names no commit".into());
     }
     let (asset, checksum, size) = asset_urls(&release);
+    // Two dev commits are ordered only by their history. When GitHub cannot
+    // compare them (a local commit it has never seen, or the hourly limit),
+    // the answer is unknown, never "older": that would say "up to date".
     let (relation, ahead_by) = match &this.sha {
         Some(s) if s == &build.sha => (Relation::Same, Some(0)),
-        _ => relate(this, &build.sha, &Version::parse("0.0.0").expect("literal")),
+        Some(s) => compare(s, &build.sha).unwrap_or((Relation::Unknown, None)),
+        None => (Relation::Unknown, None),
     };
-    // Version order says nothing about two dev commits, so a fallback that
-    // only had the version to go on is reported as unknown.
-    let relation = match (relation, &this.sha) {
-        (Relation::Older | Relation::Newer, None) => Relation::Unknown,
-        (r, _) => r,
-    };
-    let notes = commit_notes(this.sha.as_deref(), &build.sha);
+    let (notes, host_restart) = commit_notes(this.sha.as_deref(), &build.sha);
     let branch_head = build.branch.as_deref().and_then(branch_head);
     let source_build = match &branch_head {
         Some(head) if head != &build.sha => {
@@ -748,7 +771,7 @@ fn check_dev(this: &BuildInfo) -> Result<Check, String> {
             sha: Some(build.sha.clone()),
             date: build.date.clone(),
             branch: build.branch.clone(),
-            host_restart: notes.contains(HOST_RESTART_MARK),
+            host_restart,
             notes,
             page: release["html_url"].as_str().unwrap_or_default().to_string(),
             asset,
@@ -762,19 +785,25 @@ fn check_dev(this: &BuildInfo) -> Result<Check, String> {
     })
 }
 
-/// The first lines of the commits `to` has that `from` lacks, newest first.
-fn commit_notes(from: Option<&str>, to: &str) -> String {
+/// The first lines of the commits `to` has that `from` lacks, newest first,
+/// and whether any of those commits carries the host-restart mark anywhere in
+/// its message (a mark is never a commit's first line).
+fn commit_notes(from: Option<&str>, to: &str) -> (String, bool) {
     let Some(from) = from else {
-        return String::new();
+        return (String::new(), false);
     };
     let url = format!("{}/repos/{REPO}/compare/{from}...{to}", api_base());
     let Ok(c) = fetch_json(&url) else {
-        return String::new();
+        return (String::new(), false);
     };
-    let mut lines: Vec<String> = c["commits"]
-        .as_array()
-        .into_iter()
-        .flatten()
+    let commits = c["commits"].as_array().cloned().unwrap_or_default();
+    let marked = commits.iter().any(|k| {
+        k["commit"]["message"]
+            .as_str()
+            .is_some_and(|m| m.contains(HOST_RESTART_MARK))
+    });
+    let mut lines: Vec<String> = commits
+        .iter()
         .filter_map(|k| {
             let sha = k["sha"].as_str()?;
             let msg = k["commit"]["message"].as_str()?.lines().next()?;
@@ -783,7 +812,7 @@ fn commit_notes(from: Option<&str>, to: &str) -> String {
         .collect();
     lines.reverse();
     lines.truncate(20);
-    lines.join("\n")
+    (lines.join("\n"), marked)
 }
 
 fn branch_head(branch: &str) -> Option<String> {
@@ -1055,7 +1084,13 @@ pub(crate) fn backup(roots: &Roots, label: &str) -> Result<PathBuf, String> {
         host.as_deref(),
         BACKED_UP_RECORDS,
     )?;
-    prune_backups(&base);
+    // Never prune the backups the record still points at: Roll back offers
+    // to restore the one taken when the previous build was replaced.
+    let rec = load_record(roots);
+    let mut keep: Vec<PathBuf> = vec![report.dir.clone()];
+    keep.extend(rec.previous.and_then(|k| k.backup));
+    keep.extend(rec.last_backup);
+    prune_backups(&base, &keep);
     Ok(report.dir)
 }
 
@@ -1079,7 +1114,7 @@ pub(crate) fn backups_dir(roots: &Roots) -> PathBuf {
     roots.data_base.join("terminal-delight-backups")
 }
 
-fn prune_backups(base: &Path) {
+fn prune_backups(base: &Path, keep: &[PathBuf]) {
     let Ok(rd) = fs::read_dir(base) else { return };
     let mut ours: Vec<PathBuf> = rd
         .flatten()
@@ -1089,10 +1124,11 @@ fn prune_backups(base: &Path) {
                 .and_then(|n| n.to_str())
                 .is_some_and(|n| n.starts_with("update-"))
                 && p.join("manifest.json").is_file()
+                && !keep.contains(p)
         })
         .collect();
     ours.sort();
-    while ours.len() > KEEP_BACKUPS {
+    while ours.len() + keep.len() > KEEP_BACKUPS && !ours.is_empty() {
         let old = ours.remove(0);
         let _ = fs::remove_dir_all(old);
     }
@@ -1110,29 +1146,91 @@ pub(crate) struct Installed {
     pub(crate) backup: PathBuf,
 }
 
+/// The session hosts on this machine, as a swap has to see them.
+///
+/// Gathered by the caller and handed in, so the rule that uses it can be
+/// tested without the machine's own hosts deciding the answer.
+#[derive(Debug, Clone, Default, Serialize)]
+pub(crate) struct Sessions {
+    /// Every session whose socket answers in any way: live, refusing our
+    /// protocol, or not answering. Only a socket nobody listens on is absent.
+    pub(crate) alive: Vec<String>,
+    /// Sessions whose host runs a build nothing here can vouch for.
+    pub(crate) unvouched: Vec<String>,
+}
+
+impl Sessions {
+    pub(crate) fn now(own: Option<&str>) -> Sessions {
+        let exe = std::env::current_exe().unwrap_or_default();
+        Sessions {
+            alive: hosts_alive(),
+            unvouched: unvouched_hosts(&exe, own),
+        }
+    }
+
+    /// Hosts alive other than `own`'s.
+    pub(crate) fn others(&self, own: Option<&str>) -> usize {
+        self.alive
+            .iter()
+            .filter(|k| Some(k.as_str()) != own)
+            .count()
+    }
+
+    /// Whether a swap to a build of `compat` may happen now, and why not.
+    ///
+    /// The one rule every install, rollback and staged install obeys: a swap
+    /// either keeps every live host working (same wire as this window, and
+    /// every other session's host vouched for), or happens when no host is
+    /// alive at all. Anything else would put the next window that opens in
+    /// front of a host it cannot talk to.
+    pub(crate) fn allow(&self, compat: Compat) -> Result<(), String> {
+        let why = if compat != Compat::Same {
+            "this build changes how the window talks to your terminals".to_string()
+        } else if !self.unvouched.is_empty() {
+            format!(
+                "the session host of {} runs a build TD cannot vouch for",
+                self.unvouched.join(", ")
+            )
+        } else {
+            return Ok(());
+        };
+        if self.alive.is_empty() {
+            Ok(())
+        } else {
+            Err(format!(
+                "{why}, and {} session host(s) are running; it installs at the next cold start, or from ⚙ CONFIG › UPDATES with Restart everything",
+                self.alive.len()
+            ))
+        }
+    }
+
+    /// True when only a cold start, or Restart everything, may install it.
+    pub(crate) fn needs_cold_start(&self, compat: Compat) -> bool {
+        compat != Compat::Same || !self.unvouched.is_empty()
+    }
+}
+
 /// Install a prepared build: back up, then swap the AppImage or repoint the
-/// launcher, keeping what it replaced. Refuses when the wire differs and
-/// `now` is false — that build is staged for the next cold start instead.
+/// launcher, keeping what it replaced. Refuses whatever [`Sessions::allow`]
+/// refuses; such a build is staged instead.
 pub(crate) fn install(
     roots: &Roots,
     install: &Install,
     p: &Prepared,
     this: &BuildInfo,
-    now: bool,
+    sessions: &Sessions,
 ) -> Result<Installed, String> {
     if !install.can_install() {
         return Err("this install is not one TD updates".into());
     }
-    if p.compat != Compat::Same && !now {
-        return Err("this build changes how the window talks to your terminals; it was staged for the next cold start".into());
-    }
+    sessions.allow(p.compat)?;
     let backup = backup(roots, &this.version)?;
     let describe = p
         .info
         .as_ref()
         .map(BuildInfo::describe)
         .unwrap_or_else(|| p.offer.describe());
-    let mut kept = activate(
+    let activated = activate(
         roots,
         install,
         &p.image,
@@ -1140,33 +1238,71 @@ pub(crate) fn install(
         &p.offer,
         p.info.as_ref(),
     )?;
-    if let Some(k) = kept.as_mut() {
-        k.describe = this.describe();
-        k.wire = this.wire.clone();
-        k.backup = Some(backup.clone());
-    }
     let mut rec = load_record(roots);
-    rec.previous = kept.clone();
+    if let Activated::Replaced { kept, is_this } = activated {
+        // The replaced file is described as this build only when it IS this
+        // build. Another window may already have moved the install on, and
+        // then all that is known is its name: the wire is left unknown, so a
+        // rollback to it is never taken for a window-only one.
+        rec.previous = kept.map(|path| Kept {
+            describe: if is_this {
+                this.describe()
+            } else {
+                path.file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_default()
+            },
+            wire: if is_this { this.wire.clone() } else { None },
+            backup: Some(backup.clone()),
+            path,
+        });
+    }
     // A build staged earlier is superseded by this one: its download goes
     // too, or the cache keeps a 40 MB file nothing will ever read.
-    if let Some(old) = rec.pending.take() {
-        if let Some(dir) = old.staged.parent() {
-            if dir.starts_with(staging(roots)) && Some(dir) != p.image.parent() {
-                let _ = fs::remove_dir_all(dir);
-            }
-        }
-    }
+    drop_pending(roots, &mut rec, p.image.parent());
     rec.last_backup = Some(backup.clone());
     save_record(roots, &rec)?;
     Ok(Installed {
         describe,
         entry: install.entry().expect("can_install"),
-        previous: kept,
+        previous: rec.previous.clone(),
         backup,
     })
 }
 
-/// Put the new build in place. Returns the build it replaced.
+/// Forget a staged build and remove its download, unless it lives in `keep`.
+fn drop_pending(roots: &Roots, rec: &mut Record, keep: Option<&Path>) {
+    if let Some(old) = rec.pending.take() {
+        if let Some(dir) = old.staged.parent() {
+            if dir.starts_with(staging(roots)) && Some(dir) != keep {
+                let _ = fs::remove_dir_all(dir);
+            }
+        }
+    }
+}
+
+/// What putting a build in place did.
+#[derive(Debug)]
+enum Activated {
+    /// The install now runs the new build. `kept` is where the replaced file
+    /// went; `is_this` says whether that file is the build this process runs.
+    Replaced {
+        kept: Option<PathBuf>,
+        is_this: bool,
+    },
+    /// The install already ran exactly this build; nothing was touched, and
+    /// the build kept for rollback stays what it was.
+    AlreadyThere,
+}
+
+fn same_file(a: &Path, b: &Path) -> bool {
+    match (fs::canonicalize(a), fs::canonicalize(b)) {
+        (Ok(x), Ok(y)) => x == y,
+        _ => false,
+    }
+}
+
+/// Put the new build in place.
 fn activate(
     roots: &Roots,
     install: &Install,
@@ -1174,45 +1310,53 @@ fn activate(
     binary: &Path,
     offer: &Offer,
     info: Option<&BuildInfo>,
-) -> Result<Option<Kept>, String> {
+) -> Result<Activated, String> {
     let _lock = DeployLock::take(roots)?;
     match install {
         Install::AppImage { image: dest } => {
+            if dest.is_file() && sha256_file(dest).ok() == sha256_file(image).ok() {
+                return Ok(Activated::AlreadyThere);
+            }
             let dir = dest.parent().ok_or("the AppImage has no directory")?;
             let name = dest
                 .file_name()
                 .ok_or("the AppImage has no name")?
                 .to_string_lossy()
                 .to_string();
-            let part = dir.join(format!(".{name}.td-update-{}", std::process::id()));
+            let pid = std::process::id();
+            let part = dir.join(format!(".{name}.td-update-{pid}"));
             copy_exec(image, &part)?;
-            let previous = dir.join(format!("{name}.previous"));
-            let prev_part = dir.join(format!(".{name}.previous-{}", std::process::id()));
-            let kept = if dest.is_file() {
-                fs::hard_link(dest, &prev_part)
-                    .or_else(|_| fs::copy(dest, &prev_part).map(|_| ()))
+            // Order matters. The current image is linked aside first, then the
+            // new one renamed over it, and only then is the aside renamed to
+            // `.previous`. A failure before the second step changes nothing; a
+            // failure after it leaves the old image in the aside, which is
+            // what gets recorded.
+            let aside = dir.join(format!(".{name}.previous-{pid}"));
+            let had = dest.is_file();
+            if had {
+                fs::hard_link(dest, &aside)
+                    .or_else(|_| fs::copy(dest, &aside).map(|_| ()))
                     .map_err(|e| {
                         let _ = fs::remove_file(&part);
                         format!("cannot keep the current AppImage: {e}")
                     })?;
-                fs::rename(&prev_part, &previous).map_err(|e| {
-                    let _ = fs::remove_file(&part);
-                    format!("cannot keep the current AppImage: {e}")
-                })?;
-                Some(previous.clone())
-            } else {
-                None
-            };
+            }
             fs::rename(&part, dest).map_err(|e| {
                 let _ = fs::remove_file(&part);
+                let _ = fs::remove_file(&aside);
                 format!("cannot replace {}: {e}", dest.display())
             })?;
-            Ok(kept.map(|path| Kept {
-                path,
-                describe: String::new(),
-                wire: None,
-                backup: None,
-            }))
+            let kept = had.then(|| {
+                let previous = dir.join(format!("{name}.previous"));
+                match fs::rename(&aside, &previous) {
+                    Ok(()) => previous,
+                    Err(_) => aside.clone(),
+                }
+            });
+            Ok(Activated::Replaced {
+                kept,
+                is_this: true,
+            })
         }
         Install::Launcher {
             launcher,
@@ -1246,6 +1390,9 @@ fn activate(
                         dest.display()
                     ));
                 }
+                if target.as_deref().is_some_and(|t| same_file(t, &dest)) {
+                    return Ok(Activated::AlreadyThere);
+                }
             } else {
                 let part = library.join(format!(".{name}.td-update-{}", std::process::id()));
                 copy_exec(binary, &part)?;
@@ -1255,12 +1402,11 @@ fn activate(
                 })?;
             }
             repoint(launcher, &dest)?;
-            Ok(target.clone().map(|path| Kept {
-                path,
-                describe: String::new(),
-                wire: None,
-                backup: None,
-            }))
+            let me = std::env::current_exe().unwrap_or_default();
+            Ok(Activated::Replaced {
+                is_this: target.as_deref().is_some_and(|t| same_file(t, &me)),
+                kept: target.clone(),
+            })
         }
         _ => Err("this install is not one TD updates".into()),
     }
@@ -1342,11 +1488,15 @@ impl DeployLock {
 // ---------------------------------------------------------------- rollback
 
 /// Go back to the build the last install replaced, keeping the current one as
-/// the new "previous" so a rollback can itself be undone.
+/// the new "previous" so a rollback can itself be undone. Obeys the same rule
+/// as an install ([`Sessions::allow`]), judged on the wire recorded for the
+/// kept build, and cancels any staged build: a person who went back did not
+/// ask for the staged one to come forward at the next login.
 pub(crate) fn rollback(
     roots: &Roots,
     install: &Install,
     this: &BuildInfo,
+    sessions: &Sessions,
 ) -> Result<Installed, String> {
     let mut rec = load_record(roots);
     let kept = rec
@@ -1359,9 +1509,11 @@ pub(crate) fn rollback(
             kept.path.display()
         ));
     }
+    sessions.allow(rollback_compat(this, &kept))?;
     let backup = backup(roots, &this.version)?;
     let _lock = DeployLock::take(roots)?;
-    let now_kept = match install {
+    let me = std::env::current_exe().unwrap_or_default();
+    let (now_kept, is_this) = match install {
         Install::AppImage { image } => {
             let dir = image.parent().ok_or("the AppImage has no directory")?;
             let swap = dir.join(format!(".td-rollback-{}", std::process::id()));
@@ -1371,25 +1523,45 @@ pub(crate) fn rollback(
                 let _ = fs::rename(&swap, image);
                 return Err(format!("cannot restore {}: {e}", kept.path.display()));
             }
-            fs::rename(&swap, &kept.path)
-                .map_err(|e| format!("cannot keep the replaced AppImage: {e}"))?;
-            kept.path.clone()
+            // The replaced image is now the one to come back to. Where it
+            // could not be given the kept name, it stays where it is, and the
+            // record says so rather than naming a file that is not there.
+            let at = match fs::rename(&swap, &kept.path) {
+                Ok(()) => kept.path.clone(),
+                Err(_) => swap,
+            };
+            (at, true)
         }
         Install::Launcher {
             launcher, target, ..
         } => {
             let current = target.clone().ok_or("the launcher is not a link")?;
+            let now_target = fs::read_link(launcher)
+                .ok()
+                .map(|t| absolutise(launcher, &t));
+            if now_target.as_ref() != Some(&current) {
+                return Err("the launcher changed since this panel looked; check again".into());
+            }
             repoint(launcher, &kept.path)?;
-            current
+            let is_this = same_file(&current, &me);
+            (current, is_this)
         }
         _ => return Err("this install is not one TD updates".into()),
     };
     rec.previous = Some(Kept {
-        path: now_kept,
-        describe: this.describe(),
-        wire: this.wire.clone(),
+        describe: if is_this {
+            this.describe()
+        } else {
+            now_kept
+                .file_name()
+                .map(|n| n.to_string_lossy().to_string())
+                .unwrap_or_default()
+        },
+        wire: if is_this { this.wire.clone() } else { None },
         backup: Some(backup.clone()),
+        path: now_kept,
     });
+    drop_pending(roots, &mut rec, None);
     rec.last_backup = Some(backup.clone());
     save_record(roots, &rec)?;
     Ok(Installed {
@@ -1412,10 +1584,22 @@ pub(crate) fn rollback_compat(this: &BuildInfo, kept: &Kept) -> Compat {
 
 // ---------------------------------------------------------------- staging
 
+/// The bytes a new window would start from right now, for telling later
+/// whether the install was moved on by something else.
+fn entry_digest(install: &Install) -> Option<String> {
+    match install {
+        Install::AppImage { image } => sha256_file(image).ok(),
+        Install::Launcher { launcher, .. } => sha256_file(launcher).ok(),
+        _ => None,
+    }
+}
+
 /// Keep a checked build for the next cold start. The file stays in staging;
 /// nothing a new window starts from is touched.
-pub(crate) fn stage(roots: &Roots, p: &Prepared) -> Result<(), String> {
+pub(crate) fn stage(roots: &Roots, p: &Prepared, install: &Install) -> Result<(), String> {
     let mut rec = load_record(roots);
+    let keep = p.image.parent();
+    drop_pending(roots, &mut rec, keep);
     rec.pending = Some(Pending {
         staged: p.image.clone(),
         describe: p
@@ -1425,36 +1609,66 @@ pub(crate) fn stage(roots: &Roots, p: &Prepared) -> Result<(), String> {
             .unwrap_or_else(|| p.offer.describe()),
         channel: p.offer.channel,
         sha256: p.sha256.clone(),
+        over: entry_digest(install),
     });
     save_record(roots, &rec)
+}
+
+/// Choose a channel. Changing it cancels a build staged from the other one.
+pub(crate) fn set_channel(roots: &Roots, channel: Channel) -> Result<Choices, String> {
+    let mut c = load_choices(roots);
+    if c.channel != channel {
+        let mut rec = load_record(roots);
+        if rec.pending.is_some() {
+            drop_pending(roots, &mut rec, None);
+            save_record(roots, &rec)?;
+        }
+    }
+    c.channel = channel;
+    save_choices(roots, &c)?;
+    Ok(c)
 }
 
 /// At a cold start — no session host alive anywhere on this machine — install
 /// a staged build and return where the new build now starts from, so the
 /// caller can run it instead of this one. `None` when there is nothing to do,
 /// or when doing it now could put a new window beside an old host.
+///
+/// A staged build is dropped, not installed, when its file changed, when the
+/// install was moved on by something else since it was staged (another
+/// update, `land.sh`, a rollback), or when the channel it came from is no
+/// longer the chosen one.
 pub(crate) fn apply_pending_at_cold_start(
     roots: &Roots,
     exe: &Path,
-    live_hosts: usize,
+    sessions: &Sessions,
 ) -> Option<PathBuf> {
     let rec = load_record(roots);
     let pending = rec.pending.clone()?;
-    if live_hosts > 0 {
+    if !sessions.alive.is_empty() {
         return None;
     }
     let report = |why: String| {
         eprintln!("terminal-delight: the staged update was not installed: {why}");
         None
     };
-    if sha256_file(&pending.staged).ok().as_deref() != Some(pending.sha256.as_str()) {
+    let (appimage, appdir) = appimage_env();
+    let install = detect(roots, exe, appimage.as_deref(), appdir.as_deref());
+    let stale = if sha256_file(&pending.staged).ok().as_deref() != Some(pending.sha256.as_str()) {
+        Some("the staged file changed or is gone")
+    } else if pending.over.is_some() && entry_digest(&install) != pending.over {
+        Some("Terminal Delight was changed another way since it was staged")
+    } else if load_choices(roots).channel != pending.channel {
+        Some("it came from a channel that is no longer chosen")
+    } else {
+        None
+    };
+    if let Some(why) = stale {
         let mut rec = rec;
-        rec.pending = None;
+        drop_pending(roots, &mut rec, None);
         let _ = save_record(roots, &rec);
-        return report("the staged file changed or is gone".into());
+        return report(why.into());
     }
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
-    let install = detect(roots, exe, appimage.as_deref());
     if !install.can_install() {
         return report("this install is not one TD updates".into());
     }
@@ -1492,7 +1706,7 @@ pub(crate) fn apply_pending_at_cold_start(
         sha256: pending.sha256.clone(),
         info,
     };
-    match self::install(roots, &install, &p, &this, true) {
+    match self::install(roots, &install, &p, &this, sessions) {
         Ok(done) => {
             let _ = fs::remove_dir_all(&dir);
             eprintln!(
@@ -1505,12 +1719,51 @@ pub(crate) fn apply_pending_at_cold_start(
     }
 }
 
-/// How many session hosts answer on this machine right now.
-pub(crate) fn live_hosts() -> usize {
+/// Every session whose host socket answers in any way. A host that refuses
+/// our protocol, or does not answer, is still a host: counting only the ones
+/// that answer properly would let a cold-start install run beside it.
+pub(crate) fn hosts_alive() -> Vec<String> {
     crate::hostctl::sockets_present()
-        .iter()
-        .filter(|k| crate::hostctl::probe_host(k).is_live())
-        .count()
+        .into_iter()
+        .filter(|k| {
+            !matches!(
+                crate::hostctl::probe_host(k),
+                crate::hostctl::HostProbe::NoSocket
+            )
+        })
+        .collect()
+}
+
+/// Sessions whose host runs a build nothing here can vouch for.
+///
+/// A window-only update repoints what every NEW window starts from, not just
+/// this one's. Another workspace's next window would then meet that
+/// workspace's host, so "same wire as this window" is not enough on its own.
+/// A host is vouched for when it runs the very bytes of this program, or of
+/// the host this session's window is already working with. Bytes are compared
+/// rather than asking the host's program, because an older build may not know
+/// `--build-info` and must not be started to find out. A host whose program
+/// cannot be read, or that does not answer properly, is not vouched for.
+pub(crate) fn unvouched_hosts(this_exe: &Path, own_session: Option<&str>) -> Vec<String> {
+    use crate::hostctl::{probe_host, sockets_present, HostProbe};
+    let exe_of = |pid: u32| -> Option<String> {
+        (pid > 0)
+            .then(|| sha256_file(Path::new(&format!("/proc/{pid}/exe"))).ok())
+            .flatten()
+    };
+    let mut vouched: Vec<String> = sha256_file(this_exe).ok().into_iter().collect();
+    if let Some(HostProbe::Live { host, .. }) = own_session.map(probe_host) {
+        vouched.extend(exe_of(host));
+    }
+    sockets_present()
+        .into_iter()
+        .filter(|k| Some(k.as_str()) != own_session)
+        .filter(|k| match probe_host(k) {
+            HostProbe::Live { host, .. } => exe_of(host).is_none_or(|s| !vouched.contains(&s)),
+            HostProbe::NoSocket => false,
+            HostProbe::Unresponsive | HostProbe::Skewed => true,
+        })
+        .collect()
 }
 
 // ---------------------------------------------------------------- restart
@@ -1569,9 +1822,11 @@ const HELP: &str =
   status              what is running, how it was installed, and the channel
   check               ask the channel for a newer build (nothing is downloaded)
   install [--now]     download, check and install the newest build on the channel.
-                      A build whose window↔host wire differs is staged for the
-                      next cold start unless --now is given; --now ends the
-                      running session's terminals when the window restarts.
+                      A build a running session host could not take (a different
+                      window↔host wire, or another session's host on a build TD
+                      cannot vouch for) is staged for the next cold start. --now
+                      installs it at once, which TD allows only while no session
+                      host is running: close Terminal Delight first.
   rollback            go back to the build the last install replaced
   channel stable|dev  choose the channel (dev is experimental)
   backups             list the settings backups taken before each install
@@ -1596,9 +1851,12 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
     };
     let this = BuildInfo::this();
     let exe = std::env::current_exe().unwrap_or_default();
-    let appimage = std::env::var_os("APPIMAGE").map(PathBuf::from);
-    let inst = detect(&roots, &exe, appimage.as_deref());
+    let (appimage, appdir) = appimage_env();
+    let inst = detect(&roots, &exe, appimage.as_deref(), appdir.as_deref());
     let choices = load_choices(&roots);
+    // Inside a TD pane this names the session whose host the caller's window
+    // is attached to; from anywhere else there is none.
+    let own = std::env::var("TD_SESSION").ok().filter(|s| !s.is_empty());
     let say = |v: serde_json::Value, text: String| {
         if json {
             println!("{}", serde_json::to_string_pretty(&v).unwrap_or_default());
@@ -1678,19 +1936,28 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
                 Ok(p) => p,
                 Err(e) => return fail(e),
             };
-            if p.compat != Compat::Same && !now {
-                return match stage(&roots, &p) {
+            let sessions = Sessions::now(own.as_deref());
+            if sessions.needs_cold_start(p.compat) && !now {
+                let why = if p.compat != Compat::Same {
+                    "it changes how the window talks to your terminals".to_string()
+                } else {
+                    format!(
+                        "the session host of {} runs a build TD cannot vouch for",
+                        sessions.unvouched.join(", ")
+                    )
+                };
+                return match stage(&roots, &p, &inst) {
                     Ok(()) => {
                         say(
-                            serde_json::json!({"staged": true, "compat": p.compat, "describe": offer.describe()}),
-                            format!("{} is checked and staged: it changes how the window talks to your terminals, so it installs at the next cold start (or run `terminal-delight update install --now`)", offer.describe()),
+                            serde_json::json!({"staged": true, "compat": p.compat, "unvouched": sessions.unvouched, "describe": offer.describe()}),
+                            format!("{} is checked and staged: {why}, so it installs at the next cold start, when no session host is running", offer.describe()),
                         );
                         0
                     }
                     Err(e) => fail(e),
                 };
             }
-            match install(&roots, &inst, &p, &this, now) {
+            match install(&roots, &inst, &p, &this, &sessions) {
                 Ok(done) => {
                     let _ =
                         fs::remove_dir_all(p.image.parent().unwrap_or(Path::new("/nonexistent")));
@@ -1711,7 +1978,7 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
             if !inst.can_install() {
                 return fail(refusal(&inst));
             }
-            match rollback(&roots, &inst, &this) {
+            match rollback(&roots, &inst, &this, &Sessions::now(own.as_deref())) {
                 Ok(done) => {
                     say(
                         serde_json::to_value(&done).unwrap_or_default(),
@@ -1732,10 +1999,8 @@ pub(crate) fn run_cli(args: &[String]) -> i32 {
                 "dev" => Channel::Dev,
                 other => return fail(format!("unknown channel `{other}` (stable or dev)")),
             };
-            let mut c = choices.clone();
-            c.channel = channel;
-            match save_choices(&roots, &c) {
-                Ok(()) => {
+            match set_channel(&roots, channel) {
+                Ok(_) => {
                     say(
                         serde_json::json!({"channel": channel}),
                         format!("channel: {}", channel.word()),
@@ -1948,12 +2213,25 @@ mod tests {
         let image = home.join("Apps/td.AppImage");
         fs::create_dir_all(image.parent().unwrap()).unwrap();
         fs::write(&image, b"x").unwrap();
+        // An AppImage names itself, but only to a program running inside it:
+        // a launcher build started from one of its panes inherits APPIMAGE.
+        let mount = home.join("mount");
+        fs::create_dir_all(mount.join("usr/bin")).unwrap();
+        let inside = mount.join("usr/bin/terminal-delight");
+        fs::write(&inside, b"x").unwrap();
         assert!(matches!(
-            detect(
-                &r,
-                Path::new("/tmp/.mount_x/usr/bin/terminal-delight"),
-                Some(&image)
-            ),
+            detect(&r, &inside, Some(&image), Some(&mount)),
+            Install::AppImage { .. }
+        ));
+        let elsewhere = home.join("elsewhere/terminal-delight");
+        fs::create_dir_all(elsewhere.parent().unwrap()).unwrap();
+        fs::write(&elsewhere, b"x").unwrap();
+        assert!(!matches!(
+            detect(&r, &elsewhere, Some(&image), Some(&mount)),
+            Install::AppImage { .. }
+        ));
+        assert!(!matches!(
+            detect(&r, &inside, Some(&image), None),
             Install::AppImage { .. }
         ));
         // A build in the library, reached through the launcher.
@@ -1962,7 +2240,7 @@ mod tests {
         let build = r.builds.join("td-abcdef12-x");
         fs::write(&build, b"x").unwrap();
         std::os::unix::fs::symlink(&build, r.bin.join("terminal-delight")).unwrap();
-        match detect(&r, &build, None) {
+        match detect(&r, &build, None, None) {
             Install::Launcher { target, .. } => assert_eq!(target, Some(build.clone())),
             other => panic!("{other:?}"),
         }
@@ -1972,16 +2250,22 @@ mod tests {
         fs::create_dir_all(co.join("app/target/release")).unwrap();
         let bin = co.join("app/target/release/terminal-delight");
         fs::write(&bin, b"x").unwrap();
-        assert!(matches!(detect(&r, &bin, None), Install::Source { .. }));
+        assert!(matches!(
+            detect(&r, &bin, None, None),
+            Install::Source { .. }
+        ));
         // A system path, and anything else.
         assert!(matches!(
-            detect(&r, Path::new("/usr/bin/terminal-delight"), None),
+            detect(&r, Path::new("/usr/bin/terminal-delight"), None, None),
             Install::Package { .. }
         ));
         let loose = home.join("bin/terminal-delight");
         fs::create_dir_all(loose.parent().unwrap()).unwrap();
         fs::write(&loose, b"x").unwrap();
-        assert!(matches!(detect(&r, &loose, None), Install::Unknown { .. }));
+        assert!(matches!(
+            detect(&r, &loose, None, None),
+            Install::Unknown { .. }
+        ));
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -2000,13 +2284,11 @@ mod tests {
         std::os::unix::fs::symlink(&old, &launcher).unwrap();
         let new_bin = home.join("staged-binary");
         fs::write(&new_bin, b"new build").unwrap();
-        let inst = detect(&r, &old, None);
+        let inst = detect(&r, &old, None, None);
         let mut o = offer(Channel::Dev, Relation::Newer);
         o.sha = Some("22222222deadbeef".into());
-        let kept = activate(&r, &inst, &new_bin, &new_bin, &o, None)
-            .unwrap()
-            .unwrap();
-        assert_eq!(kept.path, old);
+        let kept = kept_of(activate(&r, &inst, &new_bin, &new_bin, &o, None).unwrap());
+        assert_eq!(kept, old);
         let now = fs::canonicalize(&launcher).unwrap();
         assert_eq!(
             now,
@@ -2024,9 +2306,9 @@ mod tests {
             backup: None,
         });
         save_record(&r, &rec).unwrap();
-        let inst = detect(&r, &now, None);
+        let inst = detect(&r, &now, None, None);
         let this = BuildInfo::this();
-        let back = rollback(&r, &inst, &this).unwrap();
+        let back = rollback(&r, &inst, &this, &Sessions::default()).unwrap();
         assert_eq!(back.describe, "old");
         assert_eq!(
             fs::canonicalize(&launcher).unwrap(),
@@ -2058,30 +2340,46 @@ mod tests {
         let inst = Install::AppImage {
             image: image.clone(),
         };
-        let kept = activate(
-            &r,
-            &inst,
-            &staged,
-            &staged,
-            &offer(Channel::Stable, Relation::Newer),
-            None,
-        )
-        .unwrap()
-        .unwrap();
+        let kept = kept_of(
+            activate(
+                &r,
+                &inst,
+                &staged,
+                &staged,
+                &offer(Channel::Stable, Relation::Newer),
+                None,
+            )
+            .unwrap(),
+        );
         assert_eq!(fs::read(&image).unwrap(), b"new image");
-        assert_eq!(fs::read(&kept.path).unwrap(), b"old image");
+        assert_eq!(fs::read(&kept).unwrap(), b"old image");
+        // Installing the same build again touches nothing, so the way back
+        // still leads to the old image rather than to a copy of the new one.
+        assert!(matches!(
+            activate(
+                &r,
+                &inst,
+                &staged,
+                &staged,
+                &offer(Channel::Stable, Relation::Newer),
+                None
+            )
+            .unwrap(),
+            Activated::AlreadyThere
+        ));
+        assert_eq!(fs::read(&kept).unwrap(), b"old image");
         assert!(fs::metadata(&image).unwrap().permissions().mode() & 0o111 != 0);
         let mut rec = Record::default();
         rec.previous = Some(Kept {
-            path: kept.path.clone(),
+            path: kept.clone(),
             describe: "old".into(),
             wire: None,
             backup: None,
         });
         save_record(&r, &rec).unwrap();
-        rollback(&r, &inst, &BuildInfo::this()).unwrap();
+        rollback(&r, &inst, &BuildInfo::this(), &Sessions::default()).unwrap();
         assert_eq!(fs::read(&image).unwrap(), b"old image");
-        assert_eq!(fs::read(&kept.path).unwrap(), b"new image");
+        assert_eq!(fs::read(&kept).unwrap(), b"new image");
         let _ = fs::remove_dir_all(&home);
     }
 
@@ -2142,16 +2440,25 @@ mod tests {
             describe: "x".into(),
             channel: Channel::Dev,
             sha256: sha256_file(&staged).unwrap(),
+            over: None,
         });
         save_record(&r, &rec).unwrap();
+        set_channel_quietly(&r, Channel::Dev);
         let exe = home.join("bin/terminal-delight");
-        assert_eq!(apply_pending_at_cold_start(&r, &exe, 1), None);
+        let alive = Sessions {
+            alive: vec!["1".into()],
+            unvouched: vec![],
+        };
+        assert_eq!(apply_pending_at_cold_start(&r, &exe, &alive), None);
         assert!(
             load_record(&r).pending.is_some(),
             "a live host leaves it staged"
         );
         fs::write(&staged, b"tampered").unwrap();
-        assert_eq!(apply_pending_at_cold_start(&r, &exe, 0), None);
+        assert_eq!(
+            apply_pending_at_cold_start(&r, &exe, &Sessions::default()),
+            None
+        );
         assert!(
             load_record(&r).pending.is_none(),
             "a changed file is dropped"
@@ -2200,12 +2507,14 @@ mod tests {
                 describe: "9.9.9".into(),
                 channel: Channel::Dev,
                 sha256: sha256_file(&image).unwrap(),
+                over: None,
             }),
             ..Record::default()
         };
         save_record(&r, &rec).unwrap();
 
-        let entry = apply_pending_at_cold_start(&r, &old, 0).expect("installed");
+        set_channel_quietly(&r, Channel::Dev);
+        let entry = apply_pending_at_cold_start(&r, &old, &Sessions::default()).expect("installed");
         assert_eq!(entry, launcher);
         let now = fs::canonicalize(&launcher).unwrap();
         assert_eq!(
@@ -2217,6 +2526,158 @@ mod tests {
         assert_eq!(rec.previous.unwrap().path, old);
         assert!(rec.last_backup.unwrap().join("config/theme.toml").is_file());
         assert!(!stage_dir.exists(), "the staged download is cleared");
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    fn kept_of(a: Activated) -> PathBuf {
+        match a {
+            Activated::Replaced { kept: Some(k), .. } => k,
+            _ => panic!("nothing was replaced"),
+        }
+    }
+
+    fn set_channel_quietly(r: &Roots, channel: Channel) {
+        save_choices(
+            r,
+            &Choices {
+                channel,
+                check_daily: None,
+            },
+        )
+        .unwrap();
+    }
+
+    /// The one rule: a swap keeps every live host working, or happens with
+    /// no host alive. Unknown is never taken for safe.
+    #[test]
+    fn a_swap_that_could_strand_a_host_waits_until_none_is_running() {
+        let none = Sessions::default();
+        let one = Sessions {
+            alive: vec!["1".into()],
+            unvouched: vec![],
+        };
+        let foreign = Sessions {
+            alive: vec!["1".into(), "2".into()],
+            unvouched: vec!["2".into()],
+        };
+        assert!(one.allow(Compat::Same).is_ok());
+        assert!(one.allow(Compat::Different).is_err());
+        assert!(one.allow(Compat::Unknown).is_err());
+        assert!(none.allow(Compat::Different).is_ok());
+        assert!(none.allow(Compat::Unknown).is_ok());
+        let err = foreign.allow(Compat::Same).unwrap_err();
+        assert!(err.contains("2"), "{err}");
+        assert!(foreign.needs_cold_start(Compat::Same));
+        assert!(!one.needs_cold_start(Compat::Same));
+        assert_eq!(foreign.others(Some("1")), 1);
+        assert_eq!(foreign.others(None), 2);
+    }
+
+    /// Going back to a build whose wire is unknown is refused while a host
+    /// runs, and the launcher is left exactly where it was.
+    #[test]
+    fn a_rollback_to_an_unknown_wire_waits_for_no_host() {
+        let home = tmp("rollback-wire");
+        let r = roots(&home);
+        fs::create_dir_all(&r.builds).unwrap();
+        fs::create_dir_all(&r.bin).unwrap();
+        let old = r.builds.join("td-11111111-old");
+        let new = r.builds.join("td-22222222-new");
+        fs::write(&old, b"old").unwrap();
+        fs::write(&new, b"new").unwrap();
+        let launcher = r.bin.join("terminal-delight");
+        std::os::unix::fs::symlink(&new, &launcher).unwrap();
+        let rec = Record {
+            previous: Some(Kept {
+                path: old.clone(),
+                describe: "old".into(),
+                wire: None,
+                backup: None,
+            }),
+            ..Record::default()
+        };
+        save_record(&r, &rec).unwrap();
+        let inst = detect(&r, &new, None, None);
+        let alive = Sessions {
+            alive: vec!["1".into()],
+            unvouched: vec![],
+        };
+        let err = rollback(&r, &inst, &BuildInfo::this(), &alive).unwrap_err();
+        assert!(err.contains("changes how the window talks"), "{err}");
+        assert_eq!(fs::read_link(&launcher).unwrap(), new);
+        rollback(&r, &inst, &BuildInfo::this(), &Sessions::default()).unwrap();
+        assert_eq!(fs::read_link(&launcher).unwrap(), old);
+        let _ = fs::remove_dir_all(&home);
+    }
+
+    /// A staged build is cancelled by everything that says the person moved
+    /// on: the install changing another way, a channel switch, a rollback.
+    #[test]
+    fn a_staged_build_is_dropped_when_the_person_moved_on() {
+        let home = tmp("staged-moved");
+        let r = roots(&home);
+        fs::create_dir_all(&r.builds).unwrap();
+        fs::create_dir_all(&r.bin).unwrap();
+        let a = r.builds.join("td-aaaaaaaa-a");
+        let b = r.builds.join("td-bbbbbbbb-b");
+        fs::write(&a, b"a").unwrap();
+        fs::write(&b, b"b").unwrap();
+        let launcher = r.bin.join("terminal-delight");
+        std::os::unix::fs::symlink(&a, &launcher).unwrap();
+        let inst = detect(&r, &a, None, None);
+        let stage_one = |r: &Roots| {
+            let dir = staging(r).join("dev-x");
+            fs::create_dir_all(&dir).unwrap();
+            let image = dir.join(ASSET);
+            fs::write(&image, b"staged").unwrap();
+            let rec = Record {
+                pending: Some(Pending {
+                    staged: image.clone(),
+                    describe: "x".into(),
+                    channel: Channel::Dev,
+                    sha256: sha256_file(&image).unwrap(),
+                    over: entry_digest(&inst),
+                }),
+                ..load_record(r)
+            };
+            save_record(r, &rec).unwrap();
+            dir
+        };
+        set_channel_quietly(&r, Channel::Dev);
+
+        // Moved on another way: the launcher now starts something else.
+        let dir = stage_one(&r);
+        repoint(&launcher, &b).unwrap();
+        assert_eq!(
+            apply_pending_at_cold_start(&r, &b, &Sessions::default()),
+            None
+        );
+        assert!(load_record(&r).pending.is_none());
+        assert!(!dir.exists(), "its download is removed");
+
+        // A channel switch.
+        let dir = stage_one(&r);
+        set_channel(&r, Channel::Stable).unwrap();
+        assert!(load_record(&r).pending.is_none());
+        assert!(!dir.exists());
+        set_channel_quietly(&r, Channel::Dev);
+
+        // A rollback.
+        let inst_b = detect(&r, &b, None, None);
+        let dir = stage_one(&r);
+        let rec = Record {
+            previous: Some(Kept {
+                path: a.clone(),
+                describe: "a".into(),
+                wire: BuildInfo::this().wire,
+                backup: None,
+            }),
+            ..load_record(&r)
+        };
+        save_record(&r, &rec).unwrap();
+        rollback(&r, &inst_b, &BuildInfo::this(), &Sessions::default()).unwrap();
+        assert!(load_record(&r).pending.is_none());
+        assert!(!dir.exists());
         let _ = fs::remove_dir_all(&home);
     }
 
