@@ -398,7 +398,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   nothing capped how many could be open at once. At most 16 are now kept; a
   further one is refused until one finishes or sits idle. A pane's host keeps
   running the build it started with, so terminals opened before an update are
-  covered once the host next starts. (#PR_UPLOADS)
+  covered once the host next starts. (#1259)
 - **No agent prompts another without a line a person drew.** `ask_agent` asks
   only along a Threshing Floor line that reaches `ask`, or a bypass a person granted on
   the rail, and a pane nobody seated is never asked. A seated pane is hidden from
