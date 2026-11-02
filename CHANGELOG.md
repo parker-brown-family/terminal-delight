@@ -1426,6 +1426,20 @@ the changes you may notice in the first hour.
 
 ### Security
 
+- **The terminal core is rio-vt 0.5.29, which fixes RUSTSEC-2026-0430.**
+  rio-vt 0.5.28 could be led by a picture command to delete a file outside its
+  temporary directory, and to read shared memory past its end; 0.5.29 checks
+  both. A synchronized update is still held back and drawn whole, by Terminal
+  Delight itself now, as 0.5.28 did, so a window on this build reads a host
+  started by an earlier 0.4 candidate the same way. Building from source needs
+  Rust 1.99.1, which `rust-toolchain.toml` names and rustup fetches on first
+  use. (#1255)
+- **A program cannot make a pane keep picture uploads open without limit.**
+  A picture sent in pieces stays unfinished until its last piece arrives, and
+  nothing capped how many could be open at once. At most 16 are now kept; a
+  further one is refused until one finishes or sits idle. A pane's host keeps
+  running the build it started with, so terminals opened before an update are
+  covered once the host next starts. (#1255)
 - **A paste can no longer end bracketed paste early and type keys into your
   shell.** A clipboard holding its own end-of-paste marker could make the shell
   read the rest as typed keys, so a line copied from a web page could run a
