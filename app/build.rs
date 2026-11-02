@@ -157,11 +157,23 @@ fn wire_fingerprint(manifest: &Path, core: &str) -> String {
 }
 
 /// Source text with comments, blank lines and the trailing test module removed.
-fn normalise(text: &str) -> String {
+///
+/// The test module is a `#[cfg(test)]` at the start of a line with a `mod`
+/// opening on the next. Any other `#[cfg(test)]` (an indented one inside an
+/// `impl`, or one on a `mod lab;` near the top) is kept as code, and so is
+/// everything after it. Stopping at the first one, as this once did, left
+/// most of `vt/mod.rs` and half of `vt/types.rs` out of the fingerprint, so a
+/// build that parsed every byte differently still reported the same wire.
+pub(crate) fn normalise(text: &str) -> String {
     let mut out = String::new();
-    for line in text.lines() {
+    let mut lines = text.lines().peekable();
+    while let Some(line) = lines.next() {
         let t = line.trim();
-        if t.starts_with("#[cfg(test)]") {
+        let test_module = line.starts_with("#[cfg(test)]")
+            && lines
+                .peek()
+                .is_some_and(|next| next.starts_with("mod ") && next.trim_end().ends_with('{'));
+        if test_module {
             break;
         }
         let code = match t.find("//") {

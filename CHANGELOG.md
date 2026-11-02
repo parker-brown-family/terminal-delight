@@ -41,6 +41,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - CI publishes every green push to a `dev/*` branch as the `dev-build`
   prerelease, which carries the AppImage, its checksum and a `build.json` that
   names the commit.
+- The wire fingerprint now covers all of the terminal core it names. It used
+  to stop reading a file at the first `#[cfg(test)]`, which left most of
+  `vt/mod.rs` out, so a build that read every byte differently could report
+  the same wire. Because the fix changes every build's fingerprint once, the
+  first dev build with it stages for a cold start on existing Dev installs.
 
 ### Briefs and judgement calls
 
