@@ -16,15 +16,15 @@
 //! either — which also keeps a window agreeing, cell for cell, with a session
 //! host that cannot cluster.
 //!
-//! **A synchronized update starts where the program starts it.** rio-vt holds
-//! an update's bytes back only from its next read, so a read that opened one
-//! drew the first part of the frame at once, torn. The rest of such a read is
-//! handed to the core as a read of its own. That goes for both ways of opening
+//! **A synchronized update starts where the program starts it.** An update's
+//! bytes are held back (`vt/hold.rs`) only from the next read, so a read that
+//! opened one drew the first part of the frame at once, torn. The rest of such
+//! a read is handed to the core as a read of its own. That goes for both ways of opening
 //! one: `ESC [ ? 2026 h`, and the older string `ESC P = 1 s ESC \`, which
-//! rio-vt honours too.
+//! the hold honours too.
 //!
 //! **Setting origin mode homes the cursor.** Setting DECOM moves the cursor to
-//! the top of the scrolling region; rio-vt 0.5.28 leaves it where it was, so a
+//! the top of the scrolling region; rio-vt (0.5.29 too) leaves it where it was, so a
 //! cursor position follows the sequence (the Terminal Lab found it,
 //! `scripts/lab/`). Resetting it is left alone, for the reason at the code.
 //!
@@ -402,7 +402,7 @@ impl TextGuard {
         let kept: Vec<u16> = modes.iter().copied().filter(|&mode| mode != 2027).collect();
         // Setting origin mode (DECOM, 6) homes the cursor to the top of the
         // scrolling region (DEC STD 070; xterm, tmux and alacritty all do).
-        // rio-vt 0.5.28 only sets the mode, so the next text lands wherever the
+        // rio-vt (0.5.29 too) only sets the mode, so the next text lands wherever the
         // cursor happened to be. A cursor position with no parameters is that
         // home, so it follows the sequence.
         //

@@ -123,7 +123,7 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
     if !entry.loading
         && entry.requested.elapsed() >= EXPIRY
         && ACTIVE_DISCOVERIES
-            .fetch_update(Ordering::AcqRel, Ordering::Acquire, |active| {
+            .try_update(Ordering::AcqRel, Ordering::Acquire, |active| {
                 (active < 2).then_some(active + 1)
             })
             .is_ok()
