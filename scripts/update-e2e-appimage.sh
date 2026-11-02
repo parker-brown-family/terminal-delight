@@ -33,7 +33,10 @@ jq -n --arg rel "$REL" '[{tag_name:"v0.4.0-rc.3", draft:false, prerelease:false,
 echo '{"status":"ahead","ahead_by":3,"commits":[]}' > "$FX/compare/$SHA...v0.4.0-rc.3"
 
 run() { env -i HOME="$H" PATH="$PATH" XDG_RUNTIME_DIR="$OUT/run" TD_UPDATE_API="file://$OUT/fixture" \
-          APPIMAGE="$H/Apps/terminal-delight-x86_64.AppImage" "$B" update "$@"; }
+          APPIMAGE="$H/Apps/terminal-delight-x86_64.AppImage" APPDIR="$(dirname "$B")" "$B" update "$@"; }
+# APPDIR is what an AppImage's runtime sets to its mount; TD treats APPIMAGE as
+# its own install only when the running program lives inside APPDIR, so the
+# binary under test stands in for one running from the image.
 mkdir -p "$OUT/run"; chmod 700 "$OUT/run"
 
 echo "== 1. check"; run check --json | tee "$OUT/1-check.json" | jq -c '{rel: .offer.relation, v: .offer.version}'

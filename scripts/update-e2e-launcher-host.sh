@@ -49,7 +49,9 @@ mkdir -p "$API/commits/dev"; echo '{"sha":"'"$DEVSHA"'"}' > "$API/commits/dev/0.
 # The running build differs from the dev build by a "diverged" history, so it is offered.
 echo '{"status":"diverged","ahead_by":2,"commits":[{"sha":"'"$DEVSHA"'","commit":{"message":"qa: a dev commit"}}]}' > "$API/compare/$SHA...$DEVSHA"
 
-envs=(env -i HOME="$H" PATH="$PATH" SHELL=/bin/bash XDG_RUNTIME_DIR="$RUN" TD_UPDATE_API="file://$FX")
+# TD_SESSION=qa: the CLI runs as it would inside one of this session's panes,
+# so the host it is attached to is the one it may vouch for.
+envs=(env -i HOME="$H" PATH="$PATH" SHELL=/bin/bash XDG_RUNTIME_DIR="$RUN" TD_UPDATE_API="file://$FX" TD_SESSION=qa)
 td() { "${envs[@]}" "$L" "$@"; }
 
 # --- a live session host with three shells -----------------------------------
@@ -61,23 +63,26 @@ path, what = sys.argv[1], sys.argv[2]
 def call(f, req):
     f.write(json.dumps(req) + "\n"); f.flush(); return json.loads(f.readline())
 s = socket.socket(socket.AF_UNIX); s.connect(path); f = s.makefile("rw")
-call(f, {"verb": "hello", "proto": 1, "kind": "tool"})
+hello = call(f, {"verb": "hello", "proto": 1, "kind": "tool"})
 geom = {"cols": 80, "rows": 24, "cell_width": 8, "cell_height": 20}
 if what == "spawn":
     for _ in range(int(sys.argv[3])):
         call(f, {"verb": "spawn-pane", "geom": geom})
-print(json.dumps(call(f, {"verb": "list-panes"})))
+print(json.dumps({"host": hello.get("host"), "panes": call(f, {"verb": "list-panes"})}))
 PY
 panes() { python3 -I - "$RUN/terminal-delight/session-qa.sock" list <<'PY'
 import json, socket, sys
 s = socket.socket(socket.AF_UNIX); s.connect(sys.argv[1]); f = s.makefile("rw")
 def call(req):
     f.write(json.dumps(req) + "\n"); f.flush(); return json.loads(f.readline())
-call({"verb": "hello", "proto": 1, "kind": "tool"})
-print(json.dumps(call({"verb": "list-panes"})))
+hello = call({"verb": "hello", "proto": 1, "kind": "tool"})
+print(json.dumps({"host": hello.get("host"), "panes": call({"verb": "list-panes"})}))
 PY
 }
-HOSTPID=$(pgrep -f "serve --session qa" | head -1)
+# The host's own pid, from its hello: never found by a process-name pattern,
+# which would match another run's host, or this shell.
+HOSTPID=$(jq -r .host "$OUT/panes-before.json")
+[ "$HOSTPID" -gt 0 ]
 starttick() { awk '{print $22}' "/proc/$1/stat"; }
 HOSTTICK=$(starttick "$HOSTPID")
 SHELLS=$(jq -r '.. | objects | select(has("shell_pid")) | .shell_pid' "$OUT/panes-before.json" | sort -n)
@@ -86,7 +91,7 @@ echo "host $HOSTPID (tick $HOSTTICK), shells: $(echo $SHELLS)"
 declare -A TICK; for p in $SHELLS; do TICK[$p]=$(starttick "$p"); done
 
 same() {
-  [ "$(pgrep -f "serve --session qa" | head -1)" = "$HOSTPID" ] && [ "$(starttick "$HOSTPID")" = "$HOSTTICK" ] || { echo "HOST CHANGED after $1"; exit 1; }
+  [ "$(panes | jq -r .host)" = "$HOSTPID" ] && [ "$(starttick "$HOSTPID")" = "$HOSTTICK" ] || { echo "HOST CHANGED after $1"; exit 1; }
   for p in $SHELLS; do [ -d "/proc/$p" ] && [ "$(starttick "$p")" = "${TICK[$p]}" ] || { echo "SHELL $p LOST after $1"; exit 1; }; done
   now=$(panes | jq -r '.. | objects | select(has("shell_pid")) | .shell_pid' | sort -n)
   [ "$now" = "$SHELLS" ] || { echo "PANE LIST CHANGED after $1"; exit 1; }
@@ -97,6 +102,18 @@ same "setup"
 echo "== channel dev"; td update channel dev
 same "channel switch"
 echo "== check"; td update check --json | tee "$OUT/check.json" | jq -c '{rel: .offer.relation, sha: .offer.sha[0:8], ahead: .offer.ahead_by}'
+echo "== another session's host runs a different build: the install is staged, not done"
+cp "$DEV" "$OUT/other-build"
+"${envs[@]}" setsid "$OUT/other-build" serve --session qa2 > "$OUT/host2.log" 2>&1 < /dev/null &
+OTHER=$!
+for _ in $(seq 50); do [ -S "$RUN/terminal-delight/session-qa2.sock" ] && break; sleep 0.1; done
+BEFORE=$(readlink "$L")
+td update install --json | tee "$OUT/staged-other.json" | jq -c '{staged, unvouched}'
+[ "$(jq -r .staged "$OUT/staged-other.json")" = true ]
+[ "$(jq -r '.unvouched[0]' "$OUT/staged-other.json")" = qa2 ]
+[ "$(readlink "$L")" = "$BEFORE" ]
+same "staging for another session"
+kill "$OTHER"; for _ in $(seq 50); do [ -d "/proc/$OTHER" ] || break; sleep 0.1; done
 echo "== install (same wire: no --now needed)"
 td update install --json | tee "$OUT/install.json" | jq -c '{describe, entry}'
 NEW=$(readlink "$L"); echo "   launcher -> $NEW"

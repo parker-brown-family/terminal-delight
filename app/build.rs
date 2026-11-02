@@ -92,10 +92,11 @@ fn main() {
 /// grid encoding and the terminal core moved underneath it: rio-vt 0.5.29
 /// changed how a synchronized update is parsed, and a window and host that
 /// parse one byte stream differently disagree about the screen while both
-/// speak protocol 1. So the fingerprint covers the wire modules, the parsing
-/// half of the terminal core boundary (`src/vt/*.rs`, without the PTY, pump,
-/// socket and lab files, which move bytes and parse none), the core's locked
-/// version, and which core is compiled in.
+/// speak protocol 1. So the fingerprint covers the wire modules, the terminal
+/// core boundary (`src/vt/*.rs`, without the PTY, socket and lab files, which
+/// move bytes and define nothing the wire carries; the pump stays in, because
+/// the close report a host sends a window is defined there), the core's
+/// locked version, and which core is compiled in.
 ///
 /// Comments, blank space and each file's trailing `#[cfg(test)]` module are
 /// left out, so a reworded comment or a new test does not turn an ordinary
@@ -112,7 +113,7 @@ fn wire_fingerprint(manifest: &Path, core: &str) -> String {
         for e in entries.flatten() {
             let p = e.path();
             let name = p.file_name().and_then(|n| n.to_str()).unwrap_or("");
-            let moves_bytes = matches!(name, "pty.rs" | "pump.rs" | "socket.rs" | "lab.rs");
+            let moves_bytes = matches!(name, "pty.rs" | "socket.rs" | "lab.rs");
             if p.extension().is_some_and(|x| x == "rs") && !moves_bytes {
                 files.push(p);
             }
