@@ -495,9 +495,16 @@ if op != 'get': path.write_text(json.dumps(d))
           "/plugins/", "/docsite/pages/keys.html", "/packaging/")
         g("checkout", "-q", "--detach", head)
         script = clone / "scripts/known-hashes.sh"
-        script.write_bytes((self.repo / "scripts/known-hashes.sh").read_bytes())
-        script.chmod(0o755)
-        check = lambda: subprocess.run([str(script), "--check"], capture_output=True, text=True)
+
+        def run(*args):
+            # Put the script under test back before every run: it sits outside
+            # the sparse set, so a checkout to a commit whose copy matches it
+            # deletes it as a clean file (as CI's merge commit does).
+            script.parent.mkdir(parents=True, exist_ok=True)
+            script.write_bytes((self.repo / "scripts/known-hashes.sh").read_bytes())
+            script.chmod(0o755)
+            return subprocess.run([str(script), *args], capture_output=True, text=True)
+        check = lambda: run("--check")
         p = check()
         self.assertEqual(p.returncode, 0, p.stderr)
 
@@ -517,7 +524,7 @@ if op != 'get': path.write_text(json.dumps(d))
         self.assertNotEqual(p.returncode, 0)
         self.assertIn("this branch's history", p.stderr)
         # ...and regenerating the table is what makes it pass.
-        subprocess.run([str(script)], capture_output=True, check=True)
+        self.assertEqual(run().returncode, 0)
         self.assertIn(side, (clone / "app/src/uninstall/known_hashes.txt").read_text())
         p = check()
         self.assertEqual(p.returncode, 0, p.stderr)
@@ -535,7 +542,7 @@ if op != 'get': path.write_text(json.dumps(d))
         g("checkout", "-q", "--detach", merged)
         p = check()
         self.assertNotEqual(p.returncode, 0, "a tagged release's version was not required")
-        subprocess.run([str(script)], capture_output=True, check=True)
+        self.assertEqual(run().returncode, 0)
         self.assertIn(shipped, (clone / "app/src/uninstall/known_hashes.txt").read_text())
         p = check()
         self.assertEqual(p.returncode, 0, p.stderr)
