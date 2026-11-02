@@ -365,6 +365,10 @@ pub(crate) fn respond_as(
                 }
             });
             let home = session::home_dir();
+            if mcp::names_agents(line) {
+                let bound = paneident::resolve(&fleet_facts(&snap.panes), &home);
+                stamp_agents(&mut snap.panes, &bound);
+            }
             // The write capability: a set_pane_config batch is applied on the
             // gpui main thread via the same ticker, bounded by the same budget.
             // Reads (list_panes/pane_events/get_pane_config) never invoke this.
@@ -492,6 +496,21 @@ fn tail_for(
     }
 }
 
+/// Give each agent pane the conversation it is proven to hold: its lasting
+/// name, which a verb about another agent can be given instead of a pid. Only
+/// a certain bond names an agent. A guess (the last conversation spoken into in
+/// a shared directory) is where an agent probably is, and a prompt aimed by one
+/// would land on the wrong agent. A pane already named, by its sleep record,
+/// keeps that name.
+fn stamp_agents(panes: &mut [mcp::PaneInfo], bound: &HashMap<u32, paneident::Bound>) {
+    for p in panes.iter_mut().filter(|p| p.agent.is_none()) {
+        p.agent = bound
+            .get(&p.pid)
+            .filter(|b| b.is_certain())
+            .map(|b| b.session_id.clone());
+    }
+}
+
 /// Every agent pane in a snapshot, as the resolver wants them.
 fn fleet_facts(panes: &[mcp::PaneInfo]) -> Vec<paneident::PaneFacts> {
     panes
@@ -596,6 +615,7 @@ mod tests {
                 access: crate::threshing_floor::AgentAccess::Open,
                 seat: None,
                 name: None,
+                agent: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
@@ -718,5 +738,36 @@ mod tests {
             "nothing should be pushed before initialize"
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// Only a proven binding names an agent. A guessed one (the last
+    /// conversation spoken into, in a directory several agents share) would
+    /// aim a prompt at whichever agent spoke last, so it names nothing; and a
+    /// pane its sleep record already named keeps that name.
+    #[test]
+    fn only_a_certain_binding_gives_an_agent_its_name() {
+        use crate::paneident::Bound;
+        use crate::vitals::Bond;
+        let pane = |pid: u32, agent: Option<&str>| mcp::PaneInfo {
+            pid,
+            agent: agent.map(String::from),
+            ..agent_snapshot(pid, "/w").panes[0].clone()
+        };
+        let mut panes = vec![pane(1, None), pane(2, None), pane(3, Some("asleep-conv"))];
+        let bound = |id: &str, bond| Bound {
+            session_id: id.into(),
+            path: format!("/t/{id}.jsonl").into(),
+            bond,
+        };
+        let map: HashMap<u32, Bound> = [
+            (1, bound("declared-conv", Bond::Declared)),
+            (2, bound("guessed-conv", Bond::Guess)),
+            (3, bound("other-conv", Bond::Declared)),
+        ]
+        .into_iter()
+        .collect();
+        stamp_agents(&mut panes, &map);
+        let names: Vec<Option<&str>> = panes.iter().map(|p| p.agent.as_deref()).collect();
+        assert_eq!(names, [Some("declared-conv"), None, Some("asleep-conv")]);
     }
 }

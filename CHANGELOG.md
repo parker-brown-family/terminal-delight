@@ -33,6 +33,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   no longer post its reply card, because the pid it remembered was gone.
 - The launch briefing tells agents to name panes by name, and never to carry a
   pane number or pid from one turn to the next.
+- An agent can name another agent by its conversation instead of its pid.
+  `list_panes` gives each agent an `agent` field (its conversation id, filled
+  only when the window can prove it, never guessed), and `prompt_agent`,
+  `ask_agent`, `pane_events` and `leave_note` accept `agent`, looked up at the
+  moment of the call. A coordinator's worker that sleeps and wakes into a fresh
+  pane is still found; its old pid is not.
 
 ### Artifact chip
 
