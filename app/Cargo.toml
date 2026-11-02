@@ -30,7 +30,7 @@ alacritty_terminal = { version = "0.26", optional = true }
 # defaults, which bring Rio's own pseudoterminal and event loop (TD has its
 # own); with `graphics`, which is what decodes a PNG a program sends — without
 # it rio-vt fails a PNG picture silently and tells the program it succeeded.
-rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+rio-vt = { version = "=0.5.29", default-features = false, features = ["graphics"] }
 # A picture's pixels as the frame gpui draws (src/pane.rs, `picture_texture`).
 # gpui already links it; named here to build the frame, with nothing added.
 image = { version = "0.25", default-features = false }
