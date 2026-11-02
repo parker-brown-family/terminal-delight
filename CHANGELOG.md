@@ -279,7 +279,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   the renderer; Terminal Delight now holds it back itself, by 0.5.28's rules,
   so a frame is still drawn whole and a window on either core reads a host's
   screen the same way. Building from source needs Rust 1.99.1, which
-  `rust-toolchain.toml` names and rustup fetches on first use. (#PR_BUMP)
+  `rust-toolchain.toml` names and rustup fetches on first use. (#1254)
 - **Markdown review notes now keep their source evidence.** A new note records the
   quotation, neighbouring passages and SHA-256 of the document as it was read.
   Notes stores advance to format 2 on the next successful save. Existing notes
