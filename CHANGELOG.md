@@ -21,6 +21,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   records each one with `brief.py call`, names the open ones in its reply at
   the `wanted` level, and carries them into its closing brief for a stamp.
 
+### Panes have names, and an agent's own pane has no number
+
+- `list_panes` gives every pane a `name`: its place on the left bar and its
+  header's title, with `name.said` as the line to say to a person, such as
+  "TERMINAL DELIGHT › MARKETING · launch copy". Each line of the listing leads
+  with it. Answers that act on a pane say its name instead of "pane 242".
+- `present_surface` no longer needs a `pid` for the agent's own pane; it works
+  out which pane is calling on every call, as `declare_deliverable` and
+  `leave_note` already did. An agent that slept and woke in a fresh pane could
+  no longer post its reply card, because the pid it remembered was gone.
+- The launch briefing tells agents to name panes by name, and never to carry a
+  pane number or pid from one turn to the next.
+
 ### Artifact chip
 
 - The pane header's artifact chip reads ARTIFACT in every skin and at every
