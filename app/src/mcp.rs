@@ -764,6 +764,20 @@ pub struct Snapshot {
     /// an org reaches whoever the org holds right now, so the membership is
     /// read live beside the chart rather than baked into the line.
     pub orgs: crate::threshing_floor::Orgs,
+    /// The wakes this window remembers: an agent's old shell pid, and the pid
+    /// of the pane it woke in. Read only to tell a caller holding an old pid
+    /// where its agent went ([`Snapshot::moved_answer`]), never to re-aim a
+    /// call at the new pane.
+    pub moved: Vec<Moved>,
+}
+
+/// One wake: the agent in conversation `agent` slept behind shell `from_pid`
+/// and woke in a fresh pane whose shell is `to_pid`.
+#[derive(Clone, PartialEq, Eq, Debug)]
+pub struct Moved {
+    pub from_pid: u32,
+    pub to_pid: u32,
+    pub agent: String,
 }
 
 /// Where an open document is drawn: floating over a pane's terminal, or on a
@@ -972,7 +986,11 @@ impl Snapshot {
             let pid = value.as_u64().ok_or_else(|| {
                 "pid must be an unsigned integer; omit it to target your own pane".to_string()
             })?;
-            return u32::try_from(pid).map_err(|_| "pid is out of range".to_string());
+            let pid = u32::try_from(pid).map_err(|_| "pid is out of range".to_string())?;
+            return match self.moved_answer(pid) {
+                Some(why) => Err(why),
+                None => Ok(pid),
+            };
         }
         let Some(caller) = &self.caller else {
             return Err("no `pid`, and this connection did not say who is calling \
@@ -997,6 +1015,43 @@ impl Snapshot {
             })
     }
 
+    /// When `pid` names no pane because the agent there slept and woke in a
+    /// fresh one: the sentence that says where it went. Follows a run of wakes
+    /// to the pane the agent is in now. Says nothing (`None`) when that pane is
+    /// gone or is one the caller cannot reach, so a stranger learns no more
+    /// than from any missing pid. Never a redirect: the call is refused either
+    /// way, because quietly re-aiming a write is how one agent's words would
+    /// land somewhere nobody chose.
+    fn moved_answer(&self, pid: u32) -> Option<String> {
+        if self.panes.iter().any(|p| p.pid == pid) {
+            return None;
+        }
+        let (mut at, mut agent) = (pid, None);
+        // Bounded by the record's length, so a loop in it cannot hang a call.
+        for _ in 0..self.moved.len() {
+            match self.moved.iter().rev().find(|m| m.from_pid == at) {
+                Some(m) => (at, agent) = (m.to_pid, Some(&m.agent)),
+                None => break,
+            }
+        }
+        let agent = agent?;
+        let now = self
+            .reachable(crate::threshing_floor::Reach::Read)
+            .into_iter()
+            .find(|p| p.pid == at)?;
+        let name = now
+            .name
+            .as_ref()
+            .map(|n| n.said.as_str())
+            .filter(|s| !s.is_empty());
+        Some(format!(
+            "pid {pid} is gone: the agent there slept and woke in a fresh pane, \
+             {} (pid {at}). Nothing was sent. Name it by `agent`: \"{agent}\", \
+             which lasts across sleep and wake, and call again.",
+            spoken(name, at)
+        ))
+    }
+
     /// The pane a verb acts on when it is about another agent: by `agent`, the
     /// conversation, looked up at the moment of the call so a sleep and a wake
     /// in between change nothing; else by `pid`, a location that a wake
@@ -1013,7 +1068,11 @@ impl Snapshot {
                 let pid = pid.as_u64().ok_or_else(|| {
                     format!("{verb}: `pid` must be an unsigned integer (see list_panes)")
                 })?;
-                u32::try_from(pid).map_err(|_| "pid is out of range".to_string())
+                let pid = u32::try_from(pid).map_err(|_| "pid is out of range".to_string())?;
+                match self.moved_answer(pid) {
+                    Some(why) => Err(why),
+                    None => Ok(pid),
+                }
             }
             (None, None) => Err(format!(
                 "{verb} needs the agent to act on: `agent`, its conversation id \
@@ -1121,6 +1180,7 @@ impl Snapshot {
             documents: vec![],
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 }
@@ -4625,6 +4685,7 @@ mod tests {
             documents: vec![],
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 
@@ -5934,6 +5995,96 @@ mod tests {
         s.panes[0].pid = 300;
         s.panes[0].pane_id = Some(17);
         assert_eq!(to(&s), (json!(300), json!(300), vec![300, 300]));
+    }
+
+    /// A pid an agent held before its worker slept is answered with where the
+    /// worker woke, following two wakes in a row, on every verb that takes a
+    /// pid, and nothing reaches the window: the call is refused, never
+    /// re-aimed. A worker woken into a pane the caller cannot reach answers
+    /// exactly like a pid nobody ever held.
+    #[test]
+    fn an_old_pid_is_told_where_its_agent_woke_and_nothing_is_sent() {
+        let make = |moved: bool, hidden: bool| {
+            let mut s = asking_snap();
+            s.config.writable = true;
+            s.instance = None;
+            s.panes[0].pid = 300;
+            s.panes[0].name = Some(PaneNameReport {
+                place: "TD › MARKETING".into(),
+                header: "worker".into(),
+                said: "TD › MARKETING · worker".into(),
+            });
+            if hidden {
+                s.panes[0].access = crate::threshing_floor::AgentAccess::OffLimits;
+            }
+            if moved {
+                s.moved = vec![
+                    Moved {
+                        from_pid: 200,
+                        to_pid: 250,
+                        agent: "w-conv-1".into(),
+                    },
+                    Moved {
+                        from_pid: 250,
+                        to_pid: 300,
+                        agent: "w-conv-1".into(),
+                    },
+                ];
+            }
+            s
+        };
+        let s = make(true, false);
+        let reached = std::cell::Cell::new(0);
+        let run = |s: &Snapshot, name: &str, args: Value| {
+            let window = |_: &AskCall| -> AskReply {
+                reached.set(reached.get() + 1);
+                AskReply::Refused(crate::threshing_floor::Refusal::Gone)
+            };
+            let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+                reached.set(reached.get() + ups.len());
+                ups.iter()
+                    .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                    .collect()
+            };
+            let l = json!({"id": 1, "method": "tools/call",
+                "params": {"name": name, "arguments": args}})
+            .to_string();
+            resp(&handle_line_asking(&l, s, no_tail, apply, no_search, no_open, window).unwrap())
+                ["result"]
+                .clone()
+        };
+        let calls = [
+            ("leave_note", json!({"pid": 200, "text": "hi"})),
+            ("pane_events", json!({"pid": 200})),
+            ("prompt_agent", json!({"pid": 200, "prompt": "go"})),
+            ("ask_agent", json!({"pid": 200, "question": "how far?"})),
+            (
+                "present_surface",
+                json!({"pid": 200, "surface": {"td": "0.1", "op": "retire", "id": "x"}}),
+            ),
+        ];
+        for (name, args) in calls.clone() {
+            let out = run(&s, name, args);
+            assert_eq!(out["isError"], true, "{name}");
+            let text = text_of(&out);
+            assert!(
+                text.contains("woke in a fresh pane, “TD › MARKETING · worker” (pid 300)"),
+                "{name}: {text}"
+            );
+            assert!(text.contains("\"w-conv-1\""), "{name}: {text}");
+        }
+        assert_eq!(reached.get(), 0, "an old pid reached the window");
+
+        // The same calls with the worker closed to the caller, and with no
+        // wake on record at all: word for word the same answers.
+        let (hidden, never) = (make(true, true), make(false, true));
+        for (name, args) in calls {
+            assert_eq!(
+                run(&hidden, name, args.clone()),
+                run(&never, name, args),
+                "{name}"
+            );
+        }
     }
 
     /// The lookup searches only panes the caller can reach, and a conversation

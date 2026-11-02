@@ -4513,6 +4513,68 @@ impl ReaderGlass {
     }
 }
 
+/// One wake the window performed: the shell pid the agent slept behind, its
+/// conversation, and the pane it woke in. `to_pid` is pinned when that pane is
+/// itself replaced by a later wake; until then the pid is read off the live
+/// pane, because a host-spawned pane learns its shell pid after it is built.
+/// Generic over the pane key so the bookkeeping is testable without a window.
+#[derive(Clone, Debug, PartialEq)]
+struct Wake<K> {
+    from_pid: u32,
+    agent: String,
+    to: K,
+    to_pid: Option<u32>,
+    at_ms: u64,
+}
+
+/// How long and how many wakes are remembered. A day covers an agent that
+/// slept overnight; past that, an old pid is answered like any missing one.
+const WAKE_KEEP_MS: u64 = 24 * 60 * 60 * 1000;
+const WAKE_KEEP: usize = 256;
+
+/// Note that the agent in pane `old` (shell `from_pid`) woke in pane `to`.
+/// A wake that had landed in `old` ends there now, so its pid is pinned.
+fn record_wake<K: Copy + PartialEq>(
+    woke: &mut Vec<Wake<K>>,
+    old: K,
+    from_pid: u32,
+    agent: String,
+    to: K,
+    now_ms: u64,
+) {
+    for w in woke
+        .iter_mut()
+        .filter(|w| w.to == old && w.to_pid.is_none())
+    {
+        w.to_pid = Some(from_pid);
+    }
+    woke.push(Wake {
+        from_pid,
+        agent,
+        to,
+        to_pid: None,
+        at_ms: now_ms,
+    });
+    woke.retain(|w| now_ms.saturating_sub(w.at_ms) < WAKE_KEEP_MS);
+    let over = woke.len().saturating_sub(WAKE_KEEP);
+    woke.drain(..over);
+}
+
+/// The wakes as the MCP snapshot carries them: each one's new pid, read live
+/// (`live`) where its pane still stands, else as pinned. A wake whose new pid
+/// is not known yet is left out rather than given a number.
+fn moves_of<K: Copy>(woke: &[Wake<K>], live: impl Fn(K) -> Option<u32>) -> Vec<mcp::Moved> {
+    woke.iter()
+        .filter_map(|w| {
+            Some(mcp::Moved {
+                from_pid: w.from_pid,
+                to_pid: live(w.to).or(w.to_pid)?,
+                agent: w.agent.clone(),
+            })
+        })
+        .collect()
+}
+
 struct Workspace {
     tabs: Vec<Tab>,
     active: usize,
@@ -4631,6 +4693,10 @@ struct Workspace {
     /// key receipts survive pruning and reopening without keeping the words.
     prompts: prompt::PromptBook,
     prompt_key_path: std::path::PathBuf,
+    /// The wakes this window performed, newest last: what tells an MCP caller
+    /// holding an agent's old pid where the agent went (`mcp_moves`). Held in
+    /// memory, a day at most; a restarted window has no old pids to explain.
+    woke: Vec<Wake<gpui::EntityId>>,
     /// The menu-bar SIZE popover, raised by the ▭ button in the mother bar. The
     /// scrub track used to live inline on that row; on a thin tile it was the
     /// widest thing there and had nowhere to go, so it moved behind a button.
@@ -6420,6 +6486,7 @@ impl Workspace {
             asks: threshing_floor::AskBook::default(),
             prompts,
             prompt_key_path,
+            woke: Vec::new(),
             scale_menu: false,
             more_menu: false,
             art_rail: false,
@@ -7921,6 +7988,18 @@ impl Workspace {
                 break;
             }
         }
+        // Remember the move, so a caller holding the old pid is told where
+        // the agent went instead of "no pane with pid".
+        if let Some(from_pid) = old.read(cx).shell_pid() {
+            record_wake(
+                &mut self.woke,
+                old_id,
+                from_pid,
+                asleep.session.clone(),
+                fresh.entity_id(),
+                prompt::now_ms(),
+            );
+        }
         // The shell that held the sleeper is no longer shown; end it.
         self.hangup(std::slice::from_ref(old), cx);
         if focus {
@@ -8640,6 +8719,21 @@ impl Workspace {
     /// binds to, and the pointer to its on-disk tool-call transcript). The
     /// `exposed` flag applies the current policy. Strictly read-only: this never
     /// writes a byte to any PTY.
+    /// The wakes, as the MCP snapshot carries them (see [`moves_of`]).
+    fn mcp_moves(&self, cx: &App) -> Vec<mcp::Moved> {
+        let live = |id: gpui::EntityId| {
+            self.tabs.iter().find_map(|tab| {
+                let mut leaves = vec![];
+                tab.root.leaves(&mut leaves);
+                leaves
+                    .into_iter()
+                    .find(|l| l.entity_id() == id)
+                    .and_then(|l| l.read(cx).shell_pid())
+            })
+        };
+        moves_of(&self.woke, live)
+    }
+
     fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
         let mut out = vec![];
         let outer = theme::outer_choice(cx);
@@ -37888,6 +37982,36 @@ impl Render for Workspace {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
+    use super::{moves_of, record_wake, Wake, WAKE_KEEP_MS};
+
+    /// Two wakes in a row: the first wake's pane is replaced by the second,
+    /// so its pid is pinned and the chain still runs from the first old pid to
+    /// the pane the agent is in now. A wake whose new pid is not known yet is
+    /// left out rather than numbered, and the record forgets after a day.
+    #[test]
+    fn wakes_chain_pin_and_expire() {
+        let mut woke: Vec<Wake<u64>> = Vec::new();
+        record_wake(&mut woke, 1, 200, "c".into(), 2, 1_000);
+        record_wake(&mut woke, 2, 250, "c".into(), 3, 2_000);
+        assert_eq!(woke[0].to_pid, Some(250), "the first wake's pane is pinned");
+        assert_eq!(woke[1].to_pid, None, "the second pane is still standing");
+        let live = |k: u64| (k == 3).then_some(300);
+        let moves = moves_of(&woke, live);
+        assert_eq!(
+            moves
+                .iter()
+                .map(|m| (m.from_pid, m.to_pid))
+                .collect::<Vec<_>>(),
+            [(200, 250), (250, 300)]
+        );
+        // The newest pane has no pid yet: that wake is not given a number.
+        assert_eq!(moves_of(&woke, |_| None).len(), 1);
+        // A day on, both are forgotten when the next is recorded.
+        record_wake(&mut woke, 9, 900, "d".into(), 10, 2_000 + WAKE_KEEP_MS);
+        assert_eq!(woke.len(), 1);
+        assert_eq!(woke[0].from_pid, 900);
+    }
+
     #[test]
     fn a_selected_surface_survives_state_serialisation_without_rewriting_the_theme() {
         let mut saved = StateFile::default();
