@@ -287,6 +287,7 @@ const LADDER: [Rung; 13] = [
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, u| {
         window_chord(k.key, k.alt, k.control)
+            || held_tab_chord(k.key, k.alt, k.control, k.shift).is_some()
             || (human_turn_chord(k)
                 && u.agent
                 && !u.paint
@@ -330,6 +331,94 @@ pub fn route(k: &Key, up: &Up) -> Layer {
 /// on an agent terminal; shell programs and editing surfaces keep their keys.
 pub fn human_turn_chord(k: &Key) -> bool {
     k.control && !k.alt && !k.shift && !k.platform && !k.function && matches!(k.key, "up" | "down")
+}
+
+/// The tab hotkeys the window on this thread holds right now: whether
+/// `alt+1`…`alt+9` jump by position, and which `alt+shift+<letter>` a tab has
+/// been pinned to (bit 0 is `a`).
+///
+/// Held, not fixed, because they are the person's: a letter nobody pinned is
+/// still the program's `ESC A`, and with the digits turned off `alt+3` is
+/// readline's argument again. The window writes this as it draws; a pane reads
+/// it when it decides whether a key leaves for the window. Per thread, because
+/// one gpui app runs on one thread and the tests run one app per thread.
+#[derive(Clone, Copy, Debug, Default, PartialEq, Eq)]
+pub struct TabKeys {
+    pub digits: bool,
+    pub pinned: u32,
+}
+
+impl TabKeys {
+    pub fn holds_letter(self, c: char) -> bool {
+        letter_bit(c).is_some_and(|b| self.pinned & b != 0)
+    }
+
+    pub fn with_letter(mut self, c: char) -> Self {
+        self.pinned |= letter_bit(c).unwrap_or(0);
+        self
+    }
+}
+
+fn letter_bit(c: char) -> Option<u32> {
+    c.is_ascii_alphabetic()
+        .then(|| 1 << (c.to_ascii_lowercase() as u32 - 'a' as u32))
+}
+
+thread_local! {
+    static TAB_KEYS: std::cell::Cell<TabKeys> = const { std::cell::Cell::new(TabKeys { digits: false, pinned: 0 }) };
+}
+
+pub fn hold_tab_keys(keys: TabKeys) {
+    TAB_KEYS.with(|k| k.set(keys));
+}
+
+pub fn tab_keys() -> TabKeys {
+    TAB_KEYS.with(|k| k.get())
+}
+
+/// A tab hotkey.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum TabChord {
+    /// `alt+1`…`alt+8` is that place in the spine's order; `alt+9` is the
+    /// last tab, however many there are, as a browser's is.
+    Position(usize),
+    /// `alt+shift+<letter>`: whichever tab that letter is pinned to.
+    Pinned(char),
+}
+
+/// The tab hotkey this keystroke is, whoever holds it. [`held_tab_chord`] is
+/// the one that asks whether the window currently does.
+pub fn tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<TabChord> {
+    if !alt || control {
+        return None;
+    }
+    let mut chars = key.chars();
+    let (Some(c), None) = (chars.next(), chars.next()) else {
+        return None;
+    };
+    match (shift, c) {
+        (false, '1'..='9') => Some(TabChord::Position(c as usize - '0' as usize)),
+        (true, c) if c.is_ascii_alphabetic() => Some(TabChord::Pinned(c.to_ascii_lowercase())),
+        _ => None,
+    }
+}
+
+/// [`tab_chord`], only when the window holds it.
+pub fn held_tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<TabChord> {
+    let held = tab_keys();
+    tab_chord(key, alt, control, shift).filter(|c| match *c {
+        TabChord::Position(_) => held.digits,
+        TabChord::Pinned(l) => held.holds_letter(l),
+    })
+}
+
+/// Why `alt+shift+<letter>` cannot be pinned to a tab: Terminal Delight
+/// already answers `alt+<letter>` with or without shift (the window's chords
+/// ignore shift), so the pin would never be reached.
+pub fn pin_is_taken(c: char) -> bool {
+    !c.is_ascii_alphabetic()
+        || window_chord(&c.to_ascii_lowercase().to_string(), true, false)
+        || c.eq_ignore_ascii_case(&'k')
 }
 
 /// Chords the WINDOW owns — never a pane's content, on either of its faces.
@@ -1881,5 +1970,86 @@ mod tests {
                 Layer::Document
             );
         }
+    }
+
+    /// Alt+1…9 and the pinned Alt+Shift+letters leave a pane only while the
+    /// window holds them. Unheld, each is the program's again: readline's
+    /// numeric argument, a TUI's ESC-letter binding.
+    #[test]
+    fn a_tab_hotkey_leaves_the_pane_only_while_the_window_holds_it() {
+        let three = alt("3");
+        let shift_m = Key {
+            key: "m",
+            alt: true,
+            shift: true,
+            ..Key::default()
+        };
+        hold_tab_keys(TabKeys::default());
+        assert_eq!(route(&three, &Up::default()), Layer::Terminal, "digits off");
+        assert_eq!(
+            route(&shift_m, &Up::default()),
+            Layer::Terminal,
+            "nothing pinned"
+        );
+
+        hold_tab_keys(
+            TabKeys {
+                digits: true,
+                pinned: 0,
+            }
+            .with_letter('m'),
+        );
+        assert_eq!(route(&three, &Up::default()), Layer::Window);
+        assert_eq!(route(&shift_m, &Up::default()), Layer::Window);
+        // Over a bench, a document and a sticky note being written alike.
+        for up in [
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+        ] {
+            assert_eq!(route(&three, &up), Layer::Window, "{up:?}");
+        }
+        // A letter nobody pinned is still the program's.
+        let shift_q = Key {
+            key: "q",
+            alt: true,
+            shift: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&shift_q, &Up::default()), Layer::Terminal);
+        // Alt+0 and Ctrl+Alt+3 are not tab chords: the second is the tree's.
+        assert_eq!(tab_chord("0", true, false, false), None);
+        assert_eq!(tab_chord("3", true, true, false), None);
+        assert_eq!(
+            tab_chord("3", true, false, false),
+            Some(TabChord::Position(3))
+        );
+        assert_eq!(
+            tab_chord("M", true, false, true),
+            Some(TabChord::Pinned('m'))
+        );
+        hold_tab_keys(TabKeys::default());
+    }
+
+    /// A letter the window already answers with Alt — shift or not — would
+    /// never reach its tab, so it cannot be pinned.
+    #[test]
+    fn a_pin_refuses_the_letters_the_window_already_answers() {
+        for c in ['w', 'v', 'h', 'l', 'r', 'k', 'g', 'W'] {
+            assert!(pin_is_taken(c), "{c}");
+        }
+        for c in ['a', 'm', 'q', 'z', 'S'] {
+            assert!(!pin_is_taken(c), "{c}");
+        }
+        assert!(pin_is_taken('3'), "digits are positions, not pins");
     }
 }
