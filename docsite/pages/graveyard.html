@@ -2,41 +2,51 @@
 {
   "title": "Graveyard",
   "description": "The graveyard lists Claude Code and Codex conversations that are saved on disk but not running in any pane, after a crash, a reboot or a closed terminal. Click one to resume it in a new tab.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Resume agents that aren't running anywhere"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Claude Code and Codex save every conversation to disk. When the terminal an agent was running in goes away (a crash, a reboot, a window you closed), the conversation is still there, just not running. The graveyard lists those.</p>
-<p>Click <code>🪦</code> in the window's footer, or <b>Session restore</b> in the <code>…</code> menu. Each row says what the conversation was about, where it ran and how long ago. Click one and it resumes in a new tab, in its own directory, where it left off.</p>
+<p>Click <code>🪦</code> in the bottom-right corner of the window, or <b>Session restore</b> in the <code>…</code> menu. Each row says what the conversation was about, where it ran and how long ago. Rows are grouped by project, and the chips across the top narrow them to one. Click one and it resumes in a new tab, in its own directory, where it left off.</p>
 <p>Something you closed a minute ago is probably in the <a href="/left-bar#technical-the-bay">bay</a> instead, still running: <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back.</p>
 <p class="invite">Technical has what counts as dead and what a row shows.</p>
 </section>
 
 <section data-register="technical" data-headline="Dead agents">
 <h3>What's listed</h3>
-<p>Every saved conversation that isn't the one any open agent pane would resume:</p>
+<p>Every saved conversation that isn't the one any open agent pane would resume:<sup><a href="#s1">1</a></sup></p>
 <ul>
   <li>Claude Code: <code>~/.claude/projects/&lt;project&gt;/&lt;id&gt;.jsonl</code></li>
   <li>Codex: <code>~/.codex/sessions/**/rollout-*.jsonl</code></li>
 </ul>
 <p>Newest first, up to 80 each time it opens. Ids that aren't plain letters, digits, <code>-</code> and <code>_</code> are left out, since they would be typed into a shell. The graveyard only reads these files; it never changes one.</p>
+<p class="in-dev">A sleeping agent's conversation also counts as live, so it isn't offered here: resurrecting it would put a second agent on the conversation when the first one wakes. <a href="/rest">Resting agents</a> has how an agent comes to be asleep.<sup><a href="#s3">3</a></sup></p>
 
 <h3>The panel</h3>
-<p>The header reads <code>🪦 DEAD AGENTS</code>, then how many are Claude and how many Codex, the card-size slider it shares with the <a href="/agent-wall">agent wall</a>, and <code>&lt;n&gt; recoverable</code>. That count is conversations found here; the same words on the bay count what's held there. Chips filter by project: <code>ALL</code>, then one per directory name. Rows are grouped by project with <code>&lt;n&gt; dead</code> on each group.</p>
-<p>A row's title is the conversation's own summary, or failing that its first message, cut to 96 characters; with neither, <code>CLAUDE session</code>. Under it:</p>
-<pre><code>~/project · 3h ago · 7f3a91c2 · 412 KB</code></pre>
+<p>The header reads <code>🪦 DEAD AGENTS</code>, then the split by program (<code>12 claude · 3 codex</code>), the card-size slider it shares with the <a href="/agent-wall">agent wall</a>, and <code>&lt;n&gt; recoverable</code>. That count is conversations found here; the same words on the bay count what's held there. Under it: <code>click a row to resurrect it — or ⬇ .cdx to harvest its context into a portable package</code>. Chips filter by project: <code>ALL</code>, then one per directory name, each with its count. Rows are grouped by project with <code>&lt;n&gt; dead</code> on each group.<sup><a href="#s2">2</a></sup></p>
+<p>A row's title is the conversation's own summary, or failing that its first message, cut to 96 characters; with neither, <code>CLAUDE session</code> or <code>CODEX session</code>. Under it:</p>
+<pre><code>~/project  ·  3h ago  ·  7f3a91c2  ·  412 KB</code></pre>
 <p>Directory, age (<code>s</code>, <code>m</code>, <code>h</code> or <code>d</code>, one unit), the first eight characters of the conversation id, and size. With nothing to list: <code>No recoverable agents — every saved session is either live or already gone.</code> Click outside to close.</p>
+<div class="in-dev">
+<p>The <code>🪦</code> is one of the corner's glyphs that <a href="/ui-config">UI CONFIG</a> can put away, under <code>MENU GLYPHS</code>. The Clean and Standard designs start with it hidden. <code>Session restore</code> stays in the <code>…</code> menu either way.<sup><a href="#s3">3</a></sup></p>
+</div>
 
 <h3>Resurrect</h3>
-<p>Clicking a row, or its <code>RESURRECT ⏎</code>, opens a new tab in the row's directory, in the branch of the left bar you're in, and types <code>claude --resume &lt;id&gt;</code> or <code>codex resume &lt;id&gt;</code>. If the session is already running that conversation somewhere, it isn't started twice.</p>
+<p>Clicking a row, or its <code>RESURRECT ⏎</code>, opens a new tab in the row's directory, in the branch of the left bar you're in, and types <code>claude --resume &lt;id&gt;</code> or <code>codex resume &lt;id&gt;</code>. If the session is already running that conversation somewhere, it isn't started twice; you're shown that pane instead.<sup><a href="#s2">2</a></sup></p>
 
 <h3>Harvest</h3>
-<p>With the context-delight <a href="/plugins">plugin</a> installed, each row also has <code>⬇ .cdx</code>, which packs the conversation into a portable file in <code>~/.local/share/context-delight/</code>.</p>
+<p>When context-delight's <code>cdx-mcp</code> is on the machine, installed as a <a href="/plugins">plugin</a> or found on your <code>PATH</code>, in <code>~/.local/bin</code> or in <code>~/.cargo/bin</code>, each row also has <code>⬇ .cdx</code>. It packs the conversation into <code>~/.local/share/context-delight/&lt;id&gt;.cdx</code>, and the result is reported under the header.<sup><a href="#s4">4</a></sup></p>
+
+<h3>What would prove this wrong</h3>
+<p>If a conversation that an open pane is running ever shows up here, the live check above has failed, and resurrecting it would start a second agent on the same conversation.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The scan: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/recover.rs">recover.rs</a>; the panel and resurrect: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
+  <li id="s1">The scan: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/recover.rs">recover.rs</a>.</li>
+  <li id="s2">The panel, its doors and resurrect: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its words: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
+  <li id="s3">0.5.0: sleeping agents counted as live, and the <code>🪦</code> glyph's switch, in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; the designs' defaults in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">ui/clean.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/standard.toml">ui/standard.toml</a>.</li>
+  <li id="s4">Harvest: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/plugins.rs">plugins.rs</a>.</li>
 </ol>

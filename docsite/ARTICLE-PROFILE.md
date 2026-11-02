@@ -46,6 +46,15 @@ spine shows it as "soon".
   which gets its own Copy button. Key tables take `class="keys"`.
 - Never style in a content file. If a page needs a component, it goes in
   `assets/td-docs.css`, where every page can use it.
+- The pages describe the current release, and mark work that exists only on
+  the next release's development branch where it appears: `class="in-dev"` on
+  a block (the stylesheet labels it), `<span class="dev-tag">0.5.0 dev</span>`
+  inline, and `"release": "0.5.0"` on a page's nav.json entry when the whole
+  page is new, which tags it in the spine and opens it on a line saying so.
+  Behaviour the next release changes is written as today's, then an `in-dev`
+  block with what changes. `trueOf` names both commits on a mixed page. When
+  the release ships, `grep -rn 'in-dev\|dev-tag\|"release"' docsite` finds
+  every marker to remove.
 - The build refuses: a broken internal link or anchor, a /docsite/ path, an
   unfilled token, and the phrases in Parker's writing ledger (the banned
   vocabulary, the split negation, a labelled declarative opener, a heading
@@ -102,4 +111,5 @@ spine shows it as "soon".
 ## Categories
 
 The spine groups (Get started, Agents, The bench, Workspace, The look, MCP and
-scripting, Desktop, Reference) are navigation, not categories. No chip renders.
+scripting, Desktop, Reference) are navigation, not categories. No chip renders
+other than the development tag above.

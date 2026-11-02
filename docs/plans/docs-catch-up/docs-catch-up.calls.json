@@ -1,0 +1,93 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-one-docs-pr-into-main-with-0-5-0-development-wor",
+      "at": "2026-11-01T15:01Z",
+      "title": "One docs PR into main, with 0.5.0 development work marked on the page",
+      "context": null,
+      "chose": "Trace every page against main (0.4.0) and dev/0.5.0, describe 0.4.0 as the baseline, and badge 0.5.0-only behaviour as development work; land it on main so the live site and GitHub's README update now",
+      "because": "The live site and GitHub front page both read main; 0.4.0 is the build people download; 0.5.0 is what Parker runs daily and ships Nov 20. One source with badges avoids tracing twice and keeps dev's docsite changes from being stranded",
+      "passed_over": [
+        "PR into dev/0.5.0 only (live site stays 5 weeks stale until Nov 20)",
+        "Two layered PRs, 0.4 on main then 0.5 on dev (double tracing)"
+      ],
+      "undo": "Revert the merge on main and redeploy; the badges can be deleted when 0.5.0 ships",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null
+    },
+    {
+      "id": "call-deploy-the-rebuilt-docs-site-after-the-pr-merges",
+      "at": "2026-11-01T15:01Z",
+      "title": "Deploy the rebuilt docs site after the PR merges",
+      "context": null,
+      "chose": "Run docsite/deploy.sh from main once the PR is green and merged, after a dry run",
+      "because": "Parker asked for the docs WEBSITE to be updated; a push does not deploy; every 0.5.0 page and section says on its face that it is development work",
+      "passed_over": [
+        "Leave the live site untouched (asks Parker to deploy by hand)"
+      ],
+      "undo": "Re-run deploy.sh from the previous main commit; the site holds only this build",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-docs-features-becomes-a-map-to-the-docs-site",
+      "at": "2026-11-01T15:01Z",
+      "title": "docs/features becomes a map to the docs site",
+      "context": null,
+      "chose": "Replace each stale docs/features page with a short pointer to the docs-site page that was traced to code, keeping filenames so inbound links work, as issue 803 proposes",
+      "because": "Issue 803 found dozens of contradictions there; maintaining two copies is how they drifted; the site is the traced source",
+      "passed_over": [
+        "Rewrite all 13 feature pages in place (a second copy to drift)"
+      ],
+      "undo": "git revert restores the old pages",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

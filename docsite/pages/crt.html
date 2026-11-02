@@ -1,17 +1,18 @@
 <script type="application/json" data-page>
 {
   "title": "CRT",
-  "description": "Every Terminal Delight pane is drawn as a small CRT tube: curved glass, scanlines, glow, a rolling tracking band. The theme sets the texture, the per-pane warp sets the curve, and the GAUGES tray grades each pane like a monitor.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "Terminal Delight can draw every pane as a small CRT tube: curved glass, scanlines, glow, a rolling band. It is a switch at the foot of the GAUGES tray (Ctrl+Shift+G), off on a fresh install. The design sets the texture, warp sets the curve, and GAUGES grades each pane like a monitor.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Curved glass, scanlines and the GAUGES tray"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">Every pane in Terminal Delight is drawn as a small CRT tube. Its glass curves, its edges fall into shadow, scanlines run across it, and now and then a faint band rolls down it the way it did on an old monitor. Only the panes bend. The tabs, bars and menus around them stay flat, and a click lands on whatever is drawn under the pointer.</p>
-<p>Two settings decide how much of it you get. The <a href="/themes">theme</a> sets the texture: scanlines, glow, the rolling band, flicker. The warp sets the curve, pane by pane, from 0 for flat glass to 1.5; the default is 1.43. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, where warp sits beside brightness, contrast, colour and text size.</p>
-<p>For none of it, choose <code>quiet-command</code> in the DESIGN tray (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>) and set warp to 0.</p>
+<p class="lede">Terminal Delight can draw every pane as a small CRT tube. Its glass curves, its edges fall into shadow, scanlines run across it, and now and then a faint band rolls down it the way it did on an old monitor. Only the panes bend. The tabs, bars and menus around them stay flat, and a click lands on whatever is drawn under the pointer.</p>
+<p>A fresh install opens flat. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, open the <code>▸ CRT</code> row at the foot, and switch <code>crt on</code>. The <a href="/themes">design</a> then decides the texture: scanlines, glow, the rolling band, flicker. The <code>warp</code> slider beside the switch sets the curve, from 0 for flat glass to 1.5.</p>
+<p>Above it, the same tray grades the pane like a monitor: brightness, contrast, colour, gamma, text size, and how brightly lit borders glow.</p>
+<p class="in-dev">Letter glow and the inactive panes' dimming work with the tube off too, erased text fades where it was drawn, and the Clean design holds the tube and every light off.</p>
 <p class="invite">Technical has the warp's formula, every effect and every gauge.</p>
 </section>
 
@@ -20,7 +21,7 @@
 
 <figure class="td-fig">
   <div class="figwrap">
-<svg class="barrel" viewBox="0 0 700 244" role="img" aria-label="Two panes' content grids. On the left, warp 0: a flat, square grid. On the right, warp 1.43, the default: the same grid bowed outward, pulled in at the corners, with black glass left in each corner.">
+<svg class="barrel" viewBox="0 0 700 244" role="img" aria-label="Two panes' content grids. On the left, warp 0: a flat, square grid. On the right, warp 1.43, the house curve: the same grid bowed outward, pulled in at the corners, with black glass left in each corner.">
   <g transform="translate(20 0)">
     <rect class="frame" x="0" y="34" width="300" height="190" rx="6"/>
     <path class="tube" d="M0.0 34.0L300.0 34.0L300.0 224.0L0.0 224.0Z"/>
@@ -73,68 +74,102 @@
     <path class="g" d="M370.7 195.1L381.4 195.6L392.3 196.1L403.5 196.5L414.8 196.8L426.3 197.2L437.9 197.5L449.7 197.7L461.6 197.9L473.6 198.1L485.7 198.2L497.8 198.3L510.0 198.3L522.2 198.3L534.3 198.2L546.4 198.1L558.4 197.9L570.3 197.7L582.1 197.5L593.7 197.2L605.2 196.8L616.5 196.5L627.7 196.1L638.6 195.6L649.3 195.1"/>
     <path class="g2" d="M373.4 215.5L383.9 216.1L394.6 216.7L405.6 217.2L416.7 217.7L428.0 218.1L439.4 218.4L450.9 218.8L462.6 219.0L474.4 219.2L486.2 219.4L498.1 219.5L510.0 219.5L521.9 219.5L533.8 219.4L545.6 219.2L557.4 219.0L569.1 218.8L580.6 218.4L592.0 218.1L603.3 217.7L614.4 217.2L625.4 216.7L636.1 216.1L646.6 215.5"/>
     <text class="t1" x="360" y="20">warp 1.43</text>
-    <text class="t2" x="660" y="20" text-anchor="end">the default</text>
+    <text class="t2" x="660" y="20" text-anchor="end">the house curve</text>
   </g>
 </svg>
   </div>
-  <figcaption><b>Figure 1.</b> One pane's content grid at warp 0 and at the default 1.43, bent by the app's own formula. The centre doesn't move. A corner of the glass shows content from 12% further out, so the content's edge lands 2.4% inside the frame at mid-height and 4.5% at the top, and the corners are left as black glass. Drawn by <code>docsite/tools/barrel-figure.mjs</code> from the shader in the renderer patch.</figcaption>
+  <figcaption><b>Figure 1.</b> One pane's content grid at warp 0 and at 1.43, the curve a grade starts from, bent by the app's own formula. The centre doesn't move. A corner of the glass shows content from 12% further out, so the content's edge lands 2.4% inside the frame at mid-height and 4.5% at the top, and the corners are left as black glass. Drawn by <code>docsite/tools/barrel-figure.mjs</code> from the shader in the renderer patch.</figcaption>
 </figure>
 
 <h3>Warp</h3>
-<p>For a point <code>c</code> on the pane, measured from its centre in the pane's own 0–1 space, the pass shows the content at <code>c × (1 + k1·r² + k2·r⁴)</code>, where <code>r = |c|</code>, <code>k1 = 0.14 × warp</code> and <code>k2 = 0.06 × warp</code>. Brightness falls to 86% toward the edge, and a bent pane is drawn 35% brighter overall so it doesn't look dim beside flat chrome. A pane at warp 0 skips the pass entirely and looks exactly as it would without it.</p>
+<p>For a point <code>c</code> on the pane, measured from its centre in the pane's own 0–1 space, the pass shows the content at <code>c × (1 + k1·r² + k2·r⁴)</code>, where <code>r = |c|</code>, <code>k1 = 0.14 × warp</code> and <code>k2 = 0.06 × warp</code>. Brightness falls to 86% toward the edge, and a bent pane is drawn 35% brighter overall so it doesn't look dim beside flat chrome. A pane at warp 0 skips the pass entirely and looks exactly as it would without it.<sup><a href="#s1">1</a></sup></p>
+<p>Warp runs from 0 to 1.5. A fresh window keeps it at 1.5, ready for the day you switch the tube on; a grade with no warp of its own starts at 1.43. Switching the CRT off leaves the number alone.<sup><a href="#s3">3</a></sup></p>
 <ul>
   <li>Clicks, selection and links are mapped through the same curve, so they land on what you see.</li>
-  <li>While a menu or dialog is open, every pane's glass is drawn flat for that frame.</li>
+  <li>The bent glass is a rounded rectangle seated behind the frame. Its corners are 5.5% of the pane's short side (10 to 72 device pixels), a shadow runs along every edge, deepest under the top lip, and a faint moulding in the pane's chrome colour catches light from above. Paper skins get none of it. A flat pane on a design with a vignette gets the same seat, drawn flat.<sup><a href="#s2">2</a></sup></li>
+  <li>While a menu or dialog is open, every pane's glass is drawn flat for that frame, and panels and hover cards over a bent pane are drawn flat.</li>
   <li>Up to 32 bent rectangles per frame, enough for the <a href="/agent-wall">agent wall</a>'s card pictures.</li>
   <li>A new bent pane powers on over 300 ms: the phosphor floods in, collapses to a line, then pinches to a star while the terminal appears behind it. Closing it plays the second half. Flat panes skip this.</li>
 </ul>
 
+<h3>The CRT switch</h3>
+<p>The switch is the last row of GAUGES: <code>▸ CRT</code>, folded shut each time the tray opens. Opened, it shows <code>▢ crt off</code> or <code>▣ crt on</code>, and while the tube is on, the dials it switches: <code>warp</code>, <code>glare</code>, <code>roll</code>, <code>roll spd</code>, <code>roll size</code> and <code>↺ roll → per-theme</code>.<sup><a href="#s3">3</a></sup></p>
+<p>Off is a flat screen. The warp, the rolling band, scanlines, vignette, bloom, flicker, jiggle, glare, the bezel and letter glow are all dropped, and the coloured haze under each pane header goes with them. The dials keep their values, so switching back on restores exactly the tube you had. The switch is per pane, like every gauge, and a pane follows the window's until you flip it on the pane. A fresh install starts with it off; an install upgraded from an earlier version keeps its tube.</p>
+
 <h3>Effects</h3>
-<p>Set in the theme file's <code>[effects]</code> table. Every key is optional and clamped to its range; one left out is off.</p>
+<p>Set in the design's <code>[effects]</code> table. Every key but <code>glow</code> is drawn only while the CRT is on. Every key is optional and clamped to its range; one left out is off.<sup><a href="#s3">3</a></sup></p>
 <table>
   <thead><tr><th>Key</th><th>Range</th><th>Default</th><th>Draws</th></tr></thead>
   <tbody>
     <tr><td><code>scanline_opacity</code></td><td>0–0.6</td><td>0</td><td>A dark line every <code>scanline_step</code> pixels, with a faint accent line under it.</td></tr>
     <tr><td><code>scanline_step</code></td><td>2 and up</td><td>4</td><td>Pixels between scanlines.</td></tr>
     <tr><td><code>vignette</code></td><td>0–1</td><td>0</td><td>Shadow toward the edges, and a soft highlight at the top left. Off on the workbench and on documents.</td></tr>
-    <tr><td><code>glow</code></td><td>0–1</td><td>0</td><td>An accent glow around the pane header.</td></tr>
+    <tr><td><code>glow</code></td><td>0–1</td><td>0</td><td>The accent halo on the pane header, the cursor and the workbench's cards. It belongs to the chrome, so it stays with the CRT off, except the part that falls onto the glass below the header.</td></tr>
     <tr><td><code>bloom</code></td><td>0–1</td><td>0</td><td>An accent haze rising toward the middle of the pane.</td></tr>
     <tr><td><code>tracking</code></td><td>0–1</td><td>0</td><td>A 160 px band that rolls from top to bottom.</td></tr>
     <tr><td><code>tracking_period</code></td><td>2–120 s</td><td>14</td><td>Seconds from one band to the next.</td></tr>
     <tr><td><code>tracking_sweep</code></td><td>1–30 s</td><td>7</td><td>Seconds one band takes to cross.</td></tr>
     <tr><td><code>flicker</code></td><td>0–1</td><td>0</td><td>Every 9 to 17 seconds, a half-second stutter in brightness.</td></tr>
     <tr><td><code>jiggle</code></td><td>0–1</td><td>0</td><td>Every 6 to 9 seconds, the picture hops a pixel or two.</td></tr>
-    <tr><td><code>screen_glare</code></td><td>0–1</td><td>0, or 0.42 for a theme named <code>hacker</code></td><td>A glare spot and streak at the top left of the glass. Shows only on a bent pane. The <code>glare</code> gauge overrides it per pane.</td></tr>
+    <tr><td><code>screen_glare</code></td><td>0–1</td><td>0, or 0.42 for a design named <code>hacker</code></td><td>A glare spot and streak at the top left of the glass. Shows only on a bent pane. The <code>glare</code> gauge overrides it per pane.</td></tr>
     <tr><td><code>bezel</code></td><td>0–1</td><td>0</td><td>A raised frame around the glass.</td></tr>
+    <tr><td><code>letter_glow</code></td><td>0–1</td><td>0</td><td>Phosphor bleeding off every letter: each line of text is drawn again underneath, a pixel out in four directions.</td></tr>
   </tbody>
 </table>
-<p>A <code>curvature</code> key in older theme files is ignored: the curve is the per-pane warp now. On a fresh install your theme file starts as a copy of <code>hacker</code>, which turns most of these on, and the window tints it amber.</p>
+<p>A <code>curvature</code> key in older theme files is ignored: the curve is the per-pane warp. Your <code>theme.toml</code> starts as a copy of <code>hacker</code>, which turns most of these on, so switching the CRT on in a fresh window gives that tube under the Terminal Delight palette.</p>
+<p><code>intrusive</code> is the design that turns the tube all the way up: scanlines laid over the text at 0.31 every 3 pixels, full glow and bloom, flicker and jiggle, and <code>letter_glow</code> at 1, the only built-in design that glows its letters. It asks for no skin, so it goes with any.<sup><a href="#s3">3</a></sup></p>
 
 <h3>GAUGES</h3>
-<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane opens <code>GAUGES — THIS PANE</code>; the <code>⛭</code> in the window's footer opens <code>GAUGES — OUTER</code> for the whole window. A pane follows the window on every gauge until you move that gauge on the pane; <code>◉ follow outer</code> hands it back.</p>
+<p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane opens <code>GAUGES — THIS PANE</code>; the slider icon beside <code>🎨</code> at the bottom right of the window opens <code>GAUGES — OUTER</code> for the whole window. A pane follows the window on every gauge until you move that gauge on the pane; <code>◉ follow outer</code> hands it back.<sup><a href="#s3">3</a></sup></p>
+<p>Ten sliders, then <code>reset</code>, then two folded rows: <code>▸ TEXT CRAWL</code> (see <a href="/text-crawl">Text crawl</a>) and <code>▸ CRT</code>.</p>
 <table>
   <thead><tr><th>Gauge</th><th>Range</th><th>Fresh window</th><th>After <code>reset</code></th></tr></thead>
   <tbody>
-    <tr><td><code>text size</code></td><td>0.6–2×</td><td>0.75×</td><td>1×</td></tr>
-    <tr><td><code>bench size</code></td><td>0.6–2×, or follow text size</td><td>follows text size</td><td>1×</td></tr>
-    <tr><td><code>brightness</code></td><td>0–1</td><td>0.38</td><td>0.5</td></tr>
-    <tr><td><code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code></td><td>0–1</td><td>0.5</td><td>0.5</td></tr>
-    <tr><td><code>menu bar</code></td><td>0.7–1.6×</td><td>0.8×</td><td>1×</td></tr>
-    <tr><td><code>warp</code></td><td>0–1.5</td><td>1.43</td><td>unchanged</td></tr>
-    <tr><td><code>glare</code></td><td>0–1, or follow the theme</td><td>follows the theme</td><td>unchanged</td></tr>
+    <tr><td><code>text size</code></td><td>60–200%</td><td>74%</td><td>100%</td></tr>
+    <tr><td><code>bench size</code></td><td>60–200%, or follow text size</td><td>follows text size</td><td>follows text size</td></tr>
+    <tr><td><code>brightness</code></td><td>−50 to +50</td><td>−24</td><td>+0</td></tr>
+    <tr><td><code>contrast</code></td><td>−50 to +50</td><td>+25</td><td>+0</td></tr>
+    <tr><td><code>colour</code></td><td>−50 to +50</td><td>+50</td><td>+0</td></tr>
+    <tr><td><code>text</code>, <code>background</code>, <code>gamma</code></td><td>−50 to +50</td><td>+0</td><td>+0</td></tr>
+    <tr><td><code>menu bar</code></td><td>70–160%</td><td>85%</td><td>100%</td></tr>
+    <tr><td><code>phosphor</code></td><td>0–400%</td><td>100%</td><td>100%</td></tr>
+    <tr><td><code>warp</code>, under <code>▸ CRT</code></td><td>+0 to +150</td><td>+150</td><td>unchanged</td></tr>
+    <tr><td><code>glare</code>, under <code>▸ CRT</code></td><td>0–100%, or follow the design</td><td>follows the design</td><td>unchanged</td></tr>
   </tbody>
 </table>
-<p>0.5 is neutral on the colour gauges, and they read as a signed offset from it: <code>+19</code>, <code>-34</code>. Text and background are graded separately, and brightness can only dim text, never push it past white. <code>warp</code>, <code>glare</code> and the roll dials sit under <code>▸ crt</code> and show while the tube is on; <code>reset</code> leaves them alone. <code>glare</code> opens at the theme's own <code>screen_glare</code> and stays there until you move it, and it shows only where <code>warp</code> is above 0. <code>roll</code>, <code>roll spd</code> and <code>roll size</code> override this pane's tracking band, and <code>↺ roll → per-theme</code> gives it back to the theme.</p>
+<p>The colour gauges read as a signed offset from neutral, <code>+19</code> or <code>-34</code>. Text and background are graded separately, and brightness can only dim text, never push it past white. <code>phosphor</code> scales the glow of every lit border at once, from none to four times the house glow; at 0 a border is still drawn, without its halo. <code>reset</code> puts the ten sliders back and leaves the crawl and the whole CRT section alone.</p>
+<p><code>glare</code> opens where the design's own <code>screen_glare</code> has it and follows the design until you move it; it shows only where <code>warp</code> is above 0. <code>roll</code>, <code>roll spd</code> and <code>roll size</code> override the pane's rolling band, and <code>↺ roll → per-theme</code> gives it back to the design. A fresh window keeps a roll of its own ready for when the tube is switched on.</p>
 <p><kbd>Ctrl</kbd> and the mouse wheel size whatever is under the pointer: the terminal's text, the workbench, or, over a header or the chrome, the menu bar. One notch is 5%.</p>
 <p>An agent can set the same gauges through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, each as a percentage of its range, with writes on.</p>
 
+<div class="in-dev">
+<h3>GAUGES in 0.5.0</h3>
+<p>The sliders sit in four groups, each folded to its heading until you click it: <code>TYPE</code>, <code>PICTURE</code>, <code>ACTIVE TERMINALS</code> and <code>INACTIVE TERMINALS</code>. The CRT row is called <code>CRT GLASS</code>.<sup><a href="#s4">4</a></sup></p>
+<table>
+  <thead><tr><th>Group</th><th>Gauges</th></tr></thead>
+  <tbody>
+    <tr><td><code>TYPE</code></td><td><code>text size</code>, <code>bench size</code>, <code>menu bar</code></td></tr>
+    <tr><td><code>PICTURE</code></td><td><code>brightness</code>, <code>contrast</code>, <code>colour</code>, <code>background</code>, <code>field colour</code>, <code>gamma</code>, <code>phosphor</code></td></tr>
+    <tr><td><code>ACTIVE TERMINALS</code></td><td><code>text</code>, <code>letter glow</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
+    <tr><td><code>INACTIVE TERMINALS</code></td><td><code>brightness</code>, <code>blur</code>, <code>text level</code> (<code>of active text intensity</code>), <code>letter glow</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
+  </tbody>
+</table>
+<p>Terminal lighting follows focus in every skin, with the tube on or off. The pane you're typing in and the others each have their own letter glow, and inactive text can dim relative to the active pane's. Left alone, active letter glow is 20% and inactive text 45%; under Intrusive they are 37% and 52%; inactive letter glow is 100% in both, and Clean has no glow at all. A setting you make wins, zero included.</p>
+<p>Erased passages fade where they were drawn, while new text appears at once. <code>cursor linger</code> is how long changed text fades at the cursor, 0 to 220 ms; <code>off-cursor linger</code> is how long an erased passage elsewhere fades, 0 to 650 ms. Both start at their maximum, and 0 turns each one off. The tray says so: <code>New text is instant. Off-cursor = erased text; 0 = off.</code></p>
+<p>Inactive <code>brightness</code> defaults to 78% and can go much darker; <code>blur</code> runs from clear to slightly softer than a popup's backdrop. <code>field colour</code> fades the terminal's default background from black toward the chrome around it; TERMINIMALIST matches it by default, and other skins keep their own background until you move it.</p>
+<p>While the window wears the Clean design, the tube and every light are held off whatever the dials say: the curve, the roll, the glare, letter glow, the linger fades and the border halos. The dials keep their values for the next design, and each design remembers its own look dials; see <a href="/themes">Themes</a>.</p>
+</div>
+
 <h3>Switches for debugging</h3>
-<p><code>TD_NOGLASS</code> skips everything drawn over the pane: scanlines, the band, vignette, bloom, glare. <code>TD_NOCANVAS</code> skips only the scanlines and the band. Neither turns off the warp; set it to 0 for that. <code>TD_IGNITION_FREEZE=0.7</code> holds the power-on at that point for a screenshot.</p>
+<p><code>TD_NOGLASS</code> skips everything drawn over the pane: scanlines, the band, vignette, bloom, glare. <code>TD_NOCANVAS</code> skips only the scanlines and the band. Neither turns off the warp; switch the CRT off or set warp to 0 for that. <code>TD_IGNITION_FREEZE=0.7</code> holds the power-on at that point for a screenshot.</p>
 
 <h3>What would prove this wrong</h3>
-<p>Click a word near the corner of a bent pane. If the selection starts anywhere other than the word you clicked, the click mapping and the drawing have come apart.</p>
+<p>Click a word near the corner of a bent pane. If the selection starts anywhere other than the word you clicked, the click mapping and the drawing have come apart. And switch the CRT off and on again: if any dial comes back changed, the switch has stopped keeping the tube it hides.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">The warp and glare: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0001-td-crt-pass.patch">0001-td-crt-pass.patch</a>; the overlay effects and ignition: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/crt.rs">crt.rs</a>; effects, gauges and their defaults: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the tube list: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/warp.rs">warp.rs</a>.</li>
+  <li id="s1">The warp and glare: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0001-td-crt-pass.patch">0001-td-crt-pass.patch</a>; the tube list: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/warp.rs">warp.rs</a>.</li>
+  <li id="s2">The rounded glass and its moulding: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0008-glass-rim.patch">0008-glass-rim.patch</a>; the overlay effects, the flat rim and ignition: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/crt.rs">crt.rs</a>.</li>
+  <li id="s3">Effects, the CRT switch, gauges, their ranges and defaults: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the GAUGES tray: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>; Intrusive: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/themes/intrusive.toml">intrusive.toml</a>.</li>
+  <li id="s4">0.5.0: the gauge groups, lighting by focus, linger, inactive brightness and blur, field colour and Clean's hold: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; the inactive blur: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/docs/patches/0012-tube-blur.patch">0012-tube-blur.patch</a>; the field under a skin: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs</a>; all on dev/0.5.0.</li>
 </ol>
