@@ -513,16 +513,35 @@ fn codex_holder(home: &std::path::Path, session: &str) -> Option<i32> {
         })
 }
 
-/// What must outlive a window: which panes are asleep (and how they wake), and
-/// which the person pinned awake. Keyed by the host's pane id, because a sleep
-/// means something only while that pane's shell is alive, and a window of an
-/// older build that does not know this file just shows the shell.
+/// What must outlive a window: which panes are asleep (and how they wake),
+/// which the person pinned awake, and the wakes of the last day. Keyed by the
+/// host's pane id, because a sleep means something only while that pane's
+/// shell is alive, and a window of an older build that does not know this
+/// file just shows the shell.
 #[derive(Debug, Clone, Default, PartialEq, serde::Serialize, serde::Deserialize)]
 pub struct Store {
     #[serde(default)]
     pub asleep: std::collections::BTreeMap<String, Asleep>,
     #[serde(default)]
     pub keep_awake: std::collections::BTreeSet<u64>,
+    /// Wakes, oldest first: an agent's old shell pid and the one it woke
+    /// behind. Kept so a window swap does not forget them, and an MCP caller
+    /// holding an old pid is still told where the agent went; read by a person
+    /// too, when something has gone wrong and they want to know what moved.
+    #[serde(default)]
+    pub woke: Vec<WakeRecord>,
+}
+
+/// One wake, as the store keeps it. Only a wake whose new pid is known is
+/// written; a record with no destination would explain nothing.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct WakeRecord {
+    pub from_pid: u32,
+    pub to_pid: u32,
+    /// The conversation the agent resumed.
+    pub agent: String,
+    /// When it woke, in Unix milliseconds.
+    pub at_ms: u64,
 }
 
 pub fn store_path(session: &str) -> PathBuf {
@@ -556,6 +575,26 @@ pub fn save_store(session: &str, store: &Store) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// The wakes ride the rest store's own file and come back whole, and a
+    /// file an older window wrote, with no wakes in it, still loads.
+    #[test]
+    fn the_store_keeps_its_wakes_and_reads_an_older_file() {
+        let store = Store {
+            woke: vec![WakeRecord {
+                from_pid: 200,
+                to_pid: 300,
+                agent: "conv".into(),
+                at_ms: 7,
+            }],
+            ..Default::default()
+        };
+        let back: Store = toml::from_str(&toml::to_string(&store).unwrap()).unwrap();
+        assert_eq!(back, store);
+        let older: Store = toml::from_str("keep_awake = [4]\n").unwrap();
+        assert!(older.woke.is_empty());
+        assert!(older.keep_awake.contains(&4));
+    }
 
     /// An agent slower to go than the sleep's wait is not "did not stop": it
     /// is followed up, and once it has gone, even as a zombie its parent has

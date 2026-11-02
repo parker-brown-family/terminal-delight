@@ -4539,16 +4539,18 @@ impl ReaderGlass {
     }
 }
 
-/// One wake the window performed: the shell pid the agent slept behind, its
-/// conversation, and the pane it woke in. `to_pid` is pinned when that pane is
-/// itself replaced by a later wake; until then the pid is read off the live
-/// pane, because a host-spawned pane learns its shell pid after it is built.
-/// Generic over the pane key so the bookkeeping is testable without a window.
+/// One wake: the shell pid the agent slept behind, its conversation, and the
+/// pane it woke in. `to_pid` is pinned when that pane is itself replaced by a
+/// later wake; until then the pid is read off the live pane, because a
+/// host-spawned pane learns its shell pid after it is built. A wake read back
+/// from the rest store after a window swap has no pane (`to: None`), only the
+/// pid it was saved with. Generic over the pane key so the bookkeeping is
+/// testable without a window.
 #[derive(Clone, Debug, PartialEq)]
 struct Wake<K> {
     from_pid: u32,
     agent: String,
-    to: K,
+    to: Option<K>,
     to_pid: Option<u32>,
     at_ms: u64,
 }
@@ -4570,20 +4572,62 @@ fn record_wake<K: Copy + PartialEq>(
 ) {
     for w in woke
         .iter_mut()
-        .filter(|w| w.to == old && w.to_pid.is_none())
+        .filter(|w| w.to == Some(old) && w.to_pid.is_none())
     {
         w.to_pid = Some(from_pid);
     }
     woke.push(Wake {
         from_pid,
         agent,
-        to,
+        to: Some(to),
         to_pid: None,
         at_ms: now_ms,
     });
+    keep_recent(woke, now_ms);
+}
+
+/// A day of wakes, and no more than [`WAKE_KEEP`].
+fn keep_recent<K>(woke: &mut Vec<Wake<K>>, now_ms: u64) {
     woke.retain(|w| now_ms.saturating_sub(w.at_ms) < WAKE_KEEP_MS);
     let over = woke.len().saturating_sub(WAKE_KEEP);
     woke.drain(..over);
+}
+
+/// The wakes as the rest store writes them: those whose new pid is known,
+/// read live where the pane still stands (`live`), else as pinned.
+fn wake_records<K: Copy>(
+    woke: &[Wake<K>],
+    live: impl Fn(K) -> Option<u32>,
+) -> Vec<agentrest_io::WakeRecord> {
+    woke.iter()
+        .filter_map(|w| {
+            Some(agentrest_io::WakeRecord {
+                from_pid: w.from_pid,
+                to_pid: w.to.and_then(&live).or(w.to_pid)?,
+                agent: w.agent.clone(),
+                at_ms: w.at_ms,
+            })
+        })
+        .collect()
+}
+
+/// A new window takes up the wakes the last one wrote, ahead of any it has
+/// already made itself, and forgets those older than a day.
+fn restore_wakes<K>(woke: &mut Vec<Wake<K>>, saved: &[agentrest_io::WakeRecord], now_ms: u64) {
+    let mut all: Vec<Wake<K>> = saved
+        .iter()
+        .map(|r| Wake {
+            from_pid: r.from_pid,
+            agent: r.agent.clone(),
+            to: None,
+            to_pid: Some(r.to_pid),
+            at_ms: r.at_ms,
+        })
+        .collect();
+    all.append(woke);
+    all.sort_by_key(|w| w.at_ms);
+    *woke = all;
+    keep_recent(woke, now_ms);
 }
 
 /// The wakes as the MCP snapshot carries them: each one's new pid, read live
@@ -4594,7 +4638,7 @@ fn moves_of<K: Copy>(woke: &[Wake<K>], live: impl Fn(K) -> Option<u32>) -> Vec<m
         .filter_map(|w| {
             Some(mcp::Moved {
                 from_pid: w.from_pid,
-                to_pid: live(w.to).or(w.to_pid)?,
+                to_pid: w.to.and_then(&live).or(w.to_pid)?,
                 agent: w.agent.clone(),
             })
         })
@@ -7958,6 +8002,13 @@ impl Workspace {
                 store.keep_awake.insert(pane);
             }
         }
+        let live = |id: gpui::EntityId| {
+            self.every_view()
+                .into_iter()
+                .find(|l| l.entity_id() == id)
+                .and_then(|l| l.read(cx).shell_pid())
+        };
+        store.woke = wake_records(&self.woke, live);
         store
     }
 
@@ -7966,6 +8017,7 @@ impl Workspace {
     /// it another way, and the record would now be wrong.
     fn restore_rest_store(&mut self, session: &str, cx: &mut Context<Self>) {
         let store = agentrest_io::load_store(session);
+        restore_wakes(&mut self.woke, &store.woke, prompt::now_ms());
         for e in self.every_view() {
             e.update(cx, |v, cx| {
                 let Some(pane) = v.pane_id() else { return };
@@ -38642,7 +38694,52 @@ impl Render for Workspace {
 #[cfg(test)]
 #[allow(clippy::items_after_test_module)]
 mod tests {
-    use super::{moves_of, record_wake, Wake, WAKE_KEEP_MS};
+    use super::{moves_of, record_wake, restore_wakes, wake_records, Wake, WAKE_KEEP_MS};
+
+    /// A window swap keeps the panes and starts a new window, which knew
+    /// nothing of the wakes before it. Written to the rest store and read back,
+    /// the two-wake chain still runs from the first old pid to the pane the
+    /// agent is in now. A wake whose new pid was not known yet is not written,
+    /// and one older than a day is not read back.
+    #[test]
+    fn wakes_survive_a_window_swap() {
+        let mut before: Vec<Wake<u64>> = Vec::new();
+        record_wake(&mut before, 1, 200, "c".into(), 2, 1_000);
+        record_wake(&mut before, 2, 250, "c".into(), 3, 2_000);
+        record_wake(&mut before, 7, 700, "d".into(), 8, 3_000);
+        // Pane 3 has its shell; pane 8 does not yet.
+        let saved = wake_records(&before, |k| (k == 3).then_some(300));
+        assert_eq!(
+            saved
+                .iter()
+                .map(|r| (r.from_pid, r.to_pid))
+                .collect::<Vec<_>>(),
+            [(200, 250), (250, 300)],
+            "a wake with no known destination is not written"
+        );
+
+        // The new window: no panes it knows by entity, only the record.
+        let mut after: Vec<Wake<u64>> = Vec::new();
+        restore_wakes(&mut after, &saved, 4_000);
+        let moves = moves_of(&after, |_| None);
+        assert_eq!(
+            moves
+                .iter()
+                .map(|m| (m.from_pid, m.to_pid, m.agent.as_str()))
+                .collect::<Vec<_>>(),
+            [(200, 250, "c"), (250, 300, "c")]
+        );
+        // A wake the new window made itself is kept, after the old ones.
+        let mut mixed: Vec<Wake<u64>> = Vec::new();
+        record_wake(&mut mixed, 30, 900, "e".into(), 31, 5_000);
+        restore_wakes(&mut mixed, &saved, 5_000);
+        assert_eq!(mixed.last().unwrap().from_pid, 900);
+        assert_eq!(mixed.len(), 3);
+        // A day later, nothing comes back.
+        let mut late: Vec<Wake<u64>> = Vec::new();
+        restore_wakes(&mut late, &saved, 2_000 + WAKE_KEEP_MS);
+        assert!(late.is_empty());
+    }
 
     /// Two wakes in a row: the first wake's pane is replaced by the second,
     /// so its pid is pinned and the chain still runs from the first old pid to
