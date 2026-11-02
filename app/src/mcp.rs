@@ -181,12 +181,51 @@ pub struct PaneInfo {
     /// The pane's Threshing Floor seat, when a person seated it. Never on the wire.
     #[serde(skip)]
     pub seat: Option<crate::threshing_floor::SeatId>,
+    /// What a person calls this pane: where its tab sits on the left bar, then
+    /// its header's title — the same [`crate::threshing_floor::PaneName`] the
+    /// Threshing Floor draws, so there is one name for a pane, not two. This is
+    /// what an agent says to a person ("TERMINAL DELIGHT › Marketing · Launch
+    /// copy"), never "pane 33": a pane number and a pid are locations that
+    /// change when an agent sleeps and wakes, and they mean nothing to a
+    /// person. `None` (sent as null) when the window could not name it — not
+    /// an empty name.
+    #[serde(default)]
+    pub name: Option<PaneNameReport>,
     /// The pane's *effective* grade — what it actually renders with (its own
     /// override, else the inherited outer) — in the config API's percentages
     /// and explicit milliseconds. `#[serde(skip)]` so `list_panes` stays an
     /// identity-only listing; `get_pane_config` serialises it explicitly.
     #[serde(skip)]
     pub grade: GradeReport,
+}
+
+/// How an answer refers to a pane in its sentence: by name, the way a person
+/// says it, and by pid only when the window could not name it.
+fn spoken(name: Option<&str>, pid: impl std::fmt::Display) -> String {
+    match name {
+        Some(n) => format!("\u{201c}{n}\u{201d}"),
+        None => format!("the pane with pid {pid}"),
+    }
+}
+
+/// A pane's name in the shape `list_panes` sends it: the left-bar `place`, the
+/// header's title, and `said`, the one line to use when telling a person which
+/// pane you mean.
+#[derive(Clone, PartialEq, Eq, Debug, Serialize, Deserialize)]
+pub struct PaneNameReport {
+    pub place: String,
+    pub header: String,
+    pub said: String,
+}
+
+impl From<&crate::threshing_floor::PaneName> for PaneNameReport {
+    fn from(n: &crate::threshing_floor::PaneName) -> Self {
+        PaneNameReport {
+            place: n.place(),
+            header: n.header.clone(),
+            said: n.full(),
+        }
+    }
 }
 
 /// The grade group exactly as the config API reads and writes it: numeric dials
@@ -822,6 +861,16 @@ pub struct Caller {
 }
 
 impl Snapshot {
+    /// What a person calls the pane `pid` names, for an answer to say back.
+    fn said_of(&self, pid: u32) -> Option<String> {
+        self.panes
+            .iter()
+            .find(|p| p.pid == pid)
+            .and_then(|p| p.name.as_ref())
+            .map(|n| n.said.clone())
+            .filter(|s| !s.is_empty())
+    }
+
     /// The pane the caller is sitting in, when the connection could say.
     fn caller_info(&self) -> Option<&PaneInfo> {
         let pane = self.caller.as_ref()?.pane?;
@@ -1667,10 +1716,10 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "pid": { "type": "integer", "description": "pid of the pane whose bench this belongs on, from list_panes — usually your own" },
+                    "pid": { "type": "integer", "description": "pid of the pane whose bench this belongs on, from list_panes. OMIT IT for your own pane — the usual case: the window works out which pane is calling, every time, so it stays right after you sleep and wake into a new pane." },
                     "surface": { "type": "object", "description": "one TDSP document: td, kind, title, model, and optionally id, op, weight, source, actions" }
                 },
-                "required": ["pid", "surface"],
+                "required": ["surface"],
                 "additionalProperties": false
             }
         },
@@ -1861,6 +1910,9 @@ fn provenance(tool: &str) -> Option<Provenance> {
         // own name, which a program chooses.
         "list_panes" => Outside(&[
             "panes[].title",
+            "panes[].name.place",
+            "panes[].name.header",
+            "panes[].name.said",
             "panes[].mode",
             "panes[].cwd",
             "panes[].note.title",
@@ -2356,8 +2408,16 @@ fn list_panes(snap: &Snapshot) -> Value {
                     .pane_id
                     .map(|id| format!("pane {id}"))
                     .unwrap_or_else(|| "pane —".to_string());
+                // The name leads: it is what a person calls this pane, and what
+                // to say to one. The pane id and pid follow as locations.
+                let said = p
+                    .name
+                    .as_ref()
+                    .map(|n| n.said.as_str())
+                    .filter(|s| !s.is_empty())
+                    .unwrap_or("(unnamed)");
                 format!(
-                    "tab {} · {} · {} · {} · {} · {}{}{}",
+                    "{said} — tab {} · {} · {} · {} · {} · {}{}{}",
                     p.tab, pane, p.title, p.mode, cwd, sess, tool, note
                 )
             })
@@ -2976,12 +3036,17 @@ where
     let outcomes = apply(&[(Target::Pane(pid as u32), patch)]);
     match outcomes.into_iter().next() {
         Some((_, Ok(_))) => {
+            let name = snap.said_of(pid as u32);
+            let place = spoken(name.as_deref(), pid);
             let line = if cleared {
-                format!("peeled the note off pane {pid}")
+                format!("peeled the note off {place}")
             } else {
-                format!("posted — the note is on pane {pid}'s glass")
+                format!("posted — the note is on {place}'s glass")
             };
-            tool_ok(line, json!({ "pid": pid, "posted": !cleared }))
+            tool_ok(
+                line,
+                json!({ "pid": pid, "name": name, "posted": !cleared }),
+            )
         }
         Some((_, Err(e))) => tool_err(&e),
         None => tool_err("the window did not answer the note write"),
@@ -3042,12 +3107,17 @@ where
         .next()
     {
         Some((_, Ok(_))) => {
+            let name = snap.said_of(pid as u32);
+            let place = spoken(name.as_deref(), pid);
             let line = if cleared {
-                format!("withdrawn — pane {pid} declares no deliverable")
+                format!("withdrawn — {place} declares no deliverable")
             } else {
-                format!("declared — {said:?} is on pane {pid}'s row in the rail")
+                format!("declared — {said:?} is on {place}'s row in the rail")
             };
-            tool_ok(line, json!({ "pid": pid, "declared": !cleared }))
+            tool_ok(
+                line,
+                json!({ "pid": pid, "name": name, "declared": !cleared }),
+            )
         }
         Some((_, Err(e))) => tool_err(&e),
         None => tool_err("the window did not answer the deliverable write"),
@@ -3181,11 +3251,13 @@ where
              TD_MCP_WRITE=1) to let an agent present a surface. An agent can ask the person for them with request_access, change writes_on.",
         );
     }
-    let Some(pid) = args.get("pid").and_then(Value::as_u64) else {
-        return tool_err("present_surface requires a `pid` (an integer, from list_panes).");
-    };
-    let Ok(pid) = u32::try_from(pid) else {
-        return tool_err("pid is out of range");
+    // Your own pane by default, worked out from who is calling on THIS call,
+    // as declare_deliverable and leave_note already do. A pid remembered from
+    // an earlier answer goes stale when an agent sleeps and wakes into a fresh
+    // pane, and the reply card was the one own-pane write still demanding one.
+    let pid = match snap.target_pane(args.get("pid")) {
+        Ok(pid) => pid,
+        Err(why) => return tool_err(&why),
     };
     // The chart gate, before anything is built or applied: a surface on a seated
     // pane this caller has no line to is the signed-prompt vector the Threshing Floor
@@ -3238,9 +3310,10 @@ where
             format!("retired — {} is off the bench", post.id.as_str())
         }
         (_, Some(s)) => format!(
-            "on the bench — {:?} ({}) is on pane {pid}'s WORKBENCH face",
+            "on the bench — {:?} ({}) is on {}'s WORKBENCH face",
             s.title,
-            s.kind.id()
+            s.kind.id(),
+            spoken(snap.said_of(pid).as_deref(), pid)
         ),
         (_, None) => "nothing to draw".to_string(),
     };
@@ -3322,7 +3395,7 @@ where
             }
             tool_ok(
                 said,
-                json!({ "pid": pid, "surface": id, "kind": kind, "op": op }),
+                json!({ "pid": pid, "name": snap.said_of(pid), "surface": id, "kind": kind, "op": op }),
             )
         }
         Some((_, Err(e))) => tool_err(&e),
@@ -4335,6 +4408,7 @@ mod tests {
                 crate::threshing_floor::AgentAccess::OffLimits
             },
             seat: None,
+            name: None,
             grade: GradeReport::default(),
         }
     }
@@ -5637,6 +5711,119 @@ mod tests {
             "the deliverable landed on the wrong pane: {}",
             text_of(&out)
         );
+    }
+
+    /// The reply card needs no pid. It used to be the one own-pane write that
+    /// demanded one, so an agent that slept and woke into a fresh pane posted
+    /// to the pid it remembered and was refused: "the pane's process ID has
+    /// changed since my last post". Now the caller is worked out on the call,
+    /// like a deliverable, and the answer names the pane the way a person says
+    /// it, never by number.
+    #[test]
+    fn a_reply_card_with_no_pid_lands_on_the_pane_that_sent_it() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        mine.name = Some(PaneNameReport {
+            place: "TERMINAL DELIGHT › MARKETING".into(),
+            header: "launch copy".into(),
+            said: "TERMINAL DELIGHT › MARKETING · launch copy".into(),
+        });
+        let mut sibling = agent_pane(200, true);
+        sibling.pane_id = Some(4);
+        let mut s = snap_writable(vec![sibling, mine]);
+        // Nothing on disk: which pane, not the persistence path, is under test.
+        s.instance = None;
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let out = call_writing(
+            &s,
+            "present_surface",
+            json!({ "surface": { "td": "0.4", "kind": "response", "title": "t",
+                "model": { "layman": "done" } } }),
+        );
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(out["structuredContent"]["pid"], 100, "{}", text_of(&out));
+        assert_eq!(
+            out["structuredContent"]["name"],
+            "TERMINAL DELIGHT › MARKETING · launch copy"
+        );
+        let text = text_of(&out);
+        assert!(
+            text.contains("“TERMINAL DELIGHT › MARKETING · launch copy”"),
+            "{text}"
+        );
+        assert!(!text.contains("pane 100"), "{text}");
+
+        // The wake: the same conversation, rebuilt in a fresh pane with a fresh
+        // shell (pane 9 → 17, pid 100 → 300). Leaving the pid out lands on
+        // the new pane. (A remembered pid is refused by the window's apply,
+        // which this stand-in does not model.)
+        let card = json!({ "td": "0.4", "kind": "response", "title": "t",
+            "model": { "layman": "after the wake" } });
+        s.panes[1].pid = 300;
+        s.panes[1].pane_id = Some(17);
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(17),
+        });
+        let out = call_writing(&s, "present_surface", json!({ "surface": card }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(out["structuredContent"]["pid"], 300, "{}", text_of(&out));
+
+        // And with no caller, it still says why rather than guessing a pane.
+        s.caller = None;
+        let out = call_writing(
+            &s,
+            "present_surface",
+            json!({ "surface": { "td": "0.4", "kind": "response", "title": "t",
+                "model": { "layman": "done" } } }),
+        );
+        assert_eq!(out["isError"], true, "{}", text_of(&out));
+    }
+
+    /// `list_panes` gives every pane the name a person uses — its place on the
+    /// left bar and its header's title — and the text line leads with it, so an
+    /// agent reading the census has the words to say before the numbers. A pane
+    /// the window could not name says so instead of borrowing a number.
+    #[test]
+    fn list_panes_leads_each_pane_with_its_name() {
+        let mut named = agent_pane(100, true);
+        named.name = Some(PaneNameReport {
+            place: "TERMINAL DELIGHT › MARKETING".into(),
+            header: "launch copy".into(),
+            said: "TERMINAL DELIGHT › MARKETING · launch copy".into(),
+        });
+        let unnamed = agent_pane(200, true);
+        let out = call(
+            &snap(true, true, vec![named, unnamed]),
+            "list_panes",
+            json!({}),
+        );
+        let panes = out["structuredContent"]["panes"].as_array().unwrap();
+        assert_eq!(panes[0]["name"]["place"], "TERMINAL DELIGHT › MARKETING");
+        assert_eq!(panes[0]["name"]["header"], "launch copy");
+        assert_eq!(
+            panes[0]["name"]["said"],
+            "TERMINAL DELIGHT › MARKETING · launch copy"
+        );
+        assert!(panes[1]["name"].is_null(), "unnamed is null, not \"\"");
+        let text = text_of(&out);
+        // `agent_pane` puts pid 100 in pane 3 and pid 200 in pane 6.
+        let line = |pid: u32| {
+            let pane = format!("pane {} ·", pid % 97);
+            text.lines()
+                .find(|l| l.contains(&pane))
+                .unwrap_or_else(|| panic!("no line for {pane}: {text}"))
+                .to_string()
+        };
+        assert!(
+            line(100).starts_with("TERMINAL DELIGHT › MARKETING · launch copy — "),
+            "{}",
+            line(100)
+        );
+        assert!(line(200).starts_with("(unnamed) — "), "{}", line(200));
     }
 
     // ---- request_access: an agent asks, and only a person answers ----
@@ -7186,6 +7373,7 @@ mod tests {
             reach: None,
             access: crate::threshing_floor::AgentAccess::Open,
             seat: None,
+            name: None,
             grade: GradeReport::default(),
         };
         let hidden_agent = agent_pane(8, false);
@@ -7273,6 +7461,11 @@ mod tests {
         pane.title = INJECTION.into();
         pane.mode = INJECTION.into();
         pane.cwd = Some(INJECTION.into());
+        pane.name = Some(PaneNameReport {
+            place: INJECTION.into(),
+            header: INJECTION.into(),
+            said: INJECTION.into(),
+        });
         pane.note = Some(NoteReport {
             title: Some(INJECTION.into()),
             text: INJECTION.into(),
