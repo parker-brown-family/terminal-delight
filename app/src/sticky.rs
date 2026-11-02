@@ -992,6 +992,7 @@ pub fn paint(
         ] {
             fill(lay, &edge, pal.pin, window);
         }
+        paint_stamp(note, lay, pal, window);
         paint_writing(note, lay, pal, window, cx);
         return;
     }
@@ -1127,22 +1128,37 @@ pub fn paint(
         }
     }
 
-    // Under the writing, so a stamp that lands on a long note's last word
-    // never makes it harder to read.
-    if stamped(note) && !crate::skin::skin(cx, 1.).text_controls() {
-        fill_even_odd(
-            lay,
-            &stamp(hw, hh, note.seed),
-            pal.ink.alpha(STAMP_INK),
-            window,
-        );
-    }
-
+    paint_stamp(note, lay, pal, window);
     paint_writing(note, lay, pal, window, cx);
 
     if note.pinned {
         paint_pin(lay, pal, window);
     }
+}
+
+/// The robot stamp, on every skin and every design: paper, stock, the square
+/// open section, icon controls or text controls. It says who wrote the words,
+/// which is content rather than furniture, so no skin's taste in controls
+/// takes it off. Parker, 2026-11-02: *"robot stamps on all sticky notes for
+/// all skins / designs please!"* — TERMINIMALIST had dropped it with its glyph
+/// controls, and its square section never drew it.
+///
+/// Painted under the writing, so a stamp that lands on a long note's last word
+/// never makes it harder to read.
+fn paint_stamp(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window) {
+    if !stamped(note) {
+        return;
+    }
+    let (hw, hh) = (
+        f32::from(lay.size.width) / 2.,
+        f32::from(lay.size.height) / 2.,
+    );
+    fill_even_odd(
+        lay,
+        &stamp(hw, hh, note.seed),
+        pal.ink.alpha(STAMP_INK),
+        window,
+    );
 }
 
 /// Does this note wear the robot stamp? Only when an agent wrote it — see
@@ -2101,15 +2117,19 @@ mod tests {
     /// The stamp stays on the paper, in its bottom-right quarter — clear of
     /// the edges, the pin at the top and the lifted bottom-left corner — on
     /// the smallest pane that carries a note and on a big one, at every lean
-    /// the seed can give it.
+    /// the seed can give it — on a leaning sheet and on the square, unleaning
+    /// section an open-text skin draws, since every skin now wears it.
     #[test]
     fn the_stamp_sits_on_the_paper_in_its_bottom_right_corner() {
-        for (w, h) in [(250.0, 190.0), (740.0, 870.0), (1900.0, 1000.0)] {
+        for ((w, h), tilt) in [(250.0, 190.0), (740.0, 870.0), (1900.0, 1000.0)]
+            .into_iter()
+            .flat_map(|wh| [(wh, 3.0), (wh, 0.0)])
+        {
             let content = Bounds {
                 origin: point(px(0.0), px(0.0)),
                 size: size(px(w), px(h)),
             };
-            let lay = layout(content, 3.0).expect("a pane this size carries a note");
+            let lay = layout(content, tilt).expect("a pane this size carries a note");
             let (hw, hh) = (
                 f32::from(lay.size.width) / 2.0,
                 f32::from(lay.size.height) / 2.0,
