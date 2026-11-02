@@ -1,0 +1,248 @@
+<script type="application/json" data-page>
+{
+  "title": "Threshing Floor",
+  "description": "The Threshing Floor is an org chart of the agents in one window. You seat agents in orgs and draw lines between them, and each line's rung (see, read, ask or prompt) decides how far one agent may reach another. Open it from the agent counter, top right.",
+  "updated": "2026-11-01",
+  "trueOf": "dev/0.5.0 at d9aa472d",
+  "summary": "Who may reach whom, drawn as an org chart"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">With a dozen agents in one window, one of them often needs another: to find out what it has done, or to hand it a job. The Threshing Floor is where you decide which agent may do that to which. Click the agent counter at the top right and it opens over the panes as an org chart.</p>
+<p>You put agent panes into orgs, and each one you add gets a seat. Then you draw lines between seats. A line points one way and carries a rung: <code>see</code> (the other agent shows up in its list of panes), <code>read</code> (its screen and tool calls), <code>ask</code> (a question, answered without disturbing it) or <code>prompt</code> (a turn typed into its own conversation). Agents never draw lines. Only you do.</p>
+<p>A seat with no line into it is hidden from every other agent, so seating an agent closes it off until you draw. A pane you never seat stays readable, as it was before, and nobody can ask it or prompt it.</p>
+<p class="invite">Story follows one coordinator across the Floor. Technical has every control, what each rung allows, how asks and prompts are answered, and what is saved.</p>
+</section>
+
+<section data-register="story" data-headline="The front desk">
+<p>Picture the window as a small office with an agent at every desk. One of them is planning a site rebuild and wants two others to do the work: one to write the pages, one to run the tests. The Threshing Floor is the office's org chart, and Terminal Delight is the front desk that holds everyone to it.</p>
+<p>You open the Floor from the agent counter, press <code>+ New org</code>, name it Site rebuild, and drag the three agents in from the pane pool on the right. Each gets a seat, drawn as a card with its name, model and latest message. Seating them changes one thing straight away: they can no longer see each other. A seat is a desk behind a door, and the doors start shut, so nothing reaches a seated agent until you say so.</p>
+<p>So you draw. In the builder above the chart you put the planner under <code>Actor</code>, pick a verb under <code>CAN</code>, and add the pages agent under <code>Targets</code>. The verb is the rung, and each rung allows what the ones below it allow. <code>see</code> puts the pages agent's name on the planner's staff list. <code>read</code> lets the planner look through the glass at its screen and the things it has run. <code>ask</code> lets the planner put a question to it. <code>prompt</code> lets the planner put a job in its in-tray. You choose <code>prompt</code> and press <code>Submit</code>, and a line appears on the chart labelled <code>may prompt →</code>.</p>
+<p>The tests agent you mark read-only first, from its right-click menu, because you want it watched and never steered. Then you draw the planner a line to it at <code>ask</code>. A read-only desk takes questions and never takes jobs, whatever line you draw.</p>
+<p>Now the planner works. It calls <code>floor_position</code> and learns where it stands: two lines out, none in. It asks the tests agent what failed overnight. The front desk answers from what is already pinned on that desk's noticeboard (its latest summary, its sticky note, its state and the last ten things it ran) and the tests agent never hears the question. When the noticeboard isn't enough, the planner can ask for a copy: a photocopy of the tests agent's notebook, handed to a temp who can only read, asked the question once, then sent home. Reading a whole notebook costs tokens, so the copy waits at your desk, as a card on your attention rail, until you press Yes.</p>
+<p>The job goes the other way. The planner writes a work order and calls <code>prompt_agent</code>. The front desk holds the order until the pages agent is sitting back at its prompt, settled for five seconds, with nobody having typed at it for a minute. Then it pastes the order in under a header naming the sender, presses Enter once, and watches the work start. When the pages agent finishes, the planner reads the result with <code>prompt_status</code>.</p>
+<p>Every question leaves a line in a logbook: who asked whom, along what kind of line, at which stage. The logbook keeps each question's length and a fingerprint of it, and never the words. One of its counts is questions answered with no line on the chart. It should always read zero, and the settings cog grows a red dot when it doesn't.</p>
+<p>An agent you never seat is a visitor in the lobby. Any agent can see it and read it, as before, and nobody can ask it anything or hand it work. Those are the real terms on the Floor: orgs, seats, lines and rungs, drawn by you and checked by the window on every ask and every prompt.</p>
+</section>
+
+<section data-register="technical" data-headline="The Floor">
+<h3>Opening it</h3>
+<ul>
+  <li>Click the agent counter at the top right of the window.<sup><a href="#s4">4</a></sup></li>
+  <li>Or choose <code>THRESHING FLOOR</code>, the first entry of the bottom-right menu. That menu opens from <code>CONFIG ▾</code> when the corner's glyphs are folded into it, as Clean does, and from <code>…</code> on a narrow window.</li>
+</ul>
+<p>In 0.4.0 the counter opened the <a href="/agent-wall">agent wall</a>. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> still opens the wall, and opening it closes the Floor. The Floor is drawn flat over the panes. Click outside it to close it. While it is open, everything you type goes to the pool's search or to an org name you are editing, never to a terminal.<sup><a href="#s2">2</a></sup></p>
+<table class="keys">
+  <thead><tr><th>Key</th><th>Does</th></tr></thead>
+  <tbody>
+    <tr><td><kbd>Esc</kbd></td><td>Steps back one thing at a time: a drag or pan, the verb menu, a card's menu, the settings tray, an open popup or half-built relationship, then the search text, and last the Floor itself.</td></tr>
+    <tr><td><kbd>Enter</kbd></td><td>Saves the org name you are typing, or submits the relationship in the builder.</td></tr>
+    <tr><td><kbd>Delete</kbd></td><td>Takes the selected seat out of its org. Its access turns off, as below.</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+wheel</td><td>Zooms the chart or the map around the pointer.</td></tr>
+    <tr><td>wheel, or drag empty space</td><td>Pans.</td></tr>
+    <tr><td><kbd>Alt</kbd>+drag a card</td><td>Draws a line out of that card instead of moving it.</td></tr>
+    <tr><td>mouse Back</td><td>From an org, opens the System Map centred on that org.</td></tr>
+    <tr><td>mouse Forward</td><td>From the System Map, returns to the org you came from.</td></tr>
+  </tbody>
+</table>
+
+<h3>The header</h3>
+<p>One row, left to right: <code>◇ System Map</code>, a tab for each org, <code>+ New org</code>, and <code>⚙</code> at the far end. An org saved before orgs had names reads <code>Unnamed org</code>. A narrow window breaks the row in two rather than hiding a tab.<sup><a href="#s2">2</a></sup><sup><a href="#s3">3</a></sup></p>
+<p><code>⚙</code> opens a tray headed <code>SETTINGS — THRESHING FLOOR</code>. Under <code>AGENT ACCESS</code> are the window's five MCP switches, the same ones the agent wall draws, each with a line saying what it does. When an org is open, its name follows with <code>Rename</code> and <code>Delete org</code>. Delete asks first, and states the count: <code>Delete “{org}”? {n} relationships go with it, for good — this cannot be undone.</code> Its members go back to the pool still holding their seats, so they stay hidden from other agents until you put them in an org and draw lines again.</p>
+<table>
+  <thead><tr><th>Switch</th><th>What its line says</th></tr></thead>
+  <tbody>
+    <tr><td><code>server</code></td><td>Agents can reach Terminal Delight's MCP server. Off: no agent can list, read or prompt any pane, and the Floor's lines grant nothing.</td></tr>
+    <tr><td><code>agents only</code> · <code>all panes</code></td><td>Which panes an agent can see. All panes: shells too. Agents only: Claude, Codex and local agents. Click to switch.</td></tr>
+    <tr><td><code>events</code></td><td>Send each agent's tool calls to connected agents as they happen. Off: they can still ask for them.</td></tr>
+    <tr><td><code>writes</code></td><td>Agents may change how a pane looks (brightness, colour, warp, text size) with set_pane_config. They can never type into one. Off: look only.</td></tr>
+    <tr><td><code>images</code></td><td>Show or hide the picture on each agent card.</td></tr>
+  </tbody>
+</table>
+<p>The server, events, writes and images switches show <code>◉</code> when on and <code>○</code> when off. The tray and the server switch's hover also carry this session's ask counts: <code>Prompts this session: {cheap} answered from what was visible · {copies} by a copy · {unlined} with no line</code>. The last of the three must stay at zero, and when it doesn't, <code>⚙</code> and the server switch each show a red dot. The switches change only here and on the wall: <code>ctl mcp</code> refuses unless the window was started with <code>TD_MCP_SCRIPTED=1</code> (see <a href="/mcp#technical-the-switches">MCP</a>).<sup><a href="#s4">4</a></sup></p>
+
+<h3>Orgs, seats and lines</h3>
+<p>An org is a named group of agent panes. Adding an agent pane to an org gives it a <strong>seat</strong>, a random id saved with the pane, so a session host restart that renumbers panes keeps the chart. Only agent panes take seats, sleeping ones included. A plain shell can't be seated. Membership alone grants nothing: every permission comes from a <strong>line</strong>, which runs one way from one seat to another, or to or from a whole org, and carries a rung.<sup><a href="#s1">1</a></sup></p>
+<figure class="td-fig">
+  <div class="figwrap">
+    <svg class="flow" viewBox="0 0 760 350" role="img" aria-label="An org called Site rebuild holds three seats. A planner seat at the top draws a line marked may prompt down to a frontend seat, and a line marked may ask down to a read-only tests seat. No line runs back up. To the right, the pane pool holds an unseated docs agent, a shell and an off-limits pane, and below them a ladder of the four rungs: see, read, ask and prompt.">
+      <defs>
+        <marker id="tf1" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto"><path class="ah" d="M0 0 10 5 0 10z"/></marker>
+      </defs>
+      <rect class="ln" x="10" y="14" width="470" height="326" rx="10"/>
+      <text class="t2" x="26" y="36">▣ SITE REBUILD</text>
+      <rect class="hot" x="155" y="56" width="180" height="58" rx="8"/>
+      <text class="t1" x="170" y="80">planner</text>
+      <text class="t2" x="170" y="99">● idle · orchestrator</text>
+      <path class="ln" d="M245 114 V168 H125 V234" marker-end="url(#tf1)"/>
+      <path class="ln" d="M245 114 V168 H365 V234" marker-end="url(#tf1)"/>
+      <rect class="warm" x="72" y="186" width="106" height="22" rx="6"/>
+      <text class="t2" x="82" y="201">may prompt →</text>
+      <rect class="hot" x="318" y="186" width="94" height="22" rx="6"/>
+      <text class="t2" x="328" y="201">may ask →</text>
+      <rect class="box" x="35" y="236" width="180" height="58" rx="8"/>
+      <text class="t1" x="50" y="260">frontend</text>
+      <text class="t2" x="50" y="279">● working · worker</text>
+      <rect class="box" x="275" y="236" width="180" height="58" rx="8"/>
+      <text class="t1" x="290" y="260">tests</text>
+      <text class="t2" x="290" y="279">worker · READ-ONLY</text>
+      <text class="t2" x="26" y="324">no line runs up: neither worker can see the planner</text>
+      <text class="t2" x="510" y="30">PANE POOL</text>
+      <rect class="box" x="510" y="40" width="240" height="48" rx="8"/>
+      <text class="t1" x="522" y="60">docs</text>
+      <text class="t2" x="522" y="78">unseated · read, never asked</text>
+      <rect class="box" x="510" y="96" width="240" height="48" rx="8"/>
+      <text class="t1" x="522" y="116">shell</text>
+      <text class="t2" x="522" y="134">a shell · cannot be seated</text>
+      <rect class="box" x="510" y="152" width="240" height="48" rx="8"/>
+      <text class="t1" x="522" y="172">secrets</text>
+      <text class="t2" x="522" y="190">OFF-LIMITS · hidden from all</text>
+      <text class="t2" x="510" y="226">RUNGS, LOWEST FIRST</text>
+      <rect class="box" x="510" y="234" width="240" height="22" rx="5"/>
+      <text class="t1" x="520" y="250">see</text><text class="t2" x="584" y="250">listed in list_panes</text>
+      <rect class="box" x="510" y="260" width="240" height="22" rx="5"/>
+      <text class="t1" x="520" y="276">read</text><text class="t2" x="584" y="276">+ screen and tool calls</text>
+      <rect class="hot" x="510" y="286" width="240" height="22" rx="5"/>
+      <text class="t1" x="520" y="302">ask</text><text class="t2" x="584" y="302">+ a question</text>
+      <rect class="warm" x="510" y="312" width="240" height="22" rx="5"/>
+      <text class="t1" x="520" y="328">prompt</text><text class="t2" x="584" y="328">+ a turn of work</text>
+    </svg>
+  </div>
+  <figcaption><b>Figure 1.</b> One org, three seats, two lines. The planner may type a turn into frontend's conversation and may only ask tests, which is read-only and could never take a prompt whatever line you drew. No line runs up, so neither worker can see the planner. In the pool, the unseated docs agent stays readable by every agent and can never be asked, and a shell can't be seated at all. Drawn from the rules in <code>threshing_floor.rs</code>, not from a screenshot: real cards also carry the model, age, tokens and newest artifact.</figcaption>
+</figure>
+
+<h3>Rungs</h3>
+<p>Each rung allows what the ones below it allow.<sup><a href="#s1">1</a></sup><sup><a href="#s5">5</a></sup></p>
+<table>
+  <thead><tr><th>Rung</th><th>The actor may</th><th>Through</th></tr></thead>
+  <tbody>
+    <tr><td><code>see</code></td><td>find the pane in its census</td><td><code>list_panes</code></td></tr>
+    <tr><td><code>read</code></td><td>read the pane's recent screen text, its tool calls and its appearance; with writes on, and only on an open pane, also note it, restyle it, or hand it a deliverable or surface</td><td><code>grep</code>, <code>pane_events</code>, <code>get_pane_config</code>; <code>leave_note</code>, <code>set_pane_config</code>, <code>declare_deliverable</code>, <code>present_surface</code></td></tr>
+    <tr><td><code>ask</code></td><td>put a question to the agent, answered without touching its conversation</td><td><code>ask_agent</code></td></tr>
+    <tr><td><code>prompt</code></td><td>type a turn into the agent's own conversation</td><td><code>prompt_agent</code></td></tr>
+  </tbody>
+</table>
+<p>Whatever the line says, the pane's own position caps it. You set the position from the pane's right-click menu, which in 0.5.0 lists three rows with the current one marked <code>●</code>: <code>Let agents see this pane</code>, <code>Read-only to agents</code> and <code>Off-limits to agents</code>.<sup><a href="#s3">3</a></sup></p>
+<ul>
+  <li>An open pane can be reached as far as the line goes.</li>
+  <li>A read-only pane wears <code>READ-ONLY</code> in its header. It can be seen, read and asked, and never prompted, and nothing from another pane writes to it: no note, deliverable, surface, appearance change, bench input or synthetic click.</li>
+  <li>An off-limits pane is hidden from every agent along every line.</li>
+  <li>A pane nobody seated is read by any agent the window's switches let see it, and is never asked or prompted, because neither travels without a line.</li>
+  <li>A seated pane is hidden from every agent except along a line from that agent's own seat. An agent whose own pane is unseated sees no seated pane at all.</li>
+  <li>The strongest line wins when a seat-to-seat line and a whole-org line both apply. A whole-org line reaches whoever is in that org now, so a pane joining or leaving changes what the line reaches with no edit to the line.</li>
+  <li>A rung word this build can't read is kept in the file and grants nothing.</li>
+</ul>
+<p>An agent can ask you for a <strong>bypass</strong>: <code>request_access</code> with <code>change: "ask_line"</code> and the other pane's pid, both panes seated. Its card on the rail reads <code>Let it ask {pane} directly, past the chart</code>, with a 1 / 3 / 10 picker for how many copies it allows, 3 unless you change it. A bypass is always an ask line, never a prompt line. Each copy asked along it spends one; at zero it disappears. It never shortens a drawn line that already reaches as far as ask.<sup><a href="#s10">10</a></sup></p>
+
+<h3>Drawing a relationship</h3>
+<p>The builder sits above the chart, titled <code>Relationship</code>, and reads left to right: <code>Actor</code> → <code>CAN</code> → <code>Targets</code>. Fill it any of these ways:<sup><a href="#s2">2</a></sup></p>
+<ul>
+  <li>Click <code>+ Actor</code>, then a card on the chart. Further cards you click, or pool cards you drag in, become targets.</li>
+  <li>Drop one card onto another. The card you dropped onto becomes the actor, and the one you carried becomes the target, the way you file a thing under where it belongs.</li>
+  <li><kbd>Alt</kbd>+drag from one card to another, or drag a card's <code>○</code> connector at its bottom right. The card you started from is the actor. Clicking <code>○</code> starts a relationship with that card as the actor.</li>
+  <li>Click a line's label on the chart to edit that line: change its rung, or <code>erase</code> it.</li>
+</ul>
+<p><code>Choose verb</code> under <code>CAN</code> opens a menu of <code>see</code>, <code>read</code>, <code>ask</code> and <code>prompt</code>. Each press of <code>+</code> beside the targets adds an empty <code>Choose target</code> slot and scrolls it into view; choose a card or drop one onto it, and an empty slot can be selected or removed. The line under the slots reads <code>{n} targets · {added} join org · {changed} existing lines change</code>, or <code>Choose cards on the Floor or drag pool cards here.</code> when nothing is chosen yet.</p>
+<p><code>Submit</code> stays dim until there is an actor, a verb and no empty slot. It saves every target together, adds any pool cards you staged to the org, and reports <code>{n} relationships saved</code>. A missing or moved pane rejects the whole batch with <code>Choose actor, targets and verb. Check missing or moved panes.</code> <code>CANCEL</code> leaves membership as it was. A new line between the same two seats replaces the old one, and any copy ask still waiting along the old one is withdrawn.</p>
+<p>In an org's view the actor and every target must sit in that org. Lines across orgs, and lines to or from a whole org, are drawn in the System Map's builder, or by dropping a seated card onto another org's tab: that opens <code>Drop {pane} onto {org}</code> with <code>Move into {org}</code>, <code>Relate to all of {org}</code>, <code>Relate to a member</code> (once that org has members) and <code>CANCEL</code>. The relate routes ask for a rung, show the sentence <code>{from} may {rung} {to}</code>, and draw it with <code>Draw relationship</code>.</p>
+
+<h3>The org chart</h3>
+<p>The open org is drawn as a bordered region wearing its name, <code>▣ SITE REBUILD</code>, with its seats laid out as a tree. A seat sits one row under the seat whose line into it is oldest, and each parent is centred over its own reports; seats with no parent on the chart form the top row, sorted by project and then title. A loop of lines is cut where it is first met. Each card names its role, read from drawn lines only: <code>orchestrator</code> (lines out, none in), <code>manager</code> (in and out), <code>worker</code> (in only) or <code>seated</code> (no line).<sup><a href="#s1">1</a></sup><sup><a href="#s2">2</a></sup></p>
+<p>A line's label reads as a sentence fragment, <code>may ask →</code>. A <code>prompt</code> label is drawn in the theme's yellow, <code>ask</code> and <code>read</code> in its accent, and <code>see</code> fainter. A bypass is drawn dashed in yellow and adds <code>· bypass · {n} left</code>. A line into an off-limits seat is drawn faint and dashed, because it grants nothing.</p>
+<p>Seats and orgs related to this org from outside stand in a lane to the right of the border, headed <code>OUTSIDE</code>, one card each however many lines they have. A whole org appears as <code>◇ {org}</code> marked <code>whole org</code>. Click an outside card to open its org.</p>
+<p>Moving a seat that has lines into another org first warns <code>Moving {pane} removes {n} connections.</code> and waits for <code>Move and remove connections</code>. To take a seat out, drag it to the pool or to the <code>Remove from org</code> bin that appears at the foot of the Floor during a drag, choose <code>Remove from org</code> from its right-click menu, or select it and press <kbd>Delete</kbd>. Removing does what the bin's second line says, <code>Access turns off</code>: every line to and from the seat is erased, the seat is taken away, and the pane is marked off-limits. Open it again from its right-click menu. A seat whose pane is closed, or open in another window, stays on the chart as <code>Unavailable pane</code> with a <code>Take off the chart</code> button.</p>
+<p>The chart zooms from 20% to 250%. <code>−</code> and <code>+</code> beside the org's title step it, and the third button shows the zoom and resets the view, as in <code>100% · Reset</code>. Cards, lines and labels scale together; the builder and the pool keep their size.<sup><a href="#s2">2</a></sup></p>
+
+<h3>The pane pool</h3>
+<p>The column on the right is headed <code>PANE POOL · {shown} of {total} panes</code>. With nothing typed it lists every pane in no org, agents and shells alike. With a search typed it lists every pane off the open chart that matches, members of other orgs included, so you can find an agent wherever it sits.<sup><a href="#s2">2</a></sup></p>
+<p>The search box, <code>⌕ find a pane</code>, takes fuzzy words matched across project, left-bar group, tab and pane title in any order. Colons address fields: <code>project:tab:pane</code>, where an empty field matches anything. It narrows the pool only, and never hides a seat or a line on the chart. <code>×</code> clears it, and so does <kbd>Esc</kbd>.</p>
+<p>A pool card shows where the pane sits on the left bar, its header title, its program, and for an agent the counter's state glyph and word in the state's colour, then <code>AGE</code> and <code>TOKENS</code>. It says <code>OFF-LIMITS</code> when it is, and the name of the org it belongs to. Its buttons are <code>Open org</code> for a member of another org, <code>Add to org</code> for a loose agent while an org is open (it reads <code>Targets</code> while you are building a relationship), and <code>Go to pane</code>, which closes the Floor and focuses that pane, sleeping agents and shells included. Agent cards can be dragged onto the chart or an org's tab; a shell card can't.</p>
+
+<h3>Cards</h3>
+<p>A seat's card reads in four groups, top to bottom.<sup><a href="#s2">2</a></sup></p>
+<dl class="defs">
+  <dt>where it sits</dt><dd>The left bar's groups and then the tab's name in bold, as <code>TERMINAL DELIGHT › MCP work</code>, and under it the pane header's title, left out when it only says <code>shell</code> or repeats the tab.</dd>
+  <dt>what it is doing</dt><dd>The agent's latest message on its <a href="/workbench">workbench</a>: its two-sentence brief, or the first line of its plain reply when it wrote no brief. A pane whose conversation is only guessed at says <code>conversation unknown</code> rather than quote words that may be another agent's. Under it, <code>● {state} · {role}</code> in the colour the agent counter uses for that state, followed by <code>OFF-LIMITS</code> or <code>READ-ONLY</code> when the pane is either.</dd>
+  <dt>what it runs on</dt><dd>A small bordered box with the harness, model and effort, as <code>CLAUDE · OPUS 5.5 MAX</code> or <code>CODEX · SOL 6.1 XHIGH</code>, read from the transcript. An effort the transcript never named is left off, and a model it never named reads <code>model unknown</code>. Then <code>AGE</code>, the time since the conversation's first recorded message (it survives a resume), and <code>TOKENS</code>, its current context. Either says <code>unknown</code> when it can't be measured, never zero.</dd>
+  <dt>what it has produced</dt><dd>Under <code>ARTIFACTS</code>, the newest thing the agent handed over: a chip with its file extension, or <code>file</code> or <code>link</code>, its label, <code>+{n}</code> for how many more, and a pill. <code>HUMAN ANNOTATED</code> means a person saved a note or a concur on it; <code>NO FEEDBACK</code> means it can take notes and has none; no pill means it doesn't take notes here, or they couldn't be read. Click it to close the Floor and open it in that agent's pane. An agent that has handed nothing over says <code>no artifact yet</code>, and its card wears the accent on its border.</dd>
+</dl>
+<p>Right-click a card for the pane's place, <code>Remove from org</code>, and the three positions.</p>
+<p>A sleeping agent can be seated, and its card reads the harness and model it will wake as from its sleep record. Its state reads <code>asleep</code>, and a resting agent's reads <code>resting</code>, each with the counter's glyph in the pool. A prompt along a line wakes either one. An ask leaves a resting agent resting. An asleep agent's pane is running a plain shell by then, so an ask of it is refused as <code>not_an_agent</code>. See <a href="/rest">Resting agents</a>.</p>
+
+<h3>The System Map</h3>
+<p><code>◇ System Map</code> shows every org at once, each as a bordered region holding its seats in the same tree, on the same 20% to 250% zoom. Each card shows a state dot, the tab's name, the harness and model line with age and tokens, and the newest artifact's title with a line saying <code>No artifact</code>, <code>No comments</code>, <code>Human comments</code> or <code>Comments unknown</code>. Below 60% zoom a card keeps its name, its model and that last line. Click a card or an org's name to open that org.<sup><a href="#s2">2</a></sup></p>
+<p>Lines inside an org are drawn as they are on its chart. Between orgs, every directed pair of orgs gets one wire, border to border, labelled with the strongest rung among all the lines it stands for and a count when there is more than one: <code>may ask → ×3</code>. Wires follow their orgs when you move them.</p>
+<p>Drag an org by its frame or title to place it; it snaps to a 20-unit grid, is pushed clear of the orgs around it, and is saved when you let go. <code>Arrange</code> forgets every placement and packs the orgs again. Dragging a card on the map moves that agent: drop it on another org to move or relate it, as on a tab. The map's builder takes a whole org or a single agent at either end: drag an org from its frame or its header tab, or an agent card, into a slot. Beneath it, <code>Cross-org &amp; whole-org relationships</code> lists every line a single org's chart can't show, each with <code>Remove</code>, or <code>None yet — draw one above.</code></p>
+
+<h3>How an ask is answered</h3>
+<p><code>ask_agent</code> answers cheapest first, and only along a line from the asker's seat that reaches <code>ask</code>, or a bypass. Questions are up to 4,000 characters.<sup><a href="#s5">5</a></sup><sup><a href="#s6">6</a></sup></p>
+<ul>
+  <li><strong>From what the window already shows.</strong> Without <code>copy</code>, the answer comes at once: the agent's latest workbench summary (only when its conversation is proven its own), its sticky note, its state, model and size in tokens, and its last ten tool calls. Nothing reaches the asked agent, and its conversation does not change.</li>
+  <li><strong>From a read-only copy.</strong> With <code>copy: true</code>, Terminal Delight forks the agent's own conversation into a copy that can only read, asks it once, and stops it. Only Claude and Codex agents can be copied, and only when the agent named its own conversation and no other pane names the same one. Claude's copy runs with the <code>Read</code> tool alone and no tool server, saves no transcript, and is stopped if anything wider turns up. Codex's runs read-only with no network, no user configuration, no apps and no web search, on codex-cli 0.162.1 only. Nothing of Terminal Delight's environment reaches a copy, and its process group is killed when it answers, fails, or passes five minutes.</li>
+</ul>
+<p>A copy is priced by what it would read, the agent's current context, and by default every copy waits as a card on the asker's row of the <a href="/attention">attention rail</a> until you press Yes or No: <code>Start a read-only copy of {pane} to answer another agent — it reads {tokens} tokens</code>. The card is coloured ◇ caution up to 600,000 tokens, ▲ warning up to 1,000,000, and ! alert above that; a copy of unknown size is never less than a warning. A press limit, <code>ask_press_tokens</code> in the layout file, lets copies at or under it start without asking; it is 0 unless you set it, and the window has no control for it yet. One copy at a time per asking pane. The asker reads the outcome with <code>ask_answer</code>, which answers only the pane that asked. Refusals come by name (<code>no_line</code>, <code>busy</code>, <code>conversation_unnamed</code>, <code>tools_wider</code> and more) so an agent can tell you why. <a href="/mcp#technical-tools">MCP</a> has the fields.<sup><a href="#s1">1</a></sup></p>
+
+<h3>Prompting along a line</h3>
+<p><code>prompt_agent</code> types up to 32,000 characters into another agent's own conversation as its next turn, so a coordinating agent can treat the others as its sub-agents, Claude Code and Codex alike. It goes only along a line you drew at <code>prompt</code>, seat to seat or through a whole org. An ask line, a bypass, a read-only pane, an off-limits pane and an unseated pane are all refused by name.<sup><a href="#s5">5</a></sup><sup><a href="#s7">7</a></sup></p>
+<ul>
+  <li>The words go in only at a recognised rest: the worker's own idle prompt on screen, settled for five seconds with no turn starting, a prompt that asked for bracketed paste, and no key pressed in that pane by a person in the last minute. A permission prompt, a question, a dialog, an error or a screen nobody can read is never typed into.</li>
+  <li>A working worker is waited for, up to ten minutes. A resting or asleep one is woken. One restarted from sleep reads, under the header: <code>[You were asleep, and Terminal Delight restarted you from your saved conversation for this prompt. Anything that lived only in your old process is gone: background shells, permissions granted for that session only, and running loops.]</code></li>
+  <li>The first line names the sender: <code>[Threshing Floor prompt {n}, from {sender} (pid {pid}): a person drew a prompt line from that agent to you. Your last message this turn is returned to the sender.]</code> When the worker's conversation can't be proven its own, the last sentence reads <code>The sender is told when you finish.</code></li>
+  <li>Every control character but newline and tab is removed. Enter is pressed once, a second after the paste shows on the worker's screen. If the paste doesn't show within four seconds there is no Enter, and the prompt fails saying the words may be sitting at the worker's prompt; the next prompt to that pane is pasted after them, and its Enter sends both.</li>
+  <li>The line and the pane's position are checked again on every look until Enter, so erasing the line or marking the pane read-only stops a prompt that hasn't gone in.</li>
+  <li>One prompt at a time from a sender to a pane, and prompts to one worker go in the order they were sent.</li>
+</ul>
+<p><code>prompt_status</code> reads the stages <code>waiting</code>, <code>typing</code>, <code>delivered</code>, <code>working</code>, <code>finished</code> (with the worker's last message when it can be read), <code>failed</code> and <code>expired</code>, and can hold its answer up to six seconds. An optional <code>key</code> of up to 64 characters names one assignment: sending the same key again reports the first attempt and never types a second turn. <a href="/mcp#technical-tools">MCP</a> has the fields.</p>
+
+<h3>The record of asks</h3>
+<p>Every ask and every prompt stage appends one JSON line to <code>$XDG_STATE_HOME/terminal-delight/threshing-floor/&lt;session&gt;/asks.jsonl</code>: an id, the time, the two seats, <code>via</code> (<code>line</code>, <code>bypass</code>, <code>prompt</code>, or <code>none</code> when there was no line), the stage, a refusal's name, the program and model, what a copy would read and did read, and its cost when the program reported one. Ask stages are <code>cheap</code>, <code>priced</code>, <code>pressed</code>, <code>declined</code>, <code>copy_started</code>, <code>answered</code>, <code>refused</code> and <code>failed</code>; a prompt records its own stage words. The record keeps each question's or prompt's length and SHA-256 and never its words, and never an answer. Prompt keys are kept beside it in <code>prompt-keys.jsonl</code>, as the prompt's id, the sender, the key's SHA-256, the worker's pid and the time.<sup><a href="#s8">8</a></sup><sup><a href="#s7">7</a></sup></p>
+<p>The counts in the settings tray are read back from this record when the Floor opens and after every ask. A record written by a build from before the rename, under <code>warroom/&lt;session&gt;/</code>, is still read and counted, and never moved.</p>
+
+<h3>What agents are told</h3>
+<p>Every agent Terminal Delight <a href="/launching">launches</a> gets a paragraph about the Floor in its briefing: Claude in its system prompt, Codex in its first prompt. It says that agents work with each other only along lines a person draws, names the four rungs, and tells the agent to call <code>floor_position</code> to learn its seat, the panes it reaches and how far, and the panes that reach it, and to read it again before relying on it. It tells a worker to treat a turn opening with <code>[Threshing Floor prompt &lt;n&gt;, from ...]</code> as carefully as one its person typed, and to end with one final message, because that message goes back to the sender. It tells a coordinator to hand over a work order with how the work will be judged done, to check each reply and prompt again when it falls short, to stop and tell its person after two or three tries on the same piece, and to ask an agent from a different provider for an adversarial review.<sup><a href="#s9">9</a></sup></p>
+
+<h3>Seen from outside</h3>
+<ul>
+  <li><code>list_panes</code> gives each pane a <code>reach</code>, how far the caller reaches it (<code>seen</code>, <code>read</code>, <code>ask</code> or <code>prompt</code>), and a <code>hidden</code> count of panes the caller can't see, without naming them.<sup><a href="#s5">5</a></sup></li>
+  <li>The pushed events (<code>agent_appeared</code>, <code>tool_call</code>, <code>agent_vanished</code>) carry only panes nobody seated, because the feed can't tell who is listening.</li>
+  <li>No MCP tool and no <code>ctl</code> verb draws, changes or erases a line. Only the Floor and a Yes on the rail do.</li>
+</ul>
+
+<h3>What is saved</h3>
+<p>The Floor lives in the session's layout file, <code>sessions/&lt;name&gt;.toml</code> (see <a href="/config-files">Config files</a>).<sup><a href="#s4">4</a></sup></p>
+<table>
+  <thead><tr><th>Key</th><th>On</th><th>Holds</th></tr></thead>
+  <tbody>
+    <tr><td><code>seat</code></td><td>a pane</td><td>Its seat id, once a person seats it.</td></tr>
+    <tr><td><code>agents = "read-only"</code></td><td>a pane</td><td>A read-only position. An open pane writes nothing.</td></tr>
+    <tr><td><code>off_limits = true</code></td><td>a pane</td><td>An off-limits position. It wins over <code>agents</code>.</td></tr>
+    <tr><td><code>[[lines]]</code></td><td>the window</td><td>Seat-to-seat lines: <code>from</code>, <code>to</code>, <code>rung</code>, and <code>prompts_left</code> on a bypass only.</td></tr>
+    <tr><td><code>[[org_lines]]</code></td><td>the window</td><td>Lines with a whole org at either end, or across orgs: <code>from</code> and <code>to</code> as <code>"seat:&lt;id&gt;"</code> or <code>"org:&lt;id&gt;"</code>, and <code>rung</code>.</td></tr>
+    <tr><td><code>[[war_orgs]]</code>, <code>war_org</code></td><td>the window</td><td>Each org's <code>id</code>, <code>name</code>, <code>seats</code> and map position <code>map_at</code>, and which org was open. The keys keep their names from before the rename, so builds on either side read the same file.</td></tr>
+    <tr><td><code>ask_press_tokens</code></td><td>the window</td><td>The copy press limit; absent means 0.</td></tr>
+  </tbody>
+</table>
+<p>A pane rebuilt from a fresh snapshot, and an asleep agent woken into a fresh shell, keep their seat and the position you set. An <code>agents</code> word this build doesn't know reads as off-limits. A 0.4.0 window reads a read-only pane as open and knows nothing of seats or lines, so in a 0.4.0 window every read-only pane is open to agents.<sup><a href="#s11">11</a></sup></p>
+
+<h3>For screenshots</h3>
+<p>Start a window with <code>TD_THRESHING_FLOOR_DEMO</code> set and the Floor opens on its own. A number selects that seat without granting it anything, and <code>map</code> opens the System Map instead.<sup><a href="#s4">4</a></sup></p>
+<pre class="cmd"><code>TD_THRESHING_FLOOR_DEMO=map terminal-delight</code></pre>
+
+<h3>What would prove this wrong</h3>
+<p>If an agent ever gets an answer from <code>ask_agent</code>, or a turn typed by <code>prompt_agent</code>, with no line from its seat on the chart, the Floor has failed. The record's count of asks answered with no line exists to show exactly that, and it should read zero in every session.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">Seats, orgs, lines, rungs, positions, reach, refusals and copy pricing: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor.rs">threshing_floor.rs</a>.</li>
+  <li id="s2">The panel, pool, builder, chart, cards and System Map: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a>.</li>
+  <li id="s3">Labels as printed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">lang/chrome.rs</a> (the <code>floor_*</code> strings) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/parts.rs">lang/parts.rs</a> (the pane menu and rail cards); the pane's right-click menu: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s4">The counter, the <code>…</code> entry, the switches, the saved window and <code>TD_THRESHING_FLOOR_DEMO</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
+  <li id="s5"><code>ask_agent</code>, <code>ask_answer</code>, <code>prompt_agent</code>, <code>prompt_status</code>, <code>floor_position</code>, <code>list_panes</code> and the read gates: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/mcp.rs">mcp.rs</a>.</li>
+  <li id="s6">Read-only copies: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/askcopy.rs">askcopy.rs</a>.</li>
+  <li id="s7">Prompt timing, header, stages and key receipts: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/prompt.rs">prompt.rs</a>.</li>
+  <li id="s8">The ask record: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/askrecord.rs">askrecord.rs</a>.</li>
+  <li id="s9">The briefing paragraph: <code>FLOOR_PARAGRAPH</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/surface.rs">surface.rs</a>, delivered by <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/launcher.rs">launcher.rs</a>.</li>
+  <li id="s10">Bypass asks and the 1 / 3 / 10 picker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/access.rs">access.rs</a>.</li>
+  <li id="s11">What changed from 0.4.0: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/CHANGELOG.md">CHANGELOG</a>, "The Threshing Floor for 0.5.0 Development" and "Upgrading from 0.4.0".</li>
+</ol>

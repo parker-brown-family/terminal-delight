@@ -41,9 +41,24 @@
     (document.head || document.documentElement).appendChild(s);
   }
 
+  /* Inside a closed <details>, apart from its own <summary>, nothing is drawn,
+     but Chromium still lays it out (the drawer is content-visibility: hidden),
+     so getBoundingClientRect answers with a real box over whatever IS drawn
+     there. A storyboard with 427 of its 594 anchors in closed drawers had two
+     and three note buttons stacked on every visible element, and a note left
+     "on a heading" landed on a hidden row. Reported 0 x 0, which the Rust side
+     already reads as not laid out. */
+  function drawerHides(el) {
+    var d = el.closest('details:not([open])');
+    if (!d) return false;
+    var s = el.closest('summary');
+    return !(s && s.parentElement === d);
+  }
+
   function box(el, dx, dy) {
     if (!el) return null;
     var r = el.getBoundingClientRect();
+    if (drawerHides(el)) return { x: r.x + dx, y: r.y + dy, w: 0, h: 0 };
     return { x: r.x + dx, y: r.y + dy, w: r.width, h: r.height };
   }
 

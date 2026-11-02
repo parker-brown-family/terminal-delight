@@ -1,0 +1,157 @@
+<script type="application/json" data-page>
+{
+  "title": "Resting agents",
+  "description": "An agent pane nobody has touched for ten minutes rests: its processes are frozen and their memory pushed out, and a look or a key brings it back in a fifth of a second. After two hours of rest it sleeps: the agent is ended, its conversation kept, and a key starts it again.",
+  "updated": "2026-11-01",
+  "trueOf": "dev/0.5.0 at d9aa472d",
+  "summary": "Idle agents frozen, then ended and resumed"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">An agent you haven't touched for ten minutes rests. Terminal Delight freezes its processes and pushes their memory out. Look at the pane or press a key and it carries on where it was, in about a fifth of a second.</p>
+<p>After two hours of rest, the agent goes to sleep. It is ended and its conversation is kept, and the pane shows a card that says <code>Press any key to wake</code>. A key or a click starts it again with the command line it was started with plus the conversation to resume, in a fresh pane in the same place. It comes back without its background jobs or the permissions you granted that session. A Codex agent sleeps only when it runs its own server.</p>
+<p>An agent that is working, printing, running a command, or that Terminal Delight can't read is left alone. The times and switches are on the <b>Agents</b> page in CONFIG. Hover the agent counter at the top right to see how much memory awake, resting and sleeping agents hold.</p>
+<p class="invite">Technical has the rules, the files, the settings and how a resting agent looks from outside.</p>
+</section>
+
+<section data-register="technical" data-headline="Rest and sleep">
+<h3>The two states</h3>
+<table>
+  <thead><tr><th></th><th>Resting</th><th>Asleep</th></tr></thead>
+  <tbody>
+    <tr><td>What happens</td><td>The pane's processes are frozen and their memory pushed out. They are still running, paused.</td><td>The agent is ended with <code>SIGTERM</code>. The pane's shell stays; the conversation stays on disk.</td></tr>
+    <tr><td>After</td><td>10 minutes untouched and quiet</td><td>2 hours of rest, or <code>Sleep now</code></td></tr>
+    <tr><td>Who</td><td>Claude Code and Codex panes</td><td>Claude Code; Codex only when it runs its own server</td></tr>
+    <tr><td>Pane header</td><td><code>RESTING · 14m</code>, with a moon</td><td><code>ASLEEP</code>, with a zzz, and a card over the pane</td></tr>
+    <tr><td>Wakes on</td><td>focusing the pane, or anything written to it</td><td>a key that would type, or a click on the card</td></tr>
+    <tr><td>Back in</td><td>about a fifth of a second, same pane</td><td>about two seconds, in a fresh pane</td></tr>
+  </tbody>
+</table>
+<p>Shells and configured local agents never rest. Terminal Delight looks at every pane every 15 seconds, the first time 3 seconds after the window opens<sup><a href="#s5">5</a></sup>.</p>
+
+<h3>When an agent rests</h3>
+<p>All of these must hold. A fact Terminal Delight can't read counts against resting, never for it<sup><a href="#s1">1</a></sup>.</p>
+<ul>
+  <li>The pane runs Claude Code or Codex.</li>
+  <li>It isn't focused (on screen with the keyboard), and it isn't pinned with <code>Keep awake</code>.</li>
+  <li>Nobody has touched it for the rest time: no key, paste, click or focus, and nothing written to it, such as a bench line.</li>
+  <li>Its screen hasn't changed for the rest time.</li>
+  <li>Claude Code has reported <code>idle</code> in its own <code>~/.claude/sessions/&lt;pid&gt;.json</code> for at least the rest time, and the screen doesn't show it working, asking or failing. Codex has its prompt on screen.</li>
+  <li>Nothing else runs in the pane besides its shell, the agent and the agent's MCP helpers: no command the agent started (a background Bash shell, say), no job of the pane's shell, nothing listening on a TCP port.</li>
+  <li>The pane's processes used under 3% of one core since the last look.</li>
+</ul>
+<p>Then the pane's memory group is frozen and its memory reclaimed in 64 MiB steps, stopping when a step frees less than 8 MiB<sup><a href="#s3">3</a></sup>. A key that races the freeze wins: the freeze is refused if anything was written since the look.</p>
+
+<h3>When an agent sleeps</h3>
+<ul>
+  <li>It has rested for the sleep time, or you chose <code>Sleep now</code>.</li>
+  <li>Everything rest needs still holds.</li>
+  <li>Claude Code: the conversation id comes from its own <code>sessions</code> file, and the conversation is saved and not empty at <code>~/.claude/projects/&lt;the pane's directory&gt;/&lt;id&gt;.jsonl</code>. Claude writes a conversation down only once something is said in it, so an agent you started and never spoke to, or one you <code>/clear</code>ed into a new conversation, rests and never sleeps<sup><a href="#s2">2</a></sup>.</li>
+  <li>Codex: it runs its own server, meaning it has MCP helpers of its own. A Codex window attached to a shared Codex service only rests, because ending it would free almost nothing. Its conversation is the one it holds open.</li>
+  <li>The command line can be rebuilt exactly. Claude Code keeps every option word for word, drops any that names a conversation, and adds <code>--resume &lt;id&gt;</code>; it is refused when the line holds an initial prompt (it would be sent again), an option this build doesn't know, or <code>-p</code>, <code>--print</code>, <code>--bg</code>. Codex keeps every option, drops its opening prompt (already the conversation's first message) and adds <code>resume &lt;id&gt;</code>; it is refused for an unknown option, an initial image, <code>--worktree</code>, or a subcommand that isn't an interactive pane<sup><a href="#s1">1</a></sup>.</li>
+</ul>
+<p>Then the wake file is written, the pane thawed, and <code>SIGTERM</code> sent to the agent alone: never to the shell, never <code>SIGKILL</code>. Terminal Delight waits up to 5 seconds for it to go and checks again on every later look. An agent still running a minute after the signal has chosen not to stop, and its pane stays awake<sup><a href="#s1">1</a></sup>.</p>
+
+<h3>Waking</h3>
+<p>A resting pane thaws before any bytes reach it, so no key, paste or mouse report lands on a frozen agent. Focusing it is enough.</p>
+<p>An asleep pane shows its last screen dimmed under a card<sup><a href="#s6">6</a></sup><sup><a href="#s7">7</a></sup>:</p>
+<pre><code>Asleep since 14:02
+Conversation kept · opus
+Press any key to wake
+Comes back without background jobs or session grants</code></pre>
+<p>The model shows when the command line named one. A key that would type, or a click on the card, opens a fresh pane in the same place that runs the wake file; the shell that held the sleeper is closed. The fresh pane is a new pane with a new <code>$TD_PANE_ID</code>, and it keeps the old one's look, its <a href="/threshing-floor">Threshing Floor</a> seat, any read-only or off-limits mark, and a <code>Keep awake</code> pin. Shortcuts still do what they do on an asleep pane; only a key that would type wakes it.</p>
+<p>If a live process already has that conversation open, the card says <code>Not woken: its conversation is open in another process</code> and nothing starts, so one conversation never has two writers<sup><a href="#s5">5</a></sup>.</p>
+
+<h3>Keep awake and Sleep now</h3>
+<p>Both are in the pane header's <code>⋯</code> menu on an agent pane. <code>☕ Keep awake</code> pins the pane so it never rests or sleeps, and reads <code>Keep awake ✓</code> while on; the pin survives a new window. <code>💤 Sleep now</code> asks the next look to put an awake or resting agent to sleep. It skips the untouched and quiet clocks and keeps every other rule, including Claude Code's own: it must have reported <code>idle</code> for the rest time. It is answered once, slept or refused<sup><a href="#s6">6</a></sup>.</p>
+<p>The <code>⋯</code> appears once the header has tucked something away, in a narrow pane or with a control hidden in <a href="/ui-config">UI CONFIG</a>. In a single-line header, right-click the header to open the same menu.</p>
+
+<h3>Settings</h3>
+<p><code>🤖 Agents</code> in the CONFIG menu opens <code>AGENTS</code>, and so does the 🤖 glyph in the bottom-right corner. The glyph has its own chip under <code>MENU GLYPHS</code> in UI CONFIG; Standard and All show it, and Clean leaves it to the CONFIG menu<sup><a href="#s9">9</a></sup>. Under <code>REST AND SLEEP</code>:</p>
+<table>
+  <thead><tr><th>Control</th><th>Shipped</th><th>Range</th><th><code>agents.toml</code></th></tr></thead>
+  <tbody>
+    <tr><td><code>Rest idle agents</code></td><td>on</td><td></td><td><code>rest</code></td></tr>
+    <tr><td><code>Rest after</code></td><td>10 min</td><td>slider 2 min to 2 h; a click lands on 5, 10, 20, 30 or 60 min, a drag on any minute</td><td><code>rest_after_min</code></td></tr>
+    <tr><td><code>Sleep resting agents</code></td><td>on; off whenever rest is off</td><td></td><td><code>sleep</code></td></tr>
+    <tr><td><code>Sleep after resting</code></td><td>2 h</td><td>slider 13 min to 48 h; a click lands on 20 min, 45 min, 90 min, 4 h or 24 h</td><td><code>sleep_after_rest_min</code></td></tr>
+  </tbody>
+</table>
+<p>The file is <code>~/.config/terminal-delight/agents.toml</code>, written the moment you change a control. Every key is optional and an absent one means the shipped answer; a file that doesn't parse reads as all absent, so a typo can't switch your agents off or on. Values are held to 1 minute to 24 hours for rest and 1 minute to 7 days for sleep<sup><a href="#s4">4</a></sup>.</p>
+<p>Under the switches, a live readout:</p>
+<pre><code>Now: 2 resting · 1 asleep · 610 MiB (3/3) given back · 1.4 GiB (6/6) held by agents
+Values cover measured panes only (measured/total).
+Not resting: busy 3 · touched 1 · running something 1</code></pre>
+<p><code>· 2 unmeasured</code> joins the first line when some agent panes have no reading. The last line counts why panes didn't rest or sleep on the latest look:</p>
+<table>
+  <thead><tr><th>Word</th><th>Means</th></tr></thead>
+  <tbody>
+    <tr><td><code>busy</code></td><td>working, asking, printing, or using more CPU than an idle agent</td></tr>
+    <tr><td><code>touched</code></td><td>focused or touched within the rest time</td></tr>
+    <tr><td><code>running something</code></td><td>a command, a shell job or a listening process under the agent</td></tr>
+    <tr><td><code>kept awake</code></td><td>pinned with <code>Keep awake</code></td></tr>
+    <tr><td><code>could not tell</code></td><td>a fact couldn't be read, the conversation isn't saved, or the command line can't be rebuilt</td></tr>
+    <tr><td><code>switched off</code></td><td>rest or sleep is off on this page</td></tr>
+  </tbody>
+</table>
+
+<h3>Memory</h3>
+<p>Each hosted pane's processes get a memory group of their own, so its header can say what it costs<sup><a href="#s3">3</a></sup>:</p>
+<table>
+  <thead><tr><th>Pane</th><th>Header reads</th></tr></thead>
+  <tbody>
+    <tr><td>awake</td><td>RAM plus swap, e.g. <code>1.2 GiB</code></td></tr>
+    <tr><td>resting</td><td>RAM left plus what went out, e.g. <code>9.0 MiB + 340 MiB out</code></td></tr>
+    <tr><td>swap unreadable</td><td><code>9.0 MiB + ?</code></td></tr>
+    <tr><td>group couldn't be made or read</td><td><code>unmeasured</code></td></tr>
+  </tbody>
+</table>
+<p>RAM is the sum of each process's proportional set size, swap the sum of their swapped share, in binary units. Hover the agent counter at the top right of the window for <code>Agent memory</code><sup><a href="#s5">5</a></sup>:</p>
+<pre><code>Agent memory
+               RAM               Swap
+Awake · 3      1.1 GiB (3/3)     120 MiB (3/3)
+resting · 2    18 MiB (2/2)      640 MiB (2/2)
+asleep · 1     4.0 MiB (1/1)     0 B (1/1)
+RAM decrease since rest: 610 MiB (3/3)
+Values cover measured panes only (measured/total).
+Sample age: 9s · refresh about 15s
+Includes pane processes and shells. Shared services excluded.</code></pre>
+<p>Each figure carries how many panes it covers. A row with no panes reads <code>—</code>; one whose panes all lack a reading reads <code>unmeasured (0/2)</code>. An asleep row measures the shells left behind. <code>RAM decrease since rest</code> is, for each resting or asleep pane, its RAM just before it rested minus its RAM now; a pane woken from sleep starts again with no baseline. Before the first look the card says <code>Waiting for the first memory sample.</code> The card reads the last look's figures and never wakes a pane. Clicking the counter still opens the <a href="/threshing-floor">Threshing Floor</a>, and the counter has a cell for resting and one for asleep. Clean hides the counter; turn on <code>agent counter</code> in UI CONFIG to get it back.</p>
+
+<h3>Where it is kept</h3>
+<dl class="defs">
+  <dt><code>~/.local/state/terminal-delight/rest-&lt;session&gt;.toml</code></dt><dd>Which panes are asleep, by pane id, with when they fell asleep, the conversation, the wake file, and the harness and model they wake as; and which panes are pinned awake. <code>&lt;session&gt;</code> is the window's session name, with anything but letters and digits as <code>_</code>. A new window reads it and puts the sleep cards back. A record whose pane is running an agent again is dropped<sup><a href="#s2">2</a></sup>.</dd>
+  <dt><code>~/.local/state/terminal-delight/wake/&lt;conversation id&gt;.sh</code></dt><dd>Owner-only. It waits up to three seconds for the fresh pane's memory group, so the agent starts inside it, then runs the rebuilt command line with <code>exec</code>. <code>bash</code> on it from a shell brings the agent back by hand.</dd>
+</dl>
+<p>Both honour <code>$XDG_STATE_HOME</code>. <code>Export settings and records</code> in CONFIG › ADMIN copies the wake files with everything else (see <a href="/uninstall">Uninstall</a>).</p>
+
+<h3>From outside</h3>
+<ul>
+  <li>A pane's group is a systemd scope named <code>td-pane-&lt;session&gt;-&lt;pane&gt;-&lt;shell pid&gt;.scope</code> under your user manager's <code>app.slice</code>, made without privilege. A resting pane's scope has <code>cgroup.freeze</code> set to 1 and its <code>cgroup.events</code> reads <code>frozen 1</code>. Its processes are all still there<sup><a href="#s3">3</a></sup>.</li>
+  <li>An asleep pane runs only its shell. <a href="/mcp#technical-tools"><code>list_panes</code></a> reports it as <code>SHELL</code>, with <code>is_agent</code> false and no session, and nothing in the listing says an agent sleeps there. A resting agent is listed as usual<sup><a href="#s8">8</a></sup>.</li>
+  <li>The Threshing Floor keeps sleeping agents in their seats, named by the harness and model they will wake as: <code>CLAUDE</code>, <code>CODEX</code>, or <code>AGENT</code> when the record doesn't say. A prompt sent along a Floor line wakes a resting or asleep worker without moving your focus. A worker woken from sleep finds this under the prompt's header: <code>[You were asleep, and Terminal Delight restarted you from your saved conversation for this prompt. Anything that lived only in your old process is gone: background shells, permissions granted for that session only, and running loops.]</code></li>
+</ul>
+
+<h3>Turning it off</h3>
+<p>The switches on the Agents page stop freezing and ending while keeping the memory figures. To turn the whole feature off, memory groups and readings included, start Terminal Delight with <code>TD_AGENT_REST=0</code> in its <a href="/environment">environment</a>. The header figures and the counter's card then stay empty, and panes an earlier window left asleep come back as plain shells; their wake files stay on disk<sup><a href="#s5">5</a></sup>.</p>
+
+<h3>When a window quits or crashes</h3>
+<p>A window that quits thaws every frozen pane of its session on the way out, so whatever opens next finds them awake. A frozen group whose pane the window doesn't show is thawed on every look. A crash skips the thaw; a window of this build that finds a pane frozen takes it over and thaws it on the first key. An older build knows nothing of rest, and its panes stay frozen until you thaw them by hand<sup><a href="#s3">3</a></sup>:</p>
+<pre class="cmd"><code>for f in /sys/fs/cgroup/user.slice/user-$(id -u).slice/user@$(id -u).service/app.slice/td-pane-*/cgroup.freeze; do echo 0 > "$f"; done</code></pre>
+
+<h3>What would prove this wrong</h3>
+<p>A pane frozen while it was focused, while you were typing, or while a command ran under its agent would mean the rules above failed. So would an asleep pane that no key brings back, or a wake that started a second process on a conversation already open somewhere else.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The rules, the thresholds, the refusals and the rebuilt command line: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentrest.rs">agentrest.rs</a>.</li>
+  <li id="s2">One look at one pane, the saved-conversation check, the wake file and the rest record: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentrest_io.rs">agentrest_io.rs</a>.</li>
+  <li id="s3">Memory groups, freezing, reclaim, the readings and the quit thaw: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/panegroup.rs">panegroup.rs</a>.</li>
+  <li id="s4"><code>agents.toml</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentcfg.rs">agentcfg.rs</a>.</li>
+  <li id="s5">The 15-second look, waking, the Agents page, the memory card and <code>TD_AGENT_REST</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
+  <li id="s6">The header chip and memory figure, the sleep card, <code>Keep awake</code> and <code>Sleep now</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s7">Every label as printed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">lang/chrome.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
+  <li id="s8"><code>list_panes</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/mcp.rs">mcp.rs</a>; sleeping agents on the Floor: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a>; the note to a woken worker: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/prompt.rs">prompt.rs</a>.</li>
+  <li id="s9">Which UI sets show the 🤖 glyph and the counter: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">clean.toml</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/standard.toml">standard.toml</a>; the glyph chips: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
+</ol>

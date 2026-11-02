@@ -33,12 +33,22 @@
           "title": "Agent wall"
         },
         {
+          "slug": "threshing-floor",
+          "title": "Threshing Floor",
+          "release": "0.5.0"
+        },
+        {
           "slug": "launching",
           "title": "Launching an agent"
         },
         {
           "slug": "attention",
           "title": "Attention"
+        },
+        {
+          "slug": "rest",
+          "title": "Resting agents",
+          "release": "0.5.0"
         },
         {
           "slug": "graveyard",
@@ -60,7 +70,11 @@
         },
         {
           "slug": "briefs",
-          "title": "Decision briefs"
+          "title": "Briefs and notes"
+        },
+        {
+          "slug": "artifacts",
+          "title": "Artifacts"
         },
         {
           "slug": "surface-protocol",
@@ -83,6 +97,14 @@
         {
           "slug": "panes-and-tabs",
           "title": "Panes and tabs"
+        },
+        {
+          "slug": "documents",
+          "title": "Documents"
+        },
+        {
+          "slug": "git-signal",
+          "title": "Git signal"
         },
         {
           "slug": "sticky-notes",
@@ -111,6 +133,11 @@
           "title": "Skins"
         },
         {
+          "slug": "ui-config",
+          "title": "UI CONFIG",
+          "release": "0.5.0"
+        },
+        {
           "slug": "crt",
           "title": "CRT"
         },
@@ -134,7 +161,8 @@
         },
         {
           "slug": "restricted",
-          "title": "Restricted commands"
+          "title": "Restricted commands",
+          "release": "0.5.0"
         },
         {
           "slug": "agent-to-agent",
@@ -152,6 +180,21 @@
       "short": "MCP"
     },
     {
+      "title": "Desktop",
+      "pages": [
+        {
+          "slug": "omarchy",
+          "title": "Omarchy"
+        },
+        {
+          "slug": "uninstall",
+          "title": "Uninstall",
+          "release": "0.5.0"
+        }
+      ],
+      "short": "Desktop"
+    },
+    {
       "title": "Reference",
       "pages": [
         {
@@ -165,6 +208,10 @@
         {
           "slug": "cli",
           "title": "Command line"
+        },
+        {
+          "slug": "bug-report",
+          "title": "Reporting a bug"
         },
         {
           "slug": "languages",
@@ -198,17 +245,17 @@
     {
       "title": "lean-ctx",
       "href": "https://leanctx.com",
-      "note": "context runtime \u2197"
+      "note": "context runtime ↗"
     },
     {
       "title": "Omarchy",
       "href": "https://omarchy.org",
-      "note": "the desktop \u2197"
+      "note": "the desktop ↗"
     },
     {
       "title": "Rio",
       "href": "https://rioterm.com",
-      "note": "the terminal core \u2197"
+      "note": "the terminal core ↗"
     },
     {
       "title": "Version",

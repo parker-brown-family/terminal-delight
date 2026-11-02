@@ -1,0 +1,107 @@
+<script type="application/json" data-page>
+{
+  "title": "UI CONFIG",
+  "description": "UI CONFIG, in the window's painter, hides any piece of Terminal Delight's chrome: the corner's glyphs, the top bar's mark, notice and counter, the left bar, each pane's header controls. Hidden menu glyphs fold into a CONFIG dropdown. New windows open in the Clean design, which turns the tube and every light off and asks for the Clean UI set.",
+  "updated": "2026-11-01",
+  "trueOf": "dev/0.5.0 at d9aa472d",
+  "summary": "Hide any chrome, and the Clean design"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">A new window opens in the Clean design: flat glass, letters with no glow, nearly square corners, tabs across the top, and very little chrome. Everything Clean puts away is still one click from the <code>CONFIG ▾</code> button in the bottom-right corner.</p>
+<p>What a window shows is yours to choose. Click <code>🎨</code>, or <code>CONFIG ▾</code> then <code>UI CONFIG…</code>, and the painter's fourth area lists every piece of chrome as a switch. <code>OUTER</code> covers the frame around the panes: the corner's glyphs, the app mark, the Git notice, the agent counter, the left bar. <code>PANES</code> is one set of switches for every pane's header at once. Hide a corner glyph and <code>CONFIG ▾</code> takes the corner, listing what the glyphs opened.</p>
+<p>Three sets come built in, <code>all</code>, <code>clean</code> and <code>standard</code>, and a design only asks for one: any switch you flip yourself wins. Each design remembers the switches you set while wearing it, and <code>use this window</code> makes the window you're in the starting point for new ones.</p>
+<p class="invite">Technical has every switch, the three sets, the CONFIG menu and the Clean design.</p>
+</section>
+
+<section data-register="technical" data-headline="UI CONFIG">
+<h3>The Clean design</h3>
+<p>Clean is the first tile of the <a href="/themes">DESIGN</a> row, <code>○ clean</code>, and what a new window wears. Every <a href="/crt#technical-effects">effect</a> in its file is zero, and while it is worn the tube and the light are held off whatever the GAUGES dials say: the curve, the rolling band, the glare, letter glow, the linger fades and the halos on lit borders. The dials keep their values for the next design you pick. It replaced Quiet, and a window saved on Quiet opens as Clean.<sup><a href="#s1">1</a></sup></p>
+<p>Clean asks for the <code>clean</code> <a href="/skins">skin</a>, nearly square (corners of 2 and 3 pixels, never more than 3) and flat with no glow, and for the Clean UI set below. Both are asks: a skin you picked, or a switch you flipped, outranks them. Its own colours show only where no theme is painted; they are the Terminal Delight palette's. With an open-furniture skin such as TERMINIMALIST, side-by-side panes meet on one shared hairline instead of a dark gutter, and dragging the rule still resizes them.</p>
+
+<h3>Where it is</h3>
+<p>UI CONFIG is an area of the window's painter, opened from <code>🎨</code> in the corner, or from <code>Surfaces</code> or <code>UI CONFIG…</code> in the corner's menu. A pane's painter (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd>) has none, the way it has no SKIN row: one config serves every pane.<sup><a href="#s2">2</a></sup></p>
+<p>The area opens with two pages, <code>OUTER</code> and <code>PANES</code>, and <code>· yours</code> beside them once any switch has been flipped by hand. Under them is the set row: <code>◎ design</code> follows whatever the design asks for, then one tile per set, built-in and yours. Under a skin with open furniture the first tile reads <code>skin</code>, because the skin is what's asking. Picking a set asks for that set whole, so it clears every switch you flipped.</p>
+
+<h3>OUTER</h3>
+<table>
+  <thead><tr><th>Switch</th><th>Key in a set file</th><th>Hides</th></tr></thead>
+  <tbody>
+    <tr><td><code>MENU GLYPHS</code></td><td>all eight below</td><td>The corner's glyphs as a group. Under it, eight chips flip one at a time: <code>📜</code> <code>artifacts</code>, <code>🎨</code> <code>surfaces</code>, <code>📊</code> <code>sliders</code>, <code>🤖</code> <code>agents</code>, <code>🪦</code> <code>graveyard</code>, <code>🔔</code> <code>notifications</code>, <code>🐞</code> <code>bug_report</code>, <code>🧩</code> <code>plugins</code>.</td></tr>
+    <tr><td><code>tab and pane counts</code></td><td><code>counts</code></td><td>The counts in the bottom row.</td></tr>
+    <tr><td><code>scale</code></td><td><code>scale</code></td><td>The menu-size scrubber.</td></tr>
+    <tr><td><code>split buttons</code></td><td><code>split_buttons</code></td><td>The split cluster.</td></tr>
+    <tr><td><code>app mark</code></td><td><code>app_mark</code></td><td>The mark at the top left.</td></tr>
+    <tr><td><code>git notice</code></td><td><code>git_notice</code></td><td>The <a href="/git-signal">Git signal</a>.</td></tr>
+    <tr><td><code>agent counter</code></td><td><code>agent_counter</code></td><td>The counter at the top right, the <a href="/threshing-floor">Threshing Floor</a>'s door.</td></tr>
+    <tr><td><code>attention pill</code></td><td><code>spine</code></td><td>The <a href="/attention">attention</a> pill.</td></tr>
+    <tr><td><code>left bar</code></td><td><code>left_bar</code></td><td>The <a href="/left-bar">left bar</a>; tabs move across the top.</td></tr>
+    <tr><td><code>bar header</code></td><td><code>left_bar_header</code></td><td>The left bar's header.</td></tr>
+    <tr><td><code>allowance</code></td><td><code>allowance</code></td><td>The <a href="/usage">usage</a> rails in the left bar.</td></tr>
+    <tr><td><code>every option</code></td><td><code>option_rows</code></td><td>Off, each row of the painter shows only its selection. A folded row opens after 750 ms of hover, or at once on a click anywhere on it, and folds again 400 ms after the pointer leaves.</td></tr>
+  </tbody>
+</table>
+
+<h3>PANES</h3>
+<table>
+  <thead><tr><th>Switch</th><th>Key in a set file</th><th>Hides, on every pane</th></tr></thead>
+  <tbody>
+    <tr><td><code>logo</code></td><td><code>logo</code></td><td>The header's logo</td></tr>
+    <tr><td><code>mode</code></td><td><code>mode</code></td><td>The label naming what runs in the pane</td></tr>
+    <tr><td><code>TERM | BENCH</code></td><td><code>face</code></td><td>The face switch</td></tr>
+    <tr><td><code>⌁ AGENT</code></td><td><code>agent</code></td><td>The launch-agent chip</td></tr>
+    <tr><td><code>handover chip</code></td><td><code>handover</code></td><td>The chip listing what the pane's agent <a href="/artifacts">handed over</a></td></tr>
+    <tr><td><code>surface</code></td><td><code>surface</code></td><td>The pane's <code>🎨</code> painter button</td></tr>
+    <tr><td><code>sliders</code></td><td><code>sliders</code></td><td>The pane's GAUGES button</td></tr>
+    <tr><td><code>close</code></td><td><code>close</code></td><td>The close button</td></tr>
+    <tr><td><code>sticky notes</code></td><td><code>notes</code></td><td><a href="/sticky-notes">Sticky notes</a></td></tr>
+  </tbody>
+</table>
+<p>Some chrome is never a switch, because it is the way back and the news: <code>CONFIG</code> itself, each pane's title, its state and its <code>⋯</code>, and the <code>◀</code>/<code>▶</code> handle that trades the left bar for tabs across the top.<sup><a href="#s2">2</a></sup></p>
+
+<h3>Who decides</h3>
+<ol>
+  <li>A switch you flipped in UI CONFIG.</li>
+  <li>The set: one you picked, else the one the skin asks for, else the one the design asks for, else <code>standard</code>.</li>
+  <li>Nothing said: shown.</li>
+</ol>
+<p>A set names only what it has an opinion on, and a key it leaves out is shown. A set name with no file behind it falls back to <code>all</code>, never to everything off. The window's choice is saved with its session as <code>[ui]</code>.<sup><a href="#s2">2</a></sup></p>
+
+<h3>The three sets</h3>
+<table>
+  <thead><tr><th>Set</th><th>Hides</th><th>Asked for by</th></tr></thead>
+  <tbody>
+    <tr><td><code>all</code></td><td>Nothing</td><td>nobody; pick it to see every control</td></tr>
+    <tr><td><code>standard</code> <code>◉</code></td><td>Split buttons, counts, scale, and the <code>🪦</code>, <code>🔔</code>, <code>🐞</code> and <code>🧩</code> glyphs</td><td>every design but Clean</td></tr>
+    <tr><td><code>clean</code> <code>○</code></td><td>The app mark, Git notice, agent counter, left bar (tabs go across the top), its header and the allowance rails; split buttons, counts and scale; all eight corner glyphs, so <code>📜</code> and its dot fold into CONFIG; every option row but the selection. On every pane: logo, mode, face switch, launch-agent chip, handover chip, surface, GAUGES button and close. It keeps the attention pill and sticky notes.</td><td>the Clean design, and any skin with word controls and no boundaries, such as TERMINIMALIST</td></tr>
+  </tbody>
+</table>
+<p>Your own sets live in <code>~/.config/terminal-delight/ui/*.toml</code>, named by file, with <code>name</code>, <code>icon</code>, an <code>[outer]</code> table and a <code>[panes]</code> table of <code>true</code> and <code>false</code>. A built-in name always means the built-in. Unknown keys are reported, never fatal, so a set written for a newer build still loads.</p>
+<pre class="cmd"><code>terminal-delight ui --list
+terminal-delight ui --template clean &gt; ~/.config/terminal-delight/ui/mine.toml
+terminal-delight ui --check ~/.config/terminal-delight/ui/mine.toml</code></pre>
+<p><code>--check</code> prints every switch as <code>shown</code>, <code>hidden</code> or <code>shown (no opinion)</code>, and exits 1 if the file names a key no switch answers to. Exit 2 is a usage error or a file that can't be read.</p>
+
+<h3>CONFIG</h3>
+<p>Hide any corner glyph, the counts, the scale or the split buttons, and <code>CONFIG ▾</code> takes the corner. Its menu lists the window's surfaces: <code>THRESHING FLOOR</code>, <code>Surfaces</code>, <code>Sliders</code>, <code>Session restore</code>, <code>Notifications</code>, <code>Agents</code>, <code>Report a bug</code>, <code>ADMIN</code>, <code>Plugins</code> and <code>Artifacts</code>. Then comes one row for each thing hidden elsewhere: the Git notice, <code>Allowance…</code> (also while the left bar is closed), <code>Scale · 100%</code>, and <code>split →</code> and <code>split ↓</code>. <code>UI CONFIG…</code> and <code>HELP</code> come last.<sup><a href="#s3">3</a></sup></p>
+<p>The button carries what the hidden pieces would have said. With the Git notice hidden it takes the notice's red or yellow; with <code>🐞</code> hidden after a crash it takes the crash dot; with <code>📜</code> hidden it takes the dot that says an agent handed something over, and so does its <code>Artifacts</code> row.</p>
+<p>With the app mark, the Git notice and the agent counter all hidden, the left bar open and no window buttons of its own, the top bar has nothing left to hold. It folds to a 1 px hairline, so the panes sit under the frame by the same margin as down the sides.</p>
+
+<h3>Looks that remember</h3>
+<p>Each design remembers the UI CONFIG choice you made while wearing it, along with its look dials: the set you picked and the switches you flipped. Pick Clean, show the left bar, try Hacker, and Clean has its left bar when you come back. A right-click on a design offers to reset it to as designed, or to undo the last switch or reset. See <a href="/themes">Themes</a>.<sup><a href="#s4">4</a></sup></p>
+<p>A skin's ask is never saved as your choice, so moving from TERMINIMALIST to another skin puts the design's own set back.</p>
+
+<h3>New windows</h3>
+<p>The <code>NEW WINDOWS</code> row says what a new window will start as: <code>clean</code>, or <code>this look</code> once you've saved one. <code>use this window</code> saves the window you're in (its design and palette, its skin if you picked one, and its UI CONFIG choice) to <code>~/.config/terminal-delight/new-window.toml</code>. A <code>clean</code> button then appears beside it; it deletes the file, and new windows open Clean again. A file that won't parse is reported and ignored.<sup><a href="#s2">2</a></sup></p>
+
+<h3>What would prove this wrong</h3>
+<p>Turn every switch off and pick <code>clean</code>. If anything UI CONFIG put away can then not be reached from <code>CONFIG ▾</code>, a pane's <code>⋯</code> or UI CONFIG itself, a switch has removed a feature where it should only have hidden it.</p>
+</section>
+
+<ol data-sources>
+  <li id="s1">The Clean design and its hold: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/themes/clean.toml">themes/clean.toml</a> and <code>hold_clean</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a>; the skin: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/skins/clean.toml">skins/clean.toml</a>; the seam between panes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
+  <li id="s2">Switches, layers, precedence, sets, the CLI and new windows: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>; the built-in sets: <a href="https://github.com/parker-brown-family/terminal-delight/tree/dev/0.5.0/app/ui">app/ui/</a>; the UI CONFIG area and the folded rows: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; its labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">lang/chrome.rs</a>; a skin's ask: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs</a>.</li>
+  <li id="s3">The CONFIG button, its menu and the collapsing top bar: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
+  <li id="s4">Per-design memory: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/looks.rs">looks.rs</a>.</li>
+</ol>
