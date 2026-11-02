@@ -8682,6 +8682,13 @@ impl Workspace {
                     reach: None,
                     access: p.agent_access,
                     seat: p.seat,
+                    // What a person calls it: the Threshing Floor's own name for
+                    // the pane, from the same helper, so the listing and the
+                    // Floor can never name one pane two ways. A pane with no
+                    // words to its name is unnamed (null), never "".
+                    name: Some(self.pane_name(leaf, cx))
+                        .filter(|n| !n.full().is_empty())
+                        .map(|n| mcp::PaneNameReport::from(&n)),
                     // the look the pane actually renders with (own override else
                     // inherited outer), in the config API's 0..100 percents
                     grade: Self::grade_report(&p.appearance.effective(&outer).grade),

@@ -17,13 +17,14 @@ concurrency:
 # The Rust every job builds with, pinned, so a new stable release cannot turn
 # its new lints into a failure on lines a pull request never touched. That
 # happened on 2026-10-07: stable moved 1.98 -> 1.99 and every PR failed clippy
-# on two old lines in surface.rs (#911). 1.98.0 is what the machine the agents
-# build on has as its default, so a local `cargo clippy` is CI's clippy.
-# Moving it is a deliberate commit that fixes the new lints in the same change;
+# on two old lines in surface.rs (#911). rust-toolchain.toml at the root names
+# the same version, so a local `cargo clippy` anywhere is CI's clippy without
+# anyone changing their default. Moving it is a deliberate commit that changes
+# both, and fixes the new lints, in the same change;
 # toolchain-drift-watch.yml runs the latest stable weekly and says what it
 # would break before anyone has to move.
 env:
-  RUST_TOOLCHAIN: "1.98.0"
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   rust:

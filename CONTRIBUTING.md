@@ -139,6 +139,11 @@ cd app && cargo run
 directory and applies `docs/patches/0001-td-crt-pass.patch` (the per-pane CRT
 barrel-warp renderer pass). It's idempotent — safe to re-run.
 
+The Rust version is pinned in `rust-toolchain.toml` at the root (1.99.1, the
+least the terminal core builds with). With rustup, `cargo` fetches it the first
+time it runs in the repository, whatever your default is, and CI builds with
+the same one.
+
 ### The bar (CI runs all of this — run it before you push)
 
 ```bash

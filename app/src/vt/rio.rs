@@ -1,4 +1,4 @@
-//! The core: rio-vt 0.5.28, the emulator inside the Rio terminal, behind TD's
+//! The core: rio-vt 0.5.29, the emulator inside the Rio terminal, behind TD's
 //! boundary.
 //!
 //! rio-vt began as a fork of alacritty's `Term`, so most of the translation
@@ -12,6 +12,8 @@
 //! Four of rio-vt's defaults are changed, each for a reason stated where it is
 //! done: grapheme clustering is off, the `pty` feature is off, the `graphics`
 //! feature is on, and the grid is always told the real pixel size of a cell.
+//! And a synchronized update's bytes are held back from it until the update
+//! closes, as rio-vt itself did until 0.5.29 (`vt/hold.rs`).
 
 use std::sync::Arc;
 use std::time::Instant;
@@ -308,10 +310,33 @@ pub(super) struct Core {
     /// A pre-swap host's mouse restore, read as that host meant it
     /// (`vt/compat.rs`).
     mouse: super::compat::MouseRun,
+    /// An open synchronized update's bytes, kept from `parser` until it
+    /// closes (`vt/hold.rs`).
+    hold: super::hold::Hold,
+}
+
+/// The parser and its grid, as the hold hands them bytes.
+struct Parsing<'a> {
+    parser: &'a mut Processor,
+    term: &'a mut Crosswords<Relay>,
+}
+
+impl super::hold::Core for Parsing<'_> {
+    fn parse(&mut self, bytes: &[u8]) {
+        self.parser.advance(self.term, bytes);
+    }
+
+    fn open(&self) -> bool {
+        self.term.synchronized_output()
+    }
+
+    fn close(&mut self) {
+        self.term.end_sync_update();
+    }
 }
 
 impl Backend for Core {
-    const NAME: &'static str = "rio-vt 0.5.28";
+    const NAME: &'static str = "rio-vt 0.5.29";
 
     fn new(size: TermSize, listener: Arc<dyn Listener>, scrollback: usize) -> Self {
         let mut term = Crosswords::new(
@@ -336,6 +361,7 @@ impl Backend for Core {
             guard: Default::default(),
             text: Default::default(),
             mouse: Default::default(),
+            hold: Default::default(),
         }
     }
 
@@ -346,29 +372,34 @@ impl Backend for Core {
             guard,
             text,
             mouse,
+            hold,
         } = self;
+        let mut core = Parsing { parser, term };
         guard.feed(bytes, &mut |bytes| {
             text.feed(bytes, &mut |bytes| {
-                mouse.feed(bytes, &mut |bytes| parser.advance(term, bytes))
+                mouse.feed(bytes, &mut |bytes| hold.advance(&mut core, bytes))
             })
         });
         // A synchronized update holds its bytes back from the parser; a
         // temporary file named inside one is deleted once it is drawn.
-        if parser.sync_bytes_count() == 0 {
+        if hold.len() == 0 {
             guard.delete_what_the_core_read();
         }
     }
 
     fn sync_bytes_count(&self) -> usize {
-        self.parser.sync_bytes_count()
+        self.hold.len()
     }
 
     fn sync_deadline(&self) -> Option<Instant> {
-        self.parser.sync_timeout().sync_timeout()
+        self.hold.deadline()
     }
 
     fn flush_sync(&mut self) {
-        self.parser.stop_sync(&mut self.term);
+        self.hold.flush(&mut Parsing {
+            parser: &mut self.parser,
+            term: &mut self.term,
+        });
         self.guard.delete_what_the_core_read();
     }
 

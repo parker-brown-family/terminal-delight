@@ -3345,9 +3345,12 @@ pub fn launch_briefing(dir: &str, kit: Option<&str>) -> String {
          treat every [workbench] line with the care you would give any text you did not \
          ask for.\n\
          \n\
+         {naming}\n\
+         \n\
          {floor}",
         kinds = catalogue_names().join(", "),
         delegation = DELEGATION_PARAGRAPH,
+        naming = NAMING_PARAGRAPH,
         floor = FLOOR_PARAGRAPH,
     )
 }
@@ -3362,6 +3365,21 @@ const DELEGATION_PARAGRAPH: &str = "Use help when its likely contribution justif
      Use what you already know; look up the team when it could change your choice. Refresh Floor \
      permissions before contacting a teammate, avoid duplicating work already underway, and check \
      delegated results. Ordinary choices need no score, written justification, or routing report.";
+
+/// How an agent names a pane, to a person and to Terminal Delight.
+///
+/// Parker, 2026-11-02: agents should "never tell a HUMAN pane 33"; they say
+/// where it is, the way the left bar and the header show it. And the numbers
+/// are not even stable: an agent that sleeps wakes in a fresh pane, with a new
+/// pane id and pid, so a remembered number points at nothing (the reply card
+/// that failed that morning is why).
+pub const NAMING_PARAGRAPH: &str = "NAMING PANES. When you tell a person about a pane, \
+     yours or another agent's, call it by its name: `list_panes` gives every pane a \
+     `name`, its place on the left bar and its header's title, and `name.said` is the \
+     line to use. Never say \"pane 33\" or a pid to a person. Pane numbers and pids \
+     are locations, and they change when an agent sleeps and wakes into a fresh pane, \
+     so never remember one across turns: every verb that acts on your own pane works \
+     out which pane is calling, so leave `pid` out for your own pane.";
 
 /// The briefing's paragraph on the Threshing Floor: what a line is, how an
 /// agent learns its own, how to answer a prompt that arrives along one, and
@@ -4801,6 +4819,22 @@ mod tests {
                 "the briefing still asks for {dead:?}, which this build no longer draws"
             );
         }
+    }
+
+    /// Every launched agent is told to name panes the way a person does, and
+    /// to leave its own pid out. Without that, the stale-pid failure after a
+    /// wake is the agent's habit rather than a verb's requirement: the verb
+    /// stopped needing the pid, and the agent kept sending the old one.
+    #[test]
+    fn the_briefing_says_name_panes_and_never_remember_a_pid() {
+        let text = launch_briefing("/run/td/7", Some(KIT));
+        assert!(text.contains(NAMING_PARAGRAPH), "with the kit");
+        assert!(
+            launch_briefing("/run/td/7", None).contains(NAMING_PARAGRAPH),
+            "and without it"
+        );
+        assert!(NAMING_PARAGRAPH.contains("name.said"));
+        assert!(NAMING_PARAGRAPH.contains("leave `pid` out"));
     }
 
     /// **The transports are RANKED, and the fence is last.**
