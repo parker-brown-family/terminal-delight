@@ -44,7 +44,7 @@ Three writers, one format. Pick whichever your agent can do.
 
 | Transport | How | Needs | Use it when |
 |---|---|---|---|
-| **MCP verb** | `present_surface` with `pid` and `surface` | a connection to TD's MCP server, and the writes toggle | you are connected and want the error message when a payload is wrong |
+| **MCP verb** | `present_surface` with `surface` (and `pid` only for a pane other than your own) | a connection to TD's MCP server, and the writes toggle | you are connected and want the error message when a payload is wrong |
 | **File drop** | write a `.json` file into the pane's directory | a filesystem | anything else — any language, any harness, no cooperation |
 | **CLI** | `terminal-delight surface [file]` (or pipe to stdin) | the binary on `PATH` | scripts, and prose that contains a fenced block |
 
