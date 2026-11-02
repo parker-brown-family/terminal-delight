@@ -7,6 +7,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+0.5.0 is the first stable release since 0.3.0. 0.4.0 stopped at its third
+candidate and never shipped stable, so everything below ships in 0.5.0. The
+sections above *Upgrading from 0.3.0* are new since the 0.4.0 candidates; the
+sections from there down are what the 0.4.0 candidates already carried.
+
 ### Update Terminal Delight from inside TD
 
 - ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a
@@ -179,6 +184,48 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   78%, the veil inactive panes have always worn, and can go much darker; blur
   runs from crystal clear to slightly softer than a popup's backdrop. The blur
   is a new renderer patch, `0012-tube-blur`.
+- Under an unboxed skin ADD PROJECT sits on the spine's header beside TABS,
+  with a rule between them, and the top rail folds to a margin like every other
+  skin's. With the spine shut it returns to the top corner beside SPINE. (#1260)
+- TERMINIMALIST is borderless outside the tile. Terminal Delight sets
+  Hyprland's `border_size` to 0 on its own windows while an unboxed skin is on
+  and unsets it when the skin changes, and its own outer hairline is gone. Under
+  Clean a terminal keeps only the rule under its header, and side-by-side
+  terminals share one upright line. Intrusive and the other tube designs keep
+  their tiling. (#1275)
+
+### Keys, prompts, gauges and notes
+
+- **One key reaches a tab.** Alt+1 to Alt+8 jump to a tab by its place in the
+  spine's order, and Alt+9 to the last. Any tab can be pinned to
+  Alt+Shift+<letter>; the pin is saved on the tab, so it survives reordering,
+  filing, a restart and a reattach. The spine's row menu and the tab config menu
+  show the keys, take a pin, refuse a taken letter with the reason, and carry
+  the window's Alt+1–9 switch. A focused terminal gives up only the chords the
+  window holds. (#1260)
+- **Ctrl+C in an agent's prompt copies what it is about to clear.** In a Claude
+  Code or Codex pane, Ctrl+C on the terminal face first puts the typed words on
+  the clipboard and the primary selection, then sends the ^C as before. An empty
+  prompt, a menu on screen or a shell pane leaves the clipboard alone. The
+  workbench face's composer is unchanged. (#1251)
+- **That copy gives back the screenshots you pasted, as their files.** Each
+  `[Image #n]` Terminal Delight can account for becomes the path of the pasted
+  screenshot it came from, so `look at [Image #1] please` copies as
+  `look at /…/pastes/pasted-1.png please`. A tag is paired with a paste only in
+  paste order and within ten seconds of it, and a tag it cannot account for
+  stays a tag. (#1279)
+- **ACTIVE TERMINALS gains a brightness gauge** that lifts the focused pane,
+  from 100% (unset, the look before) to 150%. It is the partner of INACTIVE
+  TERMINALS' brightness, and MCP reads and sets it as `active_brightness`.
+  (#1277)
+- **The cursor can leave a phosphor trail.** GAUGES › CURSOR TRAIL has a
+  switch, an afterimage or streak style, and linger (up to 600 ms) and light
+  sliders. It is off until you turn it on, and Clean, a crawl and a desktop
+  asking for less motion hold it off. (#1260)
+- **An agent's sticky note wears the robot stamp on every skin and note
+  design**, including the square section TERMINIMALIST draws. Who wrote the
+  note is the only thing that decides it; a note with no recorded writer stays
+  unstamped. (#1250)
 
 ### Installer ownership and cleanup
 
@@ -231,7 +278,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   `terminal-delight uninstall preview|plan|run` and `terminal-delight admin
   export|builds|guard|protect`.
 
-### Linux removal preparation (release unassigned)
+### Linux removal preparation
 
 - A headless `uninstall preview` inventories candidate paths without opening a
   window or changing files. `--json` carries structured evidence; `--handoff`
@@ -243,7 +290,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   choices. Old installs without an ownership receipt require review. The
   removal guide retains records and undo evidence before application removal.
 
-### The Threshing Floor for 0.5.0 Development
+### The Threshing Floor
 
 - Pane pool cards show each agent's state with the counter's glyph and color.
   A Go to pane button below the org action closes the Floor and focuses that
@@ -330,7 +377,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   person set. Before, both came back unseated, and an off-limits pane came back
   open to agents.
 
-### Agent Memory Hover for 0.5.0 Development
+### Agent Memory Hover
 
 - MENU GLYPHS includes a saved 🤖 Agents shortcut toggle. The toolbar button
   opens Agents settings; CONFIG keeps the same entry when the glyph is hidden.
@@ -343,7 +390,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   use binary units (KiB, MiB and GiB); shared services outside pane scopes are
   excluded.
 
-### Agaro Permission Follow-Through for 0.5.0 Development
+### Agaro Permission Follow-Through
 
 - Agents can propose opening an off-limits pane without learning whether the
   supplied PID exists. Real, missing and already-open targets occupy the same
@@ -355,8 +402,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - MCP documentation now describes read-only tool hints, sticky-note writer
   provenance and the ordinary-window control-socket fence.
 
-### Upgrading from 0.4.0 (0.5.0 development)
+### Upgrading from a 0.4.0 candidate
 
+- **Alt+1 to Alt+9 and Alt+Shift+<letter> now switch tabs**, so a program in
+  a focused terminal no longer receives those chords while the window holds
+  them. Ctrl+C in a Claude Code or Codex prompt also writes the clipboard. (#1260,
+  #1251)
 - **The terminal core is rio-vt 0.5.29.** Replacing the window keeps every
   terminal running on its existing host, which keeps the core it started with
   until it next starts, and the two agree screen for screen. rio-vt 0.5.29
@@ -428,7 +479,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   `ask_press_tokens`.** A 0.4 window reads a read-only pane as open and does not
   know seats or lines; nothing is written for it.
 
-### Artifact and Review Continuity for 0.5.0 Development
+### Artifact and Review Continuity
 
 - **The artifact rail has an Archive action.** It opens a searchable local page in the default browser
   assembled from the existing conversation records, including conversations whose
@@ -455,7 +506,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   its save is running queues the deletion without discarding the next pending
   note. Deletion after reattachment addresses the original stored note.
 
-### Explicit Terminal Cleanup for 0.5.0 Development
+### Explicit Terminal Cleanup
 
 - **Ending a terminal no longer waits indefinitely for a program that ignores
   hangup.** The PTY owner closes its master, allows a 250 ms hangup grace period,
@@ -476,8 +527,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   jobs and errors. Missing evidence remains absent. Older hosts and clients retain
   compatibility with the existing close reply.
 
-### Security for 0.5.0 development
+### Security (new since the 0.4.0 candidates)
 
+- **The terminal core is rio-vt 0.5.29, which fixes RUSTSEC-2026-0430.**
+  rio-vt 0.5.28 could be led by a picture command to delete a file outside its
+  temporary directory, and to read shared memory past its end; 0.5.29 checks
+  both. A synchronized update is still held back and drawn whole, by Terminal
+  Delight itself now, as 0.5.28 did, so a window on this build reads a host
+  started by an earlier 0.4 candidate the same way. Building from source needs
+  Rust 1.99.1, which `rust-toolchain.toml` names and rustup fetches on first
+  use. (#1254, #1255)
 - **A program cannot make a pane keep picture uploads open without limit.**
   A picture sent in pieces stays unfinished until its last piece arrives, and
   nothing capped how many could be open at once. At most 16 are now kept; a
@@ -537,7 +596,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   surface an agent was refused for an off-limits pane was still saved to disk
   and shown there a few seconds later; it is no longer saved.
 
-### Added for 0.5.0 development
+### Added (new since the 0.4.0 candidates)
 
 - **Named Threshing Floor orgs and a relationship builder.** Create and rename orgs;
   drag fixed-size pane cards into an org with a lightweight text preview.
@@ -1438,20 +1497,6 @@ the changes you may notice in the first hour.
 
 ### Security
 
-- **The terminal core is rio-vt 0.5.29, which fixes RUSTSEC-2026-0430.**
-  rio-vt 0.5.28 could be led by a picture command to delete a file outside its
-  temporary directory, and to read shared memory past its end; 0.5.29 checks
-  both. A synchronized update is still held back and drawn whole, by Terminal
-  Delight itself now, as 0.5.28 did, so a window on this build reads a host
-  started by an earlier 0.4 candidate the same way. Building from source needs
-  Rust 1.99.1, which `rust-toolchain.toml` names and rustup fetches on first
-  use. (#1255)
-- **A program cannot make a pane keep picture uploads open without limit.**
-  A picture sent in pieces stays unfinished until its last piece arrives, and
-  nothing capped how many could be open at once. At most 16 are now kept; a
-  further one is refused until one finishes or sits idle. A pane's host keeps
-  running the build it started with, so terminals opened before an update are
-  covered once the host next starts. (#1255)
 - **A paste can no longer end bracketed paste early and type keys into your
   shell.** A clipboard holding its own end-of-paste marker could make the shell
   read the rest as typed keys, so a line copied from a web page could run a
