@@ -1060,11 +1060,22 @@ impl PageEngine for FakeDecisionEngine {
 /// Not [`crate::testsync::Scratch`], whose name carries the thread's id in
 /// parentheses: these paths are printed on a pane and clicked, and a person's
 /// paths do not end a directory in `)`. Each test passes a tag of its own.
+///
+/// Rooted at `/tmp`, not `$TMPDIR`, because a test that clicks a printed path
+/// needs that path to fit on one row of the pane. Under a long `$TMPDIR` a
+/// clip's path wrapped and the click landed on the next link (issue 1265).
+/// `$TMPDIR` is used only where `/tmp` cannot be written.
 pub(super) struct Scratch(PathBuf);
 
 impl Scratch {
     pub(super) fn new(tag: &str) -> Scratch {
-        let dir = std::env::temp_dir().join(format!("td-pane-{tag}-{}", std::process::id()));
+        let name = format!("td-pane-{tag}-{}", std::process::id());
+        let dir = Path::new("/tmp").join(&name);
+        let _ = std::fs::remove_dir_all(&dir);
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return Scratch(dir);
+        }
+        let dir = std::env::temp_dir().join(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Scratch(dir)
