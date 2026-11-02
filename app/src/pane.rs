@@ -10948,6 +10948,17 @@ impl Render for TerminalView {
         };
         let mut grid_th = th.clone();
         grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
+        // ACTIVE TERMINALS brightness: the focused pane's text and background
+        // are drawn this much lighter, through the per-channel levels the grade
+        // already multiplies by, so the per-cell loop gains no work. It is the
+        // inactive veil's partner, and it does not use master brightness, which
+        // never lifts text (see `graded`). A field a skin paints ungraded stays
+        // where the skin put it; the letters on it still lift.
+        if focused_now {
+            let gain = th.grade.active_brightness_at_edge();
+            grid_th.grade.text *= gain;
+            grid_th.grade.background *= gain;
+        }
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -13049,8 +13060,14 @@ impl Render for TerminalView {
                     .map(|d| {
                         sk.terminal_stock(
                             d,
+                            // The grid's grade, so the field lifts with the
+                            // cells when the ACTIVE brightness gauge is up.
                             th.field_background.unwrap_or_else(|| {
-                                graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg)
+                                graded(
+                                    crate::mix(th.bg, th.surface, 0.18),
+                                    &grid_th.grade,
+                                    Channel::Bg,
+                                )
                             }),
                         )
                     })

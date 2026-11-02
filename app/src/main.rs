@@ -9050,6 +9050,9 @@ impl Workspace {
                 .inactive_image_glow
                 .map(|v| K::InactiveImageGlow.to_percent(v)),
             inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            active_brightness: g
+                .active_brightness
+                .map(|v| K::ActiveBrightness.to_percent(v)),
             inactive_brightness: g
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
@@ -9126,6 +9129,9 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_text {
             set!(K::InactiveText, p);
+        }
+        if let Some(p) = patch.active_brightness {
+            set!(K::ActiveBrightness, p);
         }
         if let Some(p) = patch.inactive_brightness {
             set!(K::InactiveBrightness, p);
@@ -23253,6 +23259,7 @@ impl Workspace {
                         | theme::GradeKey::ImageGlow
                         | theme::GradeKey::InactiveImageGlow
                         | theme::GradeKey::InactiveText
+                        | theme::GradeKey::ActiveBrightness
                         | theme::GradeKey::InactiveBrightness
                         | theme::GradeKey::InactiveBlur => {
                             format!("{}%", (v * 100.).round() as i32)
@@ -33513,6 +33520,12 @@ impl Render for Workspace {
                 (
                     t.g_active_hdr,
                     vec![
+                        // First, as INACTIVE TERMINALS leads with its own.
+                        (
+                            G::ActiveBrightness,
+                            t.g_brightness,
+                            grade.active_brightness_at_edge(),
+                        ),
                         (G::Text, t.g_text, grade.text),
                         (
                             G::ImageGlow,
