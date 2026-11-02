@@ -13013,8 +13013,16 @@ impl Render for TerminalView {
                     .relative()
                     .flex_1()
                     .overflow_hidden()
+                    // Under Clean the terminal is open on three sides: the rule
+                    // under its header stays, and the split draws the upright
+                    // between neighbours (`skin::open_tiling`).
                     .when(sk.unboxed() && on_terminal, |d| {
-                        d.border(px(sk.m.hairline)).border_color(sk.ink.rule)
+                        let d = d.border_color(sk.ink.rule);
+                        if crate::skin::open_tiling(cx) {
+                            d.border_t(px(sk.m.hairline))
+                        } else {
+                            d.border(px(sk.m.hairline))
+                        }
                     })
                     .child({
                         let store = self.content_bounds.clone();
