@@ -5356,6 +5356,9 @@ struct Workspace {
     /// do the moves until the button comes up: a picture being panned, a
     /// video's track being scrubbed.
     focus_doc_holding: bool,
+    /// The pane the reading frame reads has held focus since the frame
+    /// opened ([`docopen::frame_follows_focus`]).
+    focus_read_seen: bool,
     /// Where the clip playing over a page in the reader was last drawn, in
     /// window coordinates: a press inside it is the clip's, not the page's.
     focus_clip_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
@@ -6856,6 +6859,7 @@ impl Workspace {
             focus_sel: None,
             focus_sel_drag: false,
             focus_doc_holding: false,
+            focus_read_seen: false,
             focus_clip_bounds: Arc::new(Mutex::new(None)),
             focus_clip_holding: false,
             focus_talk: None,
@@ -15797,6 +15801,7 @@ impl Workspace {
         }
         pane.update(cx, |v, cx| v.set_being_read(true, cx));
         self.focus_read = Some(pane.downgrade());
+        self.focus_read_seen = false;
         self.focus_inline = false;
         self.focus_turn_nav = transcript::TurnNav::default();
         // Each FOCUS opens at fit-to-modal; the header slider takes it from there.
@@ -15842,6 +15847,7 @@ impl Workspace {
         if let Some(pane) = self.focus_read.take().and_then(|w| w.upgrade()) {
             pane.update(cx, |v, cx| v.set_being_read(false, cx));
         }
+        self.focus_read_seen = false;
         self.focus_sel = None;
         self.focus_sel_drag = false;
         *self.focus_map.lock().unwrap() = None;
@@ -38322,6 +38328,29 @@ impl Render for Workspace {
         // document it shows is read as that document, and anything else is read
         // as its terminal (`docopen::read_from`).
         let focus_pane = self.focus_read.as_ref().and_then(|w| w.upgrade());
+        // A document being read puts its frame away when focus moves to
+        // another pane, so typing never lands in a shell hidden behind it.
+        if let Some(read) = focus_pane
+            .as_ref()
+            .filter(|p| p.read(cx).reading_view(cx).is_some())
+        {
+            let focus = if read.focus_handle(cx).contains_focused(window, cx) {
+                docopen::FrameFocus::Read
+            } else if self
+                .every_view()
+                .iter()
+                .any(|p| p.focus_handle(cx).contains_focused(window, cx))
+            {
+                docopen::FrameFocus::Other
+            } else {
+                docopen::FrameFocus::Elsewhere
+            };
+            let (close, seen) = docopen::frame_follows_focus(focus, self.focus_read_seen);
+            self.focus_read_seen = seen;
+            if close {
+                cx.defer_in(window, |ws, _window, cx| ws.close_focus_read(cx));
+            }
+        }
         let focus_doc = focus_pane
             .as_ref()
             .and_then(|pane| pane.update(cx, |v, cx| v.reader_document(cx)));
@@ -39313,6 +39342,85 @@ mod tests {
         assert!(legacy.skin.is_none());
     }
 
+    /// Issue 1293: Alt+arrows move focus while a document is read, and the
+    /// frame used to stay drawn over a pane that now took the typing. Focus
+    /// moving to another pane puts the frame and the document away; focus
+    /// landing on the read pane first, as the frame opens, does not.
+    #[gpui::test]
+    fn focus_moving_to_another_pane_puts_the_reading_frame_away(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.split(SplitDir::Col, w, cx)));
+        }
+        draw(cx);
+        let panes = ws.read_with(cx, |ws, _| ws.every_view());
+        assert_eq!(panes.len(), 2, "two panes side by side");
+        for p in &panes {
+            let stop = p.read_with(cx, |v, _| v.fixture_shutdown());
+            cx.on_quit(stop);
+        }
+        let (read, other) = (panes[0].clone(), panes[1].clone());
+
+        let dir = std::env::temp_dir().join(format!("td-frame-focus-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("plan.md");
+        std::fs::write(&doc, "# Plan\n\nA paragraph to read.\n").unwrap();
+        let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+
+        cx.update(|w, cx| w.focus(&read.focus_handle(cx), cx));
+        read.update(cx, |v, cx| v.open_to_read(target, None, cx))
+            .unwrap();
+        draw(cx);
+        draw(cx);
+        let reading = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| ws.focus_read.as_ref().and_then(|w| w.upgrade()))
+                .is_some_and(|p| p == read)
+        };
+        assert!(reading(cx), "the document opens in the reading frame");
+        assert!(
+            read.read_with(cx, |v, cx| v.reading_view(cx).is_some()),
+            "and is being read there"
+        );
+
+        cx.update(|w, cx| w.focus(&other.focus_handle(cx), cx));
+        draw(cx);
+        draw(cx);
+        assert!(!reading(cx), "focus on the other pane puts the frame away");
+        assert!(
+            !read.read_with(cx, |v, _| v.has_float()),
+            "and the document it was reading goes with it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[gpui::test]
     fn minimal_header_keeps_model_and_menu_without_an_invisible_trash_target(
         cx: &mut gpui::TestAppContext,
@@ -39528,10 +39636,12 @@ mod tests {
             "the sheet let typing through to the shell:\n{screen}"
         );
 
-        // The control: with the sheet shut, the same letters reach cat.
+        // The control: with the sheet shut, the same letters reach cat. Up to
+        // ten seconds for the echo: a loaded CI runner missed two (run
+        // 41690913559) on a tree whose own push run passed.
         cx.simulate_keystrokes("z q");
         let mut seen = false;
-        for _ in 0..200 {
+        for _ in 0..1000 {
             draw(cx);
             if pane.read_with(cx, |v, _| v.fixture_screen_text().contains("zq")) {
                 seen = true;
@@ -39633,8 +39743,14 @@ mod tests {
                     cx,
                 );
                 // The other pane has its document open: that must not move the
-                // focused pane's first rung.
-                v.open_newest_handover(cx);
+                // focused pane's first rung. It is opened the way an agent opens
+                // its own, in the small square: a person's open is read in the
+                // frame, and the frame is put away once focus leaves its pane
+                // (issue 1293), so it could not still be up here.
+                let target = crate::docopen::drawable_document(std::path::Path::new(&theirs))
+                    .expect("a Markdown file");
+                v.open_float(target, None, cx)
+                    .expect("the small square opens");
             });
         });
         let draw = |cx: &mut gpui::VisualTestContext| {
