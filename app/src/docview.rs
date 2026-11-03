@@ -277,6 +277,23 @@ pub struct SendNotes {
 
 impl EventEmitter<SendNotes> for DocumentView {}
 
+/// What a reading key asks of a document's notes, from the FOCUS frame
+/// ([`crate::keylayer::ReadKey`]): the gestures a pointer makes on the note
+/// buttons and the CONCUR spaces, made from the keyboard.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ReadAct {
+    /// Move the keyboard's selection.
+    Pick(notes_ui::Pick),
+    /// Write a note on the selection.
+    Note,
+    /// Stamp the selected decision, or lift its stamp.
+    Concur,
+    /// Put the notes map on the clipboard.
+    CopyMap,
+    /// Let go of the selection.
+    Unselect,
+}
+
 /// A brief's notes, driven by the control socket: the note box's and the
 /// bar's gestures, for a caller with no pointer.
 #[derive(Clone, Debug, PartialEq)]
@@ -1097,6 +1114,16 @@ impl DocumentView {
     #[cfg(test)]
     pub(crate) fn seat_and_theme(&self) -> (DocSeat, Option<Arc<Theme>>) {
         (self.seat, self.theme.clone())
+    }
+
+    /// A reading key's ask of the document's notes ([`ReadAct`]). Answers
+    /// whether anything changed.
+    pub fn read_act(&mut self, act: ReadAct, cx: &mut Context<Self>) -> bool {
+        let changed = self.backend.read_act(act, cx);
+        if changed {
+            cx.notify();
+        }
+        changed
     }
 
     /// Whether a note is being written in a brief's note box: while it is,

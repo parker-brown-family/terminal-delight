@@ -1,0 +1,125 @@
+<!doctype html>
+<html lang="en"><head><title>Reading an artifact from the keyboard</title><!-- briefing: {"id": "artifact-keyboard", "purpose": "decision"} --><!--BRIEF:head-->
+<style>
+/* This brief's own figures and notes. The house look arrives through BRIEF:head. */
+svg{display:block;width:100%;height:auto}.small{font-size:13px;color:var(--dim)}
+svg .t{font:12px var(--mono)} svg .ts{font:10.5px var(--mono)} svg .tb{font:700 13px var(--mono)}
+.cmp{width:100%;border-collapse:collapse;font-size:13.5px}
+.cmp td,.cmp th{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+.cmp th{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.cmp kbd,.strip kbd{font:12px var(--mono);padding:0 5px;border:1px solid var(--line2);border-radius:5px;color:var(--fgb)}
+.page{font:13px/1.6 var(--sans,inherit);border:1px solid var(--line2);border-radius:10px;overflow:hidden;background:color-mix(in srgb,var(--bg0) 90%,transparent)}
+.page .bar{display:flex;justify-content:space-between;padding:5px 12px;font:11.5px var(--mono);color:var(--dim);border-bottom:1px solid var(--line2)}
+.page .body{padding:10px 18px 12px}
+.page .blk{padding:6px 10px;margin:6px 0;border-radius:8px;border:1px solid transparent;color:var(--fg)}
+.page .blk b{color:var(--fgb)}
+.page .sel{border-color:var(--acc);box-shadow:0 0 0 1px var(--acc),0 0 16px color-mix(in srgb,var(--acc) 35%,transparent)}
+.page .stamp{float:right;font:700 11px var(--mono);color:#0ca30c;border:1.5px solid #0ca30c;border-radius:5px;padding:0 6px;transform:rotate(-6deg)}
+.page .wait{float:right;font:700 11px var(--mono);color:#d03b3b;border:1.5px dashed #d03b3b;border-radius:5px;padding:0 6px}
+.strip{display:flex;flex-wrap:wrap;gap:6px 12px;padding:8px 12px;border-top:1px solid var(--line2);font:11.5px var(--mono);color:var(--dim)}
+.strip b{color:var(--acc);letter-spacing:.12em}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="eyebrow">Briefing · decision · HTML · difficulty 6/10, so one plan page and one approval</div><h1>Reading an artifact from the keyboard</h1><p class="lede">You want an opened artifact to be something you read, not a square in the corner: large, centred, and driven entirely from the keyboard, down to choosing a section, writing a note, concurring and sending. Today the square is built for the opposite job, so a few of the choices below reverse earlier ones and are yours to make.</p><nav class="sections"></nav></div></header>
+<main class="wrap">
+
+<section class="pane"><h2 id="sec-today" data-brief-anchor="sec-today"><span class="n">01</span> The square was built to read beside, not to read</h2>
+<p>An Alt+clicked page opens as a square beside the line you clicked. It keeps three keys (Escape, Ctrl+↑/↓, send) and, by design, <em>every other key still reaches the shell underneath</em>. Your request makes reading the main job, so that rule flips.</p>
+<figure id="fig-frame" data-brief-anchor="fig-frame"><span class="lbl">01 · Where an artifact opens, today and proposed</span>
+<div class="scroller"><svg viewBox="0 0 660 250" role="img" aria-label="Two window outlines: today a square at the right of one pane, proposed a frame 80 percent wide centred in the window with 5 percent above and 10 percent below">
+<text class="tb ink" x="10" y="16">TODAY</text>
+<rect class="box struct" x="10" y="24" width="300" height="200" rx="6" fill="none"/>
+<line class="wire" x1="160" y1="24" x2="160" y2="224"/>
+<text class="ts ink2" x="18" y="40">pane A</text><text class="ts ink2" x="168" y="40">pane B (clicked)</text>
+<rect class="box mine" x="212" y="96" width="92" height="92" rx="5"/>
+<text class="ts ink" x="258" y="146" text-anchor="middle">56% of B</text>
+<line class="wire" x1="168" y1="90" x2="300" y2="90" stroke-dasharray="3 3"/><text class="ts ink2" x="170" y="86">clicked line</text>
+<text class="ts ink2" x="10" y="242">keys: Esc, Ctrl+↑↓, send. Rest → shell</text>
+<text class="tb ink" x="350" y="16">PROPOSED</text>
+<rect class="box struct" x="350" y="24" width="300" height="200" rx="6" fill="none"/>
+<rect class="box ready" x="380" y="34" width="240" height="170" rx="6"/>
+<text class="ts ink" x="500" y="122" text-anchor="middle">80% of the window</text>
+<text class="ts ink2" x="626" y="32">5%</text><text class="ts ink2" x="626" y="218">10%</text>
+<text class="ts ink2" x="356" y="122">10%</text><text class="ts ink2" x="624" y="122">10%</text>
+<text class="ts ink2" x="350" y="242">keys: all of them, except the window's and the pane's chords</text>
+</svg></div>
+<figcaption><b>Measure the frame against the window, not the pane.</b> In a tiled layout a pane can be a third of the screen, and 80% of that is too narrow to read. The FOCUS reader on Alt+R already draws a pane's document in a frame 80% of the window, so the window can already draw this.</figcaption>
+<p class="small">Today's geometry is from the code: <code>float_home</code> in docopen.rs (side = 56% of the pane's width, capped at 84% of its height). FOCUS's frame is <code>ReaderGlass::in_window</code> in main.rs, 80% × 80% and centred. Your numbers (80% wide, 5% above, 10% below, so 85% tall) are close to FOCUS's but not the same; the proposal uses yours.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-who" data-brief-anchor="sec-who"><span class="n">02</span> Who gets a keystroke when boxes stack</h2>
+<p>A video opens in its own box on top of the page that played it, and today the top box hears the keyboard. Clips have nothing to comment on, so: <b>the page or Markdown file always gets the keys</b>, and a clip only answers the two "put a box away" keys.</p>
+<figure id="fig-ladder" data-brief-anchor="fig-ladder"><span class="lbl">02 · One keystroke, top to bottom</span>
+<div class="scroller"><svg viewBox="0 0 660 300" role="img" aria-label="A stack of layers from F1 help down to the shell, showing the reading document swallowing every key the window and pane chords leave, the clip box taking none, and the shell receiving nothing while reading">
+<g class="t">
+<rect class="box struct" x="20" y="10" width="400" height="30" rx="6"/><text class="ink" x="32" y="30">F1 help · Alt+K face · window chords</text><text class="ts ink2" x="430" y="30">never taken: Alt+O, Alt+Q, Alt+E, Alt+0…9</text>
+<rect class="box struct" x="20" y="46" width="400" height="30" rx="6"/><text class="ink" x="32" y="66">pane chords</text><text class="ts ink2" x="430" y="66">unchanged: Alt+A, Alt+S, Ctrl+Shift+…</text>
+<rect class="box struct" x="20" y="82" width="400" height="30" rx="6"/><text class="ink" x="32" y="102">sticky note / header rename (if writing)</text><text class="ts ink2" x="430" y="102">unchanged</text>
+<rect class="box fail" x="20" y="118" width="400" height="34" rx="6"/><text class="ink" x="32" y="140">video / sound box (top of the stack)</text><text class="ts ink2" x="430" y="134">Esc and Ctrl+W put it away;</text><text class="ts ink2" x="430" y="148">every other key goes past it</text>
+<rect class="box ready" x="20" y="158" width="400" height="60" rx="6"/><text class="ink" x="32" y="180">the page or Markdown being read</text><text class="ts ink2" x="32" y="200">takes every key left: reading, targets,</text><text class="ts ink2" x="32" y="212">notes, concur, send</text><text class="ts ink2" x="430" y="186">today: only Esc, Ctrl+↑↓, send</text>
+<rect class="box mine" x="20" y="224" width="400" height="30" rx="6"/><text class="ink" x="32" y="244">shell or agent underneath</text><text class="ts ink2" x="430" y="244">gets nothing while you read</text>
+<rect class="box unk" x="20" y="262" width="400" height="30" rx="6" stroke-dasharray="4 3"/><text class="ink" x="32" y="282">Ctrl+C while reading</text><text class="ts ink2" x="430" y="282">undecided: see question 3</text>
+</g></svg></div>
+<figcaption><b>The clip goes keyboard-deaf, and keys pass under it to the page.</b> Today the pane always hands keys to whichever box is on top, so this one rule changes for a clip. Escape peels one thing per press: a note you are writing, then a selected section, then the top box. Ctrl+W keeps its current job of putting away one box per press.</figcaption>
+<p class="small">The layer order is from the routing table in keylayer.rs on the 0.5.0 line (the <code>LADDER</code> and the <code>Float</code> rung). The clip stack, two boxes deep at most, is <code>FloatingDoc::below</code> in pane.rs. Red here marks the clip box, which loses the keys it has today; amber is the shell, which loses them while you read. Nothing in this picture has been built.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-keys" data-brief-anchor="sec-keys"><span class="n">03</span> What the keys do once the page has them</h2>
+<p>A page is drawn as a picture, but TD already knows where every section, figure and decision sits on it, because it draws their note buttons and CONCUR spaces itself. Markdown knows its blocks the same way. So the keyboard has targets to move between.</p>
+<figure id="fig-reading" data-brief-anchor="fig-reading"><span class="lbl">03 · A brief in the reading frame, a decision selected</span>
+<div class="page"><div class="bar"><span>brief.html · 4 notes</span><span>⧉ copy map · ↪ send</span></div>
+<div class="body">
+<div class="blk"><b>02 Who gets a keystroke when boxes stack</b><br>A video or a sound opens in its own glowing box…</div>
+<div class="blk"><span class="stamp">CONCUR</span><b>Q1 · Does reading take the keyboard?</b><br>Recommend yes.</div>
+<div class="blk sel"><span class="wait">awaiting</span><b>Q2 · Window frame or pane frame?</b><br>Recommend the window.</div>
+<div class="blk"><span class="wait">awaiting</span><b>Q3 · Ctrl+C while reading</b></div>
+</div>
+<div class="strip"><b>READING</b><span><kbd>j</kbd><kbd>k</kbd> line</span><span><kbd>Space</kbd> page</span><span><kbd>Tab</kbd> next target</span><span><kbd>]</kbd><kbd>[</kbd> next decision awaiting</span><span><kbd>Enter</kbd> note</span><span><kbd>c</kbd> concur</span><span><kbd>Ctrl+Shift+Enter</kbd> send</span><span><kbd>Esc</kbd> back</span><span><kbd>?</kbd> all keys</span></div></div>
+<figcaption><b>Concurring through a decision brief takes three keys per decision:</b> <kbd>]</kbd> jumps to the next decision without a stamp, <kbd>c</kbd> stamps it, <kbd>]</kbd> again. One more chord sends the whole map to the agent.</figcaption>
+<p class="small">A mockup with this page's own headings. The section boxes are the anchor rectangles <code>extract.js</code> already reads off every brief; Markdown blocks come from <code>md_notes.rs</code>. Markdown takes notes but not CONCUR stamps today, so there <kbd>c</kbd> and <kbd>]</kbd> say "no decisions here" rather than doing nothing.</p></figure>
+
+<figure id="fig-keymap" data-brief-anchor="fig-keymap"><span class="lbl">04 · The reading keys, and what each one costs</span>
+<div class="scroller"><table class="cmp">
+<tr><th>Key</th><th>Does</th><th>Taken from</th></tr>
+<tr><td><kbd>j</kbd> <kbd>k</kbd> <kbd>↓</kbd> <kbd>↑</kbd></td><td>scroll a wheel notch</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>Space</kbd> <kbd>Shift+Space</kbd> <kbd>PgDn</kbd> <kbd>PgUp</kbd></td><td>a page</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>g</kbd> <kbd>G</kbd> <kbd>Home</kbd> <kbd>End</kbd></td><td>top, end</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>Tab</kbd> <kbd>Shift+Tab</kbd></td><td>select the next or previous section, figure or decision; it scrolls into view with a ring</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>]</kbd> <kbd>[</kbd></td><td>the next or previous decision with no stamp yet</td><td>matches block motion in the sibling's scroll mode</td></tr>
+<tr><td><kbd>Enter</kbd></td><td>write a note on the selection; <kbd>Ctrl+Enter</kbd> adds it, as it does today</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>c</kbd></td><td>CONCUR the selection, or lift the stamp</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>y</kbd></td><td>copy the notes map</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>Ctrl+Shift+Enter</kbd></td><td>send the notes to the agent beside you</td><td>already this, built and tested</td></tr>
+<tr><td><kbd>+</kbd> <kbd>-</kbd> <kbd>0</kbd> <kbd>1</kbd></td><td>zoom, fit, actual size</td><td>already the Document face's keys</td></tr>
+<tr><td><kbd>?</kbd></td><td>show every reading key</td><td>the shell, while reading</td></tr>
+<tr><td><kbd>Esc</kbd></td><td>drop the draft, then the selection, then the top box</td><td>already closes the square</td></tr>
+<tr><td><kbd>Alt+O</kbd></td><td>with nothing open, opens the newest artifact; with a document open, raises the ARTIFACTS list numbered 1–9, newest first</td><td>the sibling's, a window chord the frame never takes</td></tr>
+</table></div>
+<figcaption><b>None of the window's or the pane's chords move, including the sibling's new Alt+O, Alt+Q, Alt+E and Alt+0–9.</b> Every new key is a plain key, so it costs nothing outside the reading frame, and while you read, the shell underneath is the only thing that loses keys.</figcaption>
+<p class="small">A proposal. The same table would drive a pane's Document face (the page shown instead of the terminal, on Alt+K), which already swallows every key, so both places a document is read share one keymap. Find-in-page (<kbd>/</kbd>) is left out: whether the page picture carries word positions has not been checked.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-sibling" data-brief-anchor="sec-sibling"><span class="n">04</span> Where this meets the keyboard work next door</h2>
+<p>The agent beside me in this tab ("Keyboard pane navigation and scroll mode") is building Alt+O to open the newest artifact, plus pane marks and a scroll mode. Its Alt+O is the way into this frame, and both plans edit the same routing table, so this work lands on top of its first slice.</p>
+</section>
+
+<section class="pane grill"><h2 id="sec-decide" data-brief-anchor="sec-decide"><span class="n">05</span> Yours to settle</h2>
+<div class="ask" id="q-takes" data-brief-anchor="q-takes"><h3>1 · Does an open artifact take the keyboard?</h3>
+<p>This reverses the square's "read beside the shell" rule for pages and Markdown. Images and PDFs would stay as they are.</p>
+<span class="rec">Recommend yes, with no "beside" mode in the first cut. Escape gets you back to the shell in one press.</span></div>
+<div class="ask" id="q-frame" data-brief-anchor="q-frame"><h3>2 · Window frame or pane frame?</h3>
+<p>80% wide, 5% above, 10% below, measured against the whole window or against the pane that opened it.</p>
+<span class="rec">Recommend the window. Moving focus to another pane puts the frame away and coming back brings it back, so one window never shows two frames.</span></div>
+<div class="ask" id="q-ctrlc" data-brief-anchor="q-ctrlc"><h3>3 · Does Ctrl+C reach the agent while you read?</h3>
+<p>Swallowed, a habitual copy cannot interrupt a turn; passed through, you can stop an agent without closing the page.</p>
+<span class="rec">Recommend swallowed, as the Document face already does. Escape then Ctrl+C is two presses.</span></div>
+<div class="ask" id="q-send" data-brief-anchor="q-send"><h3>4 · Which key sends to the agent?</h3>
+<p>Ctrl+Shift+Enter is built, tested, and works inside the note box too. A plain <kbd>s</kbd> is quicker but types an s inside the note box.</p>
+<span class="rec">Recommend keeping Ctrl+Shift+Enter, one send key everywhere.</span></div>
+<div class="ask" id="q-order" data-brief-anchor="q-order"><h3>5 · What ships first?</h3>
+<span class="rec">Recommend: 1 · the reading frame at your numbers. 2 · the page takes the keys, the clip goes deaf, reading and zoom keys, the Escape order. 3 · targets: Tab, ] [, Enter, c, y, on pages and Markdown. Each is usable alone, and each lands after the sibling's first slice.</span></div>
+</section>
+
+<footer><p>Primary artifact: this brief. Every claim about today's behaviour was read from the dev/0.5.0 branch at 08bb6f3b on 2026-11-02; nothing proposed here has been built or pressed.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>

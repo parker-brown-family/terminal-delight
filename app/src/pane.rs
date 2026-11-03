@@ -488,6 +488,10 @@ pub(crate) struct FloatingDoc {
     /// when the clip closes. `None` for every square that is not a clip, and
     /// for a clip opened over the bare terminal.
     below: Option<Box<FloatingDoc>>,
+    /// A person opened this to read it ([`TerminalView::open_to_read`]): it
+    /// came up in the FOCUS frame, and it goes when the frame does. A square
+    /// an agent opened beside itself is not, and stays small.
+    to_read: bool,
 }
 
 impl FloatingDoc {
@@ -511,6 +515,7 @@ impl FloatingDoc {
             _send: send,
             _finished: finished,
             below: None,
+            to_read: false,
         }
     }
 
@@ -3243,6 +3248,12 @@ pub struct TerminalView {
     /// it is read is never taken for the one that was lent. `None` while
     /// nothing is lent. See [`TerminalView::reader_document`].
     lent: Option<gpui::EntityId>,
+    /// The clip playing over the page lent to the reader, lent with it, so
+    /// the reader draws it on top of the page and this pane does not.
+    lent_clip: Option<gpui::EntityId>,
+    /// What is lent is a document a person opened to read
+    /// ([`TerminalView::open_to_read`]), so the frame closes when it goes.
+    lent_to_read: bool,
     /// The sticky note pinned to this pane's glass, if any. See [`crate::sticky`]
     /// — in particular why Esc does NOT take it down.
     note: Option<crate::sticky::Sticky>,
@@ -4387,6 +4398,15 @@ impl TerminalView {
         if !on {
             self.take_back(cx);
             *self.read_history.get_mut() = None;
+            // A document a person opened to read goes with the frame it was
+            // read in, clip and all; a square that was already up when the
+            // reader opened over it stays, as it was.
+            let read = |f: &FloatingDoc| f.to_read || f.below.as_ref().is_some_and(|b| b.to_read);
+            while self.float.as_ref().is_some_and(read) {
+                if !self.request_close_float(cx) {
+                    break;
+                }
+            }
         }
     }
 
@@ -4404,30 +4424,90 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         let want = if self.being_read {
-            self.read_document()
+            self.read_document(cx)
         } else {
             None
         };
         let want_id = want.as_ref().map(|v| v.entity_id());
         if want_id != self.lent {
+            // A document opened to be read that has gone — Ctrl+W, a link
+            // that replaced it, its file handed to the desktop — takes the
+            // frame it was read in with it, rather than leaving the reader
+            // to fall back on the terminal it was opened over.
+            let ended = self.lent_to_read && want.is_none();
             self.take_back(cx);
             if let Some(view) = &want {
                 view.update(cx, |v, cx| v.lend(true, cx));
             }
             self.lent = want_id;
+            self.lent_to_read = want.as_ref().is_some_and(|w| {
+                let mut floats = self
+                    .float
+                    .iter()
+                    .chain(self.float.iter().filter_map(|f| f.below.as_deref()));
+                floats.any(|f| f.to_read && f.view == *w)
+            });
+            if ended {
+                cx.emit(CloseFocusRead);
+            }
             cx.notify();
         }
         want
     }
 
+    /// The clip the FOCUS frame draws over the page it reads, lent to it with
+    /// the page; `None` when no clip plays over the page being read. Asked
+    /// every frame, after [`Self::reader_document`], on the same terms.
+    pub fn reader_clip(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let want = self
+            .float
+            .as_ref()
+            .filter(|top| top.below.as_ref().is_some_and(|b| self.lends(&b.view)))
+            .map(|top| top.view.clone());
+        let want_id = want.as_ref().map(|v| v.entity_id());
+        if want_id != self.lent_clip {
+            self.take_back_clip(cx);
+            if let Some(view) = &want {
+                view.update(cx, |v, cx| v.lend(true, cx));
+            }
+            self.lent_clip = want_id;
+            cx.notify();
+        }
+        want
+    }
+
+    /// The page or Markdown file being READ in the FOCUS frame, while one is:
+    /// the document that takes every key ([`crate::keylayer::Layer::Reading`]).
+    /// A picture or a PDF lent to the reader is only being looked at.
+    pub(crate) fn reading_view(
+        &self,
+        cx: &App,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        if !self.being_read {
+            return None;
+        }
+        self.lent_view()
+            .filter(|v| v.read(cx).target().kind.reads())
+    }
+
     /// The document [`crate::docopen::read_from`] names for this pane now,
     /// while the pane holds one there.
-    fn read_document(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+    fn read_document(&self, cx: &App) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         use crate::docopen::{DocSeat, ReadFrom};
         let face = self.bench.face();
         let square_up = self.float.is_some() && float_shows_on(face);
         match crate::docopen::read_from(face, square_up) {
-            ReadFrom::Document(DocSeat::Float) => self.float.as_ref().map(|f| f.view.clone()),
+            // A clip over a page is read as the page, with the clip drawn on
+            // top of it in the frame: the page is what takes the keys.
+            ReadFrom::Document(DocSeat::Float) => {
+                self.float.as_ref().map(|f| match f.below.as_deref() {
+                    Some(page) if f.view.read(cx).target().kind.plays() => page.view.clone(),
+                    _ => f.view.clone(),
+                })
+            }
             ReadFrom::Document(DocSeat::Face) => self.doc.as_ref().map(|d| d.view.clone()),
             ReadFrom::Grid => None,
         }
@@ -4438,8 +4518,13 @@ impl TerminalView {
     pub fn lent_view(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         let id = self.lent?;
         let float = self.float.as_ref().map(|f| &f.view);
+        let below = self
+            .float
+            .as_ref()
+            .and_then(|f| f.below.as_ref())
+            .map(|b| &b.view);
         let face = self.doc.as_ref().map(|d| &d.view);
-        [float, face]
+        [float, below, face]
             .into_iter()
             .flatten()
             .find(|v| v.entity_id() == id)
@@ -4450,18 +4535,34 @@ impl TerminalView {
     /// does not. A view drawn in two places measures two boxes, and a page
     /// laid out at each in turn never settles.
     fn lends(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
-        self.lent == Some(view.entity_id())
+        let id = Some(view.entity_id());
+        self.lent == id || self.lent_clip == id
     }
 
     /// Take back whatever was lent to the reader, if this pane still holds
     /// it. A view it no longer holds was handed back where it went:
     /// `show_document` and `float_of` hand back any view they are given.
     fn take_back(&mut self, cx: &mut Context<Self>) {
+        self.take_back_clip(cx);
+        self.lent_to_read = false;
         let view = self.lent_view();
         self.lent = None;
         if let Some(view) = view {
             view.update(cx, |v, cx| v.lend(false, cx));
             cx.notify();
+        }
+    }
+
+    /// Take back the clip lent with the page, if it is still on top here.
+    fn take_back_clip(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.lent_clip.take() else {
+            return;
+        };
+        if let Some(view) = self.float.as_ref().map(|f| f.view.clone()) {
+            if view.entity_id() == id {
+                view.update(cx, |v, cx| v.lend(false, cx));
+                cx.notify();
+            }
         }
     }
 
@@ -5561,6 +5662,8 @@ impl TerminalView {
                 .unwrap_or_else(Instant::now),
             being_read: false,
             lent: None,
+            lent_clip: None,
+            lent_to_read: false,
             note,
             peeled: None,
             note_hover: None,
@@ -7637,6 +7740,7 @@ impl TerminalView {
             // note box to take. The document is asked first: the note box, then
             // a brief's own dialog, is what Escape puts away before the square
             // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Reading => self.reading_key(ks, cx),
             crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
@@ -7680,7 +7784,9 @@ impl TerminalView {
     /// One read per keystroke, so every layer is judged against the same instant
     /// — the alternative is a ladder whose rungs disagree about what is open.
     pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+        let reading = self.reading_view(cx).is_some();
         crate::keylayer::Up {
+            reading,
             agent: self.mode.is_agent(),
             paint: theme::paint_mode(cx),
             ctx_menu: self.ctx_menu.is_some(),
@@ -7689,7 +7795,11 @@ impl TerminalView {
             // every key, as it does on the pane — Escape puts the note box
             // away, and a page key is the note's — so the reader claims none
             // until the box is closed.
-            reader: self.being_read && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
+            // A document being read takes the reader's keys too, Escape and
+            // paging among them: one ladder of Escape, and one way to page.
+            reader: self.being_read
+                && !reading
+                && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
             sticky: self.sticky_composing(),
             rename: self.renaming.is_some(),
             note: self.note.is_some(),
@@ -9594,7 +9704,7 @@ impl TerminalView {
                             let (row, _, _) = self.viewport_cell(ev.position);
                             // Refused only for HTML with no engine, which has
                             // already gone to the desktop and said why.
-                            let _ = self.open_float(target, Some(row), cx);
+                            let _ = self.open_to_read(target, Some(row), cx);
                         }
                     }
                     Some(Took::Stop)
@@ -11322,7 +11432,7 @@ impl Render for TerminalView {
                                 MouseButton::Left,
                                 cx.listener(move |v, _, _, cx| {
                                     if let Some(doc) = doc.clone() {
-                                        let _ = v.open_float(doc, Some(row_at), cx);
+                                        let _ = v.open_to_read(doc, Some(row_at), cx);
                                     }
                                     v.ctx_menu = None;
                                     cx.stop_propagation();
@@ -18016,7 +18126,10 @@ mod tests {
         );
         assert!(open.contains("self.bench_open_href("), "{open}");
         let href = method_body(&bench_src, "fn bench_open_href(");
-        assert!(href.contains("self.open_float(target, None, cx)"), "{href}");
+        assert!(
+            href.contains("self.open_to_read(target, None, cx)"),
+            "{href}"
+        );
         let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
         assert!(click.contains("crate::docopen::click_intent("), "{click}");
         assert!(

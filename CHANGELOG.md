@@ -43,6 +43,30 @@ sections from there down are what the 0.4.0 candidates already carried.
   Claude Code, lines, pages and turns move the program's own history. Ctrl
   and Alt chords still pass through, so Ctrl+C reaches a running agent.
 
+### Read an artifact from the keyboard
+
+- **A page or Markdown file you open is opened to read.** An Alt+click on its
+  path, the artifact chip and rail, Alt+O, or a link on the bench opens it in
+  the reading frame: 80% of the window wide and centred, 5% of the window
+  above it and 10% below. The FOCUS reader (Alt+R) uses the same frame. An
+  agent opening its own deliverable still gets the small square beside its
+  prompt, and images and PDFs still open in the square.
+- **While you read, the keyboard is the document's.** j/k and the arrows
+  scroll, Space and Shift+Space page, g and Shift+G go to the top and the end,
+  and + − 0 1 zoom. Tab and Shift+Tab walk the sections, figures and
+  decisions; ] and [ jump to the next decision without a CONCUR stamp; Enter
+  writes a note on the selection, c stamps it, and y copies the notes map.
+  Nothing you type reaches the shell underneath, Ctrl+C included. The window's
+  and the pane's own chords (Alt+arrows, Alt+O, Alt+Q, Alt+A, Ctrl+W …) still
+  work.
+- **Ctrl+Shift+Enter sends the notes to the agent and closes the document**,
+  once they have landed in its prompt. A send that fails leaves it open and
+  says why. The ↪ button does the same.
+- **A video or sound playing over a page takes no keys.** It plays in its box
+  on top of the page in the frame, and the page keeps the keyboard. Escape
+  puts away one thing at a time: the note being written, the selection, the
+  clip, then the document and the frame.
+
 ### Update Terminal Delight from inside TD
 
 - ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a

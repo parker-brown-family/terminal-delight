@@ -221,6 +221,41 @@ impl MarkdownDoc {
 // (`MarkdownDoc::wheel(self, …)`): Rust finds an inherent method before a
 // trait's, so that is the document's own and not this one calling itself.
 impl Backend for MarkdownDoc {
+    /// A reading key's ask of the notes, as a page answers it: a block is an
+    /// anchor, so Tab moves between blocks. A Markdown file takes no CONCUR
+    /// stamp, so `c` and `]` find nothing to do.
+    fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
+        use super::ReadAct;
+        let anchors = self.note_anchors();
+        let map = self.view.map(|v| self.note_map(v));
+        let Some(layer) = self.notes.as_mut() else {
+            return false;
+        };
+        match act {
+            ReadAct::Pick(how) => {
+                let Some(map) = map else {
+                    return false;
+                };
+                let Some(rect) = layer.select(&anchors, how, f32::from(map.scroll)) else {
+                    return false;
+                };
+                if let Some(y) = notes_ui::into_view(rect, &map) {
+                    let dy = y - f32::from(map.scroll);
+                    let delta = ScrollDelta::Pixels(point(px(0.), px(-dy)));
+                    MarkdownDoc::wheel(self, delta, 1.0, Some(f32::from(map.clip.size.height)));
+                }
+                true
+            }
+            ReadAct::Note => layer.open_selected(&anchors),
+            ReadAct::Unselect => layer.unselect(),
+            ReadAct::CopyMap => {
+                layer.copy_map(&anchors, cx);
+                true
+            }
+            ReadAct::Concur => false,
+        }
+    }
+
     /// The column, and over it the notes: each block's rule and 💬, the bar,
     /// and the note box above everything.
     fn element(
