@@ -62,6 +62,14 @@ sections from there down are what the 0.4.0 candidates already carried.
 - **Ctrl+Shift+Enter sends the notes to the agent and closes the document**,
   once they have landed in its prompt. A send that fails leaves it open and
   says why. The ↪ button does the same.
+- **Tab starts from the screen.** Once you have scrolled away from the
+  selection, Tab picks the first section on screen and Shift+Tab the last,
+  rather than carrying on from where you were pages ago.
+- **The note box names the element by its title only**, not by its id.
+- **Alt+O asks before it leaves the window.** When the newest artifact is a
+  web address or a file TD cannot draw, a small card names it: Enter opens it
+  in the browser (or with the desktop, for a file), Alt+O again raises the
+  artifact list instead, and Escape cancels.
 - **A video or sound playing over a page takes no keys.** It plays in its box
   on top of the page in the frame, and the page keeps the keyboard. Escape
   puts away one thing at a time: the note being written, the selection, the

@@ -269,6 +269,20 @@ struct CopyHint {
     does: crate::docopen::AltClick,
 }
 
+/// An artifact TD cannot draw, waiting for a yes before it leaves the window
+/// for the browser or the desktop ([`crate::keylayer::Layer::Ask`]).
+#[derive(Debug, Clone, PartialEq)]
+pub(crate) struct AskOutside {
+    /// What goes to the desktop's opener: the web address, or the file.
+    href: String,
+    /// The name the agent gave it.
+    label: String,
+    /// The handover it is, marked opened once it is.
+    key: String,
+    /// A web address rather than a file: what the question calls the place.
+    web: bool,
+}
+
 /// A few words the pane shows for [`SAID_FOR`], in a chip where the click
 /// that prompted them landed: why a click did something other than what its
 /// chip promised. TD has no toast, and this is where the person is looking.
@@ -3201,6 +3215,8 @@ pub struct TerminalView {
     copy_flash: Option<Instant>,
     /// What the pane is saying about the last click, while it says it.
     said: Option<Said>,
+    /// Alt+O's question before an artifact leaves the window.
+    ask_outside: Option<AskOutside>,
     /// The document floating over the terminal face, if one is open.
     float: Option<FloatingDoc>,
     /// Where the floating square's strip, buttons and body were laid out,
@@ -5639,6 +5655,7 @@ impl TerminalView {
             wb_alt_hint: None,
             copy_flash: None,
             said: None,
+            ask_outside: None,
             float: None,
             float_zones: std::rc::Rc::new(std::cell::RefCell::new(Vec::new())),
             doc_memo: std::cell::RefCell::new(None),
@@ -7723,6 +7740,7 @@ impl TerminalView {
                 cx.notify();
                 Handled::Declined
             }
+            crate::keylayer::Layer::Ask => self.ask_key(ks, cx),
             crate::keylayer::Layer::Reader => self.reader_key(&k, ks, cx),
             crate::keylayer::Layer::Sticky => {
                 // A note holding the cursor owns the keyboard, rename-box style:
@@ -7786,6 +7804,7 @@ impl TerminalView {
     pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
         let reading = self.reading_view(cx).is_some();
         crate::keylayer::Up {
+            ask: self.ask_outside.is_some(),
             reading,
             agent: self.mode.is_agent(),
             paint: theme::paint_mode(cx),
@@ -13215,6 +13234,60 @@ impl Render for TerminalView {
                         .child(said.text.clone()),
                 )
         });
+        // Alt+O's question about an artifact TD cannot draw: a card near the
+        // top of the screen, naming it, with the keys that answer it.
+        let ask_el = self.ask_outside.as_ref().filter(|_| !on_bench).map(|ask| {
+            let parts = crate::lang::current().strings().parts;
+            let title = if ask.web {
+                parts.pane_ask_browser
+            } else {
+                parts.pane_ask_desktop
+            };
+            div()
+                .absolute()
+                .left(px(grid_pad_x))
+                .right(px(grid_pad_x))
+                .top(px(grid_pad_y + self.cell_h))
+                .flex()
+                .justify_center()
+                .child(
+                    div()
+                        .max_w(px(560.))
+                        .min_w(px(0.))
+                        .flex()
+                        .flex_col()
+                        .gap(px(4.))
+                        .px(px(14.))
+                        .py(px(10.))
+                        .bg(th.surface.alpha(0.96))
+                        .border_2()
+                        .border_color(th.accent)
+                        .rounded(px(6.))
+                        .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
+                        .text_size(sk.text_px(12.))
+                        .text_color(th.text)
+                        .child(
+                            div()
+                                .text_color(th.accent)
+                                .font_weight(gpui::FontWeight::BOLD)
+                                .child(title),
+                        )
+                        .child(div().child(ask.label.clone()))
+                        .child(
+                            div()
+                                .text_color(th.text.alpha(0.6))
+                                .whitespace_nowrap()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(ask.href.clone()),
+                        )
+                        .child(
+                            div()
+                                .text_color(th.accent.alpha(0.85))
+                                .child(parts.pane_ask_keys),
+                        ),
+                )
+        });
         // Scroll mode's key strip, along the bottom of the screen, so the keys
         // the mode answers are in front of the person using them.
         let scroll_el = (self.scroll_mode && on_terminal).then(|| {
@@ -13590,6 +13663,7 @@ impl Render for TerminalView {
                     .children(float_cursor)
                     // Over the square: a link in it can be what prompted it.
                     .children(said_el)
+                    .children(ask_el)
                     .children(scroll_el)
                     // The glass meets its bezel in rounded, shadowed corners.
                     // Over everything ON the glass, since the lip's shadow falls
