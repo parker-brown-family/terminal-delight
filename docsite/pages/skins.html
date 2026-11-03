@@ -1,85 +1,124 @@
 <script type="application/json" data-page>
 {
   "title": "Skins",
-  "description": "A skin sets the shape of Terminal Delight's chrome: round or square corners, how edges are drawn, how the active tab is marked, how labels are set. Five are built in — default, deco, console, chalk and ops — and your own skin.toml reloads as you save it. Any skin works with any theme.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "A skin sets the shape and material of Terminal Delight's chrome: corners, edges, how the selection is marked, the interface fonts, paper or plain. Five are built in (default, deco, console, chalk and ops), and your own skin.toml appears as custom and reloads as you save it. Any skin works with any theme.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "The shape of the chrome around the panes"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">A <a href="/themes">theme</a> decides the colours. A skin decides the shape of everything around the terminals: whether corners are round or square, whether an edge is a hairline, a double rule or nothing, how the active tab stands out, and whether labels are capitals.</p>
+<p class="lede">A <a href="/themes">theme</a> decides the colours. A skin decides the shape of everything around the terminals: whether corners are round, square or cut, whether an edge is a hairline, a double rule or nothing, how the selected row stands out, which fonts the menus use, and whether the controls are plain or paper.</p>
 <figure class="td-fig">
-  <div class="figwrap skinfig" role="img" aria-label="The same row of three tabs and a chip in the three built-in skins. default: rounded tabs with hairline edges, the active one glowing. deco: square tabs with double rules and widely spaced letters. console: square tabs with no edges, capital letters, and a bar under the active one.">
+  <div class="figwrap skinfig" role="img" aria-label="The same row of three tabs and a chip in three of the built-in skins. default: rounded tabs with hairline edges, the active one glowing. deco: square tabs with double rules and widely spaced letters. console: square tabs with no edges, capital letters, and a bar under the active one.">
     <div class="row sk-default"><div class="who">default <span>▢ round · glow</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
     <div class="row sk-deco"><div class="who">deco <span>◈ square · double</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
     <div class="row sk-console"><div class="who">console <span>▤ square · rail</span></div><div class="strip"><span class="tab">api</span><span class="tab on">docs</span><span class="tab">logs</span><span class="chip">2 need you</span></div></div>
   </div>
-  <figcaption><b>Figure 1.</b> One strip of tabs in each built-in skin, with the same colours. Drawn by hand from each skin's settings over the <code>hacker</code> palette, not photographed from the app.</figcaption>
+  <figcaption><b>Figure 1.</b> One strip of tabs in three of the built-in skins, with the same colours. Drawn by hand from each skin's settings over the <code>hacker</code> palette, not photographed from the app.</figcaption>
 </figure>
-<p>Pick one from the <b>SKIN</b> row in the window's DESIGN tray (<code>🎨</code> in the footer), or run <code>terminal-delight ctl skin deco</code>. A skin applies to the whole window, never to one pane. Because a skin describes its colours as adjustments to the theme's (the accent at half strength, the text a little dimmer), every skin works with every theme.</p>
-<p class="invite">Technical has how a skin gets chosen and every key in <code>skin.toml</code>.</p>
+<p>Pick one from the <code>SKIN</code> row in the Style area of the window's painter (<code>🎨</code>, bottom right), or run <code>terminal-delight ctl skin chalk</code>. A skin dresses the whole window, never one pane. Chalk turns the controls into paper with handwritten labels; OPS is a command deck of cut corners and countable pips. Because a skin describes its colours as adjustments to the theme's, every skin works with every theme.</p>
+<p>Your own skin is a file: start from <code>terminal-delight skin --template chalk</code>, save it as <code>~/.config/terminal-delight/skin.toml</code>, and it appears as <code>custom</code> and reloads as you edit.</p>
+<p class="in-dev">Console is retired and TERMINIMALIST arrives: square, flat furniture with word labels that follows the Omarchy theme.</p>
+<p class="invite">Technical has the built-in skins, how one gets chosen, and every key in <code>skin.toml</code>.</p>
 </section>
 
 <section data-register="technical" data-headline="skin.toml">
+<h3>Built in</h3>
+<table>
+  <thead><tr><th>Skin</th><th>Icon</th><th>Hover text</th><th>What it does</th></tr></thead>
+  <tbody>
+    <tr><td><code>default</code></td><td><code>▢</code></td><td>Rounded controls and filled selections.</td><td>Round corners, hairline edges, a phosphor ring around the active item.</td></tr>
+    <tr><td><code>deco</code></td><td><code>◈</code></td><td>Square edges, double rules, spaced capitals, lit edge.</td><td>The Deco design asks for it.</td></tr>
+    <tr><td><code>console</code></td><td><code>▤</code></td><td>Minimal outlines, open spacing, active leading rail.</td><td>No edges, capitals, a rail beside the active row.</td></tr>
+    <tr><td><code>chalk</code></td><td><code>✿</code></td><td>Paper and chalk strokes in the current theme colours.</td><td>Controls, menus, gauges and the attention rail become deckled paper with grain and handwritten Caveat labels, while the terminal's own text stays monospace. It follows the palette, light or dark, and sticky notes gain paper fibres and a taped offcut with a pressed flower on the curl.</td></tr>
+    <tr><td><code>ops</code></td><td><code>⌖</code></td><td>Command deck: squared type, cut panels, pip gauges, lit edges.</td><td>Names in Oxanium, interface text in Chakra Petch, numbers in Share Tech Mono. Panels have cut corners, the notice and the focused pane's title sit between chevrons, the focused pane carries a hatched strip, the selected row is a solid bar with an arrow tip, allowances are rows of pips, and a faint grid lies under each region. The Tactical design asks for it.</td></tr>
+    <tr><td><code>custom</code></td><td>yours</td><td>Custom control styling.</td><td>Your <code>skin.toml</code>. In the row only while the file exists.</td></tr>
+  </tbody>
+</table>
+<p>The four fonts the skins name, Caveat, Oxanium, Chakra Petch and Share Tech Mono, ship with Terminal Delight under the SIL Open Font License, so a skin can name them on any machine.<sup><a href="#s1">1</a></sup></p>
+<div class="in-dev">
+<p>The row is <code>chalk</code>, <code>default</code>, <code>deco</code>, <code>ops</code>, <code>clean</code> <code>▫</code> (nearly square, flat, no glow; the Clean design asks for it) and <code>TERMINIMALIST</code>. Console is retired, and a saved Console opens as OPS. <code>custom</code> is no longer offered in the row, though a window already wearing it still shows it and <code>ctl skin custom</code> still selects the file.<sup><a href="#s3">3</a></sup></p>
+</div>
+
 <h3>Which skin draws</h3>
 <ol>
-  <li><code>terminal-delight ctl skin &lt;name&gt;</code>, until <code>ctl skin theme</code> undoes it.</li>
+  <li>A skin you chose, from the <code>SKIN</code> row or with <code>terminal-delight ctl skin &lt;name&gt;</code>. It stays until <code>ctl skin theme</code> hands the choice back.</li>
   <li>The file <code>TD_SKIN</code> names.</li>
-  <li>Your <code>~/.config/terminal-delight/skin.toml</code>, reloaded when you save it.</li>
-  <li><code>skin = "…"</code> in the theme file; <code>deco</code> asks for <code>deco</code>.</li>
+  <li>Your <code>~/.config/terminal-delight/skin.toml</code>.</li>
+  <li><code>skin = "…"</code> in the design's theme file: Tactical asks for <code>ops</code>, Deco for <code>deco</code>.</li>
   <li><code>default</code>.</li>
 </ol>
-<p>In the tray, <code>SKIN</code> lights whichever skin is drawing, and <code>◎ theme</code> appears once you've chosen one, to hand the choice back. Nothing is written on first run: with no <code>skin.toml</code>, the theme decides. An unknown name is refused with the list of known ones.</p>
+<p>The <code>SKIN</code> row lights whichever skin is drawing, chosen or not. Picking one there is a choice, so a design you pick afterwards no longer changes the skin. Nothing is written on first run. An unknown name is refused with the list of known ones: <code>err no skin "…" — have: …</code>. <code>ctl skin status</code> says what is drawing and what is available.<sup><a href="#s1">1</a></sup></p>
+<p class="in-dev">Picking a design never moves the skin, whether or not you ever chose one: a window keeps the skin it was drawing. A design file that names no skin asks for <code>ops</code>, so every design but Clean starts on OPS.<sup><a href="#s3">3</a></sup></p>
+
+<h3>Your own skin</h3>
+<p>Print a built-in skin to start from, edit it, and save it where the window looks:</p>
+<pre class="cmd"><code>terminal-delight skin --template chalk &gt; ~/.config/terminal-delight/skin.toml
+terminal-delight skin --check --skin ~/.config/terminal-delight/skin.toml --theme hacker</code></pre>
+<p>The file is checked every 300 ms. A valid save reloads it, and the window adopts it as <code>custom</code> unless you've chosen another skin. A save that doesn't parse prints <code>skin reload error (keeping current): …</code> and the last good skin stays, so an editor writing in two steps never flashes the default look. <code>--template default</code> lists every key, commented out, with the value it resolves to.<sup><a href="#s1">1</a></sup></p>
+<p><code>docs/skins/examples/field-notes.toml</code> in the repository is a second paper look made from the file alone: a monospace interface, restrained grain, plain notes and a glass terminal. The <code>td-skin</code> agent skill walks an agent from a reference picture to a checked skin file and a review in a private window, using the running binary's own catalogue.<sup><a href="#s2">2</a></sup></p>
 
 <h3>The file</h3>
-<p>Start from <code>app/skins/default.toml</code> in the repository, which lists every key, commented out. Every key is optional; one you leave out takes its default, worked out against the live palette.</p>
+<p>Every key is optional; one you leave out takes its default, worked out against the live palette.</p>
 <pre><code>name = "mine"
 icon = "▲"
 
+[font]
+family  = "Share Tech Mono"
+heading = "Oxanium"
+data    = "Share Tech Mono"
+
 [shape]
-corner   = "square"    # round | square
-boundary = "double"    # hairline | double | inset | none
-emphasis = "rail"      # fill | underline | bracket | rail | glow
+corner   = "cut"       # round | square | cut
+boundary = "hairline"  # hairline | double | inset | none
+emphasis = "bar"       # fill | underline | bracket | rail | glow | bar
 divider  = "line"      # line | double | none
-caps     = "tracked"   # off | upper | tracked
+caps     = "upper"     # off | upper | tracked
 shine    = "flat"      # gradient | flat
+material = "grid"      # plain | paper | grid
+
+[note]
+decoration = "plain"   # plain | flower
 
 [metric]
 radius = 0
-pad_x  = 8
-rail   = 3
+cut    = 8
 
 [ink]
-rule = { from = "accent", a = 0.5 }
-ink_on_mark = { from = "bg" }
-panel_raised = { from = "surface", l = 1.25, max_l = 0.30 }</code></pre>
+rule = { from = "accent", a = 0.2 }
+ink_on_mark = { from = "bg" }</code></pre>
 
 <h3>Shape</h3>
 <table>
   <thead><tr><th>Key</th><th>Default</th><th>Decides</th></tr></thead>
   <tbody>
-    <tr><td><code>corner</code></td><td><code>round</code></td><td>Rounded corners, none, or <code>cut</code>: the top-left and bottom-right corners of each region cut off, by the <code>cut</code> metric.</td></tr>
+    <tr><td><code>corner</code></td><td><code>round</code></td><td>Rounded corners, <code>square</code>, or <code>cut</code>: the top-left and bottom-right corners of each region cut off, by the <code>cut</code> metric.</td></tr>
     <tr><td><code>boundary</code></td><td><code>hairline</code></td><td>How a region's edge is drawn. <code>double</code> is two thin rules.</td></tr>
-    <tr><td><code>emphasis</code></td><td><code>fill</code>; the <code>default</code> skin sets <code>glow</code></td><td>How the active item stands out. <code>glow</code> is a phosphor ring, <code>rail</code> a bar along one side, <code>bar</code> a solid bar with an arrow tip, the way a Pip-Boy marks its selection.</td></tr>
+    <tr><td><code>emphasis</code></td><td><code>fill</code>; the <code>default</code> skin sets <code>glow</code></td><td>How the active item stands out. <code>glow</code> is a phosphor ring, <code>rail</code> a bar along one side, <code>bar</code> a solid bar with an arrow tip.</td></tr>
     <tr><td><code>divider</code></td><td><code>line</code></td><td>Horizontal dividers.</td></tr>
     <tr><td><code>caps</code></td><td><code>off</code></td><td>Labels as written, in capitals, or <code>tracked</code> with thin spaces between the letters.</td></tr>
     <tr><td><code>shine</code></td><td><code>gradient</code></td><td>Whether raised surfaces carry a soft gradient.</td></tr>
-    <tr><td><code>material</code></td><td><code>plain</code></td><td>What lies under each region: nothing, <code>paper</code> with its grain, or a faint <code>grid</code>.</td></tr>
+    <tr><td><code>material</code></td><td><code>plain</code></td><td>What lies under each region: nothing, <code>paper</code> with deckled edges and grain, or a faint <code>grid</code>.</td></tr>
+    <tr><td><code>tube</code></td><td><code>glass</code>; <code>stock</code> under paper</td><td>Whether the terminal reads as glass or as part of the paper stock around it.</td></tr>
     <tr><td><code>gauge</code></td><td><code>rail</code></td><td>How an allowance is drawn: a filled rail, or a row of <code>pips</code> you can count. A missing reading draws hollow pips, never empty ones.</td></tr>
     <tr><td><code>title</code></td><td><code>plain</code></td><td>Whether the top band's notice and the focused pane's title sit between <code>chevron</code>s, <code>» like this «</code>.</td></tr>
     <tr><td><code>focus</code></td><td><code>plain</code></td><td>Whether the pane with the keyboard carries a <code>hatch</code>ed strip along its top edge.</td></tr>
+    <tr class="in-dev"><td><code>controls</code> <span class="dev-tag">0.5.0 dev</span></td><td><code>icons</code></td><td><code>text</code> draws the chrome's own actions as words instead of glyphs. With <code>boundary = "none"</code> as well, native boxes go, and the skin asks for the Clean <a href="/ui-config">UI set</a>.</td></tr>
   </tbody>
 </table>
+<p><code>[note]</code> dresses <a href="/sticky-notes">sticky notes</a>: <code>decoration</code> is <code>plain</code> or <code>flower</code>, and <code>stock = true</code> draws them as paper. Left out, they follow the material, so a paper skin gets the flower.<sup><a href="#s1">1</a></sup></p>
 
 <h3>Metrics</h3>
-<p>In pixels before the window's scale is applied; borders never scale. Defaults: <code>radius</code> 4, <code>radius_lg</code> 10, <code>hairline</code> 1, <code>border</code> 1, <code>rule_gap</code> 2, <code>gap</code> 4, <code>pad_x</code> 6, <code>pad_y</code> 4, <code>chip_px</code> 5, <code>chip_py</code> 1, <code>row_h</code> 15, <code>label_size</code> 9, <code>bracket</code> 5, <code>rail</code> 2, <code>glow</code> 5.25 (how far the ring spreads), <code>glow_a</code> 0.11 (how bright it is, 0 to 1) and <code>cut</code> 7 (how far a cut corner reaches, read only under <code>corner = "cut"</code>).</p>
+<p>In pixels before the window's scale is applied; borders never scale. Defaults: <code>radius</code> 4, <code>radius_lg</code> 10, <code>hairline</code> 1, <code>border</code> 1, <code>rule_gap</code> 2, <code>gap</code> 4, <code>pad_x</code> 6, <code>pad_y</code> 4, <code>chip_px</code> 5, <code>chip_py</code> 1, <code>row_h</code> 15, <code>label_size</code> 9, <code>bracket</code> 5, <code>rail</code> 2, <code>glow</code> 5.25 (how far the ring spreads), <code>glow_a</code> 0.11 (how bright it is, 0 to 1) and <code>cut</code> 7 (how far a cut corner reaches, read only under <code>corner = "cut"</code>). Paper reads four more: <code>grain</code> 1 and <code>roughness</code> 1 (0 to 1), <code>lift</code> 1 (contact shadow and stock depth, 0 to 2) and <code>marker_alpha</code> 0.22 (highlighter opacity).</p>
+<p class="in-dev"><code>corner_cap</code> caps the largest corner anything draws (Clean caps it at 3), and <code>frost</code> softens the grid under a grouping into smoked glass (OPS sets 3).<sup><a href="#s3">3</a></sup></p>
+
 <h3>Fonts</h3>
-<p><code>[font]</code> sets the chrome's type, never the terminal's. <code>family</code> is the interface face; <code>heading</code> sets names (projects, the notice, a pane's title) and <code>data</code> sets numbers (percentages, counts, the zoom), each falling back to <code>family</code>, which falls back to the theme's font. Terminal Delight bundles Caveat, Oxanium, Chakra Petch and Share Tech Mono, all under the SIL Open Font License, so a skin can name them on any machine.</p>
+<p><code>[font]</code> sets the chrome's type, never the terminal's. <code>family</code> is the interface face; <code>heading</code> sets names (projects, the notice, a pane's title) and <code>data</code> sets numbers (percentages, counts, the zoom), each falling back to <code>family</code>, which falls back to the design's font. <code>scale</code> (0.5 to 3), <code>min_px</code> (0 to 32) and <code>line_height</code> (0.8 to 2) fit a face optically; Caveat falls back to 1.45, 16 and 1.15, any other face to 1, 0 and 1.15.</p>
 
 <h3>Inks</h3>
-<p>An ink is either a fixed colour, <code>"#1a2226"</code>, or a recipe over one of the theme's colours: <code>{ from = "accent", l = 0.8, s = 1.2, a = 0.5, max_l = 0.3, toward = "text", t = 0.4 }</code>. <code>from</code> and <code>toward</code> name <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>complement</code>, <code>human</code>, <code>faint</code>, <code>cursor</code>, <code>white</code>, <code>black</code> or <code>ansi0</code> to <code>ansi15</code>. <code>l</code> scales lightness, <code>max_l</code> caps it, <code>s</code> scales saturation, <code>toward</code> blends by <code>t</code> (0.5 if left out), and <code>a</code> sets opacity, applied in that order.</p>
+<p>An ink is either a fixed colour, <code>"#1a2226"</code>, or a recipe over one of the theme's colours: <code>{ from = "accent", l = 0.8, s = 1.2, a = 0.5, max_l = 0.3, toward = "text", t = 0.4 }</code>. <code>from</code> and <code>toward</code> name <code>bg</code>, <code>surface</code>, <code>text</code>, <code>accent</code>, <code>complement</code>, <code>human</code>, <code>faint</code>, <code>cursor</code>, <code>light</code> (the lighter of bg and text), <code>white</code>, <code>black</code> or <code>ansi0</code> to <code>ansi15</code>. <code>l</code> scales lightness, <code>max_l</code> caps it, <code>s</code> scales saturation, <code>toward</code> blends by <code>t</code> (0.5 if left out), and <code>a</code> sets opacity, applied in that order.</p>
 <table>
   <thead><tr><th>Group</th><th>Inks and their defaults</th></tr></thead>
   <tbody>
@@ -91,20 +130,38 @@ panel_raised = { from = "surface", l = 1.25, max_l = 0.30 }</code></pre>
     <tr><td>states</td><td><code>live</code> complement · <code>ok</code> ansi10 · <code>warn</code> ansi11 · <code>danger</code> ansi9</td></tr>
   </tbody>
 </table>
-<p>Fractions without a word are opacity. <code>ink_faint</code> at 0.6 is the lowest setting at which faint text passes 4.5:1 contrast on all six built-in themes. Selection uses the <code>👤</code> colour from the theme's wheel, not the accent.</p>
-<p>A key the parser doesn't know is reported, never fatal, with a guess: <code>rule_stong (no such token — did you mean rule_strong?)</code>.</p>
+<p>Fractions without a word are opacity. <code>ink_faint</code> at 0.6 is the lowest setting at which faint text passes 4.5:1 contrast on every built-in theme. Selection uses the theme's <code>human</code> colour, not the accent.</p>
+<p>A key the parser doesn't know is reported, never fatal, with a guess: <code>rule_stong (no such token — did you mean rule_strong?)</code>. Under <code>--check</code> it fails the file.</p>
 
 <h3>Checking a skin</h3>
 <pre class="cmd"><code>terminal-delight skin --skin deco --theme hacker</code></pre>
-<p>Prints every resolved shape, ink, metric and type size as JSON, without a window. <code>--list</code> names the skins this build has; <code>--scale</code> is the menu-bar gauge (0.7 to 1.6) and <code>--text-size</code> the text-size gauge's factor (0.6 to 2.0). Exit codes: 0, 1 for a file that doesn't load, 2 for usage.</p>
+<p>Prints every resolved shape, ink, metric and type size as JSON, without a window. <code>--palette</code> lays a bundled palette or a palette file over the theme; <code>--scale</code> is the menu-bar gauge (0.7 to 1.6) and <code>--text-size</code> the text-size gauge's factor (0.6 to 2.0).</p>
+<table>
+  <thead><tr><th>Flag</th><th>Prints</th></tr></thead>
+  <tbody>
+    <tr><td><code>--list</code></td><td>The skins this build carries, and every way one gets chosen</td></tr>
+    <tr><td><code>--template &lt;id&gt;</code></td><td>A bundled skin file, to start your own from</td></tr>
+    <tr><td><code>--check</code></td><td>Refuses unknown tokens and invalid values</td></tr>
+    <tr><td><code>--catalogue</code></td><td>The inventory of the 65 chrome surfaces a skin reaches, as JSON, each with its owner and which of material, boundary, emphasis, type and colour the skin decides there; 66 surfaces <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><code>--catalogue-md</code></td><td>The same inventory as a table</td></tr>
+    <tr><td><code>--atlas-script</code></td><td>This build's runner for previewing a skin in a private window</td></tr>
+  </tbody>
+</table>
+<p>Exit codes: 0, 1 for a file that doesn't load or fails <code>--check</code>, 2 for usage. <code>terminal-delight ctl skin snapshot</code> reads the running window's resolved tokens instead.<sup><a href="#s1">1</a></sup></p>
 
-<h3>Not yet</h3>
-<ul>
-  <li>Some overlays, such as the usage card and the paint tray, may still draw rounded corners under a square skin.</li>
-  <li>Chamfered corners can't be drawn yet; <code>corner</code> is round or square.</li>
-</ul>
+<div class="in-dev">
+<h3>In 0.5.0</h3>
+<p><b>TERMINIMALIST</b> is square, flat furniture that follows the selected Omarchy palette, in JetBrainsMono Nerd Font. The chrome's actions are words, compact states are unboxed symbols, and nested pane frames, button outlines and settings boxes are gone; hairline sides, structural dividers and a single rule on a selected choice or a warning remain. It asks for the Clean <a href="/ui-config">UI set</a>: tabs across the top, the corner's actions in <code>CONFIG</code>, the Git notice hidden, and pane actions behind a right-click on the title. Any switch you flip yourself still wins. Sticky notes become a flat square with an open hairline edge, and a right-click raises one in the theme's complementary colour. Its terminal field matches the chrome, where other skins keep their own background until the field-colour gauge in <a href="/crt">GAUGES</a> is moved.<sup><a href="#s3">3</a></sup></p>
+<p>Where the field matches the chrome like that, an agent's own shades of the background become lines in Claude Code and Codex panes: a full-width band, such as your turn or Codex's composer, is ruled above and below, and a short one, such as <code>Jump to bottom</code>, sits in a hairline box. A diff's red and green keep their fills.</p>
+<p><b>OPS</b> uses two layers of glass. The backing of an overlay softens its own grid, the way the left spine does, and foreground groupings and cards show the desktop through the compositor's blur. Fullscreen, 100% window opacity, or an opacity the compositor won't report keeps those faces solid.</p>
+</div>
+
+<h3>What would prove this wrong</h3>
+<p>Save a <code>skin.toml</code> with a syntax error while a window is open. If the chrome changes at all, rather than staying on the last good skin with an error printed, the reload has stopped protecting the look it was given.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">Tokens, recipes, precedence and the <code>skin</code> verb: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>; the built-in skins: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/skins">app/skins/</a>.</li>
+  <li id="s1">Tokens, recipes, precedence, reload and the <code>skin</code> verb: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>; the built-in skins: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/app/skins">app/skins/</a>; the surface inventory: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skin-surfaces.json">skin-surfaces.json</a>; the SKIN row and its hover text: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>; Chalk's notes: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/sticky.rs">sticky.rs</a>; <code>ctl skin</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
+  <li id="s2">The authoring guide and example: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/skins/README.md">docs/skins/README.md</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/skins/examples/field-notes.toml">field-notes.toml</a>; the agent skill: <a href="https://github.com/parker-brown-family/agent-skills/blob/main/td-skin/SKILL.md">td-skin</a>.</li>
+  <li id="s3">0.5.0: TERMINIMALIST, Clean, the retired Console, <code>controls</code>, <code>frost</code> and skins that hold still across a design change: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/tree/dev/0.5.0/app/skins">app/skins/</a>; the agent shades: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane/styling.rs">pane/styling.rs</a>; the SKIN row: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; all on dev/0.5.0.</li>
 </ol>

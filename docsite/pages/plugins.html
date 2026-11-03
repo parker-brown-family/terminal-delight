@@ -1,21 +1,22 @@
 <script type="application/json" data-page>
 {
   "title": "Plugins",
-  "description": "A Terminal Delight plugin is a small MCP server it launches on demand, found from a plugin.json in ~/.config/terminal-delight/plugins. Two run today: harvesting a finished agent's session, and lean-ctx token savings.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "A Terminal Delight plugin is a small MCP server it launches on demand, found from a plugin.json in ~/.config/terminal-delight/plugins. Two run today: harvesting a dead agent's session from the graveyard into a .cdx package, and lean-ctx token savings on the usage card.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "MCP servers it launches on demand"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Terminal Delight is an MCP client as well as a server. A plugin is a small program that speaks MCP over stdin and stdout. Terminal Delight finds it from a manifest, starts it when you use one of its actions, and stops it when the call returns.</p>
-<p>To install one, put a <code>plugin.json</code> naming its command in <code>~/.config/terminal-delight/plugins/&lt;name&gt;/</code>. The <code>🧩</code> button in the footer lists what's installed, and a new manifest shows up the next time you open it.</p>
-<p>Two actions run today. <b>⬇ context</b> harvests a finished agent's session into a <code>.cdx</code> package, from the agent wall or the <a href="/graveyard">graveyard</a>, using context-delight's <code>cdx-mcp</code>. <b>&lt;/&gt; savings</b> shows lean-ctx's token savings on the usage card, using <code>leanctx-mcp</code>. The panel lists any other plugin's actions, but can't run them yet.</p>
+<p>To install one, put a <code>plugin.json</code> naming its command in <code>~/.config/terminal-delight/plugins/&lt;name&gt;/</code>. The <code>🧩</code> button in the footer, or <code>Plugins</code> in its <code>…</code> menu, lists what's installed, and a new manifest shows up the next time you open it.</p>
+<p>Two actions run today. The <code>⬇ .cdx</code> button on a <a href="/graveyard">graveyard</a> card harvests that dead agent's session into a <code>.cdx</code> package, using context-delight's <code>cdx-mcp</code>. The <code>savings</code> face of the <a href="/usage">usage card</a> shows lean-ctx's token savings, using <code>leanctx-mcp</code>. The panel lists any other plugin's actions, but can't run them yet.</p>
 <p class="invite">Technical has the manifest format and how a call is made.</p>
 </section>
 
 <section data-register="technical" data-headline="Manifests">
+<p>Terminal Delight reads every <code>plugin.json</code> one level under <code>plugins/</code> in its config folder, <code>$XDG_CONFIG_HOME/terminal-delight</code> or <code>~/.config/terminal-delight</code>. It reads them again each time it needs the list, so there is nothing to restart.<sup><a href="#s1">1</a></sup></p>
 <table>
   <thead><tr><th>Key</th><th>Type</th><th>Default</th><th>Meaning</th></tr></thead>
   <tbody>
@@ -26,7 +27,7 @@
     <tr><td><code>version</code></td><td>string</td><td><code>"0"</code></td><td>Shown as <code>v&lt;version&gt;</code>.</td></tr>
     <tr><td><code>description</code></td><td>string</td><td><code>""</code></td><td>Shown in the panel.</td></tr>
     <tr><td><code>scope</code></td><td>string</td><td><code>"agent"</code></td><td><code>agent</code> or <code>global</code>.</td></tr>
-    <tr><td><code>actions</code></td><td>list</td><td><code>[]</code></td><td>Each <code>{tool, label, surfaces}</code>: the MCP tool, its label, and where it belongs, among <code>agent</code>, <code>graveyard</code> and <code>global</code>.</td></tr>
+    <tr><td><code>actions</code></td><td>list</td><td><code>[]</code></td><td>Each <code>{tool, label, surfaces}</code>: the MCP tool, its label (the tool's name if left out), and where it belongs, among <code>agent</code>, <code>graveyard</code> and <code>global</code> (<code>global</code> if left out).</td></tr>
   </tbody>
 </table>
 <p>A manifest that is not valid JSON, or has no <code>name</code> or <code>command</code>, is skipped without a word.</p>
@@ -39,25 +40,30 @@
 }</code></pre>
 
 <h3>How a call is made</h3>
-<p>Terminal Delight starts the command with stdin and stdout piped and stderr discarded, sends <code>initialize</code> (protocol <code>2024-11-05</code>, client <code>terminal-delight</code>), then <code>notifications/initialized</code>, then one <code>tools/call</code>, and reads the text of the result. Each request has ten seconds: <code>plugin timed out after 10s</code>. The process is ended when the call is done.</p>
+<p>Terminal Delight starts the command with stdin and stdout piped and stderr discarded, sends <code>initialize</code> (protocol <code>2024-11-05</code>, client <code>terminal-delight</code>), then <code>notifications/initialized</code>, then one <code>tools/call</code>, and reads the text of the result. Each request has ten seconds: <code>plugin timed out after 10s</code>. The process is ended when the call is done. A plugin's JSON-RPC error shows as <code>plugin error &lt;code&gt;: &lt;message&gt;</code>, and a program that won't start as <code>could not launch &lt;command&gt;: …</code>.<sup><a href="#s1">1</a></sup></p>
 
 <h3>The built-in two</h3>
 <table>
   <thead><tr><th>Plugin</th><th>Found when</th><th>Action</th></tr></thead>
   <tbody>
-    <tr><td><code>context-delight</code></td><td><code>cdx-mcp</code> is on your PATH, in <code>~/.local/bin</code> or in <code>~/.cargo/bin</code></td><td><code>⬇ context</code>: <code>write_package</code> with <code>{target, format: "cdx", redact: true}</code>, writing <code>~/.local/share/context-delight/&lt;session&gt;.cdx</code></td></tr>
-    <tr><td><code>leanctx-savings</code></td><td><code>leanctx-mcp</code> is on your PATH, in <code>~/.local/bin</code> or in <code>~/.cargo/bin</code></td><td><code>&lt;/&gt; savings</code>: <code>savings</code>, drawn on the usage card</td></tr>
+    <tr><td><code>context-delight</code></td><td><code>cdx-mcp</code> is on your PATH, in <code>~/.local/bin</code> or in <code>~/.cargo/bin</code></td><td><code>⬇ context</code> in the panel, <code>⬇ .cdx</code> on a graveyard card: <code>write_package</code> with <code>{target, format: "cdx", out, redact: true}</code>, writing <code>~/.local/share/context-delight/&lt;session&gt;.cdx</code></td></tr>
+    <tr><td><code>leanctx-savings</code></td><td><code>leanctx-mcp</code> is on your PATH, in <code>~/.local/bin</code> or in <code>~/.cargo/bin</code></td><td><code>&lt;/&gt; savings</code>: <code>savings</code>, drawn on the usage card's <code>savings</code> face. The <code>&lt;/&gt; savings</code> button on the <a href="/agent-wall">agent wall</a> opens the same face.</td></tr>
   </tbody>
 </table>
-<p>From a source checkout, <code>scripts/install-plugins.sh</code> copies the plugin programs under <code>plugins/</code> into <code>~/.local/bin</code>. It copies programs, not manifests.</p>
+<p>Run from a source checkout, Terminal Delight also finds the repository's own <code>plugins/leanctx-mcp/leanctx-mcp</code>. <code>scripts/install-plugins.sh</code> copies the plugin programs under <code>plugins/</code> into <code>~/.local/bin</code>; their manifests stay where they are.</p>
+<p class="in-dev">The agent wall has no button or menu row of its own; <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> opens it, and the usage card's <code>savings</code> face is the usual way to the savings.</p>
+<p>The plugin code is the same in 0.4.0 and 0.5.0 development; only where its buttons sit differs.</p>
 
 <h3>Not yet</h3>
 <ul>
   <li>Only the two built-in actions run. A third plugin's actions are listed in the panel but have nothing to run them.</li>
   <li>The repository's <code>td-send</code> plugin, which pulls other terminals' windows into Terminal Delight, isn't installed where Terminal Delight looks for manifests. Copy its <code>plugin.json</code> into place to list it.</li>
 </ul>
+
+<h3>What would prove this wrong</h3>
+<p>Each action starts one plugin process and ends it when the call returns or times out. A plugin process still running after that, or a call that waits longer than ten seconds for one answer, is a bug.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">Discovery, the manifest and the client: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/plugins.rs">plugins.rs</a>; the bundled plugins: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/plugins">plugins/</a>.</li>
+  <li id="s1">Discovery, the manifest and the client: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/plugins.rs">plugins.rs</a>; the strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>; the bundled plugins: <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/plugins">plugins/</a>.</li>
 </ol>

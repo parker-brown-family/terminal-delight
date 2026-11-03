@@ -1,9 +1,9 @@
 <script type="application/json" data-page>
 {
   "title": "Install",
-  "description": "Terminal Delight ships as one file, terminal-delight-x86_64.AppImage, for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it.",
-  "updated": "2026-10-21",
-  "trueOf": "main at 70e0d00, release v0.3.0; candidate v0.4.0-rc.3",
+  "description": "Terminal Delight ships as one file, terminal-delight-x86_64.AppImage, for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it. 0.3.0 is the stable release and 0.4.0-rc.3 the candidate, with a SHA-256 file beside it. Optional: poppler, libmpv, Chromium and ffplay.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0), release v0.3.0, candidate v0.4.0-rc.3; 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "One AppImage, three commands"
 }
 </script>
@@ -21,7 +21,7 @@ chmod +x terminal-delight-x86_64.AppImage
 </div>
 
 <div class="pair">
-  <div class="term"><p>Those commands fetch the stable release, 0.3.0. <strong>0.4.0 is out as a candidate, 0.4.0-rc.3</strong>: a preview of the next stable, for people who choose it on purpose. Its <a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.3">release page</a> lists what is new. Stable 0.4.0 is due on 27 October at the earliest, and then the commands above fetch it.</p></div>
+  <div class="term"><p>Those commands fetch the stable release, 0.3.0. <strong>0.4.0 is out as a candidate, 0.4.0-rc.3</strong>: a preview of the next stable, for people who choose it on purpose, and what the rest of these docs describe. Its <a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.3">release page</a> lists what is new. When stable 0.4.0 ships, the commands above fetch it.</p></div>
   <div class="bench"><div class="glass cmdglass"><span class="h">The 0.4.0 candidate</span>
 <pre class="cmd"><code>curl -LO https://github.com/parker-brown-family/terminal-delight/releases/download/v0.4.0-rc.3/terminal-delight-x86_64.AppImage
 chmod +x terminal-delight-x86_64.AppImage
@@ -30,7 +30,7 @@ chmod +x terminal-delight-x86_64.AppImage
 </div>
 
 <div class="pair">
-  <div class="term"><p>The rest of these docs call it <code>terminal-delight</code>. To get that command, move the file into a folder on your PATH under that name.</p></div>
+  <div class="term"><p>The rest of these docs call it <code>terminal-delight</code>, and so does the desktop launcher. To get that command, move the file into a folder on your PATH under that name.</p></div>
   <div class="bench">
 <pre class="cmd"><code>mv terminal-delight-x86_64.AppImage ~/.local/bin/terminal-delight</code></pre>
   </div>
@@ -42,7 +42,12 @@ chmod +x terminal-delight-x86_64.AppImage
 </div>
 
 <div class="pair">
-  <div class="term"><p class="invite">Then open <a href="/first-launch">First launch</a>. Technical covers what the AppImage needs from your system, building from source, why there is no <code>cargo install</code>, where everything is kept, and how to remove it.</p></div>
+  <div class="term"><p class="in-dev">0.5.0 is being built on the <code>dev/0.5.0</code> branch, with its candidate planned for 13 November 2026 and stable for 20 November. No 0.5.0 build is published yet.</p></div>
+  <div class="bench"></div>
+</div>
+
+<div class="pair">
+  <div class="term"><p class="invite">Then open <a href="/first-launch">First launch</a>. Technical covers checking the download, the optional programs that open PDFs, video and web pages, building from source, the desktop launcher, where everything is kept, and how to remove it.</p></div>
   <div class="bench"></div>
 </div>
 </section>
@@ -58,9 +63,17 @@ chmod +x terminal-delight-x86_64.AppImage
 <div class="pair">
   <div class="term">
 <h3>What the AppImage needs</h3>
-<p>A 64-bit x86 machine, X11 or Wayland, and a working Vulkan or OpenGL driver, taken from your system. The renderer is wgpu, which targets NVIDIA, AMD and Intel. At startup the app reports the GPU and driver it found.</p>
-<p>There are no fonts to install: it walks an explicit monospace fallback chain and warns at startup if the default font is missing. <code>ffplay</code>, from ffmpeg, plays a short built-in ping when an agent finishes in a pane you aren't watching; PipeWire's <code>pw-play</code> is tried without it. With neither, the ping is silent and nothing else changes.</p>
-<p>Wider testing on AMD, Intel, Wayland and fractional scaling is open work for 1.0, and so is a Flatpak.<sup><a href="#s2">2</a></sup></p>
+<p>A 64-bit x86 machine, X11 or Wayland, and a working Vulkan or OpenGL driver, taken from your system. The renderer is wgpu, which targets NVIDIA, AMD and Intel. At startup the app logs the GPU and driver it found. There are no fonts to install: it walks an explicit monospace fallback chain and warns if the default font is missing.</p>
+<p>Four things are optional, and each is looked for only when it's first needed. Without one, Terminal Delight runs as before and hands that file to your desktop with a sentence saying why.<sup><a href="#s2">2</a></sup></p>
+<table class="q">
+  <thead><tr><th>For</th><th>Install</th><th>Without it</th></tr></thead>
+  <tbody>
+    <tr><td>PDFs in the floating square</td><td>poppler: <code>pdfinfo</code> and <code>pdftoppm</code> on PATH</td><td>the PDF opens in your desktop's own app</td></tr>
+    <tr><td>Video and sound in the floating square</td><td>libmpv (<code>libmpv.so.2</code>, <code>.so.1</code> or <code>.so</code>)</td><td>the file opens in your desktop's own app</td></tr>
+    <tr><td>HTML pages in the floating square</td><td>Chromium: <code>chromium</code>, <code>chromium-browser</code>, <code>google-chrome-stable</code> or <code>google-chrome</code> on PATH</td><td>the page opens in your browser</td></tr>
+    <tr><td>The ping when an agent finishes in a pane you aren't watching</td><td><code>ffplay</code>, from ffmpeg, or PipeWire's <code>pw-play</code></td><td>no sound; the badge and notification still appear</td></tr>
+  </tbody>
+</table>
   </div>
   <div class="bench">
 <table class="q">
@@ -69,7 +82,7 @@ chmod +x terminal-delight-x86_64.AppImage
     <tr><td>Display</td><td>X11 or Wayland</td></tr>
     <tr><td>Graphics</td><td>a working Vulkan or OpenGL driver</td></tr>
     <tr><td>Fonts</td><td>nothing to install</td></tr>
-    <tr><td>Sound</td><td>optional: <code>ffplay</code> or <code>pw-play</code></td></tr>
+    <tr><td>Optional</td><td>poppler, libmpv, Chromium, <code>ffplay</code> or <code>pw-play</code></td></tr>
   </tbody>
 </table>
   </div>
@@ -78,18 +91,25 @@ chmod +x terminal-delight-x86_64.AppImage
 <div class="pair">
   <div class="term">
 <h3>The file</h3>
-<p>The address <code>…/releases/latest/download/terminal-delight-x86_64.AppImage</code> always redirects to the newest release, so the command in the Brief keeps working after the next one ships. To update, download it again over the old file.</p>
-<p>The AppImage's launcher passes every argument through to the program, so the subcommands work through it: <code>ctl</code>, <code>mcp</code>, <code>serve</code>, <code>skin</code>, <code>surface</code>, <code>conversation</code>, <code>probe</code>, <code>bindings</code>, <code>agent-usage</code> and <code>agent-vitals</code>.</p>
-<p>The binary is MIT-licensed. The two GPL crates that Zed's dependency graph would otherwise link are cut out at build time, <code>cargo deny</code> passes with no GPL exceptions, and the licences of everything bundled are listed in <code>THIRD-PARTY-LICENSES.md</code>.</p>
+<p>The address <code>releases/latest/download/terminal-delight-x86_64.AppImage</code> always redirects to the newest stable release, so the command in the Brief keeps working after the next one ships. A candidate is on its own release page, marked <em>Pre-release</em>. To update, download it again over the old file.<sup><a href="#s1">1</a></sup></p>
+<p>From 0.4.0 on, each release attaches the file's SHA-256 as <code>terminal-delight-x86_64.AppImage.sha256</code>. Download it into the same folder as the AppImage and check the two against each other; it prints <code>OK</code> when they match. The 0.3.0 release has no checksum file.</p>
+<p>The AppImage's launcher passes every argument through to the program, so the subcommands work through it: <code>ctl</code>, <code>mcp</code>, <code>serve</code>, <code>skin</code>, <code>surface</code>, <code>conversation</code>, <code>probe</code>, <code>bindings</code>, <code>agent-usage</code>, <code>agent-vitals</code>, <code>default-terminal</code> and <code>briefing</code>. <a href="/cli">Command line</a> has each one.<sup><a href="#s3">3</a></sup></p>
+<p class="in-dev">0.5.0 adds <code>admin</code>, <code>uninstall</code>, <code>restricted</code> and <code>ui</code>.</p>
+<p>The binary is MIT-licensed. The GPL crates that Zed's dependency graph would otherwise link are cut out at build time, <code>cargo deny check</code> passes with no GPL exceptions, and the licences of everything bundled are listed in <code>THIRD-PARTY-LICENSES.md</code>.</p>
   </div>
-  <div class="bench"><dl class="facts"><span class="cap">Latest release</span><dt>version</dt><dd>v0.3.0</dd><dt>published</dt><dd>2026-09-18</dd><dt>asset</dt><dd>terminal-delight-x86_64.AppImage</dd><dt>size</dt><dd>31.6 MB</dd><dt>licence</dt><dd>MIT, no GPL crates linked</dd></dl></div>
+  <div class="bench">
+<pre class="cmd"><code>curl -LO https://github.com/parker-brown-family/terminal-delight/releases/download/v0.4.0-rc.3/terminal-delight-x86_64.AppImage.sha256
+sha256sum --check terminal-delight-x86_64.AppImage.sha256</code></pre>
+<dl class="facts"><span class="cap">Releases</span><dt>stable</dt><dd>v0.3.0, 2026-09-18, 31.6 MB</dd><dt>candidate</dt><dd>v0.4.0-rc.3, 2026-10-21, 38.3 MB</dd><dt>asset</dt><dd>terminal-delight-x86_64.AppImage</dd><dt>checksum</dt><dd>.sha256 beside it, from 0.4.0</dd><dt>licence</dt><dd>MIT, no GPL crates linked</dd></dl>
+  </div>
 </div>
 
 <div class="pair">
   <div class="term">
 <h3>Building from source</h3>
-<p><code>prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> directory at Zed commit <code>abbe85a</code> and applies six patches from <code>docs/patches/</code>: <code>0001-td-crt-pass</code> (the per-pane barrel warp), <code>0002-focus-blur</code>, <code>0003-text-crawl</code>, <code>0004-warp-tube-cap-32</code>, <code>0005-glyph-transform</code>, and <code>0002-sever-gpl-crates</code>. CI builds the same way.</p>
-<p>For a release binary, run <code>cargo build --release</code> in <code>app/</code>; it lands in <code>app/target/release/terminal-delight</code>. <code>CONTRIBUTING.md</code> has the CI bar and the clean-room rule.</p>
+<p><code>scripts/prepare-gpui.sh</code> sets up a sibling <code>zed-upstream/</code> directory at Zed commit <code>abbe85a</code>, the pin recorded in <code>app/Cargo.toml</code>, and applies nine patches from <code>docs/patches/</code>. Eight change what gpui draws: <code>0001-td-crt-pass</code> (the per-pane barrel warp), <code>0002-focus-blur</code>, <code>0003-text-crawl</code>, <code>0004-warp-tube-cap-32</code>, <code>0005-glyph-transform</code>, <code>0006-lazy-path-targets</code> and <code>0007-path-targets-fit-the-paths</code> (which hold back the GPU memory an idle window never needs), and <code>0008-glass-rim</code>. The ninth, <code>0002-sever-gpl-crates</code>, removes the GPL crates. Each applies once; running the script again changes nothing. CI builds the same way.<sup><a href="#s4">4</a></sup></p>
+<p>For a release binary, run <code>cargo build --release</code> in <code>app/</code>; it lands in <code>app/target/release/terminal-delight</code>. <code>scripts/build-appimage.sh</code> builds the AppImage into <code>dist/</code>, and <code>scripts/release-smoke.sh</code> runs the checks a release goes through. <code>CONTRIBUTING.md</code> has the CI bar and the clean-room rule.</p>
+<p class="in-dev">The 0.5.0 branch applies four more, <code>0009-image-glow</code>, <code>0010-image-glow-taps</code>, <code>0011-desktop-cutout</code> and <code>0012-tube-blur</code>, at the same Zed commit. Run <code>prepare-gpui.sh</code> again after switching branches.</p>
   </div>
   <div class="bench">
 <pre class="cmd"><code># on Ubuntu: Vulkan and the build libraries
@@ -97,6 +117,8 @@ bash scripts/setup-deps.sh
 # the pinned Zed checkout, patched
 bash scripts/prepare-gpui.sh
 cd app &amp;&amp; cargo run</code></pre>
+<pre class="cmd"><code># the AppImage, into dist/
+bash scripts/build-appimage.sh</code></pre>
   </div>
 </div>
 
@@ -108,6 +130,16 @@ cd app &amp;&amp; cargo run</code></pre>
   <div class="bench"></div>
 </div>
 
+<div class="pair">
+  <div class="term">
+<h3>The desktop launcher</h3>
+<p>From a checkout, <code>scripts/install-desktop.sh</code> puts a launcher in <code>~/.local/share/applications/terminal-delight.desktop</code> and the icon in <code>~/.local/share/icons/hicolor/</code>, as an SVG and, when <code>rsvg-convert</code> is installed, as PNGs at four sizes. The launcher runs <code>terminal-delight</code>, so move the AppImage onto your PATH first, as in the Brief. The same entry is what lets <code>terminal-delight default-terminal on</code> make it Omarchy's terminal; <a href="/omarchy">Omarchy</a> has that, and the key sheet.<sup><a href="#s5">5</a></sup></p>
+  </div>
+  <div class="bench">
+<pre class="cmd"><code>bash scripts/install-desktop.sh</code></pre>
+  </div>
+</div>
+
 <div class="pair full">
   <div class="term">
 <h3>Where things are kept</h3>
@@ -115,14 +147,15 @@ cd app &amp;&amp; cargo run</code></pre>
   <tbody>
     <tr><td><code>~/.config/terminal-delight/theme.toml</code></td><td>Your own theme. Changes are picked up while the app runs.</td></tr>
     <tr><td><code>~/.config/terminal-delight/skin.toml</code></td><td>A skin override for the chrome. <code>$TD_SKIN</code> does the same.</td></tr>
-    <tr><td><code>~/.config/terminal-delight/launch.toml</code></td><td>What a new agent opens with.</td></tr>
+    <tr><td><code>~/.config/terminal-delight/launch.toml</code></td><td>What a new agent opens with, once you save it.</td></tr>
     <tr><td><code>~/.config/terminal-delight/notifications.toml</code></td><td>What a finished agent may do to the rest of the desktop.</td></tr>
     <tr><td><code>~/.config/terminal-delight/sessions/</code></td><td>One file per window session: its layout, each pane's working directory, and each agent's resume command, so the work reopens after a restart.</td></tr>
     <tr><td><code>~/.config/terminal-delight/plugins/</code></td><td>Plugins, one folder each with a <code>plugin.json</code>.</td></tr>
-    <tr><td><code>~/.local/state/terminal-delight/</code></td><td>The workbench's surfaces and conversations.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/</code></td><td>The workbench's surfaces and conversations, notes, handovers, and the logs.</td></tr>
+    <tr><td><code>~/.cache/terminal-delight/</code></td><td>Rendered HTML pages, kept to open faster next time.</td></tr>
   </tbody>
 </table>
-<p><code>$XDG_CONFIG_HOME</code> and <code>$XDG_STATE_HOME</code> replace <code>~/.config</code> and <code>~/.local/state</code> when they are set. <a href="/config-files">Config files</a> lists every file.</p>
+<p><code>$XDG_CONFIG_HOME</code>, <code>$XDG_STATE_HOME</code> and <code>$XDG_CACHE_HOME</code> replace <code>~/.config</code>, <code>~/.local/state</code> and <code>~/.cache</code> when they are set. <a href="/config-files">Config files</a> lists every file, and <a href="/first-launch">First launch</a> says which are written when.</p>
   </div>
 </div>
 
@@ -130,17 +163,17 @@ cd app &amp;&amp; cargo run</code></pre>
   <div class="term">
 <h3>Agent hooks</h3>
 <p>For an agent's replies to reach the <a href="/workbench">workbench</a> on their own, Claude Code needs Terminal Delight's hooks. Their installer lives in the source tree, not in the AppImage.</p>
-<p>It puts <code>td-agent-hooks</code> in <code>~/.local/bin</code> and adds it to <code>~/.claude/settings.json</code> on five events: <code>UserPromptSubmit</code>, <code>PreToolUse</code> and <code>PostToolUse</code> for <code>AskUserQuestion</code>, <code>Stop</code>, and <code>Notification</code>. It appends to any hooks already there and keeps a timestamped backup of the file. Running it twice changes nothing.</p>
+<p>It puts <code>td-agent-hooks</code> in <code>~/.local/bin</code> and adds it to <code>~/.claude/settings.json</code> on five events: <code>UserPromptSubmit</code>, <code>PreToolUse</code> and <code>PostToolUse</code> for <code>AskUserQuestion</code>, <code>Stop</code>, and <code>Notification</code>. It appends to any hooks already there and keeps a timestamped backup of the file. Running it twice changes nothing. <code>CLAUDE_SETTINGS</code> and <code>DEST</code> point it at another settings file or folder.<sup><a href="#s6">6</a></sup></p>
   </div>
   <div class="bench">
-<pre class="cmd"><code>scripts/install-agent-hooks.sh</code></pre>
+<pre class="cmd"><code>bash scripts/install-agent-hooks.sh</code></pre>
   </div>
 </div>
 
 <div class="pair">
   <div class="term">
 <h3>The briefing hook</h3>
-<p>One hook needs no source tree. A Claude agent you start by typing <code>claude</code> is not told what a <a href="/launching">LAUNCH AGENT</a> pane is told, about the workbench and <a href="/briefs">decision briefs</a>, until a <code>SessionStart</code> hook tells it. The binary adds that hook itself, after you say yes on the agent's bench, or from a terminal. It appends to <code>~/.claude/settings.json</code> and keeps a timestamped backup, the same way.</p>
+<p>One hook needs no source tree. A Claude agent you start by typing <code>claude</code> is not told what a <a href="/launching">LAUNCH AGENT</a> pane is told, about the workbench and <a href="/briefs">decision briefs</a>, until a <code>SessionStart</code> hook tells it. The binary adds that hook itself, after you say yes on the agent's bench, or from a terminal. It appends to <code>~/.claude/settings.json</code> and keeps a timestamped backup, the same way. <code>status</code> says whether it's there and <code>off</code> takes it out.</p>
   </div>
   <div class="bench">
 <pre class="cmd"><code>terminal-delight briefing hook on</code></pre>
@@ -150,43 +183,44 @@ cd app &amp;&amp; cargo run</code></pre>
 <div class="pair">
   <div class="term">
 <h3>Removing it</h3>
-<p>Removal keeps settings, sessions and saved work by default. Exporting or deleting those records is a separate choice. Projects, native agent histories, unrelated hooks and later desktop changes stay yours.</p>
+<p>Undo what you set up, in the order alongside, while Terminal Delight is still there to undo it. Then delete the AppImage.</p>
 <ol>
-<li>Open another terminal and check that it works. While TD and its undo records still exist, turn off the briefing hook and restore the previous default terminal with the commands alongside.</li>
-<li>If you installed the source hooks, run their matching uninstallers from the source checkout, using the same <code>CLAUDE_SETTINGS</code> and <code>DEST</code> overrides you used at installation. Unrelated nested hooks are preserved. If cleanup reports a changed file, uncertain reference or damaged block, resolve it before proceeding.</li>
-<li>In this release, open <strong>CONFIG › ADMIN › Uninstall</strong>, review the proposed changes and choose the removal that keeps records. The command-line equivalent below writes a readable plan and a JSON plan, then prints their paths; read the readable plan before running the JSON plan. The worker writes a removal receipt outside TD's directories and reports anything it retained or could not finish. Agent assistance and an AI review of your workflow are optional.</li>
-<li>After the worker finishes, check its receipt for the AppImage and launcher. Remove a remaining downloaded AppImage only after confirming its exact path. The commands alongside cover this page's optional move onto PATH and its original download filename. Keep backups and receipts until the removal is resolved.</li>
+<li>Open another terminal and check that it works, since the next step may make it the default again.</li>
+<li>Take out the briefing hook and put the previous default terminal back. Both commands say what they changed.</li>
+<li>From the checkout, run the matching <code>--uninstall</code> of each source installer you used, with the same <code>CLAUDE_SETTINGS</code>, <code>DEST</code> or <code>HYPR_BINDINGS</code> you installed with. Two have no uninstall in 0.4.0. For the desktop launcher, delete <code>~/.local/share/applications/terminal-delight.desktop</code> and the <code>terminal-delight</code> icons under <code>~/.local/share/icons/hicolor/</code>. <code>install-plugins.sh</code> copied <code>leanctx-mcp</code> and <code>td-send-mcp</code> into <code>~/.local/bin</code>.</li>
+<li>Delete the AppImage, at <code>~/.local/bin/terminal-delight</code> if you moved it there.</li>
 </ol>
-<p>Older releases may lack ADMIN and the plan command. Keep the executable until its briefing hook, default-terminal choice and source integrations are undone. The current source key-sheet, GNOME hotkey, plugin and desktop installers each accept <code>--uninstall</code>; use only those you installed. GNOME shortcuts without an ownership receipt require the manual review printed by their installer. Then remove the AppImage you downloaded and its launcher, if you created one. Do not delete TD's settings or state directories when keeping records.</p>
+<p>Your settings, sessions and saved work stay in <code>~/.config/terminal-delight/</code>, <code>~/.local/state/terminal-delight/</code> and <code>~/.cache/terminal-delight/</code>. Delete those folders too if you want nothing left.</p>
+<p class="in-dev">0.5.0 adds <b>Uninstall</b> under <code>CONFIG › ADMIN</code>, and <code>terminal-delight uninstall</code>, which write a plan for you to read, then remove Terminal Delight's own pieces, keeping or exporting your records as you choose. <a href="/uninstall">Uninstall</a> has the steps.</p>
   </div>
   <div class="bench">
 <pre class="cmd"><code>terminal-delight briefing hook off
 terminal-delight default-terminal off</code></pre>
-<p>For source hooks you installed, from the checkout:</p>
+<p>Each source installer you used, from the checkout:</p>
 <pre class="cmd"><code>bash scripts/install-agent-hooks.sh --uninstall
-bash scripts/install-recovery-hook.sh --uninstall</code></pre>
-<p>Save and inspect the removal plan, then run it from the replacement terminal:</p>
-<pre class="cmd"><code>terminal-delight uninstall plan</code></pre>
-<pre class="cmd"><code>terminal-delight uninstall run --plan "${XDG_CACHE_HOME:-$HOME/.cache}/terminal-delight/admin/uninstall-plan.json"</code></pre>
-<p>If you used this page's optional move onto PATH and the receipt says that file remains:</p>
+bash scripts/install-recovery-hook.sh --uninstall
+bash scripts/install-keys-hotkey.sh --uninstall
+bash scripts/install-hotkey.sh --uninstall</code></pre>
+<p>If you used the Brief's move onto PATH:</p>
 <pre class="cmd"><code>rm -- "$HOME/.local/bin/terminal-delight"</code></pre>
-<p>Otherwise, from the directory where you downloaded the AppImage, after confirming it is the copy you intend to remove:</p>
-<pre class="cmd"><code>rm -- ./terminal-delight-x86_64.AppImage</code></pre>
   </div>
 </div>
 
 <div class="pair">
   <div class="term">
 <h3>What would prove this wrong</h3>
-<p>This page claims the three commands in the Brief give you a working Terminal Delight on a 64-bit Linux desktop with a working graphics driver. If they don't, that is a bug. Open an issue with your distribution, your GPU, and the lines the app prints at startup, which name the GPU and driver it found.<sup><a href="#s3">3</a></sup></p>
+<p>This page claims the three commands in the Brief give you a working Terminal Delight on a 64-bit Linux desktop with a working graphics driver. If they don't, that is a bug. Open an issue with your distribution, your GPU, and the lines the app logs at startup, which name the GPU and driver it found.<sup><a href="#s7">7</a></sup></p>
   </div>
   <div class="bench"></div>
 </div>
 </section>
 
 <ol data-sources>
-<li id="s1"><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.3.0">Release v0.3.0</a>, and the <a href="https://github.com/parker-brown-family/terminal-delight#install">Install</a> and <a href="https://github.com/parker-brown-family/terminal-delight#build-from-source">Build from source</a> sections of the README.</li>
-<li id="s2"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/features/09-packaging.md">Packaging and platform</a>, in the feature catalogue.</li>
-<li id="s3"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
-<li>The code this page was checked against: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/build-appimage.sh">build-appimage.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/Cargo.toml">app/Cargo.toml</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a>.</li>
+<li id="s1"><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.3.0">Release v0.3.0</a> and <a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.4.0-rc.3">release v0.4.0-rc.3</a>; the checksum is written and checked in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/.github/workflows/ci.yml">ci.yml</a>; the release kinds: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/RELEASING.md">RELEASING.md</a>.</li>
+<li id="s2">PDFs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/poppler.rs">docview/poppler.rs</a>; video and sound: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/mpv.rs">docview/mpv.rs</a>; HTML: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/engine.rs">docview/engine.rs</a>; the ping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/bell.rs">bell.rs</a>.</li>
+<li id="s3">The launcher: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/build-appimage.sh">build-appimage.sh</a>; the subcommands: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>VERBS</code>); 0.5.0's: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; licences: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/deny.toml">app/deny.toml</a>.</li>
+<li id="s4"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/prepare-gpui.sh">prepare-gpui.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/patches">docs/patches/</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/setup-deps.sh">setup-deps.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/release-smoke.sh">release-smoke.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/Cargo.toml">app/Cargo.toml</a>; 0.5.0's patches: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/prepare-gpui.sh">prepare-gpui.sh</a>.</li>
+<li id="s5"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-desktop.sh">install-desktop.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/packaging/terminal-delight.desktop">packaging/terminal-delight.desktop</a>.</li>
+<li id="s6"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-recovery-hook.sh">install-recovery-hook.sh</a>; the briefing hook: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefhook.rs">briefhook.rs</a>; the default terminal: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>.</li>
+<li id="s7"><a href="https://github.com/parker-brown-family/terminal-delight/issues/new">Open an issue</a>.</li>
 </ol>

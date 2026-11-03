@@ -9,7 +9,7 @@
 //! before the press, not discovered after.
 use super::*;
 use crate::uninstall::roots::Roots;
-use crate::update::{self, BuildInfo, Channel, Check, Compat, Install, Installed, Prepared};
+use crate::update::{self, BuildInfo, Channel, Check, Install, Installed, Prepared};
 
 #[derive(Default)]
 pub(crate) struct UpdateState {
@@ -851,7 +851,10 @@ impl Workspace {
             // Staged for a different wire, or because another session's host
             // runs a build nothing here can vouch for; only the first ends
             // this window's terminals on a full restart, so only it says so.
-            let wire = u.prepared.as_ref().is_none_or(|p| p.compat != Compat::Same);
+            let wire = u
+                .prepared
+                .as_ref()
+                .is_none_or(|p| u.sessions.as_ref().is_none_or(|s| !s.keeps(p.compat)));
             if wire {
                 panel = panel.child(note(
                     ui.upd_wire_warn.replace("{n}", &panes.to_string()),

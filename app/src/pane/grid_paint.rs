@@ -811,6 +811,62 @@ mod tests {
         }
     }
 
+    /// ACTIVE TERMINALS brightness lifts the focused pane's text and ground
+    /// by its gain and gives it back the moment the pane loses focus; unset,
+    /// the focused pane is drawn exactly as before the gauge existed.
+    #[gpui::test]
+    fn active_brightness_lifts_only_the_focused_pane(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'bright fixture\\n'; exec cat");
+        pane.wait_for("bright fixture");
+        let levels = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                let g = v
+                    .grid_paint
+                    .read(cx)
+                    .snapshot
+                    .context
+                    .as_ref()
+                    .unwrap()
+                    .theme
+                    .grade;
+                (g.text, g.background)
+            })
+        };
+        let dress = |pane: &mut Pane, gain: Option<f32>| {
+            pane.view.update(pane.cx, |v, cx| {
+                let mut grade = theme::Grade::neutral();
+                grade.active_brightness = gain;
+                grade.inactive_text = Some(1.0);
+                v.appearance.grade = Some(grade);
+                v.appearance.pins = theme::GradePins::all();
+                cx.notify();
+            });
+            pane.redraw();
+        };
+        dress(&mut pane, None);
+        assert_eq!(levels(&mut pane), (0.5, 0.5), "unset is the old look");
+        dress(&mut pane, Some(1.5));
+        let (text, ground) = levels(&mut pane);
+        assert!((text - 0.75).abs() < 1e-4 && (ground - 0.75).abs() < 1e-4);
+        // Half again the level is half again the lightness, text and ground.
+        let ink = gpui::hsla(0.3, 0.5, 0.4, 1.0);
+        let lifted = |ch| {
+            let mut g = theme::Grade::neutral();
+            g.text = text;
+            g.background = ground;
+            graded(ink, &g, ch).l
+        };
+        assert!((lifted(Channel::Text) - 0.6).abs() < 1e-4);
+        assert!((lifted(Channel::Bg) - 0.6).abs() < 1e-4);
+        pane.cx.update(|window, _| window.blur());
+        pane.redraw();
+        assert_eq!(
+            levels(&mut pane),
+            (0.5, 0.5),
+            "an unfocused pane is not lifted"
+        );
+    }
+
     #[gpui::test]
     fn real_focus_changes_only_the_drawn_terminal_text(cx: &mut TestAppContext) {
         let mut pane = Pane::running(cx, "printf 'focus fixture\\n'; exec cat");

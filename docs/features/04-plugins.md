@@ -1,48 +1,16 @@
-# Plugins — the extension surface
+# Plugins, and why the usage collectors add no dependency
 
-Terminal Delight is both an MCP **server** (watched by orchestrators) *and* an MCP
-**client** (it drives plugins). Plugins are stdio MCP processes that surface extra
-data on the agent wall, the graveyard, or globally.
+How plugins work, and the usage card, are described on the docs site, where each
+page was checked against the code and names the commit it is true of:
 
-## Why it matters
+- Plugins (the MCP servers Terminal Delight calls): [https://docs.terminal-delight.brownfamilysports.com/plugins](https://docs.terminal-delight.brownfamilysports.com/plugins) (source: [`docsite/pages/plugins.html`](../../docsite/pages/plugins.html))
+- Usage and vitals (the `</>` card's usage face): [https://docs.terminal-delight.brownfamilysports.com/usage](https://docs.terminal-delight.brownfamilysports.com/usage) (source: [`docsite/pages/usage.html`](../../docsite/pages/usage.html))
 
-The wall isn't a closed box. Anything that speaks MCP can light up a surface in TD —
-token-savings ledgers, context harvesters, your own tooling — discovered from a
-manifest, launched on demand, with a wedged plugin unable to freeze the UI.
+What stays here is the argument `app/src/vendor/README.md` points to: why
+shipping Omarchy's usage collectors inside the binary does not make Omarchy a
+dependency. It was checked against `app/src/usage.rs` on 2026-11-01.
 
-## Features
-
-| Feature | What it does | Evidence | Status |
-|---|---|---|---|
-| **MCP client host** | Discovers, launches, and JSON-RPC-handshakes plugins over stdio; separate from the server transport | `app/src/plugins.rs` | Shipped |
-| **Discovery** | Scans `~/.config/terminal-delight/plugins/*/plugin.json` + built-in fallbacks | `discover(home)` | Shipped |
-| **Manifest** | Each plugin declares name/version/description/command/args/env/scope + per-surface **actions** (agent / graveyard / global) | `PluginManifest`, `action_for(surface)` | Shipped |
-| **Timeout + isolation** | 10 s per tool call; isolated stdio; reader thread so a hung plugin can't block paint | `RPC_TIMEOUT`, `PluginClient` | Shipped |
-
-## ⭐ Built-in: LeanCTX token-savings → [leanctx.com](https://leanctx.com/)
-
-The `</> LeanCTX` plugin shows, on the wall, the **token savings** that
-[lean-ctx](https://leanctx.com/) achieved by compressing each agent's context — a
-live, quantified "this is how much cheaper your agents got." lean-ctx **precomputes**
-the savings; TD reads and displays them. It's the flagship plugin and the canonical
-backlink to leanctx.com.
-
-- Evidence: `plugins.rs::builtin_leanctx_savings` / `resolve_leanctx_mcp`.
-- Known gap: per-agent attribution (the ledger currently keys `agent_id:"local"`);
-  full per-agent cost breakdown is the next step.
-- Demo: `TD_SAVINGS_DEMO`.
-
-## ⭐ Subscription usage — the other half of the same budget
-
-The `</>` card has two faces, switched by the chips in its header. **savings** is
-lean-ctx's compression ledger: tokens TD's own plumbing never had to send.
-**usage** is what the subscriptions actually charged for the tokens that did go —
-one tab per plan, with the ceiling each is up against.
-
-Per subscription the card draws the plan and its limits (a meter apiece, coloured
-by pressure rather than by theme, with the time until each window resets), today's
-tokens and prompts, the last seven days, and where the tokens went by model. A
-prepaid plan reports a draining credit balance instead of resetting windows.
+## The usage records
 
 **TD collects none of this.** It reads one JSON record per subscription out of a
 state directory, and that is the entire contract:
@@ -87,21 +55,3 @@ turned off — else a packaged `td-agent-usage`, else this binary's own
 `agent-usage update`. It fires only when the newest record is over five minutes
 old, and always on a pool thread: asking Anthropic's usage endpoint takes seconds,
 and the card is up on the frame of the click with whatever it already has.
-
-- Evidence: `app/src/usage.rs` (record contract, discovery, countdowns, the
-  compiled-in collectors and their runner; 16 tests), `app/src/vendor/README.md`,
-  `main.rs::render_usage_body`, `main.rs::open_usage` / `refresh_usage`.
-- Demo: `TD_USAGE_DEMO` (fictional). Dev: `TD_USAGE_LIVE` (this machine's real
-  records — never for capture).
-
-## Built-in: context-delight harvest
-
-If the `cdx-mcp` binary is on `PATH`, TD auto-registers
-**[context-delight](https://github.com/parker-brown-family/context-delight)** as a
-plugin — harvest a live session into a portable `.cdx` / lean-ctx package, right
-from the wall. `plugins.rs::builtin_context_delight` / `resolve_cdx_mcp`.
-
-## Status
-
-**Shipped** (client host, discovery, both built-ins). Per-agent LeanCTX attribution
-is the tracked follow-up.

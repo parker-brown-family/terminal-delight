@@ -394,6 +394,10 @@ jobs:
       cancel-in-progress: true
     steps:
       - uses: actions/checkout@v5
+        with:
+          # The attest step runs the previous build's binary; it must find no
+          # token in .git/config. Nothing in this job pushes with git.
+          persist-credentials: false
 
       # One rolling build serves the Dev channel, so only the newest dev/*
       # branch publishes it. An older dev branch still taking fixes would
@@ -417,22 +421,85 @@ jobs:
           name: terminal-delight-x86_64.AppImage
           path: dist
 
-      - name: Verify the digest and describe the build
+      - name: Verify the digest
+        if: steps.newest.outputs.publish == 'true'
+        run: cd dist && sha256sum --check terminal-delight-x86_64.AppImage.sha256
+
+      # The updater counts a new build as sharing a window's wire only when a
+      # hash of the wire's source matches, so every terminal-core change would
+      # otherwise reach Dev installs as a cold start. Here the build being
+      # replaced stands up a real session host, the new build replays a
+      # capture of it, and a passing replay (with its mutated controls
+      # refused) lists the old wire in build.json's compatible_with. The
+      # updater then offers "Restart window" to a window on that wire whose
+      # hosts all run its own bytes (app/src/update.rs, compat_attested).
+      # Anything short of a clean pass publishes no attestation, which leaves
+      # the conservative hash in charge; it never fails the job.
+      # The token stays in this step: nothing that runs the old build sees it.
+      - name: Fetch the dev build it replaces
+        if: steps.newest.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p wire/old
+          gh release download dev-build -p terminal-delight-x86_64.AppImage -D wire/old \
+            || echo "::notice::no dev build to attest against"
+
+      # No token in this step's environment, and checkout keeps none in
+      # .git/config (persist-credentials: false above), because it runs the
+      # PREVIOUS build's binary. Every failure here is a notice or a warning,
+      # and the build is then published without an attestation.
+      - name: Attest the wire against the build it replaces
         if: steps.newest.outputs.publish == 'true'
         run: |
-          cd dist
-          sha256sum --check terminal-delight-x86_64.AppImage.sha256
-          version="$(sed -n 's/^version = "\(.*\)"/\1/p' ../app/Cargo.toml | head -1)"
+          set +e
+          echo '{}' > attest.json
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxcb1 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 \
+            || echo "::warning::could not install the runtime libraries"
+          mkdir -p wire/new
+          (cd wire/new && ../../dist/terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null) \
+            || { echo "::warning::could not extract the new build; no attestation"; exit 0; }
+          [ -f wire/old/terminal-delight-x86_64.AppImage ] || exit 0
+          chmod +x wire/old/terminal-delight-x86_64.AppImage
+          (cd wire/old && ./terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null) \
+            || { echo "::warning::could not extract the previous build; no attestation"; exit 0; }
+          scripts/wire-attest.sh wire/old/squashfs-root/usr/bin/terminal-delight \
+            wire/new/squashfs-root/usr/bin/terminal-delight "$RUNNER_TEMP/wire-attest" > attest.out
+          code=$?
+          # Nothing the previous build started outlives this step: the
+          # publish steps after it hold a token.
+          old="$(readlink -f wire/old/squashfs-root/usr/bin/terminal-delight)"
+          for p in /proc/[0-9]*; do
+            [ "$(readlink "$p/exe" 2>/dev/null)" = "$old" ] && kill -9 "${p#/proc/}" 2>/dev/null
+          done
+          case $code in
+            0) cp attest.out attest.json; echo "attested:"; cat attest.json ;;
+            3) echo "::notice::no wire attestation (see the log above)" ;;
+            *) echo "::warning::the wire attestation failed (exit $code); this build is published without one" ;;
+          esac
+          exit 0
+
+      - name: Describe the build
+        if: steps.newest.outputs.publish == 'true'
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -1)"
           date="$(git log -1 --format=%cI "$GITHUB_SHA")"
+          wire="$(wire/new/squashfs-root/usr/bin/terminal-delight --build-info | jq -r '.wire // empty')"
           jq -n \
             --arg sha "$GITHUB_SHA" \
             --arg date "$date" \
             --arg branch "$GITHUB_REF_NAME" \
             --arg version "$version" \
             --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
-            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run}' \
-            > build.json
-          cat build.json
+            --arg wire "$wire" \
+            --slurpfile attest attest.json \
+            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run,
+              wire: (if $wire == "" then null else $wire end),
+              compatible_with: (if $attest[0].wire == $wire then ($attest[0].compatible_with // []) else [] end),
+              attestation: (if $attest[0].wire == $wire then $attest[0].against else null end)}' \
+            > dist/build.json
+          cat dist/build.json
 
       - name: Replace the dev-build prerelease
         if: steps.newest.outputs.publish == 'true'

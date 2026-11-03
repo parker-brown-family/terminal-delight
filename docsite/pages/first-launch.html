@@ -1,66 +1,94 @@
 <script type="application/json" data-page>
 {
   "title": "First launch",
-  "description": "What happens the first time you run Terminal Delight: one window, one terminal, and a background session host that keeps your shells alive when the window closes. What you're looking at, the first keys to try, and what comes back next time.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "description": "What happens the first time you run Terminal Delight: one window, one terminal, flat glass in Terminal Delight's own colours, and a background session host that keeps your shells alive when the window closes. Which session opens, what is written to disk, the first keys to try, and what comes back next time.",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "What you see, and the first keys to try"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Run <code>terminal-delight</code> and one window opens with one terminal in it. Behind the window, a small background process called the session host starts and takes charge of your shells, so closing the window, or losing it to a crash, doesn't end them.</p>
-<p>The <a href="/left-bar">left bar</a> runs down the left side and holds your session as a tree of projects, groups and tasks. At the top of the right edge, a small pill counts agents waiting on you. The window's own controls (theme, gauges, dead agents, notifications, plugins) sit at the bottom right. The terminal itself is drawn as a <a href="/crt">CRT</a>: scanlines, a soft glow, and glass that curves.</p>
+<p>A new install opens flat, in Terminal Delight's own colours, with the tube switched off. Each pane wears Terminal Delight's mark in its header. The <a href="/left-bar">left bar</a> down the left side holds your session as a tree of projects, groups and tasks. In the top right, the agent counter tallies your agents by state, and a click opens the <a href="/agent-wall">agent wall</a>. The window's own controls sit at the bottom right.</p>
 <p>A few things to try first:</p>
 <table class="keys">
   <tbody>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>a new tab</td></tr>
+    <tr><td><kbd>F1</kbd></td><td>every shortcut, and the <a href="/languages">language</a></td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>A</kbd></td><td><a href="/launching">start an agent</a> in this pane</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>V</kbd> / <kbd>Alt</kbd>+<kbd>H</kbd></td><td>split the pane side by side, or stacked</td></tr>
     <tr><td><kbd>Alt</kbd>+arrows</td><td>move between panes</td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>T</kbd></td><td>a new tab</td></tr>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>turn a pane to its <a href="/workbench">workbench</a> and back</td></tr>
-    <tr><td><kbd>F1</kbd></td><td>every shortcut, and the <a href="/languages">language</a></td></tr>
   </tbody>
 </table>
-<p>Type <code>claude</code> or <code>codex</code> at a prompt and Terminal Delight notices the agent, or press <kbd>Alt</kbd>+<kbd>K</kbd> and use <b>⌁ LAUNCH AGENT</b> to <a href="/launching">start one</a> from a panel. Close the window and open it again: your tabs, splits, directories and agents come back where they were.</p>
-<p class="invite">Technical has which session a window opens, what is saved, and when.</p>
+<p>Typing <code>claude</code> or <code>codex</code> at a prompt works too: Terminal Delight notices the agent. Close the window and open it again, and your tabs, splits, directories and agents come back where they were.</p>
+<p class="in-dev">0.5.0 opens a new window in the Clean design, with tabs across the top instead of the left bar and fewer controls on show. See <a href="/ui-config">UI CONFIG</a>.</p>
+<p class="invite">Technical has which session a window opens, what is written to disk and when, and what 0.5.0's first window looks like.</p>
 </section>
 
 <section data-register="technical" data-headline="Starting up">
 <h3>Which session opens</h3>
-<p>A session is a set of tabs and panes with a name of its own, <code>1</code>, <code>2</code> or <code>work</code>, saved as <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>. A window opens:</p>
+<p>A session is a set of tabs and panes with a name of its own, <code>1</code>, <code>2</code> or <code>work</code>, saved as <code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code>. A window opens:<sup><a href="#s1">1</a></sup></p>
 <ol>
   <li>the session in <code>TD_SESSION</code>, if set;</li>
   <li>otherwise a session whose host is running with no window attached, which is what happens when you close the window and open it again;</li>
   <li>otherwise the most recently saved session, preferring one last used on this Hyprland workspace and one with more than a single pane;</li>
   <li>otherwise a new one, numbered from <code>1</code>.</li>
 </ol>
-<p>The window's title says which: <code>terminal-delight — 1</code>. On stderr it prints <code>attached to the session host for session '1'</code>. If no host can be reached, it says so and opens anyway, owning its terminals itself. <a href="/sessions">Sessions</a> has the rest, including running without a host.</p>
+<p>The window's title says which: <code>terminal-delight — 1</code>. In its log it writes <code>attached to the session host for session '1'</code>. If no host can be reached, it says so and opens anyway, owning its terminals itself. <a href="/sessions">Sessions</a> has the rest, including running without a host.</p>
+<p>A window opened by another program through <code>xdg-terminal-exec</code>, as Omarchy opens every terminal once Terminal Delight is the default, is a quick window: it never takes a session. <a href="/omarchy">Omarchy</a> has how that works.</p>
 
 <h3>The window</h3>
 <ul>
   <li>No title bar from the desktop: Terminal Delight draws its own frame and its own <code>—</code> <code>☐</code> <code>✕</code>. Drag the top bar to move it. <code>✕</code> saves before closing.</li>
   <li>With no saved size, it opens at 1280 by 720, centred.</li>
-  <li>At startup it prints the GPU and driver it found, and warns if the theme's font is missing.</li>
+  <li>At startup it reports the GPU and driver it found, and warns if the theme's font is missing. The window and the session host log to <code>~/.local/state/terminal-delight/logs/</code>.</li>
   <li>Narrower than 720 px, the controls at the bottom right fold into a <code>…</code> menu.</li>
 </ul>
 
 <h3>The first look</h3>
-<p>First run writes your own theme file, <code>theme.toml</code>, as a copy of the built-in <code>hacker</code> theme, and the window tints it with a warm amber seed, <code>#e0913a</code>. Programs show their real colours. Every pane follows the window's look and starts with a warp of 1.43, text at 75% and the chrome at 80%. <a href="/themes">Themes</a> and <a href="/crt">CRT</a> say how to change any of it.</p>
+<p>A new install opens flat: the Terminal Delight palette, which ships inside the app, with the tube switched off and contrast raised to make up for the glow a flat screen doesn't have. Every pane follows the window's look until you dress one. The tube is a switch in the collapsed <code>CRT</code> section at the foot of <code>GAUGES</code> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> for a pane, ⛭ at the bottom right for the window), and switching it on brings the warp and the roll already set. An install that ran an earlier version keeps the tube it had.<sup><a href="#s2">2</a></sup></p>
+<p>Each pane's header shows Terminal Delight's mark, because the first start maps <code>/</code>, the folder every other folder sits under, to it. <a href="/themes">Themes</a> and <a href="/crt">CRT</a> say how to change any of it.</p>
+
+<h3>What is written, and when</h3>
+<table>
+  <thead><tr><th>File</th><th>Written</th></tr></thead>
+  <tbody>
+    <tr><td><code>~/.config/terminal-delight/theme.toml</code></td><td>At the first start, as a copy of the built-in <code>hacker</code> theme, so you have a file to edit. It reloads as you save it.</td></tr>
+    <tr><td><code>~/.config/terminal-delight/dir-logos.toml</code> and <code>logos/terminal-delight.png</code></td><td>At the first start, only if <code>dir-logos.toml</code> doesn't exist. An existing file, even an empty one, is never touched.</td></tr>
+    <tr><td><code>~/.config/terminal-delight/sessions/&lt;name&gt;.toml</code></td><td>At the first save, then after every layout change and every 30 seconds.</td></tr>
+    <tr><td><code>~/.local/state/terminal-delight/logs/</code></td><td>As the window and the host run; <code>crashes/</code> beside it only after a crash.</td></tr>
+    <tr><td><code>launch.toml</code>, <code>local-agent.toml</code>, <code>documents.toml</code></td><td>Only when you save a setting that lives there.</td></tr>
+    <tr><td>conversations, brief backups, Markdown notes, handover lists</td><td>Under <code>~/.local/state/terminal-delight/</code>, only once there is something to keep.</td></tr>
+    <tr><td><code>~/.cache/terminal-delight/pages/</code></td><td>Only when an HTML page is opened: renders kept for next time, up to 256 MiB.</td></tr>
+  </tbody>
+</table>
+<p><code>$XDG_CONFIG_HOME</code>, <code>$XDG_STATE_HOME</code> and <code>$XDG_CACHE_HOME</code> replace the three folders when they are set. <a href="/config-files">Config files</a> lists every file.<sup><a href="#s3">3</a></sup></p>
 
 <h3>What's saved</h3>
 <p>The session file keeps the window's size, every tab with its name, colours, group and project, the split layout, the left bar, the look, the <a href="/mcp">MCP</a> switches and the language. For each pane it keeps the directory the foreground program is in and, if that program is Claude Code or Codex, the command that resumes its conversation: <code>claude --resume &lt;id&gt;</code> or <code>codex resume &lt;id&gt;</code>. Reopening starts a shell in that directory and types the command.</p>
-<p>It saves after anything that changes the layout, every 30 seconds, and when you press <code>✕</code>. A save that would lose more than half the panes or tabs without your having closed them is refused, and the last ten versions are kept in <code>sessions/backups/</code>.</p>
+<p>A save that would lose more than half the panes or tabs without your having closed them is refused, and the last ten versions are kept in <code>sessions/backups/</code>.</p>
 
 <h3>Closing</h3>
-<p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.</p>
+<p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.<sup><a href="#s1">1</a></sup></p>
+
+<h3>The first window in 0.5.0</h3>
+<div class="in-dev">
+<p>A new window wears the Clean design: no tube and no glow on the letters, corners that are nearly square, and the Terminal Delight palette with INHERIT on, so it follows your Omarchy theme. Clean also asks for its own set of chrome. Tabs run across the top instead of the left bar, and the ◀/▶ handle brings the bar back. The app mark, the Git notice and the agent counter are hidden; the attention pill at the top right stays. The bottom-right glyphs, among them the graveyard and the 📜 artifact rail, fold into a <code>CONFIG</code> menu, and each pane's header comes down to its title, its state and its <code>⋯</code>, with the handover chip and the rest folded in there.<sup><a href="#s4">4</a></sup></p>
+<p>Every one of those is a switch in <a href="/ui-config">UI CONFIG</a>, and a switch you flip there beats Clean. The default for new windows can be changed too. A session saved by an earlier version opens the way it was saved.</p>
+</div>
 
 <h3>On the desktop</h3>
-<p>From a source checkout, <code>scripts/install-desktop.sh</code> adds a launcher and icon, and on Omarchy <code>scripts/install-keys-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to a searchable list of every Terminal Delight key.</p>
+<p>From a source checkout, <code>scripts/install-desktop.sh</code> adds a launcher and icon. On Omarchy, <code>scripts/install-keys-hotkey.sh</code> binds <kbd>Super</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> to a searchable list of every Terminal Delight key, and <code>terminal-delight default-terminal on</code> makes it the terminal the desktop opens. <a href="/omarchy">Omarchy</a> has all three.</p>
 
-<h3>As Omarchy's terminal</h3>
-<p>Omarchy opens every terminal through <code>xdg-terminal-exec</code>: <kbd>Super</kbd>+<kbd>Return</kbd>, its TUI launchers and the Local AI plugin's agents. Terminal Delight answers it the way foot does: <code>--app-id=</code>, <code>--title=</code>, <code>--working-directory=</code> and <code>-e</code> open a quick window that runs the program and closes when it ends, and never touches a session. <code>terminal-delight default-terminal on</code> makes it the one Omarchy picks, after <code>scripts/install-desktop.sh</code>. <code>off</code> puts back exactly what was there before, and leaves the list alone if somebody has changed it since. <code>status</code> says which terminal is the default. A pane opened by the Local AI plugin wears a <code>LOCAL MODEL</code> mark.</p>
+<h3>What would prove this wrong</h3>
+<p>A first start on a machine with no <code>~/.config/terminal-delight/</code> should leave behind exactly the files the table names as written at the first start, plus the session file once it saves. Any other file there before you've used the feature it belongs to means a default was written that nobody asked for.</p>
 </section>
 
 <ol data-sources>
-  <li id="s1">Session choice: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; the window, saving and the safety nets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; what a pane remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; the first look: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>); the host's idle stop: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>; the xdg-terminal-exec contract: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>parse_contract</code>) and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/packaging/terminal-delight.desktop">terminal-delight.desktop</a>; the switch: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>.</li>
+  <li id="s1">Session choice: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a> (<code>resolve_session</code>, and the hosted order below it); the window, the quick window, saving and the safety nets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; what a pane remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; the host's idle stop: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
+  <li id="s2">The first look and the theme seed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>, <code>init</code>); the mark: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/dirlogo.rs">dirlogo.rs</a> (<code>seed_if_absent</code>).</li>
+  <li id="s3">Logs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>; the page cache: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/cache.rs">docview/cache.rs</a>.</li>
+  <li id="s4">0.5.0's first window: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>), the Clean set <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
 </ol>

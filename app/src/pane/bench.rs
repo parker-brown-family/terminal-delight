@@ -3243,7 +3243,7 @@ impl TerminalView {
         // other terminal on this machine does with a dropped file.
         if self.bench.face() != crate::workbench::Face::Workbench {
             window.focus(&self.focus_handle, cx);
-            self.paste_text(&text);
+            self.paste_image_paths(paths.paths(), cx);
             cx.notify();
             return;
         }

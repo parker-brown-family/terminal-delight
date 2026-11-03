@@ -105,6 +105,7 @@ mod threshing_floor_view;
 mod uninstall;
 mod update;
 mod update_view;
+mod wirecheck;
 use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
 mod slot;
 mod sticky;
@@ -9050,6 +9051,9 @@ impl Workspace {
                 .inactive_image_glow
                 .map(|v| K::InactiveImageGlow.to_percent(v)),
             inactive_text: g.inactive_text.map(|v| K::InactiveText.to_percent(v)),
+            active_brightness: g
+                .active_brightness
+                .map(|v| K::ActiveBrightness.to_percent(v)),
             inactive_brightness: g
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
@@ -9126,6 +9130,9 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_text {
             set!(K::InactiveText, p);
+        }
+        if let Some(p) = patch.active_brightness {
+            set!(K::ActiveBrightness, p);
         }
         if let Some(p) = patch.inactive_brightness {
             set!(K::InactiveBrightness, p);
@@ -23253,6 +23260,7 @@ impl Workspace {
                         | theme::GradeKey::ImageGlow
                         | theme::GradeKey::InactiveImageGlow
                         | theme::GradeKey::InactiveText
+                        | theme::GradeKey::ActiveBrightness
                         | theme::GradeKey::InactiveBrightness
                         | theme::GradeKey::InactiveBlur => {
                             format!("{}%", (v * 100.).round() as i32)
@@ -33513,6 +33521,12 @@ impl Render for Workspace {
                 (
                     t.g_active_hdr,
                     vec![
+                        // First, as INACTIVE TERMINALS leads with its own.
+                        (
+                            G::ActiveBrightness,
+                            t.g_brightness,
+                            grade.active_brightness_at_edge(),
+                        ),
                         (G::Text, t.g_text, grade.text),
                         (
                             G::ImageGlow,
@@ -49705,6 +49719,10 @@ enum Verb {
     /// Find, check, install and roll back builds from the stable or dev
     /// channel (see [`update`]); what ⚙ CONFIG › UPDATES does, from a terminal.
     Update,
+    /// Replay a capture of a real session host and say whether this build's
+    /// core reads it into the screen that host reported. Internal: CI's wire
+    /// attestation runs it (`scripts/wire-attest.sh`).
+    WireReplay,
     /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
     Admin,
 }
@@ -49760,6 +49778,14 @@ const VERBS: &[VerbSpec] = &[
         verb: Verb::Update,
         typed: true,
         piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "wire-replay",
+        verb: Verb::WireReplay,
+        typed: false,
+        piping: Piping::Ungated(
+            "reads a capture named on the command line; with none it refuses on stderr",
+        ),
     },
     VerbSpec {
         word: "restricted",
@@ -50026,6 +50052,7 @@ fn main() {
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
                 Verb::Update => update::run_cli(&argv[2..]),
+                Verb::WireReplay => wirecheck::run_cli(&argv[2..]),
                 Verb::Admin => uninstall::admin_cli(&argv[2..]),
             };
             std::process::exit(code);

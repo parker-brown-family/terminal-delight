@@ -1,12 +1,15 @@
 # The paragraph that goes in `AGENTS.md`
 
 This is the text that makes every agent on a machine aware of the workbench.
-It is **not installed by this branch** — it changes the behaviour of every
-agent on the box, and the feature has to be merged and installed first, or the
-instruction describes a surface that is not there.
+Nothing installs it for you: it changes the behaviour of every agent on the
+box, so it goes in by hand, and only on a machine running a build that has the
+workbench, or the instruction describes a surface that is not there.
 
-Paste it into `~/.config/agents/AGENTS.md` (the canonical machine-global file;
-Claude imports it, Codex and Gemini symlink it) once the build is live.
+Paste it into the instructions file your agents all read — for example a
+machine-global `~/.config/agents/AGENTS.md` that Claude imports and Codex and
+Gemini symlink. An agent the Workbench launches is already given the same
+instructions in its briefing; this paragraph is for agents started any other
+way.
 
 ---
 
@@ -32,8 +35,9 @@ MCP verb if you are connected to Terminal Delight's MCP server, or pipe the
 document to `terminal-delight surface`.
 
 ```json
-{ "td": "0.1",
+{ "td": "0.4",
   "kind": "decision",
+  "id": "cache-eviction",
   "title": "Cache eviction policy",
   "weight": { "effort": "medium", "complexity": "involved",
               "confidence": "measured",
@@ -45,8 +49,13 @@ document to `terminal-delight surface`.
              "consequences": ["Staleness becomes a separate knob."] } }
 ```
 
+**Give every document an `id` of its own**, using letters, digits, `-` and
+`_`. The same id again updates that card in place; a new id adds a card, so
+each turn's response gets a new one. Two documents sent without an id can
+replace each other.
+
 **Kinds:** `response`, `decision`, `changeset`, `architecture`, `artifact`,
-`table`, `markdown`. **Describe meaning, never layout** — no widths, no
+`table`, `markdown`, `question`. **Describe meaning, never layout** — no widths, no
 colours, no components. Terminal Delight owns how each kind looks, in whatever
 theme and at whatever size the pane is. A kind it does not know is shown as
 `unclassified` rather than dropped, so it is always safe to send.
@@ -64,7 +73,7 @@ becomes a section labelled by its key; a string is prose, an array is a list, an
 object is facts.
 
 ```json
-{ "td": "0.4", "kind": "response", "title": "What this turn did",
+{ "td": "0.4", "kind": "response", "id": "turn-<n>", "title": "What this turn did",
   "model": { "layman": "The whole reply, in plain English.",
              "brief": "Two sentences, under fifty words.", "technical": "…",
              "evidence": ["…"], "next": ["…"],

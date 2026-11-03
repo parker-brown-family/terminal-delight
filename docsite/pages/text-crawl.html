@@ -2,8 +2,8 @@
 {
   "title": "Text crawl",
   "description": "Text crawl tilts one pane back like a film's opening crawl: centred rows in a News Gothic-style italic, largest at the bottom and receding toward the top. A per-pane switch in the GAUGES tray with two knobs, angle and depth.",
-  "updated": "2026-09-25",
-  "trueOf": "main at d7cf383",
+  "updated": "2026-11-01",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "A pane that recedes like an opening crawl"
 }
 </script>
@@ -52,7 +52,7 @@
   </div>
   <figcaption><b>Figure 1.</b> The same centred rows, flat and under the crawl at its defaults. The top row ends up 73% as wide as the bottom one, and the lower half of the pane holds only the bottom 39% of the rows. Each bar is a row of text. Drawn by <code>docsite/tools/crawl-figure.mjs</code> from the crawl shader.</figcaption>
 </figure>
-<p>Turn it on in a pane's GAUGES tray (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>) under <code>TEXT CRAWL</code>. Two knobs appear: <b>angle</b>, how sharply the sides lean in, and <b>depth</b>, how much bigger the bottom rows are than the top ones. It's a way of looking at a terminal rather than working in one: selecting text in a crawling pane is only approximate.</p>
+<p>Turn it on in a pane's GAUGES tray (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd>): open the folded <code>▸ TEXT CRAWL</code> row near the foot and press <code>crawl off</code> so it reads <code>crawl on</code>. Two knobs appear: <b>angle</b>, how sharply the sides lean in, and <b>depth</b>, how much bigger the bottom rows are than the top ones. It's a way of looking at a terminal rather than working in one: selecting text in a crawling pane is only approximate.</p>
 <p>There's a version on the web: <a href="https://terminal-delight.brownfamilysports.com/start-crawl.html">the crawl kiosk</a>.</p>
 <p class="invite">Technical has the ranges and the math.</p>
 </section>
@@ -66,10 +66,11 @@
     <tr><td><code>depth</code></td><td><code>crawl_depth</code></td><td>0.05–15×</td><td>2.5×</td></tr>
   </tbody>
 </table>
-<p>Crawl is a gauge like warp, so it's set per pane, and a pane follows the window's unless you change it on the pane. Turning it on in <code>GAUGES — OUTER</code> crawls every pane that follows the window. <code>reset</code> turns it off. An agent can set it through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, with the angle and depth as percentages of their ranges. There's no theme key for it.</p>
+<p>Crawl is a gauge like warp, so it's set per pane, and a pane follows the window's unless you change it on the pane. Turning it on in <code>GAUGES — OUTER</code> crawls every pane that follows the window. The row is folded shut each time the tray opens, and the two sliders show only while crawl is on. <code>reset</code> leaves the crawl alone; the switch is the only way off.<sup><a href="#s2">2</a></sup> An agent can set it through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, with the angle and depth as percentages of their ranges. There's no theme key for it.</p>
+<p class="in-dev">Crawl, its angle and its depth are look dials, so each <a href="/themes">design</a> remembers its own, and a dial you pin follows you into every design.<sup><a href="#s3">3</a></sup></p>
 
 <h3>The math</h3>
-<p>The top edge's width, as a share of the bottom's, is <code>a = 1 − 1.3 × sin(angle)</code>, kept between 0.2 and 1. Depth <code>D</code> is how many times taller the bottom row is than the top. For each point on the pane at height <code>v</code> from the bottom (0 to 1), the renderer shows the content row at <code>(D^v − 1) / (D − 1)</code>, and each row's width runs from 1 at the bottom to <code>a</code> at the top. Anything outside that trapezoid is black, and still takes the glass's glare. It's one extra power per pixel in the same pass as the <a href="/crt">barrel warp</a>, which it stacks with.</p>
+<p>The top edge's width, as a share of the bottom's, is <code>a = 1 − 1.3 × sin(angle)</code>, kept between 0.2 and 1.<sup><a href="#s1">1</a></sup> Depth <code>D</code> is how many times taller the bottom row is than the top. For each point on the pane at height <code>v</code> from the bottom (0 to 1), the renderer shows the content row at <code>(D^v − 1) / (D − 1)</code>, and each row's width runs from 1 at the bottom to <code>a</code> at the top. Anything outside that trapezoid is black, and still takes the glass's glare. It's one extra power per pixel in the same pass as the <a href="/crt">barrel warp</a>, which it stacks with.</p>
 
 <h3>What changes and what doesn't</h3>
 <ul>
@@ -84,4 +85,6 @@
 
 <ol data-sources>
   <li id="s1">The perspective: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0003-text-crawl.patch">0003-text-crawl.patch</a>; the gauges and <code>crawl_coeffs</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the font and centring: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>.</li>
+  <li id="s2">The TEXT CRAWL row and what <code>reset</code> keeps: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> and <code>Grade::reset_gauges</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>.</li>
+  <li id="s3">0.5.0, the look dials a design remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/looks.rs">looks.rs</a> on dev/0.5.0.</li>
 </ol>
