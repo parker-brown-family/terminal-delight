@@ -317,6 +317,63 @@ impl TerminalView {
         }
     }
 
+    /// Alt+O with nothing open: the newest handover, over this pane. One TD
+    /// can draw opens to be read; one it cannot, a web address or a file it
+    /// has no view for, waits on a question rather than jumping to the
+    /// browser. Parker, 2026-11-03: *"alt+o opens a file link to web ... and
+    /// ZIPs over to a browser which I do not love"*. The chip and a click on
+    /// a name stay as they are: a press on a link already says where to go.
+    pub(crate) fn ask_newest_handover(&mut self, cx: &mut Context<Self>) {
+        let Some(h) = self.handovers.newest().cloned() else {
+            return;
+        };
+        let outside = match h.path() {
+            Some(path) => path.exists() && crate::docopen::drawable_document(&path).is_none(),
+            None => true,
+        };
+        if !outside {
+            self.open_handover(&h, cx);
+            return;
+        }
+        self.ask_outside = Some(AskOutside {
+            href: h
+                .path()
+                .map(|p| p.to_string_lossy().into_owned())
+                .unwrap_or_else(|| h.href.clone()),
+            label: h.label.clone(),
+            key: h.key(),
+            web: h.path().is_none(),
+        });
+        cx.notify();
+    }
+
+    /// Whether Alt+O's question is up: a second Alt+O raises the artifact
+    /// rail, as it does over an open document.
+    pub(crate) fn asks_outside(&self) -> bool {
+        self.ask_outside.is_some()
+    }
+
+    /// Take the question down unanswered: the rail is going up instead.
+    pub(crate) fn put_ask_away(&mut self, cx: &mut Context<Self>) {
+        if self.ask_outside.take().is_some() {
+            cx.notify();
+        }
+    }
+
+    /// The question's keys ([`crate::keylayer::Layer::Ask`]): Enter hands
+    /// the artifact to the browser or the desktop and counts it opened,
+    /// Escape takes the question down. Nothing else reaches here.
+    pub(super) fn ask_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
+        if let Some(ask) = self.ask_outside.take() {
+            if ks.key == "enter" {
+                open_with_system(&ask.href);
+                self.mark_handover_opened(&ask.key);
+            }
+            cx.notify();
+        }
+        Handled::Consumed
+    }
+
     /// Open one handover the way the history page's links open: a file this
     /// window can draw floats over the pane, anything else goes to the
     /// desktop, and a file that is gone says so instead of failing out of
