@@ -1618,8 +1618,8 @@ fn tool_defs() -> Value {
                  phosphor — the glow of the lit borders, 25 the house look, 0 none; \
                  image_glow — active letter glow, default 20 (Standard) / 37 (Intrusive); inactive_image_glow \
                  — inactive glow, default 100; inactive_text — percent of active \
-                 text, default 45 (Standard) / 52 (Intrusive); active_brightness — how much \
-                 brighter the focused pane is drawn, 0 none (default) to 100 half again as light; \
+                 text, default 45 (Standard) / 52 (Intrusive); active_brightness — how light \
+                 the focused pane is drawn, 0 a fifth, 62 as always (default), 100 half again as light; \
                  inactive_brightness — light an inactive pane keeps, default 78; inactive_blur — softness of an inactive \
                  pane's terminal, default 0). The four linger fields use milliseconds: \
                  cursor_linger_ms and inactive_cursor_linger_ms range 0..220; off_cursor_linger_ms \
