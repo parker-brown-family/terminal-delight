@@ -81,6 +81,7 @@ sections from there down are what the 0.4.0 candidates already carried.
   on top of the page in the frame, and the page keeps the keyboard. Escape
   puts away one thing at a time: the note being written, the selection, the
   clip, then the document and the frame.
+- **Ctrl+= and Ctrl+- zoom the document you are reading**, as plain + and - do.
 - **Moving to another pane puts the document away.** Alt+arrows and the pane
   marks still take you elsewhere while you read, and the frame now closes as
   focus lands on the other pane, so nothing you type there goes into a shell
