@@ -39079,7 +39079,6 @@ impl Render for Workspace {
                     .children(self.render_rail(cx))
                     .children(scale_overlay)
                     .children(more_overlay)
-                    .children(self.render_artifact_rail(&th, scale, cx))
                     .children(help_overlay)
                     .children(tab_menu_overlay)
                     .children(group_menu_overlay)
@@ -39087,6 +39086,10 @@ impl Render for Workspace {
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
+                    // except the artifact rail: Alt+O pressed while a document
+                    // is read raises it, numbered, and a rail drawn under the
+                    // reading frame would be raised out of sight
+                    .children(self.render_artifact_rail(&th, scale, cx))
                     // the find panel rides on top too (its own scrim locks input)
                     .children(find_overlay)
                     // and the lookup, which is find's twin over names
@@ -42274,6 +42277,22 @@ mod tests {
     /// columns across the glass, about twelve rows at a time, and the slider's
     /// smallest setting was still 1.28×. Parker: "If I open a reader for a tiny,
     /// tiny pane, it's exactly because it's a tiny pane and I can't read it."
+    /// Alt+O pressed while a document is read in the FOCUS frame raises the
+    /// artifact rail (issue raised by the keyboard-navigation agent on PR
+    /// 1292). gpui paints a parent's children in order, so the rail has to be
+    /// added after the frame or it opens under the frame's scrim, unseen.
+    #[test]
+    fn the_artifact_rail_is_drawn_over_the_reading_frame() {
+        let src = include_str!("main.rs");
+        let frame = src
+            .find(".children(focus_overlay)")
+            .expect("the window adds the reading frame");
+        let rail = src
+            .find(".children(self.render_artifact_rail(")
+            .expect("the window adds the artifact rail");
+        assert!(rail > frame, "the rail is added after, so above, the frame");
+    }
+
     #[test]
     fn the_reader_opens_a_narrow_pane_at_its_own_letters_across_the_glass() {
         let glass = ReaderGlass::in_window(1576.0, 950.0);
