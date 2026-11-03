@@ -102,9 +102,9 @@ sections from there down are what the 0.4.0 candidates already carried.
   a digit), plus WHILE A DOCUMENT IS OPEN (the reading keys) and IN SCROLL
   MODE. Ctrl+Insert and Shift+Insert, Ctrl+Shift+A, Ctrl+Shift+B, and PgUp
   and Ctrl+Home in agent panes are listed for the first time.
-- **FEATURES is rebuilt for 0.5.0**: forty-five entries in six sections,
+- **FEATURES is rebuilt for 0.5.0**: forty-six entries in six sections,
   from the workbench, NEEDS ME and the Threshing Floor to the reading frame,
-  briefs, pane marks, skins, updates and Restricted commands, each with its
+  briefs, pane marks, skins, phosphor burn, updates and Restricted commands, each with its
   chord where it has one. The stale "5 themes" and "stdio, never TCP" lines
   are gone. All of it is in the nine languages.
 
