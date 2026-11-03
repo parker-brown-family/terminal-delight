@@ -2,8 +2,8 @@
 # Copy the decision-brief notes-format fixtures from the skill into TD, or check
 # that TD's copy is what it says it is.
 #
-# TD writes notes into Parker's briefs, and the brief's own save button writes
-# them too. The two are held to one format by shared fixtures that live in the
+# TD writes submitted annotations into the original HTML, and notes.js exports
+# portable snapshots for tooling. The two are held to one format by shared fixtures that live in the
 # skill (parker-brown-family/agent-skills, decision-brief/fixtures/notes-format/)
 # and are vendored here byte for byte, with SOURCE naming the commit. A copy
 # that someone edits by hand, or one the skill has moved past, stops holding

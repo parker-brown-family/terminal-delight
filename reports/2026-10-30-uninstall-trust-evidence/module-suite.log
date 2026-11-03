@@ -1,0 +1,116 @@
+
+running 102 tests
+test defaultterm::tests::off_without_a_journal_changes_nothing ... ok
+test defaultterm::tests::on_refuses_without_an_entry_that_can_take_a_command ... ok
+test uninstall::blocks::tests::damaged_duplicate_edited_or_foreign_blocks_are_refused ... ok
+test uninstall::blocks::tests::exact_block_goes_and_the_tail_stays ... ok
+test defaultterm::tests::off_leaves_a_newer_choice_alone ... ok
+test defaultterm::tests::on_twice_keeps_the_first_record ... ok
+test defaultterm::tests::restoring_never_writes_through_a_planted_temporary_link ... ok
+test defaultterm::tests::with_no_list_before_off_removes_the_list_again ... ok
+test defaultterm::tests::status_says_who_the_default_is ... ok
+test uninstall::blocks::tests::no_marker_is_absent ... ok
+test defaultterm::tests::off_puts_back_the_previous_list_byte_for_byte ... ok
+test uninstall::builds::tests::list_real_builds_read_only ... ignored, reads the real build directory; run by hand
+test uninstall::builds::tests::human_bytes_reads_like_a_person_writes ... ok
+test uninstall::builds::tests::parses_the_command_line ... ok
+test uninstall::e2e::a_classifier_that_cannot_finish_reading_proves_nothing ... ok
+test uninstall::e2e::a_change_after_the_plan_refuses ... ok
+test uninstall::e2e::a_bare_mcp_command_says_which_path_found_it ... ok
+test uninstall::builds::tests::lists_builds_in_use_and_leaves_the_rest_alone ... ok
+test uninstall::builds::tests::a_build_that_starts_running_before_its_removal_is_kept ... ok
+test uninstall::e2e::a_bad_stamp_or_a_non_empty_journal_dir_refuses_before_writing ... ok
+test uninstall::builds::tests::dry_run_removes_nothing ... ok
+test uninstall::builds::tests::an_unreadable_launcher_blocks_the_prune_and_the_count ... ok
+test uninstall::builds::tests::prune_keeps_the_launcher_running_and_newest ... ok
+test uninstall::e2e::a_records_folder_that_cannot_be_looked_at_is_unknown_not_absent ... ok
+test uninstall::e2e::a_protected_machine_refuses_and_changes_nothing ... ok
+test uninstall::e2e::a_fixture_whose_directories_reach_outside_its_home_is_refused ... ok
+test uninstall::e2e::a_failed_export_keeps_the_records ... ok
+test uninstall::e2e::a_receipt_others_can_write_proves_nothing ... ok
+test uninstall::e2e::a_program_in_the_builds_directory_that_cannot_be_read_blocks_instead_of_being_signalled ... ok
+test uninstall::e2e::a_registration_with_its_own_path_to_a_wrapper_is_not_td ... ok
+test uninstall::e2e::a_fixture_launcher_cannot_make_a_live_build_a_target ... ok
+test uninstall::e2e::a_registration_replaced_during_the_run_is_left_alone ... ok
+test uninstall::e2e::a_registration_whose_path_starts_relative_or_with_its_own_cwd_is_reported ... ok
+test uninstall::e2e::a_runtime_dir_that_is_the_settings_dir_is_refused ... ok
+test uninstall::e2e::a_running_build_that_will_not_stop_blocks_the_file_removals ... ok
+test uninstall::builds::tests::an_unreadable_launcher_keeps_every_build ... ok
+test uninstall::builds::tests::a_deleted_executable_still_counts_as_running_its_path ... ok
+test uninstall::builds::tests::the_text_says_what_is_in_use_and_what_would_go ... ok
+test uninstall::e2e::a_running_appimage_in_the_builds_directory_is_never_signalled ... ok
+test uninstall::e2e::a_runtime_dir_on_top_of_older_records_is_refused ... ok
+test uninstall::e2e::an_export_cannot_be_written_where_a_removal_would_delete_it ... ok
+test uninstall::e2e::only_the_names_td_gives_its_loose_files_are_removed ... ok
+test uninstall::e2e::only_the_running_programs_own_bytes_make_it_a_build ... ok
+test uninstall::e2e::an_unreadable_tree_has_no_size_rather_than_zero ... ok
+test uninstall::e2e::overlapping_roots_are_refused ... ok
+test uninstall::builds::tests::an_unreadable_builds_directory_is_a_refused_prune_not_an_empty_one ... ok
+test uninstall::e2e::an_unreadable_registration_is_a_failure_not_already_gone ... ok
+test uninstall::builds::tests::a_build_that_changes_or_becomes_the_launcher_is_kept ... ok
+test uninstall::builds::tests::the_cli_says_unknown_instead_of_a_removable_count_while_a_possible_td_is_unreadable ... ok
+test uninstall::e2e::an_export_that_cannot_be_written_keeps_the_records ... ok
+test uninstall::e2e::a_linked_socket_is_never_asked_to_close ... ok
+test uninstall::export::tests::an_absent_root_is_null_and_an_empty_one_is_present ... ok
+test uninstall::export::tests::bytes_read_as_decimal_units ... ok
+test uninstall::export::tests::options_parse_and_refuse_ambiguity ... ok
+test uninstall::export::tests::stamps_are_utc_civil_dates_and_bad_ones_are_refused ... ok
+test uninstall::e2e::absolute_launcher_registrations_ignore_shadowing_path_for_every_client ... ok
+test uninstall::export::tests::the_text_report_groups_what_was_left_out ... ok
+test uninstall::e2e::td_still_the_default_terminal_keeps_the_program ... ok
+test uninstall::guard::tests::no_marker_is_unprotected ... ok
+test uninstall::guard::tests::unreadable_or_unnamed_marker_fails_closed ... ok
+test uninstall::guard::tests::this_machine_refuses_and_other_machine_does_not ... ok
+test uninstall::jsonorder::tests::a_repeated_key_is_refused ... ok
+test uninstall::jsonorder::tests::four_space_tab_and_compact_files_keep_their_style ... ok
+test uninstall::jsonorder::tests::non_ascii_and_escapes_survive ... ok
+test uninstall::e2e::writing_the_plan_for_review_does_not_change_the_plan ... ok
+test uninstall::jsonorder::tests::round_trip_keeps_order_and_bytes ... ok
+test uninstall::jsonorder::tests::remove_and_lookup ... ok
+test uninstall::known::tests::a_receipt_others_can_write_is_not_believed ... ok
+test uninstall::known::tests::receipt_lines_parse_and_reject_relative_paths ... ok
+test uninstall::known::tests::ownership_needs_a_hash_match_not_a_name ... ok
+test uninstall::manifest_name::the_worker_reads_the_receipt_art_writes ... ok
+test uninstall::mcp::tests::gemini_is_read_and_edited_where_gemini_cli_home_points ... ok
+test uninstall::mcp::tests::discovers_each_client_and_classifies ... ok
+test uninstall::roots::tests::defaults_follow_home ... ok
+test uninstall::mcp::tests::td_itself_versus_a_wrapper ... ok
+test uninstall::roots::tests::home_must_be_absolute_and_not_root ... ok
+test uninstall::roots::tests::relative_xdg_is_reported_and_not_used ... ok
+test uninstall::settings::tests::a_lookalike_is_kept_and_reported ... ok
+test uninstall::settings::tests::an_event_that_was_already_empty_stays ... ok
+test uninstall::roots::tests::inside_td_is_lexical_and_resolved ... ok
+test uninstall::settings::tests::malformed_shapes_are_refused ... ok
+test uninstall::export::tests::an_existing_partial_directory_is_refused_and_left_alone ... ok
+test uninstall::settings::tests::briefing_is_left_unless_asked ... ok
+test uninstall::settings::tests::nothing_owned_means_no_rewrite ... ok
+test uninstall::settings::tests::removes_only_owned_entries_and_keeps_order_and_neighbours ... ok
+test uninstall::settings::tests::unfaithful_formatting_refuses_only_when_there_is_something_to_remove ... ok
+test uninstall::tests::a_changed_review_digest_cannot_stage_a_worker ... ok
+test uninstall::e2e::the_worker_removes_a_build_only_while_its_bytes_still_say_build ... ok
+test uninstall::tests::handoff_cannot_turn_a_path_into_instructions_and_respects_protection ... ok
+test uninstall::tests::refuses_destructive_and_ambiguous_requests ... ok
+test uninstall::e2e::delete_and_export_remove_records_only_after_the_export ... ok
+test uninstall::e2e::keep_records_removes_the_application_and_reports_the_rest ... ok
+test uninstall::export::tests::refuses_an_existing_destination_a_missing_parent_and_a_relative_path ... ok
+test uninstall::export::tests::refuses_a_destination_inside_a_td_root_even_through_a_link ... ok
+test uninstall::export::tests::without_records_state_is_left_but_still_reported_present ... ok
+test uninstall::builds::tests::a_missing_directory_lists_nothing_and_prunes_nothing ... ok
+test uninstall::export::tests::an_unreadable_file_aborts_leaves_no_partial_and_no_trace_in_the_source ... ok
+test uninstall::export::tests::exports_byte_copies_with_modes_hashes_and_reasons ... ok
+test uninstall::tests::a_confirmed_exited_child_is_not_a_live_unreadable_td ... ok
+test uninstall::e2e::an_appimage_in_the_builds_directory_is_never_a_build ... ok
+test uninstall::e2e::an_appimage_or_a_wrapper_at_the_launcher_stays_and_a_true_copy_goes ... ok
+test uninstall::e2e::a_launcher_pointing_at_a_persons_own_program_in_the_builds_directory_keeps_both ... ok
+
+test result: ok. 101 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 1.29s
+
+
+running 0 tests
+
+test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.00s
+
+   Compiling harness-core v0.0.0 (/home/parker/.cache/td-uninstall-trust/full)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.08s
+     Running unittests src/lib.rs (/home/parker/.cache/td-uninstall-trust/full/target/debug/deps/harness_core-7781ced66ba71580)
+   Doc-tests harness_core

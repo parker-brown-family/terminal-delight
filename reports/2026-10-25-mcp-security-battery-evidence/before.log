@@ -1,0 +1,55 @@
+   Compiling terminal-delight v0.4.0-rc.3 (/home/parker/Work/td-authority-lab/mcp-security-battery/app)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1m 24s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/terminal_delight-d0b31d40af54f88b)
+
+running 18 tests
+test war_room_view::tests::a_multi_row_jump_keeps_its_gutter_on_canvas ... ok
+test war_room_view::tests::a_same_row_link_runs_side_to_side ... ok
+test war_room_view::tests::age_keeps_unmeasured_and_future_timestamps_distinct_from_zero ... ok
+test war_room_view::tests::an_adjacent_card_below_draws_one_straight_on_canvas_line ... ok
+test war_room_view::tests::bin_drop_revokes_access_and_saved_membership ... ok
+test war_room_view::tests::card_menu_dismisses_on_press_and_changes_only_its_card ... ok
+test war_room_view::tests::chart_and_pool_scroll_inside_the_frame_while_their_headers_stay_put ... ok
+test war_room_view::tests::colons_keep_fuzzy_matches_in_the_requested_field ... ok
+test war_room_view::tests::connector_drag_requires_explicit_permission_and_keeps_card_shape ... ok
+test war_room_view::tests::copy_collection_checks_live_policy_seats_and_the_original_asker ... FAILED
+test war_room_view::tests::drag_cancel_and_invalid_release_preserve_membership_and_geometry ... ok
+test war_room_view::tests::fuzzy_words_find_project_tab_and_pane_in_any_word_order ... ok
+test war_room_view::tests::names_are_typed_without_creating_relationships_and_close_restores_terminal_focus ... ok
+test war_room_view::tests::org_transfer_revokes_pending_copies_and_permission_cards ... FAILED
+test war_room_view::tests::pool_drop_revokes_access_and_saved_membership ... ok
+test war_room_view::tests::queued_write_rechecks_relationship_and_caller_identity ... FAILED
+test war_room_view::tests::terminal_menu_closes_even_when_the_war_room_swallows_the_press ... ok
+test war_room_view::tests::whole_card_drag_moves_membership_and_the_saved_record_keeps_identity ... ok
+
+failures:
+
+---- war_room_view::tests::copy_collection_checks_live_policy_seats_and_the_original_asker stdout ----
+
+thread 'war_room_view::tests::copy_collection_checks_live_policy_seats_and_the_original_asker' (436228) panicked at src/war_room_view.rs:3069:17:
+assertion `left == right` failed: line-removed: Copy(CopyStatus { ask_id: AskId(500), reads: Some(1), press_limit: 0, stage: Answered { answer: "SECRET_ANSWER", tokens_read: None, cost_usd: None } })
+  left: true
+ right: false
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+---- war_room_view::tests::org_transfer_revokes_pending_copies_and_permission_cards stdout ----
+
+thread 'war_room_view::tests::org_transfer_revokes_pending_copies_and_permission_cards' (436281) panicked at src/war_room_view.rs:3007:21:
+org transfer retained copy 1
+
+---- war_room_view::tests::queued_write_rechecks_relationship_and_caller_identity stdout ----
+
+thread 'war_room_view::tests::queued_write_rechecks_relationship_and_caller_identity' (436291) panicked at src/war_room_view.rs:3038:13:
+captured own flag bypassed live identity
+
+
+failures:
+    war_room_view::tests::copy_collection_checks_live_policy_seats_and_the_original_asker
+    war_room_view::tests::org_transfer_revokes_pending_copies_and_permission_cards
+    war_room_view::tests::queued_write_rechecks_relationship_and_caller_identity
+
+test result: FAILED. 15 passed; 3 failed; 0 ignored; 0 measured; 2726 filtered out; finished in 0.91s
+
+error: test failed, to rerun pass `--bin terminal-delight`

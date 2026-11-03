@@ -160,6 +160,11 @@ chmod +x terminal-delight-x86_64.AppImage
 ```
 
 It's a single self-contained file and **MIT-licensed** (see [License](#license)).
+Once it is running, **⚙ CONFIG › UPDATES** keeps it current. It checks the
+download against its published checksum, replaces the AppImage while keeping
+the old one beside it, and restarts only the window, so your terminals keep
+running. Choose the Dev channel there to follow the development branch.
+
 Each release attaches the file's SHA-256 as `terminal-delight-x86_64.AppImage.sha256`.
 The `latest` link serves the newest stable release only; a candidate is on its
 own release page, marked *Pre-release*. The schedule and what each release is

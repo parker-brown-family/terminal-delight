@@ -12,18 +12,22 @@ use crate::screenread::{
     rows_fingerprint, wants_human_row, wants_human_unless_answered, PROMPT_TAIL_ROWS,
 };
 
+mod afterglow;
 /// The workbench half of this view — every method that draws or drives the
 /// bench. A child module so it keeps private access; see `pane/bench.rs`.
 mod bench;
 /// The document half of this view — the floating square and the Document
 /// face. A child module for the same reason; see `pane/doc.rs`.
 mod doc;
+mod draft_images;
 mod grid_paint;
+pub(crate) use grid_paint::reduced_motion;
 /// What this pane's agent handed over: the header chip, the history page and
 /// the screen scan. A child module for the same reason; see `pane/handed.rs`.
 mod handed;
 /// Visibility-aware housekeeping deadlines and wakeups.
 mod housekeeping;
+mod input_edit;
 /// Bounded reuse of the viewport's styled text.
 mod styling;
 use crate::term;
@@ -329,6 +333,10 @@ type LiveRowsMemo = ((u64, usize, usize), std::rc::Rc<Vec<String>>);
 /// its key: [`TerminalView::live_rows`] hands out the same one until the
 /// screen changes. See `TerminalView::agent_status`.
 type StatusMemo = (std::rc::Rc<Vec<String>>, crate::hud::AgentStatus);
+
+/// The blur an inactive pane's terminal takes at 100% INACTIVE TERMINALS blur,
+/// in logical px: a touch softer than the 7px backdrop behind a popup.
+const INACTIVE_BLUR_PX: f32 = 9.0;
 
 /// The frame round a bent tube's glass, for [`crate::warp::register_tube`]: a
 /// plastic in the pane's own chrome hue, desaturated and at a fixed lightness so
@@ -2016,7 +2024,7 @@ fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
     Some(match index {
         i if i < 256 => graded(shape(idx_color(i as u8), th), g, Channel::Text),
         i if i == NamedColor::Foreground as usize => graded(th.text, g, Channel::Text),
-        i if i == NamedColor::Background as usize => graded(th.bg, g, Channel::Bg),
+        i if i == NamedColor::Background as usize => terminal_background(th),
         i if i == NamedColor::Cursor as usize => graded(th.cursor, g, Channel::Text),
         _ => return None,
     })
@@ -2584,6 +2592,11 @@ enum Channel {
     Bg,
 }
 
+fn terminal_background(th: &Theme) -> Hsla {
+    th.field_background
+        .unwrap_or_else(|| graded(th.bg, &th.grade, Channel::Bg))
+}
+
 /// Apply the monitor-OSD [`Grade`](crate::theme::Grade) to one final cell colour,
 /// in HSLA, at paint time — the last step before a cell is committed so the whole
 /// composited display is graded uniformly (text and background still take their
@@ -2815,6 +2828,7 @@ struct ReadStyle {
     inherit: bool,
     tint: bool,
     theme_gen: u64,
+    field_background: Option<Hsla>,
 }
 
 /// What a WINDOW has decided about a pane, as distinct from what the pane's
@@ -2850,6 +2864,13 @@ pub struct Presentation {
     /// Who the document pane was opened beside: a repaired document pane is
     /// still beside the same agent.
     doc_opened_by: Option<u64>,
+    /// The Threshing Floor seat and the person's access mark. A pane rebuilt
+    /// from a fresh snapshot, or an asleep agent woken into a fresh shell, is
+    /// still the pane a person seated and marked: without these it came back
+    /// unseated, every line to it gone, and a pane marked off-limits came
+    /// back open to agents.
+    seat: Option<crate::threshing_floor::SeatId>,
+    agent_access: crate::threshing_floor::AgentAccess,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -2909,15 +2930,23 @@ pub struct TerminalView {
     /// window is a process away from the terminal, and a reading that comes
     /// back empty is not evidence that the recipe was wrong.
     staged: crate::session::PaneRestore,
-    /// A person marked this pane off-limits to agents: no agent reads it or
-    /// writes to it through MCP, except the one running inside it acting on
-    /// its own pane (see `mcp::may_write`), and the control socket's bench
-    /// verbs never pick it. Set and cleared ONLY by a person: the terminal's
-    /// right-click menu, or a Yes on the rail to an agent's `request_access`
-    /// — no control-socket or MCP verb reaches it, because both answer
-    /// agents, and a lock an agent can lift is decoration. Persisted per leaf
-    /// in the state file.
-    pub off_limits: bool,
+    /// A person's position for this pane, for every agent: open, read-only
+    /// (agents may watch and ask, never write or type into its bench) or
+    /// off-limits (no agent reads it or writes to it through MCP, except the
+    /// one running inside it acting on its own pane — see
+    /// `threshing_floor::may_write` — and the control socket's bench verbs never pick
+    /// it). Set and cleared ONLY by a person: the terminal's right-click menu,
+    /// or a Yes on the rail to an agent's `request_access` — no control-socket
+    /// or MCP verb reaches it, because both answer agents, and a lock an agent
+    /// can lift is decoration. Persisted per leaf in the state file.
+    pub agent_access: crate::threshing_floor::AgentAccess,
+    /// The agent's model and effort for the header (`OPUS 5.5 MAX`), handed
+    /// down by the window from the transcript vitals it already reads for the
+    /// Threshing Floor. `None` until a transcript has named the model.
+    pub(crate) model_label: Option<String>,
+    /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
+    /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
+    pub seat: Option<crate::threshing_floor::SeatId>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -3063,6 +3092,18 @@ pub struct TerminalView {
     /// played, the tab wears its 🔔 badge and the header reads "● done" until
     /// the focus-in edge acknowledges it ([`Self::ack_bell`]).
     bell: bool,
+    /// When a person last typed or pasted into this pane, in ms since the
+    /// epoch: a prompt another agent sent waits while a person may have a line
+    /// half-typed here (`prompt::QUIET_MS`). A `Cell`, because the paste path
+    /// borrows the pane shared.
+    person_key_ms: std::cell::Cell<Option<u64>>,
+    /// Which file each `[Image #n]` in the agent's prompt was pasted from,
+    /// so the ctrl+c that clears the prompt copies the screenshots back too.
+    draft_images: RefCell<draft_images::DraftImages>,
+    /// When this pane's own scan last saw a turn begin, in ms since the epoch:
+    /// a prompt's worker took it if a turn began after Enter, even one that
+    /// began and ended between two of the prompt clock's looks.
+    turn_began_ms: Option<u64>,
     /// The agent is stopped WAITING ON A HUMAN — a picker or permission prompt
     /// is on screen (see [`wants_human`]). Live state maintained by the 120ms
     /// scan, never latched: true exactly while the prompt is up. Drives the
@@ -3177,6 +3218,10 @@ pub struct TerminalView {
     doc_holding: bool,
     /// Last-known OS focus, for edge-detected focus reporting (CSI I / CSI O).
     was_focused: bool,
+    /// Rest and sleep: this pane's memory group, its freezer gate, the clocks
+    /// that say how long it has been untouched and quiet, and whether it is
+    /// awake, resting or asleep. See `agentrest`.
+    pub(crate) rest: crate::agentrest::PaneRest,
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
@@ -3532,7 +3577,7 @@ impl gpui::EventEmitter<DragPaneStart> for TerminalView {}
 pub struct ClosePane;
 impl gpui::EventEmitter<ClosePane> for TerminalView {}
 
-/// Ctrl+W in this pane — the workspace closes the whole active tab, always via
+/// Ctrl+Shift+W in this pane — the workspace closes the whole active tab, always via
 /// the serious confirmation dialog (never a silent close).
 pub struct RequestCloseTab;
 impl gpui::EventEmitter<RequestCloseTab> for TerminalView {}
@@ -3561,6 +3606,10 @@ impl gpui::EventEmitter<OffLimitsChanged> for TerminalView {}
 /// or the launch needs a new tab; the entry point never writes to the PTY.
 pub struct OpenAgentLauncher;
 impl gpui::EventEmitter<OpenAgentLauncher> for TerminalView {}
+
+/// A key or a click on an asleep pane: bring its agent back.
+pub struct WakeAsleep;
+impl gpui::EventEmitter<WakeAsleep> for TerminalView {}
 
 /// Click on this pane's header logo (or the `＋ logo` placeholder when none is
 /// set) — ask the workspace to open the image-file picker scoped to this pane.
@@ -3787,6 +3836,10 @@ fn grid_row(cells: &[crate::vt::Cell], th: &Theme) -> GridRow {
 /// leaves the conversation room.
 const INPUT_ROWS_MAX: usize = 12;
 
+/// How often the screen is read for the tag a pasted picture becomes, while
+/// one is awaited (see `TerminalView::paste_image_paths`).
+const DRAFT_IMAGE_LOOK: Duration = Duration::from_millis(50);
+
 /// Where an agent's input box is on a screen: from the status line just above
 /// its top border to the last row with anything on it. `None` when the screen
 /// draws no box.
@@ -3800,17 +3853,7 @@ const INPUT_ROWS_MAX: usize = 12;
 /// agent at rest those rows are the end of its reply, which the transcript
 /// already shows.
 fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
-    let border = |r: &GridRow| {
-        let marks = r.line.text.chars().filter(|c| !c.is_whitespace());
-        let mut n = 0;
-        for c in marks {
-            if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
-                return false;
-            }
-            n += 1;
-        }
-        n >= 10
-    };
+    let border = |r: &GridRow| is_box_border(&r.line.text);
     let blank = |r: &GridRow| r.line.text.trim().is_empty();
     let status = |r: &GridRow| {
         let t = r.line.text.trim_start();
@@ -3838,6 +3881,120 @@ fn input_box(rows: &[GridRow]) -> Option<std::ops::Range<usize>> {
         .map_or(bottom + 1, |e| e + 1);
     let end = end.max(bottom + 1).min(start + INPUT_ROWS_MAX);
     Some(start..end)
+}
+
+/// A row an agent draws its input box with: every mark box drawing — Claude
+/// Code's two long rules, or a rounded box's top and bottom — and at least ten
+/// of them, so a short rule inside a reply is not taken for one.
+fn is_box_border(text: &str) -> bool {
+    let mut n = 0;
+    for c in text.chars().filter(|c| !c.is_whitespace()) {
+        if !matches!(c, '─' | '━' | '╭' | '╮' | '╰' | '╯' | '├' | '┤') {
+            return false;
+        }
+        n += 1;
+    }
+    n >= 10
+}
+
+/// What the person has typed into an agent's prompt, read off the screen, for
+/// the ctrl+c that clears it to put on the clipboard first.
+///
+/// Parker, 2026-11-02: ctrl+c clears the prompt in Claude Code and Codex, which
+/// is useful, *"but fatfingering is a REAL AND AWEFUL PAIN POINT"* — a long
+/// prompt gone on one stray chord. So in a TD pane that chord is a cut.
+///
+/// `rows` are the screen's rows with every DIM cell already blanked, because
+/// both agents draw their empty-prompt placeholder dim and their typed text
+/// plain — captured off the real programs the same day: Codex writes
+/// `› ESC[2mAsk Codex to do anything`, Claude Code `❯ ESC[2mTry "fix
+/// typecheck errors"`. Without that, ctrl+c on an empty prompt would put the
+/// placeholder over whatever the person had on the clipboard.
+///
+/// The prompt is the caret row (`❯`, `›` or `> `) whose block holds the cursor
+/// — both agents park the cursor in their prompt, and that is what tells it
+/// apart from the same caret echoing an earlier turn in the scrollback above.
+/// The block runs down to the box's closing rule (Claude Code, which draws
+/// one), or else to the first blank row below the cursor (Codex, which leaves a
+/// blank before its footer); a row not indented under the caret ends it, which
+/// is how the agent's own words below an echoed turn stop the block short of
+/// the cursor. Continuation rows lose the caret's indent, and rows
+/// the agent broke only for width are joined back, as a selection copy does.
+fn agent_draft(rows: &[String], cursor: usize, cols: usize) -> Option<String> {
+    let inner = |r: &str| -> String {
+        let t = r.trim_end().trim_end_matches('│').trim_end();
+        t.strip_prefix('│').unwrap_or(t).to_string()
+    };
+    let caret_at = |r: &str| -> Option<usize> {
+        let r = inner(r);
+        let lead = r.chars().take_while(|c| c.is_whitespace()).count();
+        let mut rest = r.chars().skip(lead);
+        let caret = rest.next()?;
+        if !matches!(caret, '❯' | '›' | '>') {
+            return None;
+        }
+        match rest.next() {
+            None => Some(lead + 1),
+            Some(' ' | '\u{a0}') if !(caret == '>' && rest.next() == Some('>')) => Some(lead + 2),
+            _ => None,
+        }
+    };
+    let first = (0..=cursor.min(rows.len().checked_sub(1)?))
+        .rev()
+        .find(|&k| caret_at(&rows[k]).is_some())?;
+    let indent = caret_at(&rows[first])?;
+    let boxed = first > 0 && is_box_border(&rows[first - 1]);
+    let mut end = first + 1;
+    while end < rows.len() && !is_box_border(&rows[end]) {
+        let row = inner(&rows[end]);
+        let blank = row.trim().is_empty();
+        let under = row.chars().take_while(|c| c.is_whitespace()).count() >= indent;
+        if !blank && !under || !boxed && blank && end > cursor {
+            break;
+        }
+        end += 1;
+    }
+    if cursor >= end {
+        return None;
+    }
+    let mut lines: Vec<String> = rows[first..end]
+        .iter()
+        .map(|r| {
+            let r = inner(r);
+            let pad = r
+                .chars()
+                .take(indent)
+                .take_while(|c| c.is_whitespace())
+                .count();
+            r.chars()
+                .skip(pad)
+                .collect::<String>()
+                .trim_end()
+                .to_string()
+        })
+        .collect();
+    lines[0] = inner(&rows[first])
+        .chars()
+        .skip(indent)
+        .collect::<String>()
+        .trim_end()
+        .to_string();
+    // `❯ 1. Yes` is a menu's cursor, not a prompt: a picker on screen has no
+    // draft to save, and its option is not worth the person's clipboard.
+    let digits = lines[0].chars().take_while(char::is_ascii_digit).count();
+    if digits > 0 && lines[0][digits..].starts_with(". ") {
+        return None;
+    }
+    while lines.last().is_some_and(|l| l.is_empty()) {
+        lines.pop();
+    }
+    if lines.is_empty() {
+        return None;
+    }
+    Some(reflow_wrapped_copy(
+        &lines.join("\n"),
+        cols.saturating_sub(indent),
+    ))
 }
 
 /// One matched line inside a pane's grid: its absolute grid line index, the line
@@ -4051,7 +4208,7 @@ impl TerminalView {
                 && *k_mode == self.mode
                 && *k_eff == eff
             {
-                return th.clone();
+                return crate::skin::for_theme(cx, th, 1.).terminal_theme(th.clone());
             }
         }
         let base = (*theme::resolve(cx, &eff)).clone();
@@ -4072,7 +4229,7 @@ impl TerminalView {
         }
         *self.theme_cache.borrow_mut() =
             Some((eff, self.mode.clone(), inherit, tint, gen, out.clone()));
-        out
+        crate::skin::for_theme(cx, &out, 1.).terminal_theme(out)
     }
 
     /// Build the read-only [`MirrorSnapshot`] the workspace paints into the
@@ -4100,6 +4257,7 @@ impl TerminalView {
                 inherit: self.appearance.inherit_theme,
                 tint: agent_tint(),
                 theme_gen: theme::theme_gen(cx),
+                field_background: th.field_background,
             },
         };
         let next_rev = {
@@ -4189,7 +4347,7 @@ impl TerminalView {
             doc,
             doc_rev,
             lines,
-            bg: th.bg,
+            bg: th.field_background.unwrap_or(th.bg),
             text: th.text,
             accent: th.accent,
             font_family: th.font_family.clone(),
@@ -4361,7 +4519,11 @@ impl TerminalView {
     fn live_runtime(&self) -> crate::session::PaneRuntime {
         match (self.session.master.as_ref(), self.session.shell_pid) {
             // Our own terminal: ask the kernel through the descriptor we hold.
-            (Some(master), Some(pid)) => crate::session::capture(Some(master), pid),
+            (Some(master), Some(pid)) => master
+                .file()
+                .map_or_else(crate::session::PaneRuntime::default, |file| {
+                    crate::session::capture(Some(&file), pid)
+                }),
             // Somebody else's: the descriptor is theirs, so the same questions
             // are asked of /proc instead. Same answers, one hop further away.
             (None, Some(pid)) => crate::session::capture_via_proc(pid),
@@ -4372,11 +4534,22 @@ impl TerminalView {
         }
     }
 
+    /// Explicit user close for a terminal this window owns. Dropping a replica
+    /// or disconnecting a window is deliberately not a close request.
+    pub fn close_owned_terminal(&self) {
+        if self.session.master.is_some() {
+            self.session.notifier.shutdown();
+        }
+    }
+
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
         let pid = self.session.shell_pid?;
-        crate::session::capture_cwd(self.session.master.as_ref(), pid)
+        match &self.session.master {
+            Some(master) => crate::session::capture_cwd(Some(master.file()?.as_ref()), pid),
+            None => crate::session::capture_cwd(None, pid),
+        }
     }
 
     /// This pane's shell pid — the kernel handle behind its identity. Ephemeral
@@ -4403,6 +4576,11 @@ impl TerminalView {
         self.pane_id
     }
 
+    #[cfg(test)]
+    pub(crate) fn fixture_set_pane_id(&mut self, id: u64) {
+        self.pane_id = Some(id);
+    }
+
     /// Everything this WINDOW decided about the pane, lifted off it so it can be
     /// put back on a replacement replica. See [`Presentation`].
     pub fn presentation(&self) -> Presentation {
@@ -4425,6 +4603,8 @@ impl TerminalView {
             }),
             float: self.float.as_ref().map(FloatingDoc::carry),
             doc_opened_by: self.doc_opened_by,
+            seat: self.seat,
+            agent_access: self.agent_access,
         }
     }
 
@@ -4462,6 +4642,9 @@ impl TerminalView {
             self.float = Some(Self::float_back(f, cx));
         }
         self.doc_opened_by = from.doc_opened_by;
+        // A restore, not a decision: the person's own seat and mark, carried.
+        self.seat = from.seat;
+        self.agent_access = from.agent_access;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4678,23 +4861,144 @@ impl TerminalView {
         self.hdr_overflow.is_some() || self.ctx_menu.is_some()
     }
 
-    /// The person's right-click: mark this pane off-limits to agents, or let
-    /// agents see it again. The only writer of [`Self::off_limits`] outside a
-    /// restore, on purpose — see the field.
-    pub(crate) fn toggle_off_limits(&mut self, cx: &mut Context<Self>) {
-        self.off_limits = !self.off_limits;
+    /// The position, set to a value: a person's choice in the right-click menu
+    /// or a Yes on the rail (`Workspace::rail_answer`) — the only writer of
+    /// [`Self::agent_access`] outside a restore. A person's press either way,
+    /// which is the whole rule of the field. Emits nothing when the
+    /// position is already so; a position that takes writes again releases any
+    /// bench input held while it did not.
+    pub(crate) fn set_agent_access(
+        &mut self,
+        access: crate::threshing_floor::AgentAccess,
+        cx: &mut Context<Self>,
+    ) {
+        if self.agent_access == access {
+            return;
+        }
+        self.agent_access = access;
+        if access.takes_writes() {
+            self.bench_drain(cx);
+        }
         cx.emit(OffLimitsChanged);
         cx.notify();
     }
 
-    /// The same mark, set to a value rather than flipped: a person's Yes on
-    /// the rail to an agent that asked for this pane to be opened or closed
-    /// (`Workspace::rail_answer`). A person's press either way, which is the
-    /// whole rule of the field. Emits nothing when the mark is already so.
-    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
-        if self.off_limits != on {
-            self.toggle_off_limits(cx);
+    /// Seat this pane in the Threshing Floor, or take it off. Called from the War
+    /// Room panel only — a person's click — and saved with the leaf.
+    pub(crate) fn set_seat(
+        &mut self,
+        seat: Option<crate::threshing_floor::SeatId>,
+        cx: &mut Context<Self>,
+    ) {
+        if self.seat != seat {
+            self.seat = seat;
+            cx.notify();
         }
+    }
+
+    /// Row #10 of `docs/security/terminal-input.md`: a prompt another agent
+    /// sent along a line a person drew at prompt, typed when `prompt.rs`
+    /// decides and `Workspace::prompt_tick` acts. Two shapes and no others:
+    /// the prompt's words as one bracketed paste ([`crate::prompt::paste`]),
+    /// which a program that asked for bracketing takes as text however many
+    /// newlines it holds; and one carriage return, pressed once, after the
+    /// paste has shown at the worker's prompt. Nothing is written — `false` —
+    /// to a pane that is not an agent, one a person marked read-only or
+    /// off-limits, one asleep, or, for the paste, a prompt that never asked
+    /// for bracketing.
+    pub(crate) fn type_prompt(&mut self, keys: crate::prompt::Keys<'_>) -> bool {
+        if !self.mode.is_agent()
+            || !self.agent_access.takes_writes()
+            || self.rest.dormancy.asleep().is_some()
+        {
+            return false;
+        }
+        let bytes = match keys {
+            crate::prompt::Keys::Paste(text) => {
+                match crate::prompt::paste(text, self.takes_bracketed_paste()) {
+                    Some(bytes) => bytes,
+                    None => return false,
+                }
+            }
+            crate::prompt::Keys::Enter => b"\r".to_vec(),
+        };
+        self.session.notifier.notify(bytes);
+        true
+    }
+
+    /// Whether the program in this pane has asked for bracketed paste.
+    pub(crate) fn takes_bracketed_paste(&self) -> bool {
+        self.session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::BRACKETED_PASTE)
+    }
+
+    /// When a person last typed or pasted here.
+    pub(crate) fn person_key_ms(&self) -> Option<u64> {
+        self.person_key_ms.get()
+    }
+
+    /// When this pane's scan last saw a turn begin.
+    pub(crate) fn turn_began_ms(&self) -> Option<u64> {
+        self.turn_began_ms
+    }
+
+    /// Whether a picker the workbench's dial raised is on screen.
+    pub(crate) fn dial_picker_up(&self) -> bool {
+        self.wb_dial_sent.is_some()
+    }
+
+    /// What a prompt sees of this pane: the screen's own word, before the
+    /// finish bell. The bell turns a screen nobody could read into "done" as
+    /// readily as a resting one, so `Ready` here is the idle furniture on
+    /// screen and nothing else.
+    pub(crate) fn prompt_seen(&self) -> crate::prompt::Seen {
+        use crate::hud::AgentState;
+        use crate::prompt::Seen;
+        if self.rest.dormancy.asleep().is_some() || self.rest.dormancy.is_resting() {
+            return Seen::Dormant;
+        }
+        if !self.mode.is_agent() {
+            return Seen::Gone;
+        }
+        let rows = self.live_rows();
+        let cached = match self.status_memo.borrow().as_ref() {
+            Some((seen, st)) if std::rc::Rc::ptr_eq(seen, &rows) => Some(st.state),
+            _ => None,
+        };
+        let state = cached.unwrap_or_else(|| crate::hud::parse_status_line(&rows).state);
+        match state {
+            AgentState::Idle => Seen::Ready,
+            AgentState::Working => Seen::Working,
+            AgentState::Blocked => Seen::Blocked,
+            AgentState::Error => Seen::Errored,
+            AgentState::Resting | AgentState::Asleep => Seen::Dormant,
+            AgentState::Finished | AgentState::Unknown => Seen::Unreadable,
+        }
+    }
+
+    /// This pane as the Threshing Floor's rules see it.
+    pub(crate) fn party(&self) -> crate::threshing_floor::Party {
+        crate::threshing_floor::Party {
+            seat: self.seat,
+            // An asleep agent is still an agent: its conversation is kept and
+            // one key brings it back, so the rules treat it as one (#1160).
+            is_agent: self.counts_as_agent(),
+            access: self.agent_access,
+        }
+    }
+
+    /// The off-limits mark alone, as a Yes to `open_pane` / `close_pane` sets
+    /// it: closing makes the pane off-limits, opening makes it fully open.
+    pub(crate) fn set_off_limits(&mut self, on: bool, cx: &mut Context<Self>) {
+        let access = if on {
+            crate::threshing_floor::AgentAccess::OffLimits
+        } else {
+            crate::threshing_floor::AgentAccess::Open
+        };
+        self.set_agent_access(access, cx);
     }
 
     /// Plain spawn (no restore context); kept for `cx.new(TerminalView::new)`.
@@ -4789,6 +5093,7 @@ impl TerminalView {
                 seed: n.seed,
                 edit: None,
                 pinned: n.pinned,
+                by: n.by,
             });
         let mut events = session.events.take().expect("events taken once");
         cx.spawn(async move |this, cx| {
@@ -4827,7 +5132,9 @@ impl TerminalView {
                         }
                         let detected = match (view.session.master.as_ref(), view.session.shell_pid)
                         {
-                            (Some(master), Some(pid)) => Some(foreground_mode(master, pid)),
+                            (Some(master), Some(pid)) => {
+                                master.file().map(|file| foreground_mode(&file, pid))
+                            }
                             // Somebody else's terminal, or nobody's: not this
                             // window's question to answer.
                             _ => None,
@@ -4873,6 +5180,17 @@ impl TerminalView {
                     #[cfg(test)]
                     {
                         view.housekeeping_ticks += 1;
+                    }
+                    // Rest's clocks: a changed screen is output, a write is a
+                    // touch, and a thaw on the pump thread is a wake to show.
+                    {
+                        let now = Instant::now();
+                        let generation = view.session.content_generation();
+                        view.rest.saw_generation(generation, now);
+                        view.rest.saw_writes(now);
+                        if view.rest.absorb_wake(now) {
+                            cx.notify();
+                        }
                     }
                     let th = theme::theme(cx);
                     if view.fx.tick(&th) {
@@ -4933,6 +5251,7 @@ impl TerminalView {
                                 cx.emit(AgentWorkingChanged);
                                 if thinking {
                                     view.think_since = Some(Instant::now());
+                                    view.turn_began_ms = Some(crate::prompt::now_ms());
                                     view.not_thinking_since = None;
                                     // A turn is running, so whatever was paused
                                     // is over. THE RISING EDGE, at 120ms, rather
@@ -5126,7 +5445,9 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
-            off_limits: false,
+            agent_access: crate::threshing_floor::AgentAccess::Open,
+            model_label: None,
+            seat: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -5168,6 +5489,9 @@ impl TerminalView {
             appearance: PaneTheme::default(),
             ctx_menu: None,
             bell: false,
+            person_key_ms: std::cell::Cell::new(None),
+            draft_images: RefCell::default(),
+            turn_began_ms: None,
             needs_input: false,
             answered_on: None,
             attention_since: None,
@@ -5213,6 +5537,7 @@ impl TerminalView {
             doc_rect: std::rc::Rc::new(std::cell::Cell::new(None)),
             doc_holding: false,
             was_focused: false,
+            rest: crate::agentrest::PaneRest::new(Instant::now()),
             pending_pty: None,
             cell_px,
             last_scroll_offset: None,
@@ -5475,7 +5800,33 @@ impl TerminalView {
     /// thirty agent panes, string scanning was 11% of the main thread, nearly
     /// all of it on screens that had not changed. The bell is applied after the
     /// memo, because it changes without the screen changing.
+    /// Whether an agent lives in this pane, awake or not. A sleeping agent's
+    /// pane runs a shell, and a signalled one is on its way there, but the
+    /// conversation is kept and wakes on its first prompt: it is not a pure
+    /// shell, and the Threshing Floor must be able to seat it.
+    pub(crate) fn hosts_agent(&self) -> bool {
+        self.mode.is_agent()
+            || self.rest.dormancy.asleep().is_some()
+            || self.rest.stopping.is_some()
+    }
+
+    /// The sleep record behind this pane, when its agent is asleep or going.
+    pub(crate) fn sleep_record(&self) -> Option<&crate::agentrest::Asleep> {
+        self.rest
+            .dormancy
+            .asleep()
+            .or(self.rest.stopping.as_ref().map(|s| &s.asleep))
+    }
+
     pub fn agent_status(&self) -> crate::hud::AgentStatus {
+        // The window's own word comes first: an asleep pane's screen is a shell,
+        // and a resting one's is a frozen frame, so neither is the screen's call.
+        if self.rest.dormancy.asleep().is_some() {
+            return crate::hud::AgentStatus {
+                state: crate::hud::AgentState::Asleep,
+                ..Default::default()
+            };
+        }
         if !self.mode.is_agent() {
             return crate::hud::AgentStatus::default();
         }
@@ -5492,13 +5843,121 @@ impl TerminalView {
             st
         });
         st.state = crate::hud::with_bell(st.state, self.bell);
+        // After the bell, so a latched bell cannot turn rest into a finish.
+        if self.rest.dormancy.is_resting() {
+            st.state = crate::hud::AgentState::Resting;
+        }
         st
+    }
+
+    /// Whether this pane is on screen and held the keyboard focus when it
+    /// last drew. A pane in a tab that is not shown stops drawing, so its
+    /// last-drawn focus goes stale; it is not being looked at.
+    pub fn focused_last_frame(&self) -> bool {
+        self.was_focused && self.shown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    /// The RESTING or ASLEEP chip for the header, or nothing while awake.
+    fn rest_chip(
+        &self,
+        th: &Theme,
+        fg: Hsla,
+        sk: &crate::skin::Skin,
+        scale: f32,
+    ) -> Option<gpui::Div> {
+        let parts = crate::lang::current().strings().parts;
+        let (glyph, word) = match &self.rest.dormancy {
+            crate::agentrest::Dormancy::Awake => return None,
+            crate::agentrest::Dormancy::Resting { since } => (
+                '\u{f0594}',
+                format!(
+                    "{} · {}",
+                    parts.hud_state_resting.to_uppercase(),
+                    crate::agentrest::short_age(since.elapsed())
+                ),
+            ),
+            crate::agentrest::Dormancy::Asleep(_) => {
+                ('\u{f04b2}', parts.hud_state_asleep.to_uppercase())
+            }
+        };
+        let tint = fg.alpha(0.85);
+        Some(
+            div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(3. * scale))
+                .px(px(5. * scale))
+                .rounded(sk.rad(4.))
+                .border_1()
+                .border_color(tint.alpha(0.5))
+                .text_color(tint)
+                .text_size(sk.text_px(9.5 * scale))
+                .child(
+                    div()
+                        .when_some(chrome_glyph_font(glyph, th), |d, family| {
+                            d.font_family(family)
+                        })
+                        .child(glyph.to_string()),
+                )
+                .child(word),
+        )
+    }
+
+    /// What this pane costs: everything its group holds in RAM and swap, or,
+    /// while it rests, what is left in RAM and what went out. `unmeasured`
+    /// where the group could not be made or read, never a smaller number.
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        use crate::agentrest::short_bytes;
+        let parts = crate::lang::current().strings().parts;
+        let u = self.rest.usage;
+        let text = match (self.rest.group.is_some(), u.resident) {
+            (true, Some(ram)) if self.rest.dormancy.is_resting() => match u.swapped {
+                Some(out) => format!(
+                    "{} + {} {}",
+                    short_bytes(ram),
+                    short_bytes(out),
+                    parts.pane_mem_out
+                ),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, Some(ram)) => match u.swapped {
+                Some(out) => short_bytes(ram + out),
+                None => format!("{} + ?", short_bytes(ram)),
+            },
+            (true, None) => parts.pane_mem_unmeasured.to_string(),
+            (false, _) if self.rest.group_error.is_some() => parts.pane_mem_unmeasured.to_string(),
+            // Not looked at yet: a blank, not a guess.
+            (false, _) => return None,
+        };
+        Some(
+            div()
+                .flex_none()
+                .text_color(fg.alpha(0.62))
+                .text_size(sk.text_px(9.5 * scale))
+                .child(text),
+        )
+    }
+
+    /// An agent pane, or one whose agent is asleep. Asleep panes run a shell
+    /// in the foreground, and anything that counts agents by mode alone would
+    /// lose them.
+    pub fn counts_as_agent(&self) -> bool {
+        self.mode.is_agent() || self.rest.dormancy.asleep().is_some()
     }
 
     /// Tokens this agent has spent this session: banked completed turns plus the
     /// running peak of any turn in flight. Zero for non-agent panes.
     pub fn session_tokens(&self) -> u64 {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
+    }
+
+    /// Give a window-level fixture the same reader cleanup as the pane harness.
+    #[cfg(test)]
+    pub(crate) fn fixture_shutdown(&self) -> impl FnOnce() + 'static {
+        let notifier = self.session.notifier.clone();
+        move || notifier.shutdown()
     }
 
     /// Should a working poll open a new live-turn via the spinner fallback?
@@ -5695,6 +6154,7 @@ impl TerminalView {
     /// Forget every picture this pane holds — the textures here and the images
     /// in the core. Called when its tab stops being shown.
     pub fn forget_pictures(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         let held = {
             let mut term = self.session.term.lock();
             let held = term.pictures().len();
@@ -6497,6 +6957,13 @@ impl TerminalView {
     /// Type `bytes` at the PTY: drop any selection, snap the view back to the
     /// prompt, and mark the pane as having pending input.
     fn send(&mut self, bytes: Vec<u8>, cx: &mut Context<Self>) {
+        // An asleep pane has a shell behind its card. A key that would type
+        // asks for the agent back instead — the workspace does that in a fresh
+        // pane — and a chord the key table handles still works as it would.
+        if self.rest.dormancy.asleep().is_some() {
+            cx.emit(WakeAsleep);
+            return;
+        }
         {
             let mut term = self.session.term.lock();
             term.clear_selection();
@@ -6505,6 +6972,7 @@ impl TerminalView {
         // a real keystroke ends any keyboard selection in progress
         self.kbd_sel = None;
         self.pending_input = Some(Instant::now());
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
         cx.notify();
     }
@@ -6698,7 +7166,7 @@ impl TerminalView {
     /// This pane's note box on the glass — recomputed from the LIVE content rect
     /// rather than cached, so a resize can never leave the paper and the thing
     /// you click in different places.
-    fn note_layout(&self) -> Option<crate::sticky::Layout> {
+    fn note_layout(&self, cx: &App) -> Option<crate::sticky::Layout> {
         // NO NOTE ON THE BENCH.
         //
         // Two rounds went into finding a corner for it and the answer was that
@@ -6720,7 +7188,7 @@ impl TerminalView {
         }
         let note = self.note.as_ref()?;
         let bounds = (*self.content_bounds.lock().ok()?)?;
-        crate::sticky::layout(bounds, note.tilt())
+        note.layout(bounds, crate::skin::skin(cx, 1.).unboxed())
     }
 
     /// `alt+s`, or a click on the paper: stick a note on, or pick the pen back up
@@ -6767,18 +7235,50 @@ impl TerminalView {
 
     /// The OSC title as a person reads it. Until the shell names itself the
     /// title is the placeholder [`DEFAULT_TITLE`], which stays English in
-    /// `title` (agents read it from the census as "nobody has named this")
-    /// and is drawn in the reader's language here.
+    /// `title` (agents read it from the census as "nobody has named this").
+    /// A person sees the pane's number there instead, which tells two unnamed
+    /// panes apart. A pane that is this window's own child has no number, and
+    /// keeps the placeholder word in the reader's language.
     pub fn shown_title(&self) -> String {
-        if self.title == DEFAULT_TITLE {
-            crate::lang::current()
+        if self.title != DEFAULT_TITLE {
+            return self.title.clone();
+        }
+        match self.pane_id {
+            Some(id) => id.to_string(),
+            None => crate::lang::current()
                 .strings()
                 .parts
                 .pane_title_default_shell
-                .to_string()
-        } else {
-            self.title.clone()
+                .to_string(),
         }
+    }
+
+    /// What leads this pane's header: an agent's model and effort as its
+    /// transcript names them (`OPUS 5.5 MAX`, `SOL 6 XHIGH`), never the harness
+    /// running it. Until the transcript has said which model, the harness is
+    /// all that is known, so it stands in. Every other pane leads with its mode.
+    pub(crate) fn header_lead(&self) -> std::borrow::Cow<'static, str> {
+        match self.model_label.clone().filter(|_| self.mode.is_agent()) {
+            Some(model) => std::borrow::Cow::Owned(model),
+            None => self.mode.label_i18n(),
+        }
+    }
+
+    /// The title on this pane's own header: the name a person gave it, else,
+    /// on the Document face, the file's name (the shell's own title describes
+    /// a terminal that is not on screen), else the OSC title. The Threshing Floor
+    /// names a pane with this too, so the two cannot disagree.
+    pub fn header_title(&self) -> String {
+        let document = (self.bench.face() == crate::workbench::Face::Document)
+            .then(|| self.document_path())
+            .flatten()
+            .and_then(|p| p.file_name())
+            .map(|n| n.to_string_lossy().into_owned());
+        self.name
+            .clone()
+            .filter(|n| !n.is_empty())
+            .or(document)
+            .unwrap_or_else(|| self.shown_title())
     }
 
     /// This pane's note for the state file.
@@ -6804,6 +7304,7 @@ impl TerminalView {
             text,
             seed: note.seed,
             pinned: note.pinned,
+            by: note.by,
         })
     }
 
@@ -6813,6 +7314,10 @@ impl TerminalView {
     /// that has finished, not a person holding the pen. A replaced note keeps
     /// its lean — same paper, new words — where a brand-new one rolls a fresh
     /// seed, so an agent updating its own note doesn't twitch the sheet.
+    ///
+    /// Everything that arrives here was written by something other than the
+    /// person at the keyboard, so the note is the agent's and wears the
+    /// robot stamp.
     pub fn note_post(
         &mut self,
         title: Option<String>,
@@ -6831,6 +7336,7 @@ impl TerminalView {
             seed,
             edit: None,
             pinned: pin,
+            by: Some(crate::sticky::Author::Agent),
         });
         self.note_hover = None;
         cx.emit(StickyChanged);
@@ -6872,6 +7378,7 @@ impl TerminalView {
             self.sticky_peel(cx);
             return;
         }
+        note.by = crate::sticky::author_after_edit(note.by, &note.text, &text);
         note.text = text;
         note.edit = None;
         cx.emit(StickyChanged);
@@ -6955,7 +7462,7 @@ impl TerminalView {
     /// where you aimed it, the same as clicking out of the tab-rename box.
     fn sticky_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         match crate::sticky::click(self.sticky_composing(), hit) {
             crate::sticky::Act::Peel => {
@@ -6990,7 +7497,7 @@ impl TerminalView {
     /// would be a surprise on a gesture whose whole job is to be uneventful.
     fn sticky_right_click(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) -> bool {
         let hit = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if crate::sticky::right_click(hit) != crate::sticky::Act::Pin {
             return false;
@@ -7012,7 +7519,7 @@ impl TerminalView {
     fn sticky_hover(&mut self, at: gpui::Point<Pixels>, cx: &mut Context<Self>) {
         let was = self.note_hover;
         self.note_hover = self
-            .note_layout()
+            .note_layout(cx)
             .and_then(|l| crate::sticky::Hit::at(at, &l));
         if was != self.note_hover {
             cx.notify();
@@ -7043,6 +7550,7 @@ impl TerminalView {
     /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        self.rest.touch(Instant::now());
         // Typing into the pane is attention too — covers the frozen-badge case
         // where the pane kept idle keyboard focus across the whole latch, so
         // no focus-in edge ever fired. No-op when nothing is latched.
@@ -7068,8 +7576,8 @@ impl TerminalView {
             }
             // alt+k flips this pane between its two faces, from either side. It
             // was alt+w for one day, and alt+w was already taken: it is the
-            // middle rung of the close ladder (ctrl+w the tab, super+w the tile,
-            // alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
+            // middle rung of the close ladder (ctrl+w the document box,
+            // ctrl+shift+w the tab, super+w the tile, alt+w the focused PANE). `keystroke_bytes` is told about `k` too,
             // so the letter cannot reach a shell as ESC k on the way past.
             crate::keylayer::Layer::Face => {
                 self.toggle_face(cx);
@@ -7113,22 +7621,13 @@ impl TerminalView {
                 Handled::Consumed
             }
             crate::keylayer::Layer::Rename => self.rename_key(&k, ks, cx),
-            // Escape over a floating document closes it, and nothing else about
-            // the key is the square's — unless a note is being written in it,
-            // when `keylayer` routes every key here for the note box to take.
-            // The document is asked first: the note box, then a brief's own
-            // dialog, is what Escape puts away before the square itself.
-            crate::keylayer::Layer::Float => {
-                let took = self
-                    .float
-                    .as_ref()
-                    .map(|f| f.view.clone())
-                    .is_some_and(|view| view.update(cx, |doc, cx| doc.key(ks, cx)));
-                if !took {
-                    self.request_close_float(cx);
-                }
-                Handled::Consumed
-            }
+            // Escape over a floating document closes it, and ctrl+↑/↓ turns it;
+            // nothing else about the key is the square's — unless a note is
+            // being written in it, when `keylayer` routes every key here for the
+            // note box to take. The document is asked first: the note box, then
+            // a brief's own dialog, is what Escape puts away before the square
+            // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
             crate::keylayer::Layer::Document => self.doc_key(ks, cx),
@@ -7392,6 +7891,10 @@ impl TerminalView {
                 "m" => self.toggle_handover_page(cx),
                 // The most recently closed thing comes back.
                 "z" => cx.emit(ReopenClosed),
+                // Ctrl+Shift+W closes the whole tab (always confirmed by the
+                // workspace). It was plain Ctrl+W until that chord went to the
+                // document box, the smallest thing a close can take.
+                "w" => cx.emit(RequestCloseTab),
                 // Two keys for one panel, and the second is not redundant.
                 // fcitx5's Unicode addon binds Ctrl+Shift+U — `libunicode.so`
                 // carries both `Control+Shift+U` and `Control+Alt+Shift+U` — and
@@ -7413,9 +7916,13 @@ impl TerminalView {
             return Handled::Declined;
         }
         match k.key {
-            // Ctrl+W closes the whole tab (always confirmed by the workspace).
-            // Intercepted here so it never reaches the PTY as werase (^W).
-            "w" => cx.emit(RequestCloseTab),
+            // Ctrl+W puts away the document box on top — a clip, then the
+            // square it was covering — the way its ✕ and Escape do, notes and
+            // all guarded. The table claims it only while a box is up, so with
+            // none it reaches the PTY as werase (^W).
+            "w" => {
+                self.request_close_float(cx);
+            }
             "f" => cx.emit(OpenFind { global: false }),
             // Ctrl+X = CUT the selection: copy it, and when it is the trailing
             // run on the live input line, erase it there too (see
@@ -7474,16 +7981,38 @@ impl TerminalView {
         // itself, so it types the edit (see `erase_selection_keys`). A selection
         // anywhere else is not text being typed, and the key goes through as it
         // always has.
-        if !k.control
+        let deletion_chord = k.key == "backspace" && k.shift && !k.platform && !k.function;
+        let edit_keys = if deletion_chord {
+            let term = self.session.term.lock();
+            let editable = (self.mode == PaneMode::Shell || self.mode.is_agent())
+                && (!term.mode().contains(TermMode::ALT_SCREEN) || self.mode.is_agent())
+                && term.display_offset() == 0;
+            if !editable {
+                None
+            } else if k.control && k.alt {
+                // Readline's whole edit buffer, including literal newlines.
+                // No Enter, interrupt or terminal-history clearing.
+                Some(b"\x01\x0b".to_vec())
+            } else if k.control {
+                input_edit::line_keys(&term)
+            } else if !k.alt {
+                Some(b"\x1b\x7f".to_vec())
+            } else {
+                None
+            }
+        } else if !k.control
             && !k.alt
             && !k.shift
             && !k.platform
             && matches!(k.key, "backspace" | "delete")
         {
-            if let Some(keys) = self.erase_selection_keys() {
-                self.send(keys, cx);
-                return Handled::Declined;
-            }
+            self.erase_selection_keys()
+        } else {
+            None
+        };
+        if let Some(keys) = edit_keys {
+            self.send(keys, cx);
+            return Handled::Declined;
         }
         // Paging the pane itself. PageUp/PageDown page the scrollback in AGENT
         // panes — a Claude/Codex session keeps its whole convo in our history and
@@ -7524,6 +8053,16 @@ impl TerminalView {
             self.paste_clipboard(cx);
             return Handled::Declined;
         }
+        // Ctrl+C clears an agent's prompt; take what it clears to the
+        // clipboard first, so a stray one costs nothing. The ^C still goes.
+        if k.control && !k.shift && !k.alt && k.key == "c" {
+            self.save_agent_draft(cx);
+        }
+        // Enter sends an agent's prompt, and its pictures go with it: a tag in
+        // the next prompt is never one of these files.
+        if k.key == "enter" && !k.control && !k.shift && !k.alt && self.mode.is_agent() {
+            self.draft_images.borrow_mut().clear();
+        }
         if let Some(bytes) = keystroke_bytes(ks) {
             self.send(bytes, cx);
         }
@@ -7539,23 +8078,37 @@ impl TerminalView {
     /// both the live pane and the FOCUS mirror.
     fn extend_kbd_selection(&mut self, right: bool, word: bool, cx: &mut Context<Self>) {
         let last_col = self.grid.cols.saturating_sub(1);
-        // one cell in the requested direction, clamped to the row (no line-wrap:
-        // command-line selection is single-row; mouse handles multi-line spans).
-        let step = |p: TermPoint| -> TermPoint {
-            if right {
-                if p.column.0 < last_col {
-                    TermPoint::new(p.line, Column(p.column.0 + 1))
+        let next = {
+            let mut term = self.session.term.lock();
+            // A soft wrap is still the same editable line. Keep hard row
+            // boundaries as boundaries so shift-arrows do not enter history.
+            let step = |p: TermPoint| -> TermPoint {
+                if right {
+                    if p.column.0 < last_col {
+                        TermPoint::new(p.line, Column(p.column.0 + 1))
+                    } else if p.line < term.bottommost_line()
+                        && term
+                            .row(p.line)
+                            .iter()
+                            .any(|c| c.flags.contains(Flags::WRAPLINE))
+                    {
+                        TermPoint::new(Line(p.line.0 + 1), Column(0))
+                    } else {
+                        p
+                    }
+                } else if p.column.0 > 0 {
+                    TermPoint::new(p.line, Column(p.column.0 - 1))
+                } else if p.line > term.topmost_line()
+                    && term
+                        .row(Line(p.line.0 - 1))
+                        .iter()
+                        .any(|c| c.flags.contains(Flags::WRAPLINE))
+                {
+                    TermPoint::new(Line(p.line.0 - 1), Column(last_col))
                 } else {
                     p
                 }
-            } else if p.column.0 > 0 {
-                TermPoint::new(p.line, Column(p.column.0 - 1))
-            } else {
-                p
-            }
-        };
-        let next = {
-            let mut term = self.session.term.lock();
+            };
             let (anchor, active) = match self.kbd_sel {
                 Some(ae) => ae,
                 None => {
@@ -8193,9 +8746,9 @@ impl TerminalView {
         let a = self.point_to_painted(start, perm, display_offset);
         let b = self.point_to_painted(end, perm, display_offset);
         let last_col = self.grid.cols.saturating_sub(1);
-        // Match styled_lines' INVERSE default background (graded th.bg) so the
+        // Match styled_lines' resolved INVERSE default background so the
         // visual highlight is the same colour as the non-inverted selection.
-        let default_bg = GradeCoeffs::new(&th.grade).apply(th.bg, Channel::Bg);
+        let default_bg = terminal_background(th);
         for (p, c_lo, c_hi) in visual_selection_spans(a, b, last_col, is_block) {
             if let Some(row) = lines.get_mut(p) {
                 invert_run_range(row, c_lo, c_hi, default_bg);
@@ -8273,6 +8826,100 @@ impl TerminalView {
         Some(reflow_wrapped_copy(&raw, self.grid.cols))
     }
 
+    /// Put the agent's typed prompt on the clipboard, if it has one: the ctrl+c
+    /// that is about to clear it becomes a cut (see [`agent_draft`]). A shell,
+    /// an empty prompt or a screen with no prompt leaves the clipboard alone.
+    fn save_agent_draft(&self, cx: &mut Context<Self>) {
+        if !self.mode.is_agent() {
+            return;
+        }
+        let draft = self.agent_draft_now();
+        let mut images = self.draft_images.borrow_mut();
+        if let Some(text) = draft {
+            // One last look first: a ctrl+c straight after a paste can beat
+            // the watcher to the tag the agent has just drawn.
+            images.observe(&draft_images::tag_set(&text), Instant::now());
+            let text = images.restore(&text);
+            cx.write_to_clipboard(ClipboardItem::new_string(text.clone()));
+            cx.write_to_primary(ClipboardItem::new_string(text));
+        }
+        images.clear();
+    }
+
+    /// The words typed into the agent's prompt as the screen shows them now
+    /// (see [`agent_draft`]), or `None` when there is no prompt to read.
+    fn agent_draft_now(&self) -> Option<String> {
+        let (rows, cursor) = {
+            let term = self.session.term.lock();
+            let mut rows = Vec::with_capacity(term.screen_lines());
+            term.for_each_row(Line(0), term.bottommost_line(), |_, cells| {
+                rows.push(
+                    cells
+                        .iter()
+                        .filter(|c| {
+                            !c.flags.intersects(
+                                Flags::WIDE_CHAR_SPACER | Flags::LEADING_WIDE_CHAR_SPACER,
+                            )
+                        })
+                        .map(|c| {
+                            if c.flags.contains(Flags::DIM) || c.c == '\0' {
+                                ' '
+                            } else {
+                                c.c
+                            }
+                        })
+                        .collect::<String>(),
+                )
+            });
+            (rows, term.cursor().point.line.0)
+        };
+        let cursor = usize::try_from(cursor).ok()?;
+        agent_draft(&rows, cursor, self.grid.cols)
+    }
+
+    /// Paste image files' paths into the terminal, and in an agent's prompt
+    /// remember which `[Image #n]` each one becomes (see `draft_images`).
+    ///
+    /// The tags on screen are read before the paste goes, so a tag already
+    /// there is never taken for this one; a watcher then looks every
+    /// [`DRAFT_IMAGE_LOOK`] until the agent has drawn the new tags or
+    /// `draft_images::WAIT` runs out. It runs only after an image paste.
+    fn paste_image_paths(&self, paths: &[std::path::PathBuf], cx: &mut Context<Self>) {
+        let text = crate::workbench::paths_as_words(paths);
+        if self.mode.is_agent() && draft_images::trackable(paths) {
+            let before = self
+                .agent_draft_now()
+                .map(|d| draft_images::tag_set(&d))
+                .unwrap_or_default();
+            let now = Instant::now();
+            let mut images = self.draft_images.borrow_mut();
+            for path in paths {
+                images.pasted(path.display().to_string(), before.clone(), now);
+            }
+            if !images.watching {
+                images.watching = true;
+                cx.spawn(async move |this, cx| loop {
+                    cx.background_executor().timer(DRAFT_IMAGE_LOOK).await;
+                    let waiting = this.update(cx, |view, _| {
+                        let tags = view
+                            .agent_draft_now()
+                            .map(|d| draft_images::tag_set(&d))
+                            .unwrap_or_default();
+                        let mut images = view.draft_images.borrow_mut();
+                        let waiting = images.observe(&tags, Instant::now());
+                        images.watching = waiting;
+                        waiting
+                    });
+                    if !matches!(waiting, Ok(true)) {
+                        break;
+                    }
+                })
+                .detach();
+            }
+        }
+        self.paste_text(&text);
+    }
+
     fn copy_selection(&self, cx: &mut Context<Self>) {
         let text = self.selection_clipboard_text();
         if let Some(text) = text {
@@ -8306,8 +8953,9 @@ impl TerminalView {
     /// The keys that erase the selection from the line being typed, or `None`
     /// when the selection is not on that line.
     ///
-    /// On it means: one row, the cursor's row, with the view at the bottom —
-    /// scrollback is history, and a selection there is something to copy. And
+    /// Soft-wrapped rows form one editable line. A selection crossing explicit
+    /// newlines must span the cursor's row; unrelated history is only copied.
+    /// The view must be at the bottom. And
     /// not a full-screen program unless it is an agent: in `less` or `vim` the
     /// arrow keys scroll or move rather than walk a caret through a line, but
     /// Claude Code draws its prompt on the alternate screen too, with the
@@ -8315,25 +8963,13 @@ impl TerminalView {
     /// selects and deletes.
     fn erase_selection_keys(&self) -> Option<Vec<u8>> {
         let term = self.session.term.lock();
-        let range = term.selection_range()?;
         let mode = term.mode();
         if term.display_offset() != 0
             || (mode.contains(TermMode::ALT_SCREEN) && !self.mode.is_agent())
         {
             return None;
         }
-        let caret = term.cursor().point;
-        if range.start.line != caret.line || range.end.line != caret.line {
-            return None;
-        }
-        let row = term.row(caret.line).0;
-        erase_run_keys(
-            &row,
-            range.start.column.0,
-            range.end.column.0,
-            caret.column.0,
-            mode.contains(TermMode::APP_CURSOR),
-        )
+        input_edit::selection_keys(&term)
     }
     /// Paste the clipboard into the PTY, honouring bracketed-paste mode.
     ///
@@ -8346,7 +8982,7 @@ impl TerminalView {
         }
         if self.clipboard_holds_an_image() {
             if let Some(path) = self.clipboard_image_path() {
-                self.paste_text(&crate::workbench::paths_as_words(&[path.into()]));
+                self.paste_image_paths(&[path.into()], cx);
             } else {
                 eprintln!("terminal-delight: could not read the clipboard image");
             }
@@ -8375,6 +9011,7 @@ impl TerminalView {
         if bytes.is_empty() {
             return;
         }
+        self.person_key_ms.set(Some(crate::prompt::now_ms()));
         self.session.notifier.notify(bytes);
     }
     fn has_selection(&self) -> bool {
@@ -8947,6 +9584,9 @@ impl TerminalView {
         let mut lines: Vec<(String, Vec<TextRun>)> = (0..self.grid.rows)
             .map(|_| (String::with_capacity(cols), Vec::with_capacity(cols)))
             .collect();
+        let mut glyphs: styling::Lines = (0..self.grid.rows)
+            .map(|_| (String::with_capacity(cols), Vec::new()))
+            .collect();
 
         // The `syntax` overlay tokenises the literal text, so it needs each full
         // row up front. Collect the cells once, build per-row colour palettes,
@@ -8995,6 +9635,46 @@ impl TerminalView {
         } else {
             Vec::new()
         };
+        // Where a skin owns the field, an agent's shades of it become lines:
+        // collect the tinted columns per row, then the bands they make, and
+        // leave those cells unfilled below. See `styling::BandRow`.
+        let bands: styling::Bands = match th.field_background.filter(|_| agent) {
+            Some(field) => {
+                let mut tinted = vec![Vec::new(); self.grid.rows];
+                for indexed in cells {
+                    let row = indexed.point.line.0 + display_offset as i32;
+                    if row < 0 || row as usize >= self.grid.rows {
+                        continue;
+                    }
+                    let cell = &indexed.cell;
+                    if cell.flags.contains(Flags::INVERSE)
+                        || matches!(cell.bg, AnsiColor::Named(NamedColor::Background))
+                    {
+                        continue;
+                    }
+                    if styling::is_field_tint(ansi_to_hsla(cell.bg, th, th.bg), field) {
+                        tinted[row as usize].push(indexed.point.column.0);
+                    }
+                }
+                let mut bands: styling::Bands = tinted
+                    .iter_mut()
+                    .map(|t| {
+                        t.sort_unstable();
+                        t.dedup();
+                        styling::band_row(t, cols)
+                    })
+                    .collect();
+                styling::join_wrapped(&mut bands);
+                bands
+            }
+            None => Vec::new(),
+        };
+        let banded = |row: usize, col: usize| {
+            bands.get(row).is_some_and(|b| {
+                b.rule.is_some_and(|(a, z)| (a..z).contains(&col))
+                    || b.notes.iter().any(|&(a, z)| (a..z).contains(&col))
+            })
+        };
         let mut ords = vec![0usize; self.grid.rows];
         // Hoist the frame-constant grade math out of the per-cell loop below.
         // `grade.apply(..)` is bit-identical to `graded(.., &th.grade, ..)` but
@@ -9015,6 +9695,7 @@ impl TerminalView {
             // coloured still flows through `color_mode` (so ls/git/vim keep
             // their palette). The ord cursor advances on every non-spacer cell
             // regardless, keeping the palette aligned with the row text.
+            let mut fg_is_field = matches!(cell.fg, AnsiColor::Named(NamedColor::Background));
             let mut fg = if syntax {
                 let ord = ords[row as usize];
                 ords[row as usize] += 1;
@@ -9031,16 +9712,49 @@ impl TerminalView {
             // Selection-inverse and the cursor below still apply on top.
             if agent && human_rows.get(row as usize).copied().unwrap_or(false) {
                 fg = th.human;
+                fg_is_field = false;
             }
             let mut bg: Option<Hsla> = match cell.bg {
                 AnsiColor::Named(NamedColor::Background) => None,
+                _ if !cell.flags.contains(Flags::INVERSE)
+                    && banded(row as usize, indexed.point.column.0) =>
+                {
+                    None
+                }
                 other => Some(ansi_to_hsla(other, th, th.bg)),
             };
+            // A background the program chose itself, still standing where it
+            // put it: not swapped by an inverse, a selection or the cursor.
+            let mut bg_is_program = bg.is_some() && !cell.flags.contains(Flags::INVERSE);
             let mut flags = cell.flags;
+            // Retain the program's text colour, including its own inverse/DIM,
+            // before TD draws a selection or its block cursor over the glyph.
+            let glyph_is_field = if flags.contains(Flags::INVERSE) {
+                bg.is_none()
+            } else {
+                fg_is_field
+            };
+            let mut glyph_fg = if flags.contains(Flags::INVERSE) {
+                bg.unwrap_or(th.bg)
+            } else {
+                fg
+            };
+            if flags.contains(Flags::DIM) {
+                glyph_fg.a *= 0.6;
+            }
+            let glyph_fg = if glyph_is_field {
+                th.field_background
+                    .map(|c| c.alpha(glyph_fg.a))
+                    .unwrap_or_else(|| grade.apply(glyph_fg, Channel::Text))
+            } else {
+                grade.apply(glyph_fg, Channel::Text)
+            };
             if !sel_visual && selection.is_some_and(|s| s.contains(indexed.point)) {
                 flags.insert(Flags::INVERSE);
             }
             if flags.contains(Flags::INVERSE) {
+                fg_is_field = bg.is_none();
+                bg_is_program = false;
                 let new_fg = bg.unwrap_or(th.bg);
                 bg = Some(fg);
                 fg = new_fg;
@@ -9050,8 +9764,10 @@ impl TerminalView {
                 && cursor.point.line == indexed.point.line
                 && cursor.point.column == indexed.point.column
             {
+                bg_is_program = false;
                 bg = Some(th.cursor);
                 fg = th.bg;
+                fg_is_field = true;
             }
             if flags.contains(Flags::DIM) {
                 fg.a *= 0.6;
@@ -9060,8 +9776,24 @@ impl TerminalView {
             // Monitor OSD: grade the final colours (text + background take their
             // own levels). Neutral grade is the identity, so the default render
             // is byte-for-byte unchanged.
-            fg = grade.apply(fg, Channel::Text);
-            bg = bg.map(|c| grade.apply(c, Channel::Bg));
+            fg = if fg_is_field {
+                th.field_background
+                    .map(|c| c.alpha(fg.a))
+                    .unwrap_or_else(|| grade.apply(fg, Channel::Text))
+            } else {
+                grade.apply(fg, Channel::Text)
+            };
+            // A program picks its backgrounds against the field TD reported
+            // (OSC 11). Where a skin paints that field ungraded, the program's
+            // own backgrounds stay ungraded too: graded, a shade meant to sit
+            // just off the field landed far below it and read as black.
+            bg = bg.map(|c| {
+                if bg_is_program && th.field_background.is_some() {
+                    c
+                } else {
+                    grade.apply(c, Channel::Bg)
+                }
+            });
 
             let weight = if flags.contains(Flags::BOLD) {
                 FontWeight::BOLD
@@ -9078,6 +9810,24 @@ impl TerminalView {
             let ch = if cell.c == '\0' { ' ' } else { cell.c };
             let ch_len = ch.len_utf8();
             text.push(ch);
+
+            let (glyph_text, glyph_runs) = &mut glyphs[row as usize];
+            glyph_text.push(ch);
+            if let Some(last) = glyph_runs
+                .last_mut()
+                .filter(|r| r.color == glyph_fg && r.font.weight == weight)
+            {
+                last.len += ch_len;
+            } else {
+                glyph_runs.push(TextRun {
+                    len: ch_len,
+                    font: grid_font(th, weight),
+                    color: glyph_fg,
+                    background_color: None,
+                    underline: None,
+                    strikethrough: None,
+                });
+            }
 
             let matches_last = runs.last().is_some_and(|r: &TextRun| {
                 r.color == fg
@@ -9101,6 +9851,8 @@ impl TerminalView {
         *self.styled_memo.borrow_mut() = Some(styling::Memo {
             key,
             lines: std::rc::Rc::new(lines.clone()),
+            glyphs: std::rc::Rc::new(glyphs),
+            bands: std::rc::Rc::new(bands),
         });
         lines
     }
@@ -10095,8 +10847,8 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // absent from the table is one deleted `return` away from arriving as
         // ESC k. Taking alt+r costs readline's revert-line, alt+v its
         // page-scroll, alt+h its mark-paragraph, alt+w its copy-region-as-kill
-        // and alt+k its (unbound-by-default) slot (the DESTRUCTIVE ^W werase is
-        // ctrl+w, intercepted a layer up in `on_key` as close-tab, and is
+        // and alt+k its (unbound-by-default) slot (^W werase is ctrl+w, taken a
+        // layer up in `on_key` only while a document box is up, and is
         // untouched here) — fair trades for one-hand pane chords.
         //
         // THE LIST ITSELF LIVES IN `workbench`, because the bench needs exactly
@@ -10105,6 +10857,11 @@ fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
         // written out here and nowhere else, so the bench competed for all of
         // them and won — see [`crate::keylayer::window_chord`] (#524).
         if crate::keylayer::window_chord(ks.key.as_str(), m.alt, m.control) {
+            return None;
+        }
+        // A tab hotkey the window holds leaves too. One it does not hold —
+        // digits switched off, a letter nobody pinned — is the program's.
+        if crate::keylayer::held_tab_chord(ks.key.as_str(), m.alt, m.control, m.shift).is_some() {
             return None;
         }
         // other alt+<char>: ESC prefix for readline (alt+b, alt+f, alt+.)
@@ -10166,6 +10923,7 @@ impl TerminalView {
             return;
         }
         if self.bench.face() != face {
+            self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
@@ -10177,6 +10935,7 @@ impl TerminalView {
     /// its shell; anywhere else it swaps the terminal and the bench. See
     /// [`crate::workbench::next_face`].
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
+        self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
         cx.notify();
     }
@@ -10244,6 +11003,30 @@ impl TerminalView {
 impl Render for TerminalView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let th = self.resolved_theme(cx);
+        let focused_now = self.focus_handle(cx).is_focused(window);
+        let letter_glow = th
+            .grade
+            .letter_glow_for_focus(focused_now, th.terminal_light);
+        // INACTIVE TERMINALS blur, in logical px: at 100% a little past the
+        // frosted backdrop behind a TERMINIMALIST popup (7px, `Skin::popup`).
+        let inactive_blur = if focused_now {
+            0.0
+        } else {
+            th.grade.inactive_blur_at_edge() * INACTIVE_BLUR_PX
+        };
+        let mut grid_th = th.clone();
+        grid_th.grade.text = th.grade.text_for_focus(focused_now, th.terminal_light);
+        // ACTIVE TERMINALS brightness: the focused pane's text and background
+        // are drawn this much lighter, through the per-channel levels the grade
+        // already multiplies by, so the per-cell loop gains no work. It is the
+        // inactive veil's partner, and it does not use master brightness, which
+        // never lifts text (see `graded`). A field a skin paints ungraded stays
+        // where the skin put it; the letters on it still lift.
+        if focused_now {
+            let gain = th.grade.active_brightness_at_edge();
+            grid_th.grade.text *= gain;
+            grid_th.grade.background *= gain;
+        }
         let menu_skin = crate::skin::for_theme(cx, &th, th.grade.scale);
         // The floating square re-records where its controls are as it paints.
         self.float_zones.borrow_mut().clear();
@@ -10288,6 +11071,12 @@ impl Render for TerminalView {
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
+                .id("pane-context-menu")
+                .debug_selector(|| "pane-context-menu".to_string())
+                .on_mouse_down_out(cx.listener(|v, _, _, cx| {
+                    v.ctx_menu = None;
+                    cx.notify();
+                }))
                 .flex()
                 .flex_col()
                 .min_w(px(168.))
@@ -10427,27 +11216,47 @@ impl Render for TerminalView {
                 // and MCP both answer agents, and a mark an agent could lift
                 // would be decoration.
                 .child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)))
-                .child(
-                    row(
-                        if self.off_limits {
-                            crate::lang::current()
-                                .strings()
-                                .parts
-                                .pane_ctx_let_agents_see
+                // Three positions, the current one marked: open, read-only (agents
+                // may watch and ask, never write or type into the bench), and
+                // off-limits. Picking one is a person's choice of the position.
+                .children({
+                    use crate::threshing_floor::AgentAccess;
+                    let parts = crate::lang::current().strings().parts;
+                    [
+                        (
+                            AgentAccess::Open,
+                            parts.pane_ctx_let_agents_see,
+                            "ctx-agents-open",
+                        ),
+                        (
+                            AgentAccess::ReadOnly,
+                            parts.pane_ctx_read_only,
+                            "ctx-agents-read-only",
+                        ),
+                        (
+                            AgentAccess::OffLimits,
+                            parts.pane_ctx_off_limits,
+                            "ctx-agents-off-limits",
+                        ),
+                    ]
+                    .into_iter()
+                    .map(|(access, label, id)| {
+                        let mark = if self.agent_access == access {
+                            "\u{25cf}"
                         } else {
-                            crate::lang::current().strings().parts.pane_ctx_off_limits
-                        },
-                        true,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|v, _, _, cx| {
-                            v.ctx_menu = None;
-                            cx.stop_propagation();
-                            v.toggle_off_limits(cx);
-                        }),
-                    ),
-                );
+                            "\u{25cb}"
+                        };
+                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |v, _, _, cx| {
+                                v.ctx_menu = None;
+                                cx.stop_propagation();
+                                v.set_agent_access(access, cx);
+                            }),
+                        )
+                    })
+                    .collect::<Vec<_>>()
+                });
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
         // PAINT mode — the wall-wide palette overlay (raised by `terminal-delight
@@ -10653,11 +11462,12 @@ impl Render for TerminalView {
         // edge below is the acknowledgement (a click, alt+arrows, or the
         // notification jump all land here), so you never miss which agent
         // finished while you were away, and there is nothing to dismiss.
-        let focused_now = self.focus_handle(cx).is_focused(window);
         if focused_now != self.was_focused {
             self.was_focused = focused_now;
             if focused_now {
                 self.ack_bell(cx);
+                // Looking at a resting pane wakes it: a fifth of a second.
+                self.rest.touch(Instant::now());
             }
             if self
                 .session
@@ -10701,11 +11511,37 @@ impl Render for TerminalView {
         // drawn there. The next terminal frame snapshots the current viewport.
         let mut lines =
             if self.bench.face() == crate::workbench::Face::Workbench || self.has_doc_face() {
+                self.grid_paint.update(cx, |v, _| v.clear_afterglow());
                 Vec::new()
             } else {
-                self.styled_lines(&th, inverted)
+                self.styled_lines(&grid_th, inverted)
             };
+        let mut glyphs = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .glyphs)
+                .clone()
+        };
+        // An agent's tinted bands, by grid row. They move with the rows below,
+        // so a rule stays on the line it rules.
+        let mut bands: styling::Bands = if lines.is_empty() {
+            Vec::new()
+        } else {
+            (*self
+                .styled_memo
+                .borrow()
+                .as_ref()
+                .expect("styled viewport built")
+                .bands)
+                .clone()
+        };
         arm_grid_fallbacks(&mut lines, window.text_system());
+        arm_grid_fallbacks(&mut glyphs, window.text_system());
         if std::env::var("TD_ANCHORDEBUG").is_ok() {
             // The last few non-blank grid rows + whether each is detected as the
             // human prompt line — reveals a caret we don't recognise or a leading
@@ -10749,6 +11585,12 @@ impl Render for TerminalView {
         if th.crawl || !anchor_top() {
             // Bottom-anchor (crawl + default normal mode).
             self.paint_offset = bottom_anchor_rows(&mut lines, self.grid.rows);
+            bottom_anchor_rows(&mut glyphs, self.grid.rows);
+            if !bands.is_empty() {
+                let mut shifted = vec![styling::BandRow::default(); self.paint_offset];
+                shifted.extend(bands.into_iter().take(lines.len() - self.paint_offset));
+                bands = shifted;
+            }
             self.paint_inverted = false;
             self.paint_to_grid = None;
         } else if inverted {
@@ -10763,10 +11605,15 @@ impl Render for TerminalView {
             };
             let (new_lines, perm) = invert_logical_read(lines, &wraps, agent_mode);
             lines = new_lines;
+            glyphs = invert_logical_read(glyphs, &wraps, agent_mode).0;
             // #149: paint the selection in VISUAL order now that rows are permuted,
             // so a cross-section drag highlights the visually-contiguous span (not
             // whole reversed blocks). styled_lines skipped the logical highlight.
             self.apply_visual_selection(&mut lines, &perm, &th);
+            bands = perm
+                .iter()
+                .map(|&g| bands.get(g).cloned().unwrap_or_default())
+                .collect();
             self.paint_to_grid = Some(perm);
             self.paint_inverted = true;
             self.paint_offset = 0;
@@ -10775,8 +11622,51 @@ impl Render for TerminalView {
             self.paint_inverted = false;
             self.paint_to_grid = None;
         }
+        // The cell the block cursor was painted in, after the rows above moved:
+        // what the cursor's afterimage remembers. Read off the memo the rows
+        // came from, never off the terminal again, so it is this frame's.
+        let cursor_cell = (!lines.is_empty())
+            .then(|| self.styled_memo.borrow())
+            .and_then(|memo| {
+                let key = &memo.as_ref()?.key;
+                if !key.show_cursor {
+                    return None;
+                }
+                let g = key.cursor.point.line.0 + key.display_offset as i32;
+                let g = usize::try_from(g).ok().filter(|&g| g < self.grid.rows)?;
+                let p = match &self.paint_to_grid {
+                    Some(perm) => perm.iter().position(|&r| r == g)?,
+                    None => g + self.paint_offset,
+                };
+                (p < lines.len()).then_some((p, key.cursor.point.column.0))
+            });
         let ps = crate::lang::current().strings();
-        let status = if self.needs_input {
+        // UI CONFIG, the PANES layer: one config for every pane — no pane is in
+        // charge of its own. The title, the state word and ⋯ are not switches.
+        let ui = |k: crate::uiconfig::Key| crate::uiconfig::shown(cx, k);
+        let minimal_header = sk.unboxed();
+        let ui_logo = !sk.text_controls() && ui(crate::uiconfig::Key::PaneLogo);
+        let ui_mode = ui(crate::uiconfig::Key::PaneMode);
+        let ui_face = ui(crate::uiconfig::Key::PaneFace);
+        let ui_agent = ui(crate::uiconfig::Key::PaneAgent);
+        let ui_handover = ui(crate::uiconfig::Key::PaneHandover);
+        let ui_surface = ui(crate::uiconfig::Key::PaneSurface);
+        let ui_sliders = ui(crate::uiconfig::Key::PaneSliders);
+        let ui_close = ui(crate::uiconfig::Key::PaneClose);
+        // With the face toggle put away, what the bench is holding still has
+        // to be said somewhere: the state word says it.
+        let held = if ui_face { 0 } else { self.bench_queued() };
+        let status = if held > 0 {
+            let l = crate::lang::current();
+            let n = held.to_string();
+            format!(
+                "\u{25c7} {}",
+                crate::lang::fill(
+                    &l.count(&l.strings().parts.pane_queued_answers, held),
+                    &[("queued", &n)]
+                )
+            )
+        } else if self.needs_input {
             // waiting on the HUMAN outranks "done": the turn isn't over, it's
             // yours. The phrases that detect it stay English (they read the
             // agent's own TUI); the chip is drawn in the reader's language.
@@ -10806,17 +11696,21 @@ impl Render for TerminalView {
         // Reserve the launch button before deciding which optional controls fit.
         let optical = sk.type_scale;
         let controls_w = (pane_w - 64. * scale) / optical;
-        let show_human = SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
-        let show_eq = controls_w >= 410.; //    2nd: EQ / display
-        let show_theme = controls_w >= 360.; //  3rd: 🎨 theme
-        let show_focus = SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
-                                                                 // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
-                                                                 // The handover chip shrinks before anything tucks: its name above
-                                                                 // 470, the word for its list down to 264, and below that it is a row
-                                                                 // in the ⋯ menu like every other control here.
+        let show_human = !sk.text_controls() && SHOW_HUMAN_NAV_GLYPH && controls_w >= 470.; // 1st: 👤 ▲▼ nav
+        let show_eq = !sk.text_controls() && ui_sliders && controls_w >= 410.; //    2nd: EQ / display
+        let show_theme = !sk.text_controls() && ui_surface && controls_w >= 360.; //  3rd: 🎨 theme
+        let show_focus = !sk.text_controls() && SHOW_FOCUS_GLYPH && controls_w >= 264.; // 4th & last: 👓 FOCUS
+                                                                                        // ⋯ shows only once something is actually tucked (👤-nav is agent-only).
+                                                                                        // The handover chip shrinks before anything tucks: its name above
+                                                                                        // 470, the word for its list down to 264, and below that it is a row
+                                                                                        // in the ⋯ menu like every other control here.
         let handover_name = controls_w >= 470.;
-        let show_handover = controls_w >= 264. && self.has_handovers();
-        let overflow = (SHOW_FOCUS_GLYPH && !show_focus)
+        let show_handover = ui_handover && controls_w >= 264. && self.has_handovers();
+        // UI CONFIG's hidden controls go where narrow-pane controls already go.
+        let overflow = !ui_face
+            || !ui_agent
+            || !ui_close
+            || (SHOW_FOCUS_GLYPH && !show_focus)
             || !show_theme
             || !show_eq
             || (SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent())
@@ -10824,7 +11718,107 @@ impl Render for TerminalView {
 
         // The ⋯ overflow menu lists exactly the controls hidden at this width, in
         // the same order they collapse. Mirrors the right-click menu's look.
+        // An asleep pane: its last screen dimmed under a card that says when,
+        // what it will come back as, and what it will come back without. A
+        // click on it wakes the agent, the same as a key.
+        let sleep_el = self.rest.dormancy.asleep().cloned().map(|asleep| {
+            let lang = crate::lang::current();
+            let parts = lang.strings().parts;
+            let when = crate::surface::stamp_local(asleep.since_ms, lang)
+                .unwrap_or_else(|| "?".to_string());
+            let mut kept = parts.sleep_card_kept.to_string();
+            if let Some(model) = &asleep.model {
+                kept = format!("{kept} \u{b7} {model}");
+            }
+            let refused = matches!(
+                &self.rest.refusal,
+                Some(crate::agentrest::Refusal::AgentBusy(Some(why))) if why == "open elsewhere"
+            );
+            let (surf, txt, acc) = (th.surface, th.text, th.accent);
+            let violet = gpui::hsla(0.72, 0.45, 0.72, 1.);
+            div()
+                .id("sleep-card")
+                .absolute()
+                .top_0()
+                .left_0()
+                .size_full()
+                .flex()
+                .items_center()
+                .justify_center()
+                .bg(gpui::black().alpha(0.55))
+                .cursor_pointer()
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.rest.touch(Instant::now());
+                        cx.emit(WakeAsleep);
+                    }),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .flex_col()
+                        .gap(px(5.))
+                        .max_w(px(360.))
+                        .px(px(16.))
+                        .py(px(12.))
+                        .rounded(px(9.))
+                        .bg(surf.alpha(0.94))
+                        .border(sk.box_border(1.))
+                        .border_color(violet.alpha(0.55))
+                        .shadow_md()
+                        .text_color(txt)
+                        .child(
+                            div()
+                                .flex()
+                                .flex_row()
+                                .items_center()
+                                .gap(px(6.))
+                                .text_size(px(14.))
+                                .child(
+                                    div()
+                                        .text_color(violet)
+                                        .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
+                                            d.font_family(f)
+                                        })
+                                        .child(sk.control("\u{f04b2}", "asleep")),
+                                )
+                                .child(crate::lang::fill(
+                                    parts.sleep_card_since,
+                                    &[("when", &when)],
+                                )),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .text_color(txt.alpha(0.75))
+                                .child(kept),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(12.5))
+                                .text_color(if refused {
+                                    gpui::hsla(0.11, 0.85, 0.60, 1.)
+                                } else {
+                                    acc
+                                })
+                                .child(if refused {
+                                    parts.sleep_card_open_elsewhere
+                                } else {
+                                    parts.sleep_card_wake
+                                }),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(txt.alpha(0.55))
+                                .child(parts.sleep_card_lost),
+                        ),
+                )
+        });
         let overflow_el = self.hdr_overflow.map(|pos| {
+            let sk = &sk;
             let (acc, surf, txt, human, _ff) = (
                 th.accent,
                 th.surface,
@@ -10843,8 +11837,10 @@ impl Render for TerminalView {
                     .cursor_pointer()
                     .text_color(txt)
                     .hover(move |s| s.bg(acc.alpha(0.22)))
-                    .child(div().w(px(22.)).child(icon.to_string()))
-                    .child(label.to_string())
+                    .when(!sk.text_controls(), |d| {
+                        d.child(div().w(px(22.)).child(icon.to_string()))
+                    })
+                    .child(sk.control_text(label))
             };
             let mut menu = div()
                 .flex()
@@ -10852,7 +11848,7 @@ impl Render for TerminalView {
                 .min_w(px(196.))
                 .py(px(4.))
                 .bg(surf)
-                .border_1()
+                .border(sk.box_border(1.))
                 .border_color(acc.alpha(0.55))
                 .rounded(sk.rad_raw(8.))
                 .occlude()
@@ -10860,6 +11856,18 @@ impl Render for TerminalView {
                 .font_family(sk.font_family.clone())
                 .shadow_md()
                 .map(|d| sk.finish(d));
+            if minimal_header {
+                menu = menu.child(
+                    div()
+                        .px(px(12.))
+                        .py(px(6.))
+                        .flex()
+                        .gap_2()
+                        .children(self.rest_chip(&th, txt, sk, scale))
+                        .children(self.memory_figure(txt, sk, scale))
+                        .child(sk.control_text(&status)),
+                );
+            }
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -10868,11 +11876,11 @@ impl Render for TerminalView {
                         .px(px(7.))
                         .py(px(1.))
                         .rounded(sk.radius())
-                        .border_1()
+                        .border(sk.box_border(1.))
                         .border_color(human.alpha(0.6))
                         .text_color(human)
                         .cursor_pointer()
-                        .child(glyph)
+                        .child(sk.control_text(glyph))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
@@ -10889,7 +11897,7 @@ impl Render for TerminalView {
                         .gap_2()
                         .px(px(12.))
                         .py(px(6.))
-                        .child(div().w(px(22.)).child("👤"))
+                        .child(div().w(px(22.)).child(sk.control("👤", "turns")))
                         .child(
                             crate::lang::current()
                                 .strings()
@@ -10900,6 +11908,105 @@ impl Render for TerminalView {
                         .child(step("▲", false, cx))
                         .child(step("▼", true, cx)),
                 );
+            }
+            // Parker's order for a Clean header's ⋯: "agent + / surface (painter)
+            // Sliders (guages) / Bench" — then what was already here.
+            let uis = &crate::lang::current().strings().ui;
+            if !ui_agent {
+                menu = menu.child(
+                    item(
+                        "⌁",
+                        crate::lang::current()
+                            .strings()
+                            .parts
+                            .pane_launch_agent_chip,
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            cx.emit(OpenAgentLauncher);
+                            cx.notify();
+                        }),
+                    ),
+                );
+            }
+            if !show_theme {
+                menu = menu.child(item("🎨", uis.cfg_surface).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenThemeMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !show_eq {
+                menu = menu.child(item("📊", uis.cfg_sliders).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenDisplayMenu { at: pos });
+                        cx.notify();
+                    }),
+                ));
+            }
+            if !ui_face {
+                // The face this pane is NOT showing: one press goes there.
+                let other = if self.bench.face() == crate::workbench::Face::Workbench {
+                    crate::workbench::Face::Terminal
+                } else {
+                    crate::workbench::Face::Workbench
+                };
+                let queued = self.bench_queued();
+                let label = if queued > 0 && other == crate::workbench::Face::Workbench {
+                    format!("{} \u{b7} {queued}", other.chip())
+                } else {
+                    other.chip().to_string()
+                };
+                menu = menu.child(item("\u{25e8}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.set_face(other, cx);
+                        cx.notify();
+                    }),
+                ));
+            }
+            // Rest and sleep, by hand: pin an agent awake, or send an idle
+            // one to sleep now (the clocks are skipped, never the refusals).
+            if self.counts_as_agent() && self.pane_id.is_some() {
+                let parts = crate::lang::current().strings().parts;
+                let label = if self.rest.keep_awake {
+                    format!("{} \u{2713}", parts.pane_keep_awake)
+                } else {
+                    parts.pane_keep_awake.to_string()
+                };
+                menu = menu.child(item("\u{2615}", &label).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        v.rest.keep_awake = !v.rest.keep_awake;
+                        v.rest.touch(Instant::now());
+                        cx.notify();
+                    }),
+                ));
+                if self.mode.is_agent() && self.rest.dormancy.asleep().is_none() {
+                    menu = menu.child(item("\u{1f4a4}", parts.pane_sleep_now).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            v.hdr_overflow = None;
+                            v.rest.sleep_now = true;
+                            cx.notify();
+                        }),
+                    ));
+                }
             }
             if !show_handover && self.has_handovers() {
                 let word = crate::lang::current().strings().artifacts_word;
@@ -10912,40 +12019,6 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ));
-            }
-            if !show_eq {
-                menu = menu.child(
-                    item(
-                        "📊",
-                        crate::lang::current().strings().parts.pane_overflow_display,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenDisplayMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
-            }
-            if !show_theme {
-                menu = menu.child(
-                    item(
-                        "🎨",
-                        crate::lang::current().strings().parts.pane_overflow_theme,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenThemeMenu { at: pos });
-                            cx.notify();
-                        }),
-                    ),
-                );
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
                 menu = menu.child(
@@ -10964,6 +12037,16 @@ impl Render for TerminalView {
                     ),
                 );
             }
+            if !ui_close {
+                menu = menu.child(item("×", uis.cfg_close).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(ClosePane);
+                    }),
+                ));
+            }
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
 
@@ -10971,9 +12054,13 @@ impl Render for TerminalView {
         // complement (the wheel's `C` target; defaults to the accent's opposite
         // hue, or the active dynamic's complement). Lightness is floored so a
         // dark complement override stays legible on the header.
-        let bar_fg = Hsla {
-            l: th.complement.l.clamp(0.5, 0.92),
-            ..th.complement
+        let bar_fg = if sk.text_controls() {
+            sk.ink.ink
+        } else {
+            Hsla {
+                l: th.complement.l.clamp(0.5, 0.92),
+                ..th.complement
+            }
         };
 
         // The global text-size scrubber now drives the MENU BAR: the bar height,
@@ -10985,6 +12072,11 @@ impl Render for TerminalView {
         // NOT `HICON`, which is the bar's own height budget: the bar is the
         // right size and the glyphs in it were not. See [`CHROME_GLYPH`].
         let hicon = CHROME_GLYPH * scale;
+        let hicon = if sk.text_controls() {
+            11. * scale
+        } else {
+            hicon
+        };
         let hpad = px(12. * scale); // header horizontal padding / control gap
 
         // ── The face toggle ─────────────────────────────────────────────────
@@ -11167,7 +12259,7 @@ impl Render for TerminalView {
                     .relative()
                     .overflow_hidden()
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(ring.alpha(0.65))
                     .child(
                         gpui::img(face.plate.clone())
@@ -11195,7 +12287,7 @@ impl Render for TerminalView {
                 base.w(px(logo_box))
                     .overflow_hidden()
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(th.accent.alpha(0.35))
                     .child(
                         gpui::img(std::path::PathBuf::from(path))
@@ -11209,7 +12301,7 @@ impl Render for TerminalView {
                 base.gap_1()
                     .px(px(5. * scale))
                     .rounded(sk.rad(4.))
-                    .border_1()
+                    .border(sk.box_border(1.))
                     .border_color(bar_fg.alpha(0.18))
                     .text_color(bar_fg.alpha(0.4))
                     .group_hover(hdr_grp.clone(), move |s| {
@@ -11222,7 +12314,7 @@ impl Render for TerminalView {
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
-                            .child("\u{ff0b}"),
+                            .child(sk.control("\u{ff0b}", "add")),
                     )
                     .child(
                         div()
@@ -11249,9 +12341,20 @@ impl Render for TerminalView {
             // Lit or flat is the skin's call, not this call site's — see
             // `Shine`. Both stops are this PANE's, so a retinted pane keeps its
             // own header rather than borrowing the window's.
-            .bg(sk.ground(lighter, th.surface))
-            .border_b_1()
-            .border_color(sk.ink.edge_strong)
+            .bg(sk.ground(
+                lighter,
+                if sk.text_controls() {
+                    sk.ink.panel_raised
+                } else {
+                    th.surface
+                },
+            ))
+            .border_b(sk.box_border(1.))
+            .border_color(if sk.unboxed() && focused_now {
+                sk.ink.focus
+            } else {
+                sk.ink.edge_strong
+            })
             .text_color(bar_fg)
             // the title / status / grid-label text scales with the bar
             .text_size(sk.text_px(th.font_size * scale))
@@ -11274,8 +12377,12 @@ impl Render for TerminalView {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(logo_el)
-                    .child(format!("▸ {} · {buf}", self.mode.label_i18n()))
+                    .when(ui_logo, |d| d.child(logo_el))
+                    .child(format!(
+                        "{}{} · {buf}",
+                        sk.control("▸ ", ""),
+                        self.header_lead()
+                    ))
                     .child(div().w(px(6.)).h(px(13.)).bg(th.cursor))
                     .into_any_element()
             } else {
@@ -11283,19 +12390,11 @@ impl Render for TerminalView {
                 // sub-tab onto another tab, or drop it on a pane to split there.
                 // Right-click renames it (custom name wins over the OSC title).
                 // On the Document face the title is the file's name, unless the
-                // pane was renamed: the shell's own title describes a terminal
-                // that is not on screen.
-                let shown = (face_now == crate::workbench::Face::Document)
-                    .then(|| self.document_path())
-                    .flatten()
-                    .and_then(|p| p.file_name())
-                    .map(|n| n.to_string_lossy().into_owned());
-                let label = self
-                    .name
-                    .clone()
-                    .or(shown)
-                    .unwrap_or_else(|| self.shown_title());
+                // pane was renamed — see `header_title`.
+                let label = self.header_title();
                 div()
+                    .id("pane-title")
+                    .debug_selector(|| "pane-title".into())
                     .flex_1()
                     // min-width:0 lets the title actually shrink (a nowrap flex
                     // child keeps min-width:auto otherwise) — so it clips instead
@@ -11311,16 +12410,16 @@ impl Render for TerminalView {
                     // A pane's title is what its program said — a command, a
                     // host, a path — so it is set as data, not as a name.
                     .map(|d| sk.data(d))
-                    .child(logo_el)
+                    .when(ui_logo, |d| d.child(logo_el))
                     // The launch mark rides before the label rather than after
                     // it: the title clips on a narrow pane, and the mark is the
                     // part that says how this pane came to be here.
-                    .children(self.launch_mark.map(|mark| {
+                    .children(self.launch_mark.filter(|_| ui_logo).map(|mark| {
                         div()
                             .flex_none()
                             .px(px(5. * scale))
                             .rounded(sk.rad(4.))
-                            .border_1()
+                            .border(sk.box_border(1.))
                             .border_color(th.accent.alpha(0.6))
                             .text_color(th.accent)
                             .text_size(sk.text_px(9.5 * scale))
@@ -11330,10 +12429,17 @@ impl Render for TerminalView {
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
                     .children(focused_now.then(|| sk.chevron("»")).flatten())
-                    .child(if focused_now && sk.chevron("»").is_some() {
-                        format!("{} · {label}", self.mode.label_i18n())
+                    .child(if !ui_mode || minimal_header {
+                        // Minimal furniture puts the model in its own slot.
+                        label.clone()
+                    } else if focused_now && sk.chevron("»").is_some() {
+                        format!("{} · {label}", self.header_lead())
                     } else {
-                        format!("▸ {} · {label}", self.mode.label_i18n())
+                        if sk.text_controls() {
+                            format!("{} · {label}", self.header_lead())
+                        } else {
+                            format!("▸ {} · {label}", self.header_lead())
+                        }
                     })
                     .on_mouse_down(
                         MouseButton::Left,
@@ -11351,10 +12457,14 @@ impl Render for TerminalView {
                     )
                     .on_mouse_down(
                         MouseButton::Right,
-                        cx.listener(|view, _ev: &MouseDownEvent, window, cx| {
+                        cx.listener(move |view, ev: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
-                            view.renaming = Some(view.name.clone().unwrap_or_default());
-                            window.focus(&view.focus_handle, cx);
+                            if minimal_header {
+                                view.hdr_overflow = Some(ev.position);
+                            } else {
+                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                window.focus(&view.focus_handle, cx);
+                            }
                             cx.notify();
                         }),
                     )
@@ -11370,32 +12480,53 @@ impl Render for TerminalView {
                     .flex_shrink_0()
                     // roomier spacing between the header glyphs — scales with the bar
                     .gap(hpad)
-                    .child(face_toggle)
-                    .child(
-                        sk.chip(false)
-                            .id("launch-agent")
-                            .debug_selector(|| "launch-agent".into())
-                            .cursor_pointer()
-                            .text_size(sk.text_px((hicon * 0.42).max(8.5)))
-                            .whitespace_nowrap()
-                            .child(if pane_w / optical >= 470. {
-                                crate::lang::current()
-                                    .strings()
-                                    .parts
-                                    .pane_launch_agent_chip
-                            } else {
-                                "⌁"
-                            })
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(OpenAgentLauncher);
-                                }),
-                            ),
-                    )
-                    // What this pane's agent handed over: the newest one's
-                    // name, and the list behind ▾. See `pane/handed.rs`.
+                    .when(minimal_header && self.mode.is_agent(), |d| {
+                        d.child(
+                            div()
+                                .id("pane-model")
+                                .debug_selector(|| "pane-model".into())
+                                .text_size(sk.text_px(11. * scale))
+                                .text_color(sk.ink.ink_dim)
+                                .cursor_pointer()
+                                .child(self.header_lead().into_owned())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|view, ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        view.hdr_overflow = Some(ev.position);
+                                        cx.notify();
+                                    }),
+                                ),
+                        )
+                    })
+                    .when(ui_face, |d| d.child(face_toggle))
+                    .when(ui_agent, |d| {
+                        d.child(
+                            sk.chip(false)
+                                .id("launch-agent")
+                                .debug_selector(|| "launch-agent".into())
+                                .cursor_pointer()
+                                .text_size(sk.text_px((hicon * 0.42).max(8.5)))
+                                .whitespace_nowrap()
+                                .child(sk.control_text(if pane_w / optical >= 470. {
+                                    crate::lang::current()
+                                        .strings()
+                                        .parts
+                                        .pane_launch_agent_chip
+                                } else {
+                                    "⌁"
+                                }))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(OpenAgentLauncher);
+                                    }),
+                                ),
+                        )
+                    })
+                    // What this pane's agent handed over: ARTIFACT, which opens
+                    // the newest, and the list behind ▼. See `pane/handed.rs`.
                     .children(
                         show_handover
                             .then(|| self.handover_chip(&sk, hicon, handover_name, cx))
@@ -11413,7 +12544,7 @@ impl Render for TerminalView {
                                 .px(px(2.))
                                 .rounded(sk.radius())
                                 .cursor_pointer()
-                                .child(glyph)
+                                .child(sk.control_text(glyph))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
@@ -11430,7 +12561,7 @@ impl Render for TerminalView {
                                 .gap(px(1.))
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(th.human.alpha(0.6))
                                 .text_color(th.human)
                                 // the bust matches the consistent 2× glyph set
@@ -11439,7 +12570,7 @@ impl Render for TerminalView {
                                         .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
-                                        .child("👤"),
+                                        .child(sk.control("👤", "turns")),
                                 )
                                 .child(step("▲", false, cx))
                                 .child(step("▼", true, cx)),
@@ -11453,13 +12584,13 @@ impl Render for TerminalView {
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
-                                .child("👓")
+                                .child(sk.control("👓", "focus"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -11475,12 +12606,12 @@ impl Render for TerminalView {
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child("🎨")
+                                .child(sk.control("🎨", "look"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -11498,7 +12629,7 @@ impl Render for TerminalView {
                                 .flex()
                                 .items_center()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .child(eq_icon(th.accent, scale * 0.5))
@@ -11513,17 +12644,17 @@ impl Render for TerminalView {
                     })
                     // ⋯ overflow: appears once anything has been tucked away. Tap to
                     // open the menu of hidden controls (built above as overflow_el).
-                    .when(overflow, |row| {
+                    .when(overflow && !minimal_header, |row| {
                         row.child(
                             div()
                                 .px_1()
                                 .rounded(sk.radius())
-                                .border_1()
+                                .border(sk.box_border(1.))
                                 .border_color(sk.ink.edge_strong)
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child("⋯")
+                                .child(sk.control("⋯", "menu"))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
@@ -11541,52 +12672,74 @@ impl Render for TerminalView {
                     // Off-limits sits with the controls on the right, which a
                     // narrow pane keeps while its title clips: it is the one
                     // thing on this header that changes what an agent may do.
-                    .children(self.off_limits.then(|| {
-                        div()
-                            .flex_none()
-                            .px(px(5. * scale))
-                            .rounded(sk.rad(4.))
-                            .border_1()
-                            .border_color(bar_fg.alpha(0.75))
-                            .text_color(bar_fg)
-                            .text_size(sk.text_px(9.5 * scale))
-                            .child(crate::lang::current().strings().parts.pane_off_limits_badge)
-                    }))
-                    .child(status)
-                    .child(
-                        // close just this sub-tab (×): ends this pane's shell.
-                        // Big, borderless, full-height — a generous click target;
-                        // a soft hover tint stands in for the dropped border.
-                        div()
-                            .id("close-pane")
-                            .h_full()
-                            .flex()
-                            .items_center()
-                            .justify_center()
-                            .px_4()
-                            .rounded_md()
-                            .text_color(bar_fg)
-                            .cursor_pointer()
-                            // Still bigger than the other header glyphs, and by
-                            // exactly as much as it always was — the old
-                            // `hicon + 10` was 1.36× the old glyph metric, so
-                            // the ratio is kept as a ratio rather than as an
-                            // offset that would have grown to half again as
-                            // dominant once the glyphs halved.
-                            .text_size(sk.text_px(hicon * 1.36))
-                            .line_height(px(hicon * 1.36))
-                            .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                            .child("×")
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
-                                    cx.stop_propagation();
-                                    cx.emit(ClosePane);
-                                }),
-                            ),
-                    ),
+                    .children({
+                        let parts = crate::lang::current().strings().parts;
+                        match self.agent_access {
+                            crate::threshing_floor::AgentAccess::Open => None,
+                            crate::threshing_floor::AgentAccess::ReadOnly => {
+                                Some(parts.pane_read_only_badge)
+                            }
+                            crate::threshing_floor::AgentAccess::OffLimits => {
+                                Some(parts.pane_off_limits_badge)
+                            }
+                        }
+                        .map(|badge| {
+                            div()
+                                .flex_none()
+                                .px(px(5. * scale))
+                                .rounded(sk.rad(4.))
+                                .border(sk.box_border(1.))
+                                .border_color(bar_fg.alpha(0.75))
+                                .text_color(bar_fg)
+                                .text_size(sk.text_px(9.5 * scale))
+                                .child(badge)
+                        })
+                    })
+                    // Rest and sleep: whether the window has frozen or ended
+                    // this pane's agent, and what the pane costs.
+                    .when(!minimal_header, |d| {
+                        d.children(self.rest_chip(&th, bar_fg, &sk, scale))
+                            .children(self.memory_figure(bar_fg, &sk, scale))
+                            .child(sk.control_text(&status))
+                    })
+                    .when(ui_close, |d| {
+                        d.child(
+                            // close just this sub-tab (×): ends this pane's shell.
+                            // Big, borderless, full-height — a generous click target;
+                            // a soft hover tint stands in for the dropped border.
+                            div()
+                                .id("close-pane")
+                                .h_full()
+                                .flex()
+                                .items_center()
+                                .justify_center()
+                                .px_4()
+                                .rounded_md()
+                                .text_color(bar_fg)
+                                .cursor_pointer()
+                                // Still bigger than the other header glyphs, and by
+                                // exactly as much as it always was — the old
+                                // `hicon + 10` was 1.36× the old glyph metric, so
+                                // the ratio is kept as a ratio rather than as an
+                                // offset that would have grown to half again as
+                                // dominant once the glyphs halved.
+                                .text_size(sk.text_px(hicon * 1.36))
+                                .line_height(px(hicon * 1.36))
+                                .hover(|s| s.bg(bar_fg.alpha(0.18)))
+                                .child(sk.control("×", "close"))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        cx.emit(ClosePane);
+                                    }),
+                                ),
+                        )
+                    }),
             );
-        header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
+        if !sk.text_controls() {
+            header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
+        }
 
         let jiggle = self.fx.jiggle_px;
         let shake_y = jiggle;
@@ -11728,43 +12881,50 @@ impl Render for TerminalView {
         // INVERSE of that tube's distortion and the two must be measuring the
         // same rectangle or the cancellation is against the wrong curve.
         // Nothing on the bench face — see [`Self::note_layout`].
-        let note_el = self.note.clone().filter(|_| on_terminal).map(|note| {
-            let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
-            let store = self.content_bounds.clone();
-            let pal = sk.note_palette(&th);
-            let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
-            // The pane's own curvature, and zero while a modal has flattened the
-            // whole screen — the note un-bends with everything else that frame
-            // rather than being the one thing that stayed compensated.
-            let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
-                (0.0, 0.0)
-            } else {
-                crate::theme::warp_coeffs(th.warp)
-            };
-            div().absolute().inset_0().child(
-                canvas(
-                    |_, _, _| {},
-                    move |_, _, window, cx| {
-                        let Some(content) = store.lock().ok().and_then(|b| *b) else {
-                            return;
-                        };
-                        if let Some(mut lay) = crate::sticky::layout(content, note.tilt()) {
-                            lay.pre_warp(content, k1, k2);
-                            crate::sticky::paint(
-                                &note,
-                                &lay,
-                                &pal,
-                                peeling,
-                                paper_stock,
-                                window,
-                                cx,
-                            );
-                        }
-                    },
+        // UI CONFIG's notes switch: one for every pane, like the rest.
+        let ui_notes = crate::uiconfig::shown(cx, crate::uiconfig::Key::PaneNotes);
+        let note_el = self
+            .note
+            .clone()
+            .filter(|_| on_terminal && ui_notes)
+            .map(|note| {
+                let paper_stock = sk.note_decoration == crate::skin::NoteDecoration::Flower;
+                let flat = sk.unboxed();
+                let store = self.content_bounds.clone();
+                let pal = sk.marked_note_palette(&th, note.pinned);
+                let peeling = self.note_hover == Some(crate::sticky::Hit::Peel);
+                // The pane's own curvature, and zero while a modal has flattened the
+                // whole screen — the note un-bends with everything else that frame
+                // rather than being the one thing that stayed compensated.
+                let (k1, k2) = if crate::warp::is_suppressed() || th.crawl {
+                    (0.0, 0.0)
+                } else {
+                    crate::theme::warp_coeffs(th.warp)
+                };
+                div().absolute().inset_0().child(
+                    canvas(
+                        |_, _, _| {},
+                        move |_, _, window, cx| {
+                            let Some(content) = store.lock().ok().and_then(|b| *b) else {
+                                return;
+                            };
+                            if let Some(mut lay) = note.layout(content, flat) {
+                                lay.pre_warp(content, k1, k2);
+                                crate::sticky::paint(
+                                    &note,
+                                    &lay,
+                                    &pal,
+                                    peeling,
+                                    paper_stock,
+                                    window,
+                                    cx,
+                                );
+                            }
+                        },
+                    )
+                    .size_full(),
                 )
-                .size_full(),
-            )
-        });
+            });
 
         // The document inside the square paints in THIS pane's resolved theme,
         // which a pane can hold apart from the window's. Handed down every
@@ -11847,7 +13007,7 @@ impl Render for TerminalView {
             // / contrast / colour sliders dim the whole pane like a dimmer light —
             // crucially the flat/paper themes, whose bright background is the bulk of
             // what you see. Neutral grade short-circuits, so the default is unchanged.
-            .bg(graded(th.bg, &th.grade, Channel::Bg))
+            .bg(terminal_background(&th))
             .relative()
             .flex()
             .flex_col()
@@ -11864,6 +13024,17 @@ impl Render for TerminalView {
                     .relative()
                     .flex_1()
                     .overflow_hidden()
+                    // Under Clean the terminal is open on three sides: the rule
+                    // under its header stays, and the split draws the upright
+                    // between neighbours (`skin::open_tiling`).
+                    .when(sk.unboxed() && on_terminal, |d| {
+                        let d = d.border_color(sk.ink.rule);
+                        if crate::skin::open_tiling(cx) {
+                            d.border_t(px(sk.m.hairline))
+                        } else {
+                            d.border(px(sk.m.hairline))
+                        }
+                    })
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
@@ -11923,6 +13094,8 @@ impl Render for TerminalView {
                                         k2,
                                         crawl,
                                         tube_bezel,
+                                        if on_terminal { letter_glow } else { 0.0 },
+                                        if on_terminal { inactive_blur * sf } else { 0.0 },
                                     );
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
@@ -11955,7 +13128,15 @@ impl Render for TerminalView {
                     .map(|d| {
                         sk.terminal_stock(
                             d,
-                            graded(crate::mix(th.bg, th.surface, 0.18), &th.grade, Channel::Bg),
+                            // The grid's grade, so the field lifts with the
+                            // cells when the ACTIVE brightness gauge is up.
+                            th.field_background.unwrap_or_else(|| {
+                                graded(
+                                    crate::mix(th.bg, th.surface, 0.18),
+                                    &grid_th.grade,
+                                    Channel::Bg,
+                                )
+                            }),
                         )
                     })
                     .children(pictures_under)
@@ -11968,17 +13149,61 @@ impl Render for TerminalView {
                         grid_paint::GridPaint::replace_if_changed(
                             &mut self.grid_paint,
                             grid_paint::Snapshot {
-                                lines,
+                                lines: std::rc::Rc::new(lines),
+                                glyphs,
                                 cell_h: self.cell_h,
+                                cell_w: self.cell_w,
+                                // The resolved theme's grade, so Clean's hold reaches it.
+                                linger: th.grade.linger_for_focus(focused_now),
+                                context: Some(grid_paint::HistoryContext {
+                                    theme: {
+                                        // Timings do not change the retained glyph paint.
+                                        // Keep them out of geometry/style invalidation.
+                                        let mut history = grid_th.clone();
+                                        history.grade.afterglow_ms = None;
+                                        history.grade.cursor_linger_ms = None;
+                                        history.grade.off_cursor_linger_ms = None;
+                                        history.grade.inactive_cursor_linger_ms = None;
+                                        history.grade.inactive_off_cursor_linger_ms = None;
+                                        history.grade.cursor_trail = None;
+                                        history
+                                    },
+                                    offset: self.session.term.lock().display_offset(),
+                                    alternate: alt_screen_active,
+                                    cols: self.grid.cols,
+                                    rows: self.grid.rows,
+                                    inverted: self.paint_inverted,
+                                }),
                                 pad: (grid_pad_x, grid_pad_y),
                                 crawl: th.crawl,
                                 bleed: (th.letter_glow > 0.001).then_some(0.35 * th.letter_glow),
+                                bands: std::rc::Rc::new(bands),
+                                band_ink: (sk.ink.rule_strong, sk.ink.rule),
+                                cursor: cursor_cell,
+                                // A crawl centres its rows, so grid columns no
+                                // longer place a cell; the desktop's ask for less
+                                // motion holds it off too. Clean has already
+                                // dropped it from `th`.
+                                cursor_trail: th
+                                    .grade
+                                    .cursor_trail
+                                    .filter(|t| t.lifetime().is_some())
+                                    .filter(|_| !th.crawl && !grid_paint::reduced_motion()),
+                                cursor_ink: graded(th.cursor, &th.grade, Channel::Bg),
                             },
                             cx,
                         );
-                        gpui::AnyView::from(self.grid_paint.clone())
-                            .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
-                            .into_any_element()
+                        let paint = gpui::AnyView::from(self.grid_paint.clone());
+                        if self.grid_paint.read(cx).is_animating() {
+                            // Repainting a cached parent forces its cached children
+                            // to refresh too. Keep the animated wrapper uncached so
+                            // the independent live-text cache survives fade frames.
+                            paint.into_any_element()
+                        } else {
+                            paint
+                                .cached(gpui::StyleRefinement::default().w_full().h(px(height)))
+                                .into_any_element()
+                        }
                     })
                     .children(pictures_over)
                     .children(copy_el)
@@ -12007,10 +13232,7 @@ impl Render for TerminalView {
                     // Over everything ON the glass, since the lip's shadow falls
                     // on whatever is there; under the ignition, which is light.
                     .when(seat_flat_rim, |el| {
-                        el.child(crt::rim(
-                            rim_strength,
-                            graded(th.bg, &th.grade, Channel::Bg),
-                        ))
+                        el.child(crt::rim(rim_strength, terminal_background(&th)))
                     })
                     // The tube fires. Last child of the SCREEN, so it paints
                     // over the grid but stays inside the registered warp tube —
@@ -12042,6 +13264,7 @@ impl Render for TerminalView {
             .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
             })
+            .children(sleep_el)
             .children(ctx_menu_el)
             .children(overflow_el)
             // the paint overlay is the topmost surface — painted last, above
@@ -12065,6 +13288,29 @@ mod tests {
             underline: None,
             strikethrough: None,
         }
+    }
+
+    #[test]
+    fn terminal_background_query_reports_the_actual_matched_field() {
+        let mut th = theme::parse(theme::CLEAN_THEME_TOML).unwrap();
+        th.grade = theme::house_outer().grade;
+        let field = gpui::rgb(0x142620).into();
+        th.field_background = Some(field);
+        assert_eq!(terminal_background(&th), field);
+        assert_eq!(
+            asked_colour(NamedColor::Background as usize, &th),
+            Some(field)
+        );
+        th.field_background = Some(gpui::black());
+        assert_eq!(
+            asked_colour(NamedColor::Background as usize, &th),
+            Some(gpui::black())
+        );
+        th.field_background = None;
+        assert_eq!(
+            terminal_background(&th),
+            graded(th.bg, &th.grade, Channel::Bg)
+        );
     }
 
     /// #953. Resolving a grid font that carries the fallback chain loads every
@@ -12196,8 +13442,8 @@ mod tests {
         let pane = cut(include_str!("pane.rs"));
         let main = cut(include_str!("main.rs"));
         for (src, glyph, file) in [
-            (pane, ".child(\"\\u{ff0b}\")", "pane.rs"),
-            (main, ".child(\"\\u{f06a9}\")", "main.rs"),
+            (pane, ".control(\"\\u{ff0b}\",", "pane.rs"),
+            (main, ".control(\"\\u{f06a9}\",", "main.rs"),
         ] {
             let at = src
                 .find(glyph)
@@ -13506,6 +14752,113 @@ mod tests {
     }
 
     const RULE: &str = "────────────────────────────────────────────────";
+
+    fn draft_of(rows: &[&str], cursor: usize) -> Option<String> {
+        let rows: Vec<String> = rows.iter().map(|r| r.to_string()).collect();
+        agent_draft(&rows, cursor, 100)
+    }
+
+    /// Ctrl+C clears an agent's prompt, and in a TD pane it saves what it
+    /// clears: the typed words, from the caret block the cursor sits in, in
+    /// Codex's unboxed composer and Claude Code's ruled box alike — a blank line
+    /// typed into the draft included, the footer under it not.
+    #[test]
+    fn ctrl_c_saves_the_prompt_the_cursor_is_in() {
+        let codex = [
+            "› an earlier turn, echoed",
+            "",
+            "• the reply to it",
+            "",
+            "› fix the login bug",
+            "  and the logout one",
+            "",
+            "  ? for shortcuts                    100% context left",
+        ];
+        assert_eq!(
+            draft_of(&codex, 5).as_deref(),
+            Some("fix the login bug\nand the logout one"),
+            "the composer, not the echoed turn above it"
+        );
+
+        let claude = [
+            "❯ an earlier turn",
+            "",
+            RULE,
+            "❯\u{a0}first line",
+            "  second",
+            "",
+            "  fourth",
+            RULE,
+            "  ? for shortcuts",
+        ];
+        assert_eq!(
+            draft_of(&claude, 4).as_deref(),
+            Some("first line\nsecond\n\nfourth"),
+            "inside the rules, blank line kept"
+        );
+
+        let rounded = [
+            "╭──────────────────────────────────────╮",
+            "│ > what now                           │",
+            "╰──────────────────────────────────────╯",
+        ];
+        assert_eq!(draft_of(&rounded, 1).as_deref(), Some("what now"));
+    }
+
+    /// The other half of the promise: ctrl+c leaves the clipboard alone when
+    /// there is nothing typed. An empty prompt arrives with its dim placeholder
+    /// already blanked, so it is a bare caret; a menu's `❯ 1.` is not a prompt;
+    /// and a cursor below an echoed turn, with the agent's words between, does
+    /// not reach back up and take that turn.
+    #[test]
+    fn ctrl_c_saves_nothing_from_an_empty_prompt_or_a_menu() {
+        let empty_codex = ["› an earlier turn", "", "›", "", "  ? for shortcuts"];
+        assert_eq!(
+            draft_of(&empty_codex, 2),
+            None,
+            "Codex, placeholder blanked"
+        );
+
+        let empty_claude = [
+            "❯ an earlier turn",
+            "",
+            RULE,
+            "❯\u{a0}",
+            RULE,
+            "  ? for shortcuts",
+        ];
+        assert_eq!(
+            draft_of(&empty_claude, 3),
+            None,
+            "Claude Code, placeholder blanked"
+        );
+
+        let menu = [
+            "Do you want to make this edit?",
+            "❯ 1. Yes",
+            "  2. No",
+            "Esc to cancel",
+        ];
+        assert_eq!(draft_of(&menu, 1), None, "a menu's cursor");
+
+        let below = [
+            "❯ fix the login bug",
+            "  and the logout one",
+            "I'll start with the session cookie.",
+            "Do you want to proceed?",
+            "  1. Yes",
+        ];
+        assert_eq!(
+            draft_of(&below, 4),
+            None,
+            "an echoed turn is not reached back to"
+        );
+        assert_eq!(
+            draft_of(&["$ cargo test", "ok"], 1),
+            None,
+            "no caret at all"
+        );
+    }
 
     /// The reader's foot finds Claude Code's input box by its two long rules,
     /// and carries the status line above it while the agent works — and only
@@ -16711,6 +18064,54 @@ mod tests {
         );
     }
 
+    /// A tab hotkey the window holds never reaches the terminal as bytes,
+    /// and one it does not hold is the program's ESC-prefixed key as ever.
+    /// `key_char` supplied, as gpui fills it at runtime: without it the alt
+    /// arm returns `None` for every key and this would pass for nothing.
+    #[test]
+    fn a_held_tab_hotkey_is_never_written_to_the_terminal() {
+        let alt = |c: &str, shift: bool| {
+            let mut k = Keystroke::parse(&if shift {
+                format!("alt-shift-{c}")
+            } else {
+                format!("alt-{c}")
+            })
+            .unwrap();
+            k.key_char = Some(if shift {
+                c.to_uppercase()
+            } else {
+                c.to_string()
+            });
+            keystroke_bytes(&k)
+        };
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        assert_eq!(
+            alt("3", false),
+            Some(b"\x1b3".to_vec()),
+            "unheld: readline's"
+        );
+        assert_eq!(
+            alt("m", true),
+            Some(b"\x1bM".to_vec()),
+            "unpinned: the program's"
+        );
+        crate::keylayer::hold_tab_keys(
+            crate::keylayer::TabKeys {
+                digits: true,
+                pinned: 0,
+            }
+            .with_letter('m'),
+        );
+        assert_eq!(alt("3", false), None);
+        assert_eq!(alt("m", true), None);
+        assert_eq!(
+            alt("q", true),
+            Some(b"\x1bQ".to_vec()),
+            "only the pinned letter"
+        );
+        crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+    }
+
     #[test]
     fn keystroke_bytes_encodes_the_pty_protocol() {
         let bytes = |s: &str| keystroke_bytes(&Keystroke::parse(s).unwrap());
@@ -16769,8 +18170,9 @@ mod tests {
         // anything, because the pane's handler runs first.
         assert_eq!(alt_char("k"), None);
         // ...and the neighbouring close chord is a DIFFERENT layer: ctrl+w is
-        // intercepted in `on_key` as close-tab and never gets here, so it keeps
-        // its werase encoding. Asserted so the two rungs stay distinguishable.
+        // taken in `on_key` while a document box is up, and with none it gets
+        // here and must still be werase. Asserted so the two rungs stay
+        // distinguishable.
         assert_eq!(bytes("ctrl-w"), Some(vec![0x17]));
         // ctrl+alt+arrows walk the LEFT BAR's tree — the workspace's, and never
         // PTY bytes. Covered by the blanket `m.control` arm; asserted because
@@ -17398,3 +18800,5 @@ mod behaviour;
 mod harness;
 #[cfg(test)]
 mod housekeeping_tests;
+#[cfg(test)]
+mod rest_tests;

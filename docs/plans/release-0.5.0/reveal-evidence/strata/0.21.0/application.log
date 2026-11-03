@@ -1,0 +1,89 @@
+[2m2026-10-23T18:11:25.082544Z[0m [33m WARN[0m [2mstrata::ui::preferences[0m[2m:[0m settings file has invalid entries; keeping the valid ones [3merror[0m[2m=[0mmissing field `mode`
+
+MESA-EGL: warning: DRI3 error: Could not get DRI3 device
+MESA-EGL: warning: Ensure your X server supports DRI3 to get accelerated rendering
+
+(io.github.lgse.Strata:49): Gdk-WARNING **: 18:11:25.577: Cannot get portal org.freedesktop.portal.Inhibit version: GDBus.Error:org.freedesktop.DBus.Error.InvalidArgs: No such interface “org.freedesktop.portal.Inhibit”
+[2m2026-10-23T18:11:25.610105Z[0m [33m WARN[0m [2mstrata::ui::preferences[0m[2m:[0m settings file has invalid entries; keeping the valid ones [3merror[0m[2m=[0mmissing field `mode`
+
+[2m2026-10-23T18:11:25.706788Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m624
+[2m2026-10-23T18:11:25.786947Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m704
+[2m2026-10-23T18:11:25.789186Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:25.837356Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load started [3mrequest_id[0m[2m=[0m1 [3mbackend[0m[2m=[0mnative
+[2m2026-10-23T18:11:25.837980Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:25.838485Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m first directory batch ready [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m1
+[2m2026-10-23T18:11:25.838523Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load finished [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m1
+[2m2026-10-23T18:11:25.880567Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m first themed frame painted [3melapsed_ms[0m[2m=[0m798
+[2m2026-10-23T18:11:25.977288Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load started [3mrequest_id[0m[2m=[0m1 [3mbackend[0m[2m=[0mnative
+[2m2026-10-23T18:11:25.991904Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m first directory batch ready [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m14
+[2m2026-10-23T18:11:25.991939Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load finished [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m14
+[2m2026-10-23T18:11:25.993022Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:25.993047Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:26.126411Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m1044
+[2m2026-10-23T18:11:26.128368Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:26.299650Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load started [3mrequest_id[0m[2m=[0m1 [3mbackend[0m[2m=[0mnative
+[2m2026-10-23T18:11:26.312900Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:26.312975Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m first directory batch ready [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m13
+[2m2026-10-23T18:11:26.312989Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load finished [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m13
+[2m2026-10-23T18:11:26.473232Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m1391
+[2m2026-10-23T18:11:26.475338Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:26.677788Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load started [3mrequest_id[0m[2m=[0m1 [3mbackend[0m[2m=[0mnative
+[2m2026-10-23T18:11:26.693807Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:26.693884Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m first directory batch ready [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m16
+[2m2026-10-23T18:11:26.693899Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load finished [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m16
+[2m2026-10-23T18:11:26.824756Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m1742
+[2m2026-10-23T18:11:26.828133Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:27.088601Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load started [3mrequest_id[0m[2m=[0m1 [3mbackend[0m[2m=[0mnative
+[2m2026-10-23T18:11:27.211798Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m2129
+[2m2026-10-23T18:11:27.213796Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m first directory batch ready [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m125
+[2m2026-10-23T18:11:27.213823Z[0m [32m INFO[0m [2mstrata::adapters::local_files[0m[2m:[0m directory load finished [3mrequest_id[0m[2m=[0m1 [3mentries[0m[2m=[0m2 [3melapsed_ms[0m[2m=[0m125
+[2m2026-10-23T18:11:27.218770Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:27.219035Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:27.628703Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m2546
+[2m2026-10-23T18:11:27.630703Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:28.038949Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m2956
+[2m2026-10-23T18:11:28.041178Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:28.509557Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m3427
+[2m2026-10-23T18:11:28.511818Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:29.098261Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m4016
+[2m2026-10-23T18:11:29.102110Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:29.776162Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m4693
+[2m2026-10-23T18:11:29.778901Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:30.526511Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m5444
+[2m2026-10-23T18:11:30.529462Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:31.412588Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m6330
+[2m2026-10-23T18:11:31.415724Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:32.377455Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m7295
+[2m2026-10-23T18:11:32.380711Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:33.486854Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m8404
+[2m2026-10-23T18:11:33.492337Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:34.717201Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m9635
+[2m2026-10-23T18:11:34.721757Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:35.977458Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m10895
+[2m2026-10-23T18:11:35.981302Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:37.449414Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m12367
+[2m2026-10-23T18:11:37.454866Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:39.089202Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m14007
+[2m2026-10-23T18:11:39.095584Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:40.762893Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m15680
+[2m2026-10-23T18:11:40.877721Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:42.658031Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m17575
+[2m2026-10-23T18:11:42.662920Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:44.664026Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m19581
+[2m2026-10-23T18:11:44.670218Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:46.691938Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m21609
+[2m2026-10-23T18:11:46.697125Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:48.927351Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m23845
+[2m2026-10-23T18:11:48.932329Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:51.308182Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m26225
+[2m2026-10-23T18:11:51.312924Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:53.818199Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m28736
+[2m2026-10-23T18:11:53.824420Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:56.472632Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m31390
+[2m2026-10-23T18:11:56.478838Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:11:59.288379Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m34206
+[2m2026-10-23T18:11:59.293027Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:12:02.252879Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m37170
+[2m2026-10-23T18:12:02.259005Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15
+[2m2026-10-23T18:12:05.518497Z[0m [32m INFO[0m [2mstrata::metrics[0m[2m:[0m application window presented [3melapsed_ms[0m[2m=[0m40436
+[2m2026-10-23T18:12:05.525405Z[0m [33m WARN[0m [2mstrata::ui::window[0m[2m:[0m unable to read trash contents [3merror_domain[0m[2m=[0mg-io-error-quark [3merror_code[0m[2m=[0m15

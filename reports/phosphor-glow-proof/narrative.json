@@ -1,0 +1,340 @@
+{
+  "file": "reports/2026-10-20-image-glow.html",
+  "subject": "A dedicated TD build adds adjustable terminal image glow and is ready for Parker to test.",
+  "reader": "Parker liked cool-retro-term, asked for a dedicated branch and a slider, and returns from being away to test the native build.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.53
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.22
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.36,
+        "catalogue": 0.14,
+        "argument": 0.38,
+        "report": 0.11,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.22
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Image Glow",
+      "text": "You liked the light spilling off the letters in cool-retro-term. That effect now has its own TD branch and a native slider. A separate test window is waiting on workspace 4 , with a glowing pane beside a reference pinned at zero. \n\nGAUGES \u2192 CRT \u2192 image glow \n\n01 \u00b7 NATIVE OUTPUT \n\n 0% \u00b7 reference capture \n 55% \u00b7 native capture \n\n Recorded strength: 0% 55% 100% \n\n Figure 1. Light spreads around the letters while their sharp core remains visible. These are crops of real GPU captures at matching coordinates, not a browser recreation. Buttons select recorded states. Source: the isolated release build on this machine\u2019s RTX 3080 Laptop GPU.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.58,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.39,
+            "2": 0.49,
+            "3": 0.07
+          },
+          "confidence": 0.44
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.31
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.14
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.15,
+            "complication": 0,
+            "turn": 0.51,
+            "consequence": 0.06,
+            "resolution": 0.09,
+            "aside": 0.18,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.43
+        }
+      },
+      "latency_ms": 905.3743190597743,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "The dial",
+      "text": "Open the bottom bar\u2019s GAUGES button, expand CRT, and turn image glow . The outer control affects panes that follow it. Each pane can own a different strength through its existing GAUGES control; the right-hand reference already owns zero. \n\n02 \u00b7 THE NATIVE CONTROL \n\nThe slider runs from 0% to 100%. CRT must be on; warp can stay at zero. \n Close GAUGES to see the result. The existing tray suppresses the CRT pass while open. This preview limitation remains tracked in the glass-preview issue . \nCRT off keeps the chosen strength, so switching it back on restores the glow. Strength and per-pane ownership survive a restart. \n Figure 2. Image glow sits beside the other CRT dials. Source: a second isolated native fixture. This screenshot shows zero glow and does not claim a live preview while dragging.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.45,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.07,
+            "1": 0.45999999999999996,
+            "2": 0.42,
+            "3": 0.05
+          },
+          "confidence": 0.41
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.35
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.63,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.4,
+            "1": 0.58,
+            "2": 0.02,
+            "3": 0
+          },
+          "confidence": 0.58
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.2
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.06,
+            "turn": 0.48,
+            "consequence": 0.26,
+            "resolution": 0.09,
+            "aside": 0.1,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.39
+        }
+      },
+      "latency_ms": 906.2242950312793,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "The light",
+      "text": "The renderer reads bright neighbours from its existing scene texture and blends their light into each terminal\u2019s image. Every sample is checked against that pane\u2019s bounds. The effect uses sixteen neighbour samples per affected pixel and adds no history texture. \n\n03 \u00b7 RENDERING BOUNDARY \n Figure 3. A pane can glow without lighting its neighbour. The drawing follows the new shader. It describes the mechanism; GPU frame cost has not been benchmarked.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.56,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.02,
+            "1": 0.43,
+            "2": 0.52,
+            "3": 0.03
+          },
+          "confidence": 0.5
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.14,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.75,
+            "2": 0.19,
+            "3": 0
+          },
+          "confidence": 0.75
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.72
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.44,
+            "consequence": 0.24,
+            "resolution": 0,
+            "aside": 0.31,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.35
+        }
+      },
+      "latency_ms": 845.1570599572733,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "The checks",
+      "text": "The native fixture held its text still while the outer strength changed. Comparisons cover the left and right terminal grids, excluding window chrome: 900 \u00d7 1,020 and 860 \u00d7 1,020 physical pixels respectively. \n | \n | Check | Observed result \n\n | 100% glow | 75,184 changed pixels in the glowing grid; zero in the reference. \n\n | Return to zero | Both grids match their zero-glow captures exactly. \n\n | CRT off, strength retained at 100% | Both grids match zero glow exactly. \n\n | Restart from saved settings | 55% follows outer; the reference stays pinned at 0%. No replacement seed was written. \n\n | Default terminal core | 2,594 passed; 10 ignored \n\n | Fallback Alacritty core | 2,541 passed; 10 ignored \n\n | Build and lint | Locked release build, format check, both core Clippy gates and patch replay passed. \n\nEvidence: native configuration and restart receipt \u00b7 pixel comparison \u00b7 test commands and counts . Passing checks cover this machine and these fixtures. Multi-monitor frame cost and other GPUs remain unmeasured.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.64,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.34,
+            "2": 0.6,
+            "3": 0.03
+          },
+          "confidence": 0.57
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.34
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.3,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.06,
+            "1": 0.58,
+            "2": 0.35,
+            "3": 0.01
+          },
+          "confidence": 0.57
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.59
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.01,
+            "consequence": 0.49,
+            "resolution": 0.05,
+            "aside": 0.44,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 985.7664779992774,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "Your test window",
+      "text": "The session is named phosphor-glow-test . Left starts at 55%; right is pinned at 0%. Both panes are ordinary interactive Bash shells. The binary and its settings live in a private lab directory; the normal TD installation and session 1 remain in place. \n\nsh /home/parker/Work/td-phosphor-glow-lab/native-lab/launch.sh \n\n Glow strength \nTry your usual dense terminal output at 25%, 55% and 100%. Mark the strength you want as the starting point, or leave a note on a capture where the halo makes a letter harder to read. \n\nBranch: feat/crt-phosphor-glow \u00b7 base: main \u00b7 release: unassigned. \nInspiration: cool-retro-term . Its effect code is GPL-3.0-or-later; this shader was independently implemented. This build provides image bloom. Fading phosphor history remains a separate possible effect. \nSource: settings \u00b7 slider \u00b7 GPU patch . \n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \ud83d\udcbe save into file \n \u2715",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.6,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.36,
+            "2": 0.53,
+            "3": 0.06
+          },
+          "confidence": 0.48
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.67
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.3,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.64,
+            "2": 0.32,
+            "3": 0.01
+          },
+          "confidence": 0.63
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.31
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0.15,
+            "complication": 0.01,
+            "turn": 0.01,
+            "consequence": 0.03,
+            "resolution": 0.61,
+            "aside": 0.18,
+            "none_of_the_above": 0.01
+          },
+          "confidence": 0.54
+        }
+      },
+      "latency_ms": 903.1000549439341,
+      "failure": null
+    }
+  ]
+}

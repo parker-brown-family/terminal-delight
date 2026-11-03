@@ -1,0 +1,627 @@
+test_changed_helper_and_symlink_settings_retained (__main__.Cleanup.test_changed_helper_and_symlink_settings_retained) ... ok
+test_committed_edit_keeps_one_private_state_backup (__main__.Cleanup.test_committed_edit_keeps_one_private_state_backup) ... FAIL
+test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) ... 
+  test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='agent-hooks') ... FAIL
+  test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='recovery-hook') ... FAIL
+  test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='keys-hotkey') ... FAIL
+  test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='plugins') ... FAIL
+  test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='desktop') ... FAIL
+test_desktop_remove_and_cache_failures_keep_receipt (__main__.Cleanup.test_desktop_remove_and_cache_failures_keep_receipt) ... FAIL
+test_desktop_uninstall_retains_changed_icon_and_refreshes_caches (__main__.Cleanup.test_desktop_uninstall_retains_changed_icon_and_refreshes_caches) ... FAIL
+test_failed_replace_discards_snapshot_and_uncommitted_backup (__main__.Cleanup.test_failed_replace_discards_snapshot_and_uncommitted_backup) ... FAIL
+test_gnome_changed_shortcut_or_missing_receipt_blocks (__main__.Cleanup.test_gnome_changed_shortcut_or_missing_receipt_blocks) ... ok
+test_gnome_failed_write_keeps_evidence (__main__.Cleanup.test_gnome_failed_write_keeps_evidence) ... ok
+test_gnome_intent_precedes_first_write_and_survives_failure (__main__.Cleanup.test_gnome_intent_precedes_first_write_and_survives_failure) ... FAIL
+test_gnome_keeps_later_terminal_choice (__main__.Cleanup.test_gnome_keeps_later_terminal_choice) ... ok
+test_gnome_missing_backup_never_guesses_default (__main__.Cleanup.test_gnome_missing_backup_never_guesses_default) ... ok
+test_gnome_missing_receipt_preserves_all_settings (__main__.Cleanup.test_gnome_missing_receipt_preserves_all_settings) ... ok
+test_gnome_missing_receipt_prints_exact_review_commands (__main__.Cleanup.test_gnome_missing_receipt_prints_exact_review_commands) ... FAIL
+test_gnome_restores_only_recorded_binding (__main__.Cleanup.test_gnome_restores_only_recorded_binding) ... ok
+test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) ... 
+  test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) (script='install-agent-hooks.sh') ... FAIL
+  test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) (script='install-recovery-hook.sh') ... FAIL
+test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) ... 
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"td-agent-hooks": BROKEN') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='[]') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{}\n{}') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":null}') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":{"Stop":{}}}') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"td-agent-hooks": BROKEN') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='[]') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{}\n{}') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":null}') ... FAIL
+  test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":{"Stop":{}}}') ... FAIL
+test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) ... 
+  test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- missing\n') ... FAIL
+  test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n') ... FAIL
+  test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n\n') ... FAIL
+  test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + U", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n') ... FAIL
+  test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\no.bind(\'X\', \'custom\', \'td-keybindings\')\n') ... FAIL
+test_keys_exact_block_removal_keeps_tail (__main__.Cleanup.test_keys_exact_block_removal_keeps_tail) ... ok
+test_keys_keep_unterminated_user_tail_bytes (__main__.Cleanup.test_keys_keep_unterminated_user_tail_bytes) ... ok
+test_known_hash_check_detects_changed_table_and_uncommitted_source (__main__.Cleanup.test_known_hash_check_detects_changed_table_and_uncommitted_source) ... FAIL
+test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works (__main__.Cleanup.test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works) ... ok
+test_mixed_nested_hooks_preserve_siblings_and_metadata (__main__.Cleanup.test_mixed_nested_hooks_preserve_siblings_and_metadata) ... ok
+test_old_committed_helper_is_owned_by_history (__main__.Cleanup.test_old_committed_helper_is_owned_by_history) ... FAIL
+test_plugin_uninstall_is_not_a_destination (__main__.Cleanup.test_plugin_uninstall_is_not_a_destination) ... FAIL
+test_receipt_hash_is_bound_to_the_installed_path (__main__.Cleanup.test_receipt_hash_is_bound_to_the_installed_path) ... FAIL
+test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) ... 
+  test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) (block='-- >>> td-send hotkey >>>\nuser tail\n') ... FAIL
+  test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) (block='-- <<< td-send hotkey <<<\n') ... FAIL
+test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) ... 
+  test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) (script='install-desktop.sh') ... FAIL
+  test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) (script='install-plugins.sh') ... FAIL
+test_unrecognized_reference_blocks_helper_removal (__main__.Cleanup.test_unrecognized_reference_blocks_helper_removal) ... FAIL
+
+======================================================================
+FAIL: test_committed_edit_keeps_one_private_state_backup (__main__.Cleanup.test_committed_edit_keeps_one_private_state_backup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 276, in test_committed_edit_keeps_one_private_state_backup
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-1gw51hqk/settings.json.td-backup.fiN14NJX')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-1gw51hqk/settings.json.td-backup.fiN14NJX')
+
+- [PosixPath('/tmp/td-uninstall-test-1gw51hqk/settings.json.td-backup.fiN14NJX')]
++ []
+
+======================================================================
+FAIL: test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='agent-hooks')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 313, in test_component_receipts_record_files_and_integrations_then_disappear
+    self.assertTrue(receipt.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='recovery-hook')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 313, in test_component_receipts_record_files_and_integrations_then_disappear
+    self.assertTrue(receipt.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='keys-hotkey')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 313, in test_component_receipts_record_files_and_integrations_then_disappear
+    self.assertTrue(receipt.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='plugins')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 313, in test_component_receipts_record_files_and_integrations_then_disappear
+    self.assertTrue(receipt.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) (component='desktop')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 313, in test_component_receipts_record_files_and_integrations_then_disappear
+    self.assertTrue(receipt.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_desktop_remove_and_cache_failures_keep_receipt (__main__.Cleanup.test_desktop_remove_and_cache_failures_keep_receipt)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 482, in test_desktop_remove_and_cache_failures_keep_receipt
+    self.assertNotEqual(self.run_script("install-desktop.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_desktop_uninstall_retains_changed_icon_and_refreshes_caches (__main__.Cleanup.test_desktop_uninstall_retains_changed_icon_and_refreshes_caches)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 383, in test_desktop_uninstall_retains_changed_icon_and_refreshes_caches
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_failed_replace_discards_snapshot_and_uncommitted_backup (__main__.Cleanup.test_failed_replace_discards_snapshot_and_uncommitted_backup)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 476, in test_failed_replace_discards_snapshot_and_uncommitted_backup
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-qt6wsbwb/settings.json.td-backup.9C6AKXTp')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-qt6wsbwb/settings.json.td-backup.9C6AKXTp')
+
+- [PosixPath('/tmp/td-uninstall-test-qt6wsbwb/settings.json.td-backup.9C6AKXTp')]
++ []
+
+======================================================================
+FAIL: test_gnome_intent_precedes_first_write_and_survives_failure (__main__.Cleanup.test_gnome_intent_precedes_first_write_and_survives_failure)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 420, in test_gnome_intent_precedes_first_write_and_survives_failure
+    self.assertTrue(intent.is_file())
+    ~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^
+AssertionError: False is not true
+
+======================================================================
+FAIL: test_gnome_missing_receipt_prints_exact_review_commands (__main__.Cleanup.test_gnome_missing_receipt_prints_exact_review_commands)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 438, in test_gnome_missing_receipt_prints_exact_review_commands
+    self.assertIn(f"gsettings get {schema} {key}", p.stderr)
+    ~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 'gsettings get org.gnome.settings-daemon.plugins.media-keys.custom-keybinding:/org/gnome/settings-daemon/plugins/media-keys/custom-keybindings/terminal-delight/ name' not found in 'No trusted hotkey receipt; retained GNOME settings and backup for review.\n'
+
+======================================================================
+FAIL: test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) (script='install-agent-hooks.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 292, in test_install_backups_are_private_and_failed_install_leaves_no_snapshot
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-rxy2yoy[34 chars]41')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-rxy2yoyy/settings.json.td-backup.1793386041')
+
+- [PosixPath('/tmp/td-uninstall-test-rxy2yoyy/settings.json.td-backup.1793386041')]
++ []
+
+======================================================================
+FAIL: test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) (script='install-recovery-hook.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 292, in test_install_backups_are_private_and_failed_install_leaves_no_snapshot
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-rxy2yoy[34 chars]41')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-rxy2yoyy/settings.json.td-backup.1793386041')
+
+- [PosixPath('/tmp/td-uninstall-test-rxy2yoyy/settings.json.td-backup.1793386041')]
++ []
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"td-agent-hooks": BROKEN')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')
+
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
++ []
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='[]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[111 chars]9p')] != []
+
+First list contains 2 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{}\n{}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[190 chars]9p')] != []
+
+First list contains 3 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":null}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[269 chars]9p')] != []
+
+First list contains 4 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.yZKXo35k')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.yZKXo35k'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":{"Stop":{}}}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[348 chars]9p')] != []
+
+First list contains 5 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.UTtV7fkA')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.UTtV7fkA'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.yZKXo35k'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"td-agent-hooks": BROKEN')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[427 chars]9p')] != []
+
+First list contains 6 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.3ERYHptH')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.3ERYHptH'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.UTtV7fkA'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.yZKXo35k'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='[]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[506 chars]9p')] != []
+
+First list contains 7 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tWArM33a')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tWArM33a'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.3ERYHptH'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.UTtV7fkA'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.yZKXo35k'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.vSx6dpmc'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.5yWTY6JI'),
+-  PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.tYs1oW9p')]
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{}\n{}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[585 chars]9p')] != []
+
+First list contains 8 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.njAWuDzY')
+
+Diff is 661 characters long. Set self.maxDiff to None to see it.
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":null}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[664 chars]9p')] != []
+
+First list contains 9 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.MkcCEu04')
+
+Diff is 743 characters long. Set self.maxDiff to None to see it.
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":{"Stop":{}}}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 142, in test_invalid_settings_keep_helper_and_report_failure
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-z518i4q[743 chars]9p')] != []
+
+First list contains 10 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-z518i4q8/settings.json.td-backup.msF2gWQt')
+
+Diff is 825 characters long. Set self.maxDiff to None to see it.
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- missing\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 208, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')
+
+- [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')]
++ []
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 208, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-q9uk_ao[109 chars]Do')] != []
+
+First list contains 2 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.w8tcZflX')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.w8tcZflX'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')]
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 208, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-q9uk_ao[187 chars]Do')] != []
+
+First list contains 3 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.PQLgRDew')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.PQLgRDew'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.w8tcZflX'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')]
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + U", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 208, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-q9uk_ao[265 chars]Do')] != []
+
+First list contains 4 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.TB75nqg0')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.TB75nqg0'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.PQLgRDew'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.w8tcZflX'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')]
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-q9uk_aoa/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\no.bind(\'X\', \'custom\', \'td-keybindings\')\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 208, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-q9uk_ao[343 chars]Do')] != []
+
+First list contains 5 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.njIrbVR6')
+
++ []
+- [PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.njIrbVR6'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.TB75nqg0'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.PQLgRDew'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.w8tcZflX'),
+-  PosixPath('/tmp/td-uninstall-test-q9uk_aoa/bindings.lua.td-backup.4XyRJbDo')]
+
+======================================================================
+FAIL: test_known_hash_check_detects_changed_table_and_uncommitted_source (__main__.Cleanup.test_known_hash_check_detects_changed_table_and_uncommitted_source)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 456, in test_known_hash_check_detects_changed_table_and_uncommitted_source
+    self.assertEqual(p.returncode, 0, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 127 != 0 : bash: /tmp/td-uninstall-test-vjrro1dm/repo/scripts/known-hashes.sh: No such file or directory
+
+
+======================================================================
+FAIL: test_old_committed_helper_is_owned_by_history (__main__.Cleanup.test_old_committed_helper_is_owned_by_history)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 358, in test_old_committed_helper_is_owned_by_history
+    self.assertEqual(p.returncode, 0, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0 : Retained changed or unverified helper: /tmp/td-uninstall-test-5ue8gx44/bin/td-agent-hooks
+
+
+======================================================================
+FAIL: test_plugin_uninstall_is_not_a_destination (__main__.Cleanup.test_plugin_uninstall_is_not_a_destination)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 398, in test_plugin_uninstall_is_not_a_destination
+    self.assertEqual(p.returncode, 0, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0 : mkdir: unrecognized option '--uninstall'
+Try 'mkdir --help' for more information.
+
+
+======================================================================
+FAIL: test_receipt_hash_is_bound_to_the_installed_path (__main__.Cleanup.test_receipt_hash_is_bound_to_the_installed_path)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 340, in test_receipt_hash_is_bound_to_the_installed_path
+    self.assertEqual(p.returncode, 0, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 0 : Retained changed or unverified helper: /tmp/td-uninstall-test-ii4q41ff/bin/td-agent-hooks
+
+
+======================================================================
+FAIL: test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) (block='-- >>> td-send hotkey >>>\nuser tail\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 369, in test_refused_legacy_keys_install_writes_nothing
+    self.assertEqual(before.keys(), after.keys())
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: dict_[509 chars]tf4d/repo/packaging/terminal-delight.svg'), Po[6742 chars]t')]) != dict_[509 chars]tf4d/data/keys.html'), PosixPath('/tmp/td-unin[6868 chars]t')])
+
+======================================================================
+FAIL: test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) (block='-- <<< td-send hotkey <<<\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 367, in test_refused_legacy_keys_install_writes_nothing
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) (script='install-desktop.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 408, in test_unknown_installer_flags_are_rejected_without_writes
+    self.assertEqual(p.returncode, 2, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 != 2 : 
+
+======================================================================
+FAIL: test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) (script='install-plugins.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 408, in test_unknown_installer_flags_are_rejected_without_writes
+    self.assertEqual(p.returncode, 2, p.stderr)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 1 != 2 : mkdir: unrecognized option '--unknown'
+Try 'mkdir --help' for more information.
+
+
+======================================================================
+FAIL: test_unrecognized_reference_blocks_helper_removal (__main__.Cleanup.test_unrecognized_reference_blocks_helper_removal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 152, in test_unrecognized_reference_blocks_helper_removal
+    self.assert_no_loose_backups()
+    ~~~~~~~~~~~~~~~~~~~~~~~~~~~~^^
+  File "/home/parker/Work/td-uninstall-lab/terminal-delight/scripts/tests/test_uninstall.py", line 104, in assert_no_loose_backups
+    self.assertEqual(list(self.root.rglob("*.td-backup.*")), [])
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: Lists differ: [PosixPath('/tmp/td-uninstall-test-cf2il18l/settings.json.td-backup.yixbDmau')] != []
+
+First list contains 1 additional elements.
+First extra element 0:
+PosixPath('/tmp/td-uninstall-test-cf2il18l/settings.json.td-backup.yixbDmau')
+
+- [PosixPath('/tmp/td-uninstall-test-cf2il18l/settings.json.td-backup.yixbDmau')]
++ []
+
+----------------------------------------------------------------------
+Ran 28 tests in 5.827s
+
+FAILED (failures=37)

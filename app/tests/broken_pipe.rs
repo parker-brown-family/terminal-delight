@@ -68,6 +68,26 @@ struct Case {
 /// refusal, and it is the stderr case.
 const CASES: &[Case] = &[
     Case {
+        label: "admin help",
+        args: &["admin", "help"],
+        stream: Stream::Stdout,
+    },
+    Case {
+        label: "uninstall help",
+        args: &["uninstall", "help"],
+        stream: Stream::Stdout,
+    },
+    Case {
+        label: "update help",
+        args: &["update", "help"],
+        stream: Stream::Stdout,
+    },
+    Case {
+        label: "restricted help",
+        args: &["restricted", "help"],
+        stream: Stream::Stdout,
+    },
+    Case {
         label: "skin --list",
         args: &["skin", "--list"],
         stream: Stream::Stdout,

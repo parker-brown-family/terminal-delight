@@ -1,0 +1,81 @@
+# TERMINIMALIST — open furniture, following the selected Omarchy palette.
+# Native furniture only. Terminal cells and semantic status ink keep their owners.
+name = "TERMINIMALIST"
+icon = ""
+
+[font]
+family = "JetBrainsMono Nerd Font"
+heading = "JetBrainsMono Nerd Font"
+data = "JetBrainsMono Nerd Font"
+scale = 1.0
+min_px = 11.0
+line_height = 1.15
+
+[shape]
+controls = "text"
+material = "plain"
+tube = "stock"
+corner = "square"
+boundary = "none"
+emphasis = "rail"
+divider = "line"
+caps = "off"
+shine = "flat"
+gauge = "rail"
+title = "plain"
+focus = "plain"
+
+[metric]
+radius = 0.0
+radius_lg = 0.0
+corner_cap = 0.0
+hairline = 1.0
+border = 0.0
+rule_gap = 1.0
+gap = 6.0
+pad_x = 10.0
+pad_y = 5.0
+chip_px = 7.0
+chip_py = 2.0
+row_h = 20.0
+label_size = 11.0
+rail = 1.0
+glow = 0.0
+glow_a = 0.0
+grain = 0.0
+frost = 0.0
+roughness = 0.0
+lift = 0.0
+marker_alpha = 0.0
+
+[ink]
+panel = { from = "bg" }
+panel_raised = { from = "bg" }
+panel_sunken = { from = "bg" }
+panel_glass = { from = "bg" }
+btn_face = { from = "bg" }
+rule = { from = "accent", a = 0.24 }
+rule_strong = { from = "accent", a = 0.40 }
+edge = { from = "accent", a = 0.32 }
+edge_strong = { from = "accent", a = 0.60 }
+edge_rest = { from = "accent", a = 0.24 }
+focus = { from = "accent" }
+ink = { from = "text" }
+ink_lit = { from = "text" }
+ink_dim = { from = "text", a = 0.80 }
+ink_faint = { from = "text", a = 0.68 }
+ink_off = { from = "text", a = 0.60 }
+ink_ghost = { from = "text", a = 0.20 }
+ink_on_mark = { from = "bg" }
+face_rest = { from = "bg" }
+mark = { from = "accent" }
+mark_soft = { from = "accent", a = 0.85 }
+mark_dim = { from = "accent", a = 0.45 }
+mark_wash = { from = "accent", a = 0.10 }
+select = { from = "accent" }
+row_active = { from = "accent", a = 0.06 }
+hover = { from = "text", a = 0.06 }
+
+[note]
+decoration = "plain"
+stock = true

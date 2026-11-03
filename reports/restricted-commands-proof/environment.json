@@ -1,0 +1,76 @@
+{
+  "architecture_and_kernel": {
+    "exit": 0,
+    "stdout": "Linux 7.2.5-3-omarchy x86_64",
+    "stderr": ""
+  },
+  "bubblewrap": {
+    "exit": 0,
+    "stdout": "bubblewrap 0.12.0",
+    "stderr": ""
+  },
+  "rustc": {
+    "exit": 0,
+    "stdout": "rustc 1.98.0 (88d9e12ae 2026-08-18)",
+    "stderr": ""
+  },
+  "cargo": {
+    "exit": 0,
+    "stdout": "cargo 1.98.0 (797e8a9bc 2026-08-05)",
+    "stderr": ""
+  },
+  "chromium": {
+    "exit": 0,
+    "stdout": "Chromium 152.0.7977.82 Arch Linux",
+    "stderr": ""
+  },
+  "compiler": {
+    "exit": 0,
+    "stdout": "cc (GCC) 16.2.1 20260810\nCopyright (C) 2026 Free Software Foundation, Inc.\nThis is free software; see the source for copying conditions.  There is NO\nwarranty; not even for MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.",
+    "stderr": ""
+  },
+  "zed_head": {
+    "exit": 0,
+    "stdout": "abbe85a3321bf6cb7f5b241e623d9c2e16c29187",
+    "stderr": ""
+  },
+  "zed_diff": {
+    "exit": 0,
+    "stdout": "crates/gpui/src/window.rs             |  40 ++-\n crates/gpui_wgpu/src/gpui_wgpu.rs     |   8 +\n crates/gpui_wgpu/src/shaders.wgsl     |   9 +-\n crates/gpui_wgpu/src/wgpu_renderer.rs | 570 +++++++++++++++++++++++++++++++++-\n crates/sum_tree/Cargo.toml            |   2 -\n crates/sum_tree/src/cursor.rs         |   5 -\n crates/sum_tree/src/sum_tree.rs       |   8 +-\n 7 files changed, 606 insertions(+), 36 deletions(-)",
+    "stderr": ""
+  },
+  "patches_sha256": {
+    "docs/patches/0001-td-crt-pass.patch": "cc39c01f23b5ca2315390cc77b2eb04fca0b4b8605aca1b5c82677b0eaf040d7",
+    "docs/patches/0002-focus-blur.patch": "ccc446b4bafe3f47614da335398a932c1a2e58242569cd00320536f9b96def76",
+    "docs/patches/0002-sever-gpl-crates.patch": "c299f1edb516ab306b5fe9c0ffb697d269ae777d5fdf16da38e6b02c298802d1",
+    "docs/patches/0003-text-crawl.patch": "fea2c5aa06302a142b4436c6470eff0b94b3d83558ce39cf4693c527f8a95e6b",
+    "docs/patches/0004-warp-tube-cap-32.patch": "946aa6d45450b69ebab1831fe0755cf02f8c136e65172e54bc5edf303e51d488",
+    "docs/patches/0005-glyph-transform.patch": "db0bac50715bcf26c200a34681f484d39b76449c7c6a6fc8038e1dad6b5f296a",
+    "docs/patches/0006-lazy-path-targets.patch": "252977d66804ba062086909ffe01b117072b855fc96e9cd7a5a20fee5f5328ee",
+    "docs/patches/0007-path-targets-fit-the-paths.patch": "b06fd6b0b5b07a55616df95f6a2155a1d78f010de1faf80d96e260685abc63e4",
+    "docs/patches/0008-glass-rim.patch": "da36246f0f98a4b15d5b3b97749c0cad19a471ff1e4838951bf05900823b5067",
+    "docs/patches/0009-image-glow.patch": "8a9041555096925469273040be04ca5c6c8e0e1ac27a5c870b8f63f442d941c9",
+    "docs/patches/0010-image-glow-taps.patch": "fe6ce4ff6e7c857144a24affba9771ea59584ba52d2404dc6557bfe407d9bdd4",
+    "docs/plans/surface-authoring/evidence/inventory-amendments.patch": "08e398c84529eb41b308640011a0f51104c8a084aa77e47e098f5287493a4ae7"
+  },
+  "scope": "Qualification on this Linux x86_64 machine; ARM execution not measured.",
+  "zed_modified_files_sha256": {
+    "crates/gpui/src/window.rs": "b74c80d14d30efe8c00cfd648cfc5bbddc11684cbe15c2f3b704d4b6f014596d",
+    "crates/gpui_wgpu/src/gpui_wgpu.rs": "67a2f96340df7a64467c58cb79d815b734d024535fc0d8f1f32ca232c94a1c9e",
+    "crates/gpui_wgpu/src/shaders.wgsl": "987272a7efc35868de1735a2f05d9463f891bddc14cd1254f194867641d39586",
+    "crates/gpui_wgpu/src/wgpu_renderer.rs": "be845f0b1f74edd316c586149ac5c5cedafb700cbe53430a096605b5f955606f",
+    "crates/sum_tree/Cargo.toml": "dadf7b09312dfcc628c87d50fa49e4b1f154eea240f8a5acbcb32e7e1603ac7e",
+    "crates/sum_tree/src/cursor.rs": "0fbb7a694b37f3d891fbe301a97eeeb0e41df5df23e65e3926e8186c8c3d41d1",
+    "crates/sum_tree/src/sum_tree.rs": "10974c62b50bf965b3f46486be9185bb4000b9da7095f3cb2c98ccf87b4d79a4"
+  },
+  "supporting_helpers_sha256": {
+    "scripts/lib/hidden-window.sh": "70fc17f25e029e014197b9030d332cc9adf7e501857b14512fafee212c80085f",
+    "scripts/prepare-gpui.sh": "b39267d7db65a3aa125ab8b4c4ef24c8acf58d2d09592a20547f867239a06d5b"
+  },
+  "application_git_trees": {
+    "review": "0b02ccb356b2d68374feae9f019bb14b48933cac",
+    "daily": "6dbbf80a6f69d2fee13188460a12e75ff7376a33"
+  },
+  "source_manifest_scope": "Application src/tests, Cargo manifests and security drivers are explicitly hashed in each receipt. The committed application tree also identifies assets/fixtures. GPUI revision and modified-file hashes, patch files and native helper hashes are recorded here separately. This is execution evidence, not a byte-reproducible-build or full supply-chain attestation.",
+  "gpui_end_snapshot_matches_recorded_files": true
+}

@@ -96,6 +96,34 @@ pub struct Sticky {
     /// of is the tab you are not. Set and cleared by right-clicking the paper,
     /// and by nothing else: see [`right_click`].
     pub pinned: bool,
+    /// Who wrote the words: the agent ones wear a robot stamp, so a person can
+    /// tell a note they wrote from one written FOR them. `None` is a note from
+    /// before notes recorded this, and it is drawn unstamped — not because it
+    /// is the person's, but because nobody can say it is not.
+    pub by: Option<Author>,
+}
+
+/// Who put a note's words on the paper.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Author {
+    /// Typed at the keyboard, through `alt+s`.
+    Person,
+    /// Anything that is not the person at the keyboard: an agent through the
+    /// MCP `leave_note` tool, or Terminal Delight itself (the DUPLICATE TAB
+    /// note it leaves on a respawned leaf).
+    Agent,
+}
+
+/// Who wrote a note once a person has had the pen. Changing the words makes
+/// them the person's, even on an agent's paper, so the stamp comes off;
+/// opening it and posting it back unchanged leaves it with whoever wrote it.
+pub fn author_after_edit(before: Option<Author>, old: &str, new: &str) -> Option<Author> {
+    if old == new {
+        before
+    } else {
+        Some(Author::Person)
+    }
 }
 
 /// A note on its way to or from the state file — what it says, the seed that
@@ -111,6 +139,8 @@ pub struct Saved {
     pub text: String,
     pub seed: u32,
     pub pinned: bool,
+    /// Who wrote it — see [`Sticky::by`].
+    pub by: Option<Author>,
 }
 
 /// The composer, alive only while the note has the keyboard.
@@ -136,7 +166,18 @@ impl Sticky {
                 restore: None,
             }),
             pinned: false,
+            by: Some(Author::Person),
         }
+    }
+
+    /// Shared paint and hit geometry. Marking a flat note lifts the whole
+    /// section four pixels; its attention state still survives a restart.
+    pub fn layout(&self, content: Bounds<Pixels>, flat: bool) -> Option<Layout> {
+        let mut lay = layout(content, self.tilt(flat))?;
+        if flat && self.pinned {
+            lay.center.y -= px(4.);
+        }
+        Some(lay)
     }
 
     /// Re-open a posted note for editing, remembering what Esc restores.
@@ -153,10 +194,12 @@ impl Sticky {
         self.edit.is_some()
     }
 
-    /// Degrees clockwise. Alternates sign off a seed bit so two notes on
-    /// neighbouring panes don't lean the same way, and never sits at 0 — a
-    /// sticky that happens to land square reads as a mis-drawn rectangle.
-    pub fn tilt(&self) -> f32 {
+    /// Degrees clockwise. Open text skins keep the section square; other skins
+    /// retain the seed's paper tilt across frames and restarts.
+    pub fn tilt(&self, flat: bool) -> f32 {
+        if flat {
+            return 0.;
+        }
         let magnitude = 2.4 + (self.seed >> 3 & 0xff) as f32 / 255.0 * 3.4;
         if self.seed & 1 == 0 {
             magnitude
@@ -696,6 +739,63 @@ fn disc(x: f32, y: f32, r: f32) -> Vec<(f32, f32)> {
         .collect()
 }
 
+/// An ellipse in note-local space, flattened like [`disc`].
+fn oval(x: f32, y: f32, rx: f32, ry: f32) -> Vec<(f32, f32)> {
+    let n = SEG * 4;
+    (0..n)
+        .map(|i| {
+            let a = i as f32 / n as f32 * std::f32::consts::TAU;
+            (x + rx * a.cos(), y + ry * a.sin())
+        })
+        .collect()
+}
+
+/// A rectangle with each corner a quarter circle of radius `r`, in note-local
+/// space, wound the same way as [`quad`].
+fn rounded(x0: f32, y0: f32, x1: f32, y1: f32, r: f32) -> Vec<(f32, f32)> {
+    let r = r.min((x1 - x0) / 2.0).min((y1 - y0) / 2.0);
+    let mut v = Vec::with_capacity(4 * (SEG + 1));
+    for (cx, cy, start) in [
+        (x1 - r, y0 + r, -90.0_f32),
+        (x1 - r, y1 - r, 0.0),
+        (x0 + r, y1 - r, 90.0),
+        (x0 + r, y0 + r, 180.0),
+    ] {
+        for i in 0..=SEG {
+            let a = (start + 90.0 * i as f32 / SEG as f32).to_radians();
+            v.push((cx + r * a.cos(), cy + r * a.sin()));
+        }
+    }
+    v
+}
+
+/// Fill several note-local outlines as ONE shape under the even-odd rule, so
+/// an outline inside another cuts a hole in it. Every vertex goes through the
+/// tilt and the pre-warp exactly as in [`fill`].
+fn fill_even_odd(
+    lay: &Layout,
+    outlines: &[Vec<(f32, f32)>],
+    background: impl Into<gpui::Background>,
+    window: &mut Window,
+) {
+    let mut b = PathBuilder::fill().with_style(gpui::PathStyle::Fill(
+        gpui::FillOptions::default().with_fill_rule(gpui::FillRule::EvenOdd),
+    ));
+    for outline in outlines {
+        let Some((first, rest)) = outline.split_first() else {
+            continue;
+        };
+        b.move_to(lay.to_window(first.0, first.1));
+        for p in rest {
+            b.line_to(lay.to_window(p.0, p.1));
+        }
+        b.close();
+    }
+    if let Ok(path) = b.build() {
+        window.paint_path(path, background);
+    }
+}
+
 /// Fill a note-local polyline, mapping every vertex through the tilt and the
 /// pre-warp. This is where the paper stops being four lines and becomes the
 /// shape that comes out flat on a bent tube.
@@ -875,6 +975,27 @@ pub fn paint(
     window: &mut Window,
     cx: &mut App,
 ) {
+    let sk = crate::skin::skin(cx, 1.);
+    if sk.unboxed() {
+        // An open, square section: solid stock and one hairline on three sides.
+        // Paint through the same inverse warp as the writing and hit geometry.
+        let (hw, hh) = (
+            f32::from(lay.size.width) / 2.,
+            f32::from(lay.size.height) / 2.,
+        );
+        let line = sk.m.hairline;
+        fill(lay, &quad(-hw, -hh, hw, hh), pal.base, window);
+        for edge in [
+            quad(-hw, -hh, -hw + line, hh),
+            quad(-hw, hh - line, hw, hh),
+            quad(hw - line, -hh + f32::from(lay.pad), hw, hh),
+        ] {
+            fill(lay, &edge, pal.pin, window);
+        }
+        paint_stamp(note, lay, pal, window);
+        paint_writing(note, lay, pal, window, cx);
+        return;
+    }
     let lift = if hover_peel { 2.1 } else { 1.0 };
     let sheet = Sheet::new(lay.size, note.seed, lift);
 
@@ -990,24 +1111,108 @@ pub fn paint(
                 window,
             );
         }
-        let (x, y) = (hw - 10., hh - 9.);
-        for i in 0..5 {
-            let angle = i as f32 * std::f32::consts::TAU / 5.;
-            fill(
-                lay,
-                &disc(x + angle.cos() * 3.2, y + angle.sin() * 3.2, 2.1),
-                pal.pin.alpha(0.45),
-                window,
-            );
+        // The seal gives its corner up to the robot stamp on an agent's note:
+        // two marks in one corner read as neither.
+        if !stamped(note) {
+            let (x, y) = (hw - 10., hh - 9.);
+            for i in 0..5 {
+                let angle = i as f32 * std::f32::consts::TAU / 5.;
+                fill(
+                    lay,
+                    &disc(x + angle.cos() * 3.2, y + angle.sin() * 3.2, 2.1),
+                    pal.pin.alpha(0.45),
+                    window,
+                );
+            }
+            fill(lay, &disc(x, y, 1.1), pal.ink.alpha(0.55), window);
         }
-        fill(lay, &disc(x, y, 1.1), pal.ink.alpha(0.55), window);
     }
 
+    paint_stamp(note, lay, pal, window);
     paint_writing(note, lay, pal, window, cx);
 
     if note.pinned {
         paint_pin(lay, pal, window);
     }
+}
+
+/// The robot stamp, on every skin and every design: paper, stock, the square
+/// open section, icon controls or text controls. It says who wrote the words,
+/// which is content rather than furniture, so no skin's taste in controls
+/// takes it off. Parker, 2026-11-02: *"robot stamps on all sticky notes for
+/// all skins / designs please!"* — TERMINIMALIST had dropped it with its glyph
+/// controls, and its square section never drew it.
+///
+/// Painted under the writing, so a stamp that lands on a long note's last word
+/// never makes it harder to read.
+fn paint_stamp(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window) {
+    if !stamped(note) {
+        return;
+    }
+    let (hw, hh) = (
+        f32::from(lay.size.width) / 2.,
+        f32::from(lay.size.height) / 2.,
+    );
+    fill_even_odd(
+        lay,
+        &stamp(hw, hh, note.seed),
+        pal.ink.alpha(STAMP_INK),
+        window,
+    );
+}
+
+/// Does this note wear the robot stamp? Only when an agent wrote it — see
+/// [`Sticky::by`] for why a note nobody can attribute goes unstamped.
+pub fn stamped(note: &Sticky) -> bool {
+    note.by == Some(Author::Agent)
+}
+
+/// How heavily the stamp is inked: the note's own ink, thinned the way a
+/// rubber stamp prints, so it reads as pressed onto the paper rather than
+/// written on it, and stays the colour the theme already checked against it.
+const STAMP_INK: f32 = 0.6;
+
+/// The robot stamp an agent's note wears in its bottom-right corner: TD's
+/// working robot ([`crate::art::robot_png`]) cut as a rubber stamp — the
+/// head's rim, the face plate with its two eyes left blank, the ears and the
+/// antenna — inside a thin ring, pressed on at its own small angle the way a
+/// hand stamps paper.
+///
+/// Subpaths in note-local space, filled EVEN-ODD by [`fill_even_odd`], so a
+/// shape inside another is a hole: the paper shows through wherever a real
+/// stamp has no rubber, and the eyes come out as the paper's colour.
+fn stamp(hw: f32, hh: f32, seed: u32) -> Vec<Vec<(f32, f32)>> {
+    // Scaled off the sheet like the pin, so a tiled note and a full-screen one
+    // carry the same stamp by eye.
+    let s = (hw * 0.18).clamp(7.0, 17.0);
+    let (cx, cy) = (hw - s * 2.0, hh - s * 2.1);
+    // Never square: a stamp pressed by hand lands a few degrees off the paper,
+    // and off the writing's own lean, which is what makes it read as stamped.
+    let (sin, cos) = (-9.0 + jitter(seed, 900) * 12.0_f32).to_radians().sin_cos();
+    let place = |shape: Vec<(f32, f32)>| -> Vec<(f32, f32)> {
+        shape
+            .into_iter()
+            .map(|(x, y)| (cx + s * (x * cos - y * sin), cy + s * (x * sin + y * cos)))
+            .collect()
+    };
+    vec![
+        // The ring.
+        place(oval(0.0, 0.0, 1.62, 1.62)),
+        place(oval(0.0, 0.0, 1.48, 1.48)),
+        // The head's rim, and the face plate inside it.
+        place(rounded(-1.0, -0.62, 1.0, 0.78, 0.46)),
+        place(rounded(-0.84, -0.46, 0.84, 0.62, 0.32)),
+        place(rounded(-0.7, -0.32, 0.7, 0.48, 0.22)),
+        // The eyes, left blank.
+        place(oval(-0.32, 0.08, 0.13, 0.2)),
+        place(oval(0.32, 0.08, 0.13, 0.2)),
+        // The ears.
+        place(rounded(-1.2, -0.18, -1.04, 0.4, 0.07)),
+        place(rounded(1.04, -0.18, 1.2, 0.4, 0.07)),
+        // The antenna: a stem clear of the rim, and the ball on it.
+        place(rounded(-0.07, -0.82, 0.07, -0.64, 0.03)),
+        place(oval(0.0, -0.95, 0.13, 0.13)),
+    ]
 }
 
 /// The pushpin, stuck through the top edge.
@@ -1189,7 +1394,12 @@ fn paint_writing(note: &Sticky, lay: &Layout, pal: &Paper, window: &mut Window, 
             .as_ref()
             .map(|l| l.size(line_height).height)
             .unwrap_or_default();
-        let fits = body_rows + title_rows <= MAX_ROWS
+        let title_fits = !crate::skin::skin(cx, 1.).unboxed()
+            || heading
+                .as_ref()
+                .is_none_or(|line| line.unwrapped_layout.width <= wrap);
+        let fits = title_fits
+            && body_rows + title_rows <= MAX_ROWS
             && f32::from(body_height) + f32::from(title_height)
                 <= f32::from(lay.size.height - lay.pad * 1.5);
         if fits || scale < 0.75 {
@@ -1414,8 +1624,9 @@ mod tests {
                 seed,
                 edit: None,
                 pinned: false,
+                by: None,
             };
-            let t = note.tilt();
+            let t = note.tilt(false);
             assert!(
                 (2.3..=6.0).contains(&t.abs()),
                 "seed {seed} tilted {t}, outside the paper range"
@@ -1429,8 +1640,49 @@ mod tests {
         assert!(left && right, "every seed leaned the same way");
     }
 
-    /// The same note must lean the same way every frame and across a restart —
-    /// the seed is persisted precisely so the angle is not re-rolled.
+    /// The rendered square and its click targets must use the same angle.
+    #[test]
+    fn flat_notes_keep_square_hit_targets_for_every_seed() {
+        let bounds = Bounds::new(point(px(0.), px(0.)), size(px(900.), px(700.)));
+        for seed in 0..64 {
+            let note = Sticky::composing("square", seed);
+            let lay = layout(bounds, note.tilt(true)).unwrap();
+            assert_eq!(lay.tilt, 0.);
+            assert_eq!(
+                lay.text_matrix(1., point(px(0.), px(0.))).rotation_scale,
+                [[1., 0.], [0., 1.]]
+            );
+            let left = lay.center.x - lay.size.width / 2.;
+            let top = lay.center.y - lay.size.height / 2.;
+            assert!(Hit::at(point(left + px(1.), top + px(1.)), &lay).is_some());
+            assert!(Hit::at(point(left - px(1.), top + px(1.)), &lay).is_none());
+        }
+    }
+
+    #[test]
+    fn marking_a_flat_note_lifts_its_paint_and_hit_geometry_together() {
+        let mut note = Sticky::composing("review", 7);
+        let plain = note.layout(content(), true).unwrap();
+        let paper = note.layout(content(), false).unwrap();
+        note.pinned = true;
+        let marked = note.layout(content(), true).unwrap();
+        assert_eq!(marked.center.x, plain.center.x);
+        assert_eq!(marked.center.y, plain.center.y - px(4.));
+        assert_eq!(marked.tilt, 0.);
+        let newly_covered = point(
+            marked.center.x,
+            marked.center.y - marked.size.height / 2. + px(1.),
+        );
+        assert!(Hit::at(newly_covered, &marked).is_some());
+        assert!(Hit::at(newly_covered, &plain).is_none());
+        let pinned_paper = note.layout(content(), false).unwrap();
+        assert_eq!(pinned_paper.center, paper.center);
+        assert_eq!(pinned_paper.tilt, paper.tilt);
+        note.pinned = false;
+        assert_eq!(note.layout(content(), true).unwrap().center, plain.center);
+    }
+
+    /// The seed keeps the paper's angle stable across frames and restarts.
     #[test]
     fn the_lean_is_stable_for_a_seed() {
         let a = Sticky {
@@ -1439,6 +1691,7 @@ mod tests {
             seed: 12345,
             edit: None,
             pinned: false,
+            by: None,
         };
         let b = Sticky {
             title: None,
@@ -1446,8 +1699,13 @@ mod tests {
             seed: 12345,
             edit: None,
             pinned: false,
+            by: None,
         };
-        assert_eq!(a.tilt(), b.tilt(), "the tilt comes from the seed alone");
+        assert_eq!(
+            a.tilt(false),
+            b.tilt(false),
+            "the tilt comes from the seed alone"
+        );
     }
 
     /// THE regression guard for this feature.
@@ -1805,6 +2063,89 @@ mod tests {
                 p.base.a
             );
             assert!(p.ink.a > 0.9, "the writing itself stays legible");
+        }
+    }
+
+    /// A note typed at the keyboard is the person's, from the first keystroke,
+    /// and wears no stamp.
+    #[test]
+    fn a_note_written_at_the_keyboard_is_the_persons() {
+        let note = Sticky::composing("", 7);
+        assert_eq!(note.by, Some(Author::Person));
+        assert!(!stamped(&note), "a person's own note wore the robot stamp");
+    }
+
+    /// Only an agent's note is stamped. A note nobody can attribute — one
+    /// saved before notes recorded their writer — goes unstamped, because the
+    /// stamp is a claim and nothing backs it.
+    #[test]
+    fn only_an_agents_note_wears_the_stamp() {
+        let mut note = Sticky::composing("x", 7);
+        note.edit = None;
+        for (by, want) in [
+            (Some(Author::Agent), true),
+            (Some(Author::Person), false),
+            (None, false),
+        ] {
+            note.by = by;
+            assert_eq!(stamped(&note), want, "{by:?}");
+        }
+    }
+
+    /// Changing an agent's words makes them yours and takes the stamp off;
+    /// opening the note and posting it back unchanged does not.
+    #[test]
+    fn changing_the_words_makes_them_yours() {
+        let agent = Some(Author::Agent);
+        assert_eq!(
+            author_after_edit(agent, "tests green", "tests green, merged"),
+            Some(Author::Person)
+        );
+        assert_eq!(
+            author_after_edit(agent, "tests green", "tests green"),
+            agent,
+            "an unchanged note changed hands"
+        );
+        assert_eq!(
+            author_after_edit(None, "old", "old"),
+            None,
+            "looking at an unattributed note attributed it"
+        );
+        assert_eq!(author_after_edit(None, "old", "new"), Some(Author::Person));
+    }
+
+    /// The stamp stays on the paper, in its bottom-right quarter — clear of
+    /// the edges, the pin at the top and the lifted bottom-left corner — on
+    /// the smallest pane that carries a note and on a big one, at every lean
+    /// the seed can give it — on a leaning sheet and on the square, unleaning
+    /// section an open-text skin draws, since every skin now wears it.
+    #[test]
+    fn the_stamp_sits_on_the_paper_in_its_bottom_right_corner() {
+        for ((w, h), tilt) in [(250.0, 190.0), (740.0, 870.0), (1900.0, 1000.0)]
+            .into_iter()
+            .flat_map(|wh| [(wh, 3.0), (wh, 0.0)])
+        {
+            let content = Bounds {
+                origin: point(px(0.0), px(0.0)),
+                size: size(px(w), px(h)),
+            };
+            let lay = layout(content, tilt).expect("a pane this size carries a note");
+            let (hw, hh) = (
+                f32::from(lay.size.width) / 2.0,
+                f32::from(lay.size.height) / 2.0,
+            );
+            for seed in 0..64u32 {
+                for (x, y) in stamp(hw, hh, seed).into_iter().flatten() {
+                    assert!(
+                        x > 0.0 && y > 0.0,
+                        "{w}x{h} seed {seed}: ({x}, {y}) left the bottom-right quarter"
+                    );
+                    assert!(
+                        x < hw - 2.0 && y < hh - 2.0,
+                        "{w}x{h} seed {seed}: ({x}, {y}) ran off the {hw}x{hh} half-sheet"
+                    );
+                }
+            }
         }
     }
 }

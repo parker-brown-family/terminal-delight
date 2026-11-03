@@ -3,7 +3,7 @@ name: CI
 on:
   pull_request:
   push:
-    branches: [main]
+    branches: [main, "dev/**"]
     tags: ['v*']
 
 # A new push to a pull request cancels that pull request's older run, which
@@ -17,13 +17,14 @@ concurrency:
 # The Rust every job builds with, pinned, so a new stable release cannot turn
 # its new lints into a failure on lines a pull request never touched. That
 # happened on 2026-10-07: stable moved 1.98 -> 1.99 and every PR failed clippy
-# on two old lines in surface.rs (#911). 1.98.0 is what the machine the agents
-# build on has as its default, so a local `cargo clippy` is CI's clippy.
-# Moving it is a deliberate commit that fixes the new lints in the same change;
+# on two old lines in surface.rs (#911). rust-toolchain.toml at the root names
+# the same version, so a local `cargo clippy` anywhere is CI's clippy without
+# anyone changing their default. Moving it is a deliberate commit that changes
+# both, and fixes the new lints, in the same change;
 # toolchain-drift-watch.yml runs the latest stable weekly and says what it
 # would break before anyone has to move.
 env:
-  RUST_TOOLCHAIN: "1.98.0"
+  RUST_TOOLCHAIN: "1.99.1"
 
 jobs:
   rust:
@@ -34,6 +35,8 @@ jobs:
         working-directory: app
     steps:
       - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0 # Ownership hashes cover every committed source version.
 
       # poppler-utils is not a build dependency: the PDF test in
       # docview/poppler.rs drives the real pdfinfo and pdftoppm, and fails
@@ -50,7 +53,25 @@ jobs:
             libxkbcommon-dev \
             libxkbcommon-x11-dev \
             pkg-config \
-            poppler-utils
+            poppler-utils \
+            libcap-dev meson ninja-build jq
+
+      - name: Uninstall integration fixtures (no live desktop)
+        run: |
+          ../scripts/known-hashes.sh --check
+          python3 ../scripts/tests/test_uninstall.py -v
+
+      # The distro helper lacks descriptor mounts. Use a fixed upstream release
+      # with safe setup-path resolution; the runtime also refuses older helpers.
+      - name: Install the qualified Restricted helper
+        run: |
+          curl --fail --location --retry 3 -o /tmp/bubblewrap-0.12.0.tar.xz https://github.com/containers/bubblewrap/releases/download/v0.12.0/bubblewrap-0.12.0.tar.xz
+          echo '9760d007363e3abba7c747489910f9f82d9fca53ba3bd3282e396fa3c97a3314  /tmp/bubblewrap-0.12.0.tar.xz' | sha256sum --check
+          tar -xJf /tmp/bubblewrap-0.12.0.tar.xz -C /tmp
+          meson setup /tmp/bwrap-build /tmp/bubblewrap-0.12.0 --prefix=/usr -Dman=disabled -Dtests=false -Dbash_completion=disabled -Dzsh_completion=disabled
+          meson compile -C /tmp/bwrap-build
+          sudo install -m 0755 /tmp/bwrap-build/bwrap /usr/bin/bwrap
+          /usr/bin/bwrap --version
 
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -102,8 +123,29 @@ jobs:
       - name: Test, fallback core
         run: cargo test --locked --features core-alacritty
 
+      - name: Prove the Restricted OS boundary
+        run: |
+          sudo install -d -m 0700 -o "$(id -u)" -g "$(id -g)" "/run/user/$(id -u)"
+          cargo test --locked --test restricted -- --ignored --test-threads=1
+
       - name: Release build smoke
         run: cargo build --release --locked
+
+      # The removal, end to end, with the release binary: once on a fixture
+      # home, then for real on the account home of a user made for this job,
+      # whose only Terminal Delight is the one the test installs. The runner is
+      # thrown away afterwards; the script refuses this mode anywhere else.
+      - name: Uninstall, end to end
+        run: |
+          bash ../scripts/tests/uninstall-e2e.sh target/release/terminal-delight
+          e2e=$(mktemp -d /tmp/td-e2e-repo.XXXXXX)
+          cp -r ../scripts ../packaging "$e2e/"
+          install -m755 target/release/terminal-delight "$e2e/terminal-delight"
+          chmod -R a+rX "$e2e"
+          sudo useradd --create-home --shell /bin/bash td-e2e
+          sudo -u td-e2e -H env -i HOME=/home/td-e2e USER=td-e2e LOGNAME=td-e2e \
+            PATH=/usr/bin:/bin LANG=C.UTF-8 TD_E2E_DISPOSABLE_HOME=1 \
+            bash "$e2e/scripts/tests/uninstall-e2e.sh" --account-home "$e2e/terminal-delight"
 
   js:
     name: Browser prototype checks
@@ -197,7 +239,11 @@ jobs:
     # check. Until 2026-10-19 this job published the release itself, beside the
     # tests rather than after them, so a tag could ship before anyone knew
     # whether its commit passed (#1002).
-    if: github.event_name == 'push'
+    #
+    # It runs on pull requests too. Until 2026-10-30 it ran only on pushes, so
+    # an upstream appimagetool change broke packaging on six straight dev/0.5.0
+    # merges while every pull request before them showed green. It runs
+    # beside the Rust job, so a pull request waits no longer for it.
     # Pin to the OLDEST glibc we want to support: ubuntu-22.04 ships glibc 2.35, so
     # the AppImage runs on glibc >= 2.35 (Ubuntu 22.04+, Debian 12+, etc.). Building
     # on ubuntu-latest (24.04 / glibc 2.39) would make the binary refuse to start on
@@ -323,3 +369,152 @@ jobs:
             dist/terminal-delight-x86_64.AppImage
             dist/terminal-delight-x86_64.AppImage.sha256
           fail_on_unmatched_files: true
+
+  dev-build:
+    name: Dev build (dev branches only)
+    # The Dev channel of ⚙ CONFIG › UPDATES installs from here: one rolling
+    # prerelease, tagged dev-build, replaced on every push to a dev/* branch
+    # once every check has passed. Run artifacts sit behind a GitHub login even
+    # on a public repository, so without this a dev build would exist only for
+    # people signed in. It is a prerelease, never Latest, and the stable
+    # channel skips it by both.
+    #
+    # build.json is what the updater reads first: the commit, its date and the
+    # branch. It is uploaded last, so a client that reads a new build.json
+    # always finds the AppImage it describes; one that reads an old build.json
+    # beside a new AppImage refuses the download, because the build inside
+    # names a different commit (app/src/update.rs, prepare_in).
+    needs: [rust, js, supply-chain, release-policy, package]
+    if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/dev/')
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write   # replace the dev-build prerelease's files and move its tag
+    concurrency:
+      group: dev-build
+      cancel-in-progress: true
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          # The attest step runs the previous build's binary; it must find no
+          # token in .git/config. Nothing in this job pushes with git.
+          persist-credentials: false
+
+      # One rolling build serves the Dev channel, so only the newest dev/*
+      # branch publishes it. An older dev branch still taking fixes would
+      # otherwise replace it, and every Dev install would be offered a step
+      # back as an update.
+      - name: Publish only from the newest dev branch
+        id: newest
+        run: |
+          newest="$(git ls-remote --heads origin 'refs/heads/dev/*' | sed 's|.*refs/heads/||' | sort -V | tail -1)"
+          echo "newest dev branch: $newest"
+          if [ "$newest" = "$GITHUB_REF_NAME" ]; then
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "publish=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::$GITHUB_REF_NAME is not the newest dev branch ($newest); the dev build is not replaced"
+          fi
+
+      - uses: actions/download-artifact@v4
+        if: steps.newest.outputs.publish == 'true'
+        with:
+          name: terminal-delight-x86_64.AppImage
+          path: dist
+
+      - name: Verify the digest
+        if: steps.newest.outputs.publish == 'true'
+        run: cd dist && sha256sum --check terminal-delight-x86_64.AppImage.sha256
+
+      # The updater counts a new build as sharing a window's wire only when a
+      # hash of the wire's source matches, so every terminal-core change would
+      # otherwise reach Dev installs as a cold start. Here the build being
+      # replaced stands up a real session host, the new build replays a
+      # capture of it, and a passing replay (with its mutated controls
+      # refused) lists the old wire in build.json's compatible_with. The
+      # updater then offers "Restart window" to a window on that wire whose
+      # hosts all run its own bytes (app/src/update.rs, compat_attested).
+      # Anything short of a clean pass publishes no attestation, which leaves
+      # the conservative hash in charge; it never fails the job.
+      # The token stays in this step: nothing that runs the old build sees it.
+      - name: Fetch the dev build it replaces
+        if: steps.newest.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          mkdir -p wire/old
+          gh release download dev-build -p terminal-delight-x86_64.AppImage -D wire/old \
+            || echo "::notice::no dev build to attest against"
+
+      # No token in this step's environment, and checkout keeps none in
+      # .git/config (persist-credentials: false above), because it runs the
+      # PREVIOUS build's binary. Every failure here is a notice or a warning,
+      # and the build is then published without an attestation.
+      - name: Attest the wire against the build it replaces
+        if: steps.newest.outputs.publish == 'true'
+        run: |
+          set +e
+          echo '{}' > attest.json
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq libxcb1 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 \
+            || echo "::warning::could not install the runtime libraries"
+          mkdir -p wire/new
+          (cd wire/new && ../../dist/terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null) \
+            || { echo "::warning::could not extract the new build; no attestation"; exit 0; }
+          [ -f wire/old/terminal-delight-x86_64.AppImage ] || exit 0
+          chmod +x wire/old/terminal-delight-x86_64.AppImage
+          (cd wire/old && ./terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null) \
+            || { echo "::warning::could not extract the previous build; no attestation"; exit 0; }
+          scripts/wire-attest.sh wire/old/squashfs-root/usr/bin/terminal-delight \
+            wire/new/squashfs-root/usr/bin/terminal-delight "$RUNNER_TEMP/wire-attest" > attest.out
+          code=$?
+          # Nothing the previous build started outlives this step: the
+          # publish steps after it hold a token.
+          old="$(readlink -f wire/old/squashfs-root/usr/bin/terminal-delight)"
+          for p in /proc/[0-9]*; do
+            [ "$(readlink "$p/exe" 2>/dev/null)" = "$old" ] && kill -9 "${p#/proc/}" 2>/dev/null
+          done
+          case $code in
+            0) cp attest.out attest.json; echo "attested:"; cat attest.json ;;
+            3) echo "::notice::no wire attestation (see the log above)" ;;
+            *) echo "::warning::the wire attestation failed (exit $code); this build is published without one" ;;
+          esac
+          exit 0
+
+      - name: Describe the build
+        if: steps.newest.outputs.publish == 'true'
+        run: |
+          version="$(sed -n 's/^version = "\(.*\)"/\1/p' app/Cargo.toml | head -1)"
+          date="$(git log -1 --format=%cI "$GITHUB_SHA")"
+          wire="$(wire/new/squashfs-root/usr/bin/terminal-delight --build-info | jq -r '.wire // empty')"
+          jq -n \
+            --arg sha "$GITHUB_SHA" \
+            --arg date "$date" \
+            --arg branch "$GITHUB_REF_NAME" \
+            --arg version "$version" \
+            --arg run "$GITHUB_SERVER_URL/$GITHUB_REPOSITORY/actions/runs/$GITHUB_RUN_ID" \
+            --arg wire "$wire" \
+            --slurpfile attest attest.json \
+            '{schema: "td-dev-build/1", sha: $sha, date: $date, branch: $branch, version: $version, run: $run,
+              wire: (if $wire == "" then null else $wire end),
+              compatible_with: (if $attest[0].wire == $wire then ($attest[0].compatible_with // []) else [] end),
+              attestation: (if $attest[0].wire == $wire then $attest[0].against else null end)}' \
+            > dist/build.json
+          cat dist/build.json
+
+      - name: Replace the dev-build prerelease
+        if: steps.newest.outputs.publish == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          notes="Rolling development build of \`$GITHUB_REF_NAME\` at \`$GITHUB_SHA\`. Experimental: it passed CI, and nobody has lived on it for a week. Terminal Delight installs it from ⚙ CONFIG › UPDATES on the Dev channel; the stable channel never offers it."
+          if gh release view dev-build >/dev/null 2>&1; then
+            gh api -X PATCH "repos/$GITHUB_REPOSITORY/git/refs/tags/dev-build" -f sha="$GITHUB_SHA" -F force=true >/dev/null
+          else
+            gh release create dev-build --prerelease --latest=false --target "$GITHUB_SHA" \
+              --title "Development build" --notes "$notes"
+          fi
+          gh release upload dev-build \
+            dist/terminal-delight-x86_64.AppImage \
+            dist/terminal-delight-x86_64.AppImage.sha256 --clobber
+          gh release upload dev-build dist/build.json --clobber
+          gh release edit dev-build --prerelease --latest=false --title "Development build ($GITHUB_REF_NAME)" --notes "$notes"

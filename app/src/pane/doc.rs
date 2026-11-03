@@ -336,6 +336,8 @@ impl TerminalView {
     ) -> gpui::AnyElement {
         use crate::docopen::FloatHit;
         let sk = crate::skin::for_theme(cx, th, th.grade.scale);
+        let chrome = sk.chrome_theme(th);
+        let th = &chrome;
         let s = crate::lang::current().strings();
         let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
         let r = crate::docopen::clamp_float(float.rect, w, h);
@@ -357,9 +359,9 @@ impl TerminalView {
                 .relative()
                 .flex_none()
                 .px(px(5.))
-                .rounded(px(3.))
+                .rounded(sk.capped(3.))
                 .when(float.hover == Some(hit), |d| d.bg(acc.alpha(0.22)))
-                .child(label)
+                .child(sk.control_text(&label))
                 .children(zone(hit))
         };
         let mut strip = div()
@@ -387,9 +389,9 @@ impl TerminalView {
                         // In the strip, because TD has no toast and this is
                         // where the person is already looking.
                         Some(crate::docopen::FloatNote::FourPanes) => {
-                            format!("☰ {name} · {}", s.float_four_panes)
+                            format!("{}{name} · {}", sk.control("☰ ", ""), s.float_four_panes)
                         }
-                        None => format!("☰ {name}"),
+                        None => format!("{}{name}", sk.control("☰ ", "")),
                     })),
             );
         if let Some(zoom) = zoom {
@@ -398,9 +400,12 @@ impl TerminalView {
                 crate::docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0).into(),
             };
             strip = strip
-                .child(button("−".into(), FloatHit::ZoomOut))
+                .child(button(
+                    sk.control("−", "zoom out").into(),
+                    FloatHit::ZoomOut,
+                ))
                 .child(button(now, FloatHit::ZoomFit))
-                .child(button("+".into(), FloatHit::ZoomIn))
+                .child(button(sk.control("+", "zoom in").into(), FloatHit::ZoomIn))
                 .child(div().w(px(4.)));
         }
         strip = strip
@@ -717,8 +722,19 @@ impl TerminalView {
     /// `open_document` with placement "here": the document floats over this
     /// pane, as Alt+click on its path opens it, and the answer is the line
     /// `ctl doc here` would give. A square already showing the file is left as
-    /// it is. One holding notes not yet saved is kept, as it is for a click,
-    /// and the answer says so rather than claiming a square that never opened.
+    /// it is.
+    ///
+    /// **Only a person replaces a square.** This is the agent's road, so a
+    /// square already up over the pane — showing anything else, with or
+    /// without notes — is HELD: it stays exactly as it was, the file is kept
+    /// as this pane's handover, where the artifact rail lists it, and the
+    /// answer begins `held` so the agent knows nothing opened and does not ask
+    /// again. Parker, 2026-10-22, after an agent's finished turn replaced the
+    /// page he was writing a note in: *"definitely will not override the
+    /// currently open glow pane"*. A clip is not held: it opens over the square
+    /// and replaces nothing ([`Self::open_clip`]). A click, the rail and
+    /// `ctl doc here` are a person's roads and go through
+    /// [`Self::open_float`], which still replaces.
     pub(crate) fn open_here(
         &mut self,
         target: crate::docopen::DocTarget,
@@ -735,6 +751,16 @@ impl TerminalView {
         };
         if showing(self, cx) {
             return format!("ok float pane {pane} — it already shows this file");
+        }
+        if self.float.is_some() && !target.kind.plays() {
+            let href = target.path.display().to_string();
+            self.hand_over(None, href, crate::handover::Source::Declared, cx);
+            return format!(
+                "held pane {pane} — a square is already open over your pane, so this \
+                 was not opened over it. It is kept as your handover: the person \
+                 sees it on the artifact rail (📜) and opens it from there. Do not \
+                 open it again."
+            );
         }
         match self.open_float(target, None, cx) {
             Err(why) => format!("desktop {why}"),
@@ -1120,6 +1146,27 @@ impl TerminalView {
         true
     }
 
+    /// A key the floating square was routed. The document is asked first —
+    /// the note box, then a brief's own dialog — and what it declines is
+    /// either [`crate::keylayer::glow_chord`], which turns the document, or
+    /// Escape, which closes the square.
+    pub(super) fn float_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
+        let Some(view) = self.float.as_ref().map(|f| f.view.clone()) else {
+            return Handled::Consumed;
+        };
+        if view.update(cx, |doc, cx| doc.key(ks, cx)) {
+            return Handled::Consumed;
+        }
+        let m = &ks.modifiers;
+        match crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt) {
+            Some(mv) => view.update(cx, |doc, cx| doc.glow(mv, cx)),
+            None => {
+                self.request_close_float(cx);
+            }
+        }
+        Handled::Consumed
+    }
+
     /// A key on the Document face. Always consumed: the face's own keys move
     /// the document, and every other key stops here rather than typing into
     /// a shell nobody can see. `keylayer` has already let the window's and
@@ -1135,6 +1182,12 @@ impl TerminalView {
             return Handled::Consumed;
         }
         let m = &ks.modifiers;
+        // The floating square's chords move the face's document too, so a
+        // brief reads the same way in either seat.
+        if let Some(mv) = crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt) {
+            view.update(cx, |v, cx| v.glow(mv, cx));
+            return Handled::Consumed;
+        }
         let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
             return Handled::Consumed;
         };

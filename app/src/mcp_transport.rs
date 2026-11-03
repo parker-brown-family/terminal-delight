@@ -53,14 +53,22 @@ enum UiReq {
     Snapshot(mpsc::Sender<mcp::Snapshot>),
     /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
     Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
-    /// `grep`: search every exposed pane's scrollback for an exact substring
-    /// (needle, lines-per-pane cap) and report the per-pane matches.
-    Search(String, usize, mpsc::Sender<Vec<mcp::PaneMatches>>),
+    /// `grep`: carry the verified caller to the grid read, so queued searches
+    /// cannot keep using a relationship that was revoked after the snapshot.
+    Search(
+        String,
+        usize,
+        Option<u64>,
+        mpsc::Sender<Vec<mcp::PaneMatches>>,
+    ),
     /// `open_document`: open a document in the caller's pane or tab. The
     /// reply is the router's own line, which for a split arrives only once the
     /// workspace has handled the pane's request — after this tick — so the
     /// sender travels with the request rather than being answered here.
     Open(mcp::OpenRequest, mpsc::Sender<String>),
+    /// `ask_agent`: an agent's question for another, decided and answered by
+    /// the window, which holds the Threshing Floor's chart and the seat facts.
+    Ask(mcp::AskCall, mpsc::Sender<mcp::AskReply>),
 }
 
 /// Build a uniform refusal for a whole batch (used when the UI is gone/wedged).
@@ -201,8 +209,8 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                             }
                         }
                     }
-                    Ok(UiReq::Search(needle, cap, reply)) => {
-                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, cx)) {
+                    Ok(UiReq::Search(needle, cap, caller, reply)) => {
+                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, caller, cx)) {
                             Ok(hits) => {
                                 let _ = reply.send(hits);
                             }
@@ -220,6 +228,19 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
                         {
                             let _ = answer.send("err terminal-delight UI not ready".into());
                             alive = false;
+                        }
+                    }
+                    Ok(UiReq::Ask(request, reply)) => {
+                        match this.update(cx, |ws, cx| ws.ask_bridge(&request, cx)) {
+                            Ok(answer) => {
+                                let _ = reply.send(answer);
+                            }
+                            Err(_) => {
+                                let _ = reply.send(mcp::AskReply::Refused(
+                                    crate::threshing_floor::Refusal::Gone,
+                                ));
+                                alive = false;
+                            }
                         }
                     }
                     Err(mpsc::TryRecvError::Empty) => break,
@@ -272,6 +293,9 @@ fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot
         coordination: Some(ws.coord_authorized.clone()),
         engineering_allowed: ws.coordination_full_scope(),
         documents: ws.mcp_documents(cx),
+        chart: ws.chart.clone(),
+        orgs: ws.floor_orgs.clone(),
+        moved: ws.mcp_moves(cx),
     }
 }
 
@@ -305,7 +329,7 @@ fn here() -> mcp::Instance {
 /// Blocks up to [`SNAPSHOT_BUDGET`], so callers must not run it on a thread that
 /// owns an accept loop.
 pub(crate) fn respond(line: &str) -> Option<String> {
-    respond_as(line, None)
+    respond_as(line, None, None)
 }
 
 /// [`respond`], with the caller named.
@@ -315,7 +339,11 @@ pub(crate) fn respond(line: &str) -> Option<String> {
 /// the transport because it is per-request data the protocol layer needs: a
 /// pane-scoped verb can then default to the pane that called it instead of
 /// making the agent guess its own pid out of a listing.
-pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Option<String> {
+pub(crate) fn respond_as(
+    line: &str,
+    caller: Option<crate::ctl::Caller>,
+    peer_pid: Option<u32>,
+) -> Option<String> {
     if !mcp::requires_snapshot(line) {
         return mcp::handle_line(line, &mcp::Snapshot::empty(), |_, _| vec![]);
     }
@@ -325,11 +353,23 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
         Ok(mut snap) => {
-            snap.caller = caller.map(|c| mcp::Caller {
-                session: c.session,
-                pane: c.pane,
+            snap.caller = caller.map(|c| {
+                let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
+                    snap.panes
+                        .iter()
+                        .find(|p| p.pane_id == Some(pane))
+                        .map(|p| p.pid)
+                });
+                mcp::Caller {
+                    session: verified.session,
+                    pane: verified.pane,
+                }
             });
             let home = session::home_dir();
+            if mcp::names_agents(line) {
+                let bound = paneident::resolve(&fleet_facts(&snap.panes), &home);
+                stamp_agents(&mut snap.panes, &bound);
+            }
             // The write capability: a set_pane_config batch is applied on the
             // gpui main thread via the same ticker, bounded by the same budget.
             // Reads (list_panes/pane_events/get_pane_config) never invoke this.
@@ -348,7 +388,8 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
             // grep never invoke this closure.
             let search = |needle: &str, cap: usize| -> Vec<mcp::PaneMatches> {
                 let (tx, rx) = mpsc::channel();
-                if !bridge_send(UiReq::Search(needle.to_string(), cap, tx)) {
+                let caller = snap.caller.as_ref().and_then(|c| c.pane);
+                if !bridge_send(UiReq::Search(needle.to_string(), cap, caller, tx)) {
                     return Vec::new();
                 }
                 rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_default()
@@ -366,13 +407,33 @@ pub(crate) fn respond_as(line: &str, caller: Option<crate::ctl::Caller>) -> Opti
                     Err(_) => Err("terminal-delight UI not ready".to_string()),
                 }
             };
-            mcp::handle_line_full(
+            let ask = |call: &mcp::AskCall| -> mcp::AskReply {
+                let gone = || mcp::AskReply::Refused(crate::threshing_floor::Refusal::Gone);
+                // A copy is priced here, on this connection's thread: which
+                // conversation the pane holds is a fact about the whole
+                // window, and reading its size is file work the window's
+                // thread must not wait on.
+                let mut call = call.clone();
+                if let mcp::AskCall::Question(req) = &mut call {
+                    if req.copy {
+                        let bound = paneident::resolve(&fleet_facts(&snap.panes), &home);
+                        req.price = Some(crate::askcopy::price(&bound, req.target));
+                    }
+                }
+                let (tx, rx) = mpsc::channel();
+                if !bridge_send(UiReq::Ask(call, tx)) {
+                    return gone();
+                }
+                rx.recv_timeout(SNAPSHOT_BUDGET).unwrap_or_else(|_| gone())
+            };
+            mcp::handle_line_asking(
                 line,
                 &snap,
                 |p, n| tail_for(p, &snap.panes, n, &home),
                 apply,
                 search,
                 open,
+                ask,
             )
         }
         Err(RecvTimeoutError::Disconnected) | Err(RecvTimeoutError::Timeout) => {
@@ -436,6 +497,21 @@ fn tail_for(
     }
 }
 
+/// Give each agent pane the conversation it is proven to hold: its lasting
+/// name, which a verb about another agent can be given instead of a pid. Only
+/// a certain bond names an agent. A guess (the last conversation spoken into in
+/// a shared directory) is where an agent probably is, and a prompt aimed by one
+/// would land on the wrong agent. A pane already named, by its sleep record,
+/// keeps that name.
+fn stamp_agents(panes: &mut [mcp::PaneInfo], bound: &HashMap<u32, paneident::Bound>) {
+    for p in panes.iter_mut().filter(|p| p.agent.is_none()) {
+        p.agent = bound
+            .get(&p.pid)
+            .filter(|b| b.is_certain())
+            .map(|b| b.session_id.clone());
+    }
+}
+
 /// Every agent pane in a snapshot, as the resolver wants them.
 fn fleet_facts(panes: &[mcp::PaneInfo]) -> Vec<paneident::PaneFacts> {
     panes
@@ -475,14 +551,30 @@ fn notify_loop(
         // also re-walk every transcript in every project directory.
         let bound = paneident::certain(&fleet_facts(&snap.panes), &home);
         let mut tailed: HashMap<u32, Vec<mcp::ToolEvent>> = HashMap::new();
-        for p in snap.panes.iter().filter(|p| p.exposed && p.is_agent) {
+        // Pushed events reach every connection at once, so each pane carries
+        // the reach an agent nobody can name gets: a seated pane is not pushed.
+        let pushable: Vec<mcp::PaneInfo> = snap
+            .panes
+            .iter()
+            .map(|p| mcp::PaneInfo {
+                reach: Some(crate::threshing_floor::anonymous_reach(
+                    &snap.config,
+                    &p.party(),
+                )),
+                ..p.clone()
+            })
+            .collect();
+        for p in pushable
+            .iter()
+            .filter(|p| p.is_agent && p.reach >= Some(crate::threshing_floor::Reach::Read))
+        {
             let events = match bound.get(&p.pid) {
                 Some(path) => mcp_tail::tail_tool_events(path, PUSH_TAIL),
                 None => vec![],
             };
             tailed.insert(p.pid, events);
         }
-        for n in watcher.diff(&snap.panes, &tailed) {
+        for n in watcher.diff(&pushable, &tailed) {
             if out_tx.send(mcp::encode_notification(&n)).is_err() {
                 return; // writer gone
             }
@@ -520,7 +612,12 @@ mod tests {
                 session: Some("claude --resume x".into()),
                 tool: None,
                 note: None,
-                exposed: true,
+                reach: None,
+                access: crate::threshing_floor::AgentAccess::Open,
+                seat: None,
+                name: None,
+                agent: None,
+                dormancy: None,
                 grade: mcp::GradeReport::default(),
             }],
             outer_grade: mcp::GradeReport::default(),
@@ -534,6 +631,9 @@ mod tests {
             coordination: None,
             engineering_allowed: false,
             documents: vec![],
+            chart: crate::threshing_floor::Chart::default(),
+            orgs: crate::threshing_floor::Orgs::default(),
+            moved: vec![],
         }
     }
 
@@ -641,5 +741,36 @@ mod tests {
             "nothing should be pushed before initialize"
         );
         std::fs::remove_dir_all(&home).ok();
+    }
+
+    /// Only a proven binding names an agent. A guessed one (the last
+    /// conversation spoken into, in a directory several agents share) would
+    /// aim a prompt at whichever agent spoke last, so it names nothing; and a
+    /// pane its sleep record already named keeps that name.
+    #[test]
+    fn only_a_certain_binding_gives_an_agent_its_name() {
+        use crate::paneident::Bound;
+        use crate::vitals::Bond;
+        let pane = |pid: u32, agent: Option<&str>| mcp::PaneInfo {
+            pid,
+            agent: agent.map(String::from),
+            ..agent_snapshot(pid, "/w").panes[0].clone()
+        };
+        let mut panes = vec![pane(1, None), pane(2, None), pane(3, Some("asleep-conv"))];
+        let bound = |id: &str, bond| Bound {
+            session_id: id.into(),
+            path: format!("/t/{id}.jsonl").into(),
+            bond,
+        };
+        let map: HashMap<u32, Bound> = [
+            (1, bound("declared-conv", Bond::Declared)),
+            (2, bound("guessed-conv", Bond::Guess)),
+            (3, bound("other-conv", Bond::Declared)),
+        ]
+        .into_iter()
+        .collect();
+        stamp_agents(&mut panes, &map);
+        let names: Vec<Option<&str>> = panes.iter().map(|p| p.agent.as_deref()).collect();
+        assert_eq!(names, [Some("declared-conv"), None, Some("asleep-conv")]);
     }
 }

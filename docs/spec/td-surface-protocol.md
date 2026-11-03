@@ -50,7 +50,7 @@ Four writers, one format. Pick whichever your agent can do.
 | Transport | How | Needs | Checks the document? | Use it when |
 |---|---|---|---|---|
 | **File drop** | write a `.json` file into the pane's directory | a filesystem | leniently: a document that fails becomes an `unclassified` card carrying the reason | almost always — any language, any harness, no cooperation |
-| **MCP verb** | `present_surface` with `pid` and `surface` | a connection to TD's MCP server, MCP exposure on, and the writes toggle | strictly: a bad document is refused with the reason, and nothing lands | you are connected and want the error message when a payload is wrong |
+| **MCP verb** | `present_surface` with `surface` (and `pid` only for a pane other than your own) | a connection to TD's MCP server, MCP exposure on, and the writes toggle | strictly: a bad document is refused with the reason, and nothing lands | you are connected and want the error message when a payload is wrong |
 | **CLI** | `terminal-delight surface [file]` (or pipe to stdin) | the binary on `PATH`, run inside a pane | no: it writes what it was given into the pane's directory, which the file drop then reads leniently | scripts, and prose that contains a fenced block |
 | **Transcript fence** | a ` ```td ` or ` ```tdsp ` block in your own reply | a Claude Code transcript the window can bind to your pane | leniently, like the file drop | nothing else is available — it puts raw JSON in front of the person reading your reply |
 
@@ -497,12 +497,12 @@ bench, and the card stays open underneath. A URL, a file of any other type, or
 a type whose viewer is not available (HTML with no Chromium, for example) goes
 to the desktop's own handler instead.
 
-#### A decision brief is an artifact
+#### A brief is an artifact
 
-When the work is something a person has to read and then decide on — an audit,
-a review, options with costs, findings — an agent the Workbench launched is
-asked for a **decision brief**: one self-contained HTML page, drawn rather than
-written, sent as an artifact.
+When the work is something a person should read, check or decide on — an audit,
+a review, options with costs, findings, a write-up of what changed — an agent
+the Workbench launched is asked for a **brief**: one self-contained HTML page,
+drawn rather than written, sent as an artifact.
 
 ```json
 { "td": "0.4", "kind": "artifact", "id": "brief-cache-eviction",
@@ -513,19 +513,26 @@ written, sent as an artifact.
 ```
 
 Nothing about it is new on the wire; what makes it a brief is the page. Built
-with the decision-brief notes markup, every element of it takes a note in the
-square, a decision takes a CONCUR stamp, and **↪ send to agent** in the notes
-bar pastes the notes into the agent's prompt as a map of `[anchor]` lines —
+with the briefing skill, every heading, figure and decision of it takes a note
+in the square, a decision takes a CONCUR stamp, and **↪ send to agent** in the
+notes bar pastes the notes into the agent's prompt as a map of `[anchor]` lines —
 pasted, never sent, so the person presses Enter. The agent can also ask for the
 same map with the `document_notes` MCP verb. The notes are saved into the file
 itself, so the brief stays the record.
 
-The launcher's briefing names the how: the decision-brief skill, which the
-binary carries (`app/skills/decision-brief/`, written under
-`$XDG_DATA_HOME/terminal-delight/skills/` on launch). Its Workbench edition asks
-for five minutes of reading and a figure for every argument. The paragraph is
-only in the briefing when the kit was written, and an agent started by hand in
-a terminal is told none of it.
+The same skill carries **judgement calls**: a decision the work needed that the
+person never made, which the agent made and kept working on. It records each
+one, names the open ones in its `response` at escalation level `wanted`, and
+carries them into its closing brief as rows the person stamps or overturns; the
+work has settled only when every call is answered.
+
+The launcher's briefing names the how: the briefing skill, which the binary
+carries (`app/skills/briefing/`, with the parts of `decision-brief/` and
+`fancy-pants-brief/` it builds with, written under
+`$XDG_DATA_HOME/terminal-delight/skills/` on launch). The paragraph is only in
+the briefing when the kit was written, and an agent started by hand in a
+terminal hears it only through the `terminal-delight briefing` hook its person
+said yes to.
 
 ### `markdown` — prose with structure
 
@@ -1116,7 +1123,7 @@ with the same event appended to `actions.jsonl` in that directory.
 | The MCP verbs `present_surface` and `surface_catalogue` | `app/src/mcp.rs` |
 | The agent channel (`td-agent-channel.md`) | `app/src/channel.rs`, `scripts/td-agent-hooks` |
 | The launcher that briefs an agent it starts | `app/src/launcher.rs` |
-| The decision-brief kit the briefing names, embedded and written on launch | `app/src/briefkit.rs`, `app/skills/decision-brief/` |
+| The briefing kit the briefing names, embedded and written on launch | `app/src/briefkit.rs`, `app/skills/`, `scripts/sync-brief-skill` |
 
 ### Flags for the person debugging the bench
 

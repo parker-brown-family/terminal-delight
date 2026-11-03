@@ -158,6 +158,11 @@ with `0001-td-crt-pass.patch` (the per-pane CRT barrel-warp renderer pass), and
 thirteen on `dev/0.5.0`. It's idempotent — safe to re-run, and worth re-running
 after you switch between those branches.
 
+The Rust version is pinned in `rust-toolchain.toml` at the root (1.99.1, the
+least the terminal core builds with). With rustup, `cargo` fetches it the first
+time it runs in the repository, whatever your default is, and CI builds with
+the same one.
+
 ### The bar (CI runs all of this — run it before you push)
 
 ```bash

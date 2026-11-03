@@ -1,0 +1,6 @@
+
+running 1 test
+test pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane ... ok
+
+test result: ok. 1 passed; 0 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.13s
+

@@ -1,0 +1,33 @@
+test_changed_helper_and_symlink_settings_retained (__main__.Cleanup.test_changed_helper_and_symlink_settings_retained) ... ok
+test_committed_edit_keeps_one_private_state_backup (__main__.Cleanup.test_committed_edit_keeps_one_private_state_backup) ... ok
+test_component_receipts_record_files_and_integrations_then_disappear (__main__.Cleanup.test_component_receipts_record_files_and_integrations_then_disappear) ... ok
+test_desktop_remove_and_cache_failures_keep_receipt (__main__.Cleanup.test_desktop_remove_and_cache_failures_keep_receipt) ... ok
+test_desktop_uninstall_retains_changed_icon_and_refreshes_caches (__main__.Cleanup.test_desktop_uninstall_retains_changed_icon_and_refreshes_caches) ... ok
+test_failed_replace_discards_snapshot_and_uncommitted_backup (__main__.Cleanup.test_failed_replace_discards_snapshot_and_uncommitted_backup) ... ok
+test_gnome_changed_shortcut_or_missing_receipt_blocks (__main__.Cleanup.test_gnome_changed_shortcut_or_missing_receipt_blocks) ... ok
+test_gnome_failed_write_keeps_evidence (__main__.Cleanup.test_gnome_failed_write_keeps_evidence) ... ok
+test_gnome_intent_precedes_first_write_and_survives_failure (__main__.Cleanup.test_gnome_intent_precedes_first_write_and_survives_failure) ... ok
+test_gnome_keeps_later_terminal_choice (__main__.Cleanup.test_gnome_keeps_later_terminal_choice) ... ok
+test_gnome_missing_backup_never_guesses_default (__main__.Cleanup.test_gnome_missing_backup_never_guesses_default) ... ok
+test_gnome_missing_receipt_preserves_all_settings (__main__.Cleanup.test_gnome_missing_receipt_preserves_all_settings) ... ok
+test_gnome_missing_receipt_prints_exact_review_commands (__main__.Cleanup.test_gnome_missing_receipt_prints_exact_review_commands) ... ok
+test_gnome_restores_only_recorded_binding (__main__.Cleanup.test_gnome_restores_only_recorded_binding) ... ok
+test_install_backups_are_private_and_failed_install_leaves_no_snapshot (__main__.Cleanup.test_install_backups_are_private_and_failed_install_leaves_no_snapshot) ... ok
+test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) ... ok
+test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) ... ok
+test_keys_exact_block_removal_keeps_tail (__main__.Cleanup.test_keys_exact_block_removal_keeps_tail) ... ok
+test_keys_keep_unterminated_user_tail_bytes (__main__.Cleanup.test_keys_keep_unterminated_user_tail_bytes) ... ok
+test_known_hash_check_detects_changed_table_and_uncommitted_source (__main__.Cleanup.test_known_hash_check_detects_changed_table_and_uncommitted_source) ... ok
+test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works (__main__.Cleanup.test_missing_hooks_remains_byte_identical_and_repeated_cleanup_works) ... ok
+test_mixed_nested_hooks_preserve_siblings_and_metadata (__main__.Cleanup.test_mixed_nested_hooks_preserve_siblings_and_metadata) ... ok
+test_old_committed_helper_is_owned_by_history (__main__.Cleanup.test_old_committed_helper_is_owned_by_history) ... ok
+test_plugin_uninstall_is_not_a_destination (__main__.Cleanup.test_plugin_uninstall_is_not_a_destination) ... ok
+test_receipt_hash_is_bound_to_the_installed_path (__main__.Cleanup.test_receipt_hash_is_bound_to_the_installed_path) ... ok
+test_refused_legacy_keys_install_writes_nothing (__main__.Cleanup.test_refused_legacy_keys_install_writes_nothing) ... ok
+test_unknown_installer_flags_are_rejected_without_writes (__main__.Cleanup.test_unknown_installer_flags_are_rejected_without_writes) ... ok
+test_unrecognized_reference_blocks_helper_removal (__main__.Cleanup.test_unrecognized_reference_blocks_helper_removal) ... ok
+
+----------------------------------------------------------------------
+Ran 28 tests in 8.187s
+
+OK

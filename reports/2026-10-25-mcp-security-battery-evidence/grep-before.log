@@ -1,0 +1,23 @@
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.43s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`
+     Running unittests src/main.rs (/home/parker/Work/td-authority-lab/war-room-target/debug/deps/terminal_delight-3e90b7984d8b357d)
+
+running 1 test
+test war_room_view::tests::queued_grep_cannot_read_fresh_content_after_relationship_revocation ... FAILED
+
+failures:
+
+---- war_room_view::tests::queued_grep_cannot_read_fresh_content_after_relationship_revocation stdout ----
+
+thread 'war_room_view::tests::queued_grep_cannot_read_fresh_content_after_relationship_revocation' (941873) panicked at src/war_room_view.rs:3114:13:
+queued grep used a revoked snapshot grant to read the live grid
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    war_room_view::tests::queued_grep_cannot_read_fresh_content_after_relationship_revocation
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2693 filtered out; finished in 0.11s
+
+error: test failed, to rerun pass `--bin terminal-delight`

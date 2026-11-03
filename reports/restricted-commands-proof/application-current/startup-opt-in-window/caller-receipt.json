@@ -1,0 +1,91 @@
+{
+  "pane": 1,
+  "shell": 2969326,
+  "note": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "posted \u2014 the note is on pane 2969326's glass"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions2968935 \u00b7 window 2968951 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "pid": 2969326,
+        "posted": true,
+        "instance": {
+          "session": "permissions2968935",
+          "window": 2968951,
+          "build": "terminal-delight"
+        }
+      }
+    }
+  },
+  "open": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/application-mutations-final-2/startup-opt-in-window/own.html \u2014 float pane 1"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions2968935 \u00b7 window 2968951 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/application-mutations-final-2/startup-opt-in-window/own.html",
+        "placement": "here",
+        "pane": 2969326,
+        "said": "float pane 1",
+        "instance": {
+          "session": "permissions2968935",
+          "window": 2968951,
+          "build": "terminal-delight"
+        }
+      }
+    }
+  },
+  "notes": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/application-mutations-final-2/startup-opt-in-window/own.html \u2014 floating over your pane\nno notes to read: the page is not laid out yet"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions2968935 \u00b7 window 2968951 \u00b7 terminal-delight"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/application-mutations-final-2/startup-opt-in-window/own.html",
+        "place": "float",
+        "pane": 2969326,
+        "found": "float-over-you",
+        "notes": null,
+        "concurs": null,
+        "unsaved": null,
+        "map": null,
+        "state": null,
+        "read_only": null,
+        "why": "the page is not laid out yet",
+        "pictures_attached": [],
+        "instance": {
+          "session": "permissions2968935",
+          "window": 2968951,
+          "build": "terminal-delight"
+        }
+      }
+    }
+  }
+}

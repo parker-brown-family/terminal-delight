@@ -1,0 +1,67 @@
+{
+  "source_commit": "047661b5402342fc6de2062a76fa9fd949240ca5",
+  "source_sha256": {
+    "app/src/access.rs": "b822f69db1a6bb2e1e7d44f6e34e25d77fafdd4d40e36480b0e720e0c7d1b5c4",
+    "app/src/ctl.rs": "00c894dea4656704cfdcbc46614e93fe6958065af2af2deff28f28b849ed2fcb",
+    "app/src/main.rs": "90c17aae444f038a9c42df0d77a785dfab6b81d55926318140baa3dd2fea7fca",
+    "app/src/mcp.rs": "787e99a30cf060439c3c0f4da43f3581f71b39a002dcfb68d75c2228ca1b4d5f",
+    "app/src/war_room_view.rs": "b174ba04d048895b38b8e56507804faf57c343d882054fe7e58d9d14b0ab16fa",
+    "app/Cargo.lock": "233f0adcee28fd7d323f1dd0864e71327d8715b75b9a3cbe0b167190f8f4e922"
+  },
+  "base_commit": "3d7113a1df0a17f59f69644e17c45ca9bfa61ae6",
+  "binary_sha256": "8fb5ee87a19af83988ca3cab46fb24bdb8cdb09ea46487f4e567fe8152debd5e",
+  "pull_request": "https://github.com/parker-brown-family/terminal-delight/pull/1148",
+  "terminal_cores": {
+    "rio": {
+      "passed": 2857,
+      "failed": 0,
+      "ignored": 17,
+      "suites": 8
+    },
+    "alacritty": {
+      "passed": 2804,
+      "failed": 0,
+      "ignored": 17,
+      "suites": 8
+    }
+  },
+  "clippy": {
+    "rio": "passed -D warnings",
+    "alacritty": "passed -D warnings"
+  },
+  "format": "passed",
+  "native_battery": {
+    "assertions": 54,
+    "passed": 54
+  },
+  "manual_security_probes": {
+    "assertions": 5,
+    "passed": 5
+  },
+  "native_capture": null,
+  "native_capture_limitation": "Capture timed out; no focused desktop window was available. No native visual verdict is claimed.",
+  "gpui_permission_states": "passed hidden/missing/open target parity, No, original Yes, missing target and replacement target",
+  "ignored_tests": "17 per terminal core, unchanged existing ignores",
+  "synthetic_fixture_cleanup": {
+    "launcher_exit": 0,
+    "window_alive": false,
+    "actor_pids_alive": [],
+    "session_layout_removed": true
+  },
+  "activation": {
+    "applied": true,
+    "new_gui": {
+      "pid": 3846285,
+      "start_tick": 107384739,
+      "exe": "/home/parker/.local/lib/terminal-delight/td-047661b5-0.5-agaro-permissions"
+    },
+    "host_preserved": true,
+    "host_panes": 31,
+    "sha256": "8fb5ee87a19af83988ca3cab46fb24bdb8cdb09ea46487f4e567fe8152debd5e",
+    "exposed_panes": 23,
+    "closed_panes": [],
+    "launcher": "/home/parker/.local/lib/terminal-delight/td-047661b5-0.5-agaro-permissions",
+    "split_documents_restored": 1
+  },
+  "release_scope": "local 0.5.0 development; no stable or candidate tag; package version unchanged"
+}

@@ -316,6 +316,7 @@ pub fn stamp(g: &mut ThemeGroup, pick: &Pick) {
 /// this one's key.
 pub fn apply_outer(cx: &mut App, pick: &Pick) {
     let cur = theme::outer_choice(cx);
+    let design = cur.id.clone();
     let next = match pick {
         Pick::Default => {
             let mut house = theme::house_outer();
@@ -328,6 +329,10 @@ pub fn apply_outer(cx: &mut App, pick: &Pick) {
             cur.with_group(g)
         }
     };
+    // DESKTOP puts the house design back; the skin stays where it is.
+    if next.id != design {
+        crate::skin::hold(cx);
+    }
     theme::select_outer(cx, next);
 }
 
@@ -539,7 +544,7 @@ pub fn face_el(face: &Face, th: &Theme, sk: &Skin) -> AnyElement {
                         .right(px(1.))
                         .text_size(sk.text_px(7.))
                         .text_color(chips[0])
-                        .child("☀"),
+                        .child(sk.control("☀", "light")),
                 )
             })
             .into_any_element(),
@@ -589,6 +594,17 @@ pub fn grid_w(win_w: Option<f32>) -> f32 {
 /// The caller attaches the click — a pane paints itself, the outer card paints
 /// the cabinet — which is the only thing the two surfaces do differently.
 pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
+    if sk.text_controls() {
+        return sk.choice(
+            div()
+                .min_w(sk.px(140.))
+                .px(sk.px(8.))
+                .py(sk.px(6.))
+                .cursor_pointer()
+                .child(format!("{}{}", e.key, e.rest)),
+            e.lit,
+        );
+    }
     let (acc, surf, txt, faint) = (th.accent, th.surface, th.text, th.faint);
     let swatch = e.swatch;
     let lit = e.lit;
@@ -619,7 +635,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                     .right(px(4.))
                     .text_size(sk.text_px(8.))
                     .text_color(acc)
-                    .child("★"),
+                    .child(sk.control("★", "score")),
             )
         })
         // Face and name sit in FIXED-height boxes so every tile is the same

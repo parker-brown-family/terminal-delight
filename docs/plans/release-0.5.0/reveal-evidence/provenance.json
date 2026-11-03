@@ -1,0 +1,21 @@
+{
+  "container_digest": "sha256:d8bf7eb45b87a52921d41f7fa734eee167180f8ab2d4f2d734347df6d06e8d13",
+  "container_input_hash": "94b0518ccf9fbc4a1f0badb87c82551639b6017c2a8222586d9f7026a67938ef",
+  "resource_limits": {
+    "cpus": 2,
+    "memory": "3g",
+    "pids": 512,
+    "shm": "512m"
+  },
+  "installed_binary_sha256": "30cb3afbaf3419929b6015e8ace279cfb4166643feac6804dd250e6964b1f206",
+  "installed_build_id": "d10b10288cb903abe2918eeaed5779a5763f8c89",
+  "release_debug_build_id": "24cdfe2aa74373ea7ee60f85cb32d4cff8e8a023",
+  "release_source_commits": {
+    "0.21.0": "3a927d18c32f9f466eed1c7e9f87cb64fd184af1",
+    "1.1.0": "cdf03238d4eeaa42b5d6b748296be450fbb16f1b"
+  },
+  "harnesses": {
+    "reveal-poc.py": "3b9134576f8b43ef977ecca5c51427401af2e82f2d0f9eba3710216faa9a544a",
+    "strata-reveal-stress.py": "817837da5463780dfc43206ba25264900ef764578b7e99f7588ec2e4a2cac6b3"
+  }
+}

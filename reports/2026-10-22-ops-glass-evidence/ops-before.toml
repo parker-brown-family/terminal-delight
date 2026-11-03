@@ -1,0 +1,97 @@
+# terminal-delight skin — ops
+#
+# The Tactical design's skin: an XCOM 2 command deck with a Fallout 4 Pip-Boy's
+# selection, read off the workshop Parker marked up on 2026-10-19
+# (reports/2026-10-19-tactical-workshop.html; plan in docs/plans/tactical-skin/).
+#
+# Three faces, each with one job, all SIL OFL and bundled with the app:
+#
+#   Oxanium Bold       NAMES — a project, a pane, a panel's title, the notice.
+#                      Squared, wide-shouldered, the loud voice.
+#   Chakra Petch       INTERFACE — the words you read between the names.
+#   Share Tech Mono    NUMBERS — percentages, counts, the zoom. A mono, so a
+#                      column of readouts lines up digit under digit.
+#
+# The terminal grid is not this file's business: it keeps the design's own
+# font, because the grid belongs to the programs running in it.
+#
+# Like deco, this skin declares no colour of its own. Every ink is a recipe, so
+# OPS is cyan under tactical-overdrive's palette, phosphor green under a green
+# one, and whatever an Omarchy theme switch hands it. Shape and type are the
+# axis; colour is the palette's.
+#
+# Glow is spent on the lit thing and on numbers, and on nothing else. The
+# workshop's "intrusive" panel — glow on every letter, scan lines over the
+# text — is a DESIGN (themes/intrusive.toml) a person mixes in on purpose, not
+# a habit of this skin.
+
+name = "ops"
+icon = "⌖"
+
+[font]
+family  = "Chakra Petch"
+heading = "Oxanium"
+data    = "Share Tech Mono"
+
+[shape]
+# Cut, not rounded and not square: the top-left and bottom-right corners of
+# every region are machined off (src/deck.rs draws the plate).
+corner   = "cut"
+boundary = "hairline"
+# The Pip-Boy selection: a solid bar with an arrow tip on rows, a solid
+# chip, and a cradle under the active tab.
+emphasis = "bar"
+divider  = "line"
+caps     = "upper"
+shine    = "flat"
+# Allowances are counted in pips, not estimated along a rail.
+gauge    = "pips"
+# Headings between chevrons, the focused pane hatched along its top edge, and
+# a faint grid washed under every region.
+title    = "chevron"
+focus    = "hatch"
+material = "grid"
+
+[metric]
+radius     = 0.0
+radius_lg  = 0.0
+cut        = 8.0
+hairline   = 1.0
+border     = 1.0
+rule_gap   = 2.0
+gap        = 5.0
+pad_x      = 8.0
+pad_y      = 4.0
+chip_px    = 7.0
+chip_py    = 2.0
+row_h      = 17.0
+label_size = 10.0
+rail       = 2.0
+# A tight, bright bloom: a lit edge on an instrument, not haze in a room.
+glow       = 5.0
+glow_a     = 0.16
+
+[ink]
+# The structure is drawn in the accent, at three strengths, so a panel's edge
+# reads as part of the deck rather than as a grey box laid on it.
+rule        = { from = "accent", a = 0.20 }
+rule_strong = { from = "accent", a = 0.42 }
+edge        = { from = "accent", a = 0.45 }
+edge_strong = { from = "accent", a = 0.60 }
+edge_rest   = { from = "accent", a = 0.28 }
+focus       = { from = "accent" }
+
+# Panels sit a step above the ground, so the hairline has something to bound.
+panel        = { from = "bg", toward = "surface", t = 0.55 }
+panel_raised = { from = "surface" }
+panel_sunken = { from = "bg" }
+btn_face     = { from = "surface", toward = "accent", t = 0.06 }
+
+# The Pip-Boy bar is a slab of the accent itself (`mark`), with its label in
+# `ink_on_mark`. `select` keeps the house default, the palette's own colour for
+# "you": the edge devices — the tab's cradle, a slider's lit half — are drawn
+# in it, and an edge in the accent would vanish into the accent hairlines.
+# Text on the accent goes dark: a cyan or phosphor fill is a light colour.
+ink_on_mark = { from = "bg" }
+mark_wash   = { from = "accent", a = 0.10 }
+row_active  = { from = "accent", a = 0.10 }

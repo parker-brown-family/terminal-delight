@@ -434,7 +434,7 @@ impl Recipe {
     /// same command line now, and a sentence asking for the same thing in
     /// prose would be a second instruction that can drift from the first.
     ///
-    /// `kit` is the decision-brief `SKILL.md` written for this launch, when it
+    /// `kit` is the briefing skill's `SKILL.md` written for this launch, when it
     /// could be written; see [`crate::briefkit`]. The launch itself goes
     /// through [`session_briefing`], which a typed agent's hook shares; this
     /// stays for the tests that read the text for an arbitrary drop directory.
@@ -948,9 +948,11 @@ mod tests {
                 .prepare_briefing(&dir.join(h.label()), &kit)
                 .unwrap();
             let text = std::fs::read_to_string(path).unwrap();
-            assert!(text.contains("DECISION BRIEFS"));
-            assert!(text.contains(&kit.join("SKILL.md").display().to_string()));
-            assert!(kit.join("assets/notes.js").is_file());
+            assert!(text.contains("BRIEFS AND JUDGEMENT CALLS"));
+            assert!(text.contains(&kit.join("briefing/SKILL.md").display().to_string()));
+            assert!(kit.join("briefing/scripts/brief.py").is_file());
+            assert!(kit.join("decision-brief/assets/notes.js").is_file());
+            assert!(kit.join("fancy-pants-brief/assets/sections.js").is_file());
         }
         let blocked = dir.join("blocked");
         std::fs::write(&blocked, "a file, not a directory").unwrap();
@@ -1196,7 +1198,7 @@ mod tests {
     #[test]
     fn the_briefing_names_the_kit_the_launch_wrote() {
         let r = recipe(Harness::Claude, "high");
-        let kit = Path::new("/data/terminal-delight/skills/decision-brief/SKILL.md");
+        let kit = Path::new("/data/terminal-delight/skills/briefing/SKILL.md");
         assert!(r
             .briefing("/run/td/7", Some(kit))
             .contains(&*kit.to_string_lossy()));
@@ -1211,6 +1213,36 @@ mod tests {
         assert!(
             text.contains("\"response\""),
             "and the reply shape it is asked for"
+        );
+    }
+
+    /// Every launched agent is told the Threshing Floor exists, how to read
+    /// where it stands, how to answer a prompt that arrives along a line, and
+    /// how to hand work out along one, Codex through its first prompt as much
+    /// as Claude through its system prompt.
+    #[test]
+    fn the_briefing_teaches_the_threshing_floor_both_ways() {
+        let dir = Path::new("/run/td/surfaces/s");
+        let text = session_briefing(dir, None);
+        for needle in [
+            "THE THRESHING FLOOR",
+            "floor_position",
+            "[Threshing Floor prompt <n>, from",
+            "That message is what goes back to the sender",
+            "prompt_agent",
+            "prompt_status",
+            "how you will judge it done",
+            "two or three tries",
+            "different provider",
+        ] {
+            assert!(text.contains(needle), "{needle} is missing");
+        }
+        // The header the worker is told to look for is the one it gets.
+        let header =
+            crate::prompt::header(crate::threshing_floor::AskId(5), "planner", Some(9), true);
+        assert!(
+            header.starts_with("[Threshing Floor prompt 5, from planner"),
+            "{header}"
         );
     }
 

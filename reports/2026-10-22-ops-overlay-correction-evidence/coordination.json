@@ -1,0 +1,340 @@
+{
+  "schema": "td-skin-proof/1",
+  "scene": "coordination",
+  "session": "skin-atlas-06ce1c241b62",
+  "binary_sha256": "06136ed5a757aee3e352123a6fb8601c9ce7bbd31f9716adffc622ee8f0cecf8",
+  "skin_sha256": "dbd56da77ebb0947af453055e8269c4ec98fdae0d37fa5eeade9e2ad6b844a24",
+  "catalogue_schema": "td-skin-catalogue/1",
+  "theme": "intrusive",
+  "palette": "terminal-delight",
+  "geometry_requested": [
+    1502,
+    1047
+  ],
+  "geometry_observed": [
+    1502,
+    1048
+  ],
+  "grade": {
+    "warp": 0.0,
+    "ui_scale": 1.15,
+    "text_scale": 1.0
+  },
+  "lang": "en",
+  "capture": {
+    "file": "native.png",
+    "sha256": "540bff3b633e3df0610db53c32e6ffe1d77312ee61688670707d3233fb85fc70"
+  },
+  "visual_verdict": null,
+  "states_reviewed": null,
+  "runner_sha256": "a8842523b0d21c89489ec63641fc45a2dba50898e8d20aa10dd6ef5735db7602",
+  "mcp_status": "enabled=on writes=on expose=all events=on",
+  "pane_config": {
+    "content": [
+      {
+        "type": "text",
+        "text": "1989451: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off\nouter: brightness 50 \u00b7 contrast 50 \u00b7 text 50 \u00b7 text-size 29 \u00b7 bench-size 29 \u00b7 warp 95 \u00b7 crt off"
+      },
+      {
+        "type": "text",
+        "text": "\u2014 terminal-delight \u00b7 session skin-atlas-06ce1c241b62 \u00b7 window 1989067 \u00b7 td-ops-overlay-material-preview"
+      }
+    ],
+    "structuredContent": {
+      "configs": [
+        {
+          "target": 1989451,
+          "scope": "pane",
+          "tab": 0,
+          "title": "shell",
+          "mode": "SHELL",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 49.999996185302734,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": null,
+            "off_cursor_linger_ms": null,
+            "inactive_cursor_linger_ms": null,
+            "inactive_off_cursor_linger_ms": null
+          }
+        },
+        {
+          "target": "outer",
+          "scope": "outer",
+          "grade": {
+            "brightness": 50.0,
+            "contrast": 50.0,
+            "colour": 50.0,
+            "text": 50.0,
+            "background": 50.0,
+            "gamma": 50.0,
+            "menu_bar": 49.999996185302734,
+            "text_size": 28.571426391601562,
+            "bench_size": 28.571426391601562,
+            "warp": 95.33332824707031,
+            "crawl": false,
+            "crawl_angle": 17.543859481811523,
+            "crawl_depth": 16.38796043395996,
+            "crt": false,
+            "phosphor": 25.0,
+            "image_glow": null,
+            "inactive_image_glow": null,
+            "inactive_text": null,
+            "afterglow_ms": null,
+            "cursor_linger_ms": null,
+            "off_cursor_linger_ms": null,
+            "inactive_cursor_linger_ms": null,
+            "inactive_off_cursor_linger_ms": null
+          }
+        }
+      ],
+      "instance": {
+        "session": "skin-atlas-06ce1c241b62",
+        "window": 1989067,
+        "build": "td-ops-overlay-material-preview"
+      }
+    }
+  },
+  "skin_status": "active=custom known=chalk,default,deco,console,ops,clean,custom",
+  "live_skin": {
+    "skin": "ops",
+    "theme": "intrusive",
+    "ui_font": "Chakra Petch",
+    "heading_font": "Oxanium",
+    "data_font": "Share Tech Mono",
+    "optical": {
+      "scale": 1.0,
+      "min_px": 0.0,
+      "line_height": 1.149999976158142
+    },
+    "note": {
+      "decoration": "Plain",
+      "stock": false
+    },
+    "material": "Grid",
+    "scale": 1.149999976158142,
+    "text_size": 1.0,
+    "shape": {
+      "corner": "Cut",
+      "boundary": "Hairline",
+      "emphasis": "Bar",
+      "divider": "Line",
+      "caps": "Upper",
+      "shine": "Flat",
+      "gauge": "Pips",
+      "title": "Chevron",
+      "focus": "Hatch",
+      "tube": "Glass"
+    },
+    "ink": {
+      "panel": {
+        "hex": "#081217",
+        "a": 1.0
+      },
+      "panel_raised": {
+        "hex": "#0c1823",
+        "a": 1.0
+      },
+      "panel_sunken": {
+        "hex": "#030708",
+        "a": 1.0
+      },
+      "panel_glass": {
+        "hex": "#030708",
+        "a": 0.699999988079071
+      },
+      "btn_face": {
+        "hex": "#102430",
+        "a": 1.0
+      },
+      "rule": {
+        "hex": "#67f454",
+        "a": 0.20000000298023224
+      },
+      "rule_strong": {
+        "hex": "#67f454",
+        "a": 0.41999998688697815
+      },
+      "edge": {
+        "hex": "#67f454",
+        "a": 0.44999998807907104
+      },
+      "edge_strong": {
+        "hex": "#67f454",
+        "a": 0.6000000238418579
+      },
+      "focus": {
+        "hex": "#67f454",
+        "a": 1.0
+      },
+      "ink": {
+        "hex": "#b5beac",
+        "a": 1.0
+      },
+      "ink_dim": {
+        "hex": "#b5beac",
+        "a": 0.699999988079071
+      },
+      "ink_off": {
+        "hex": "#282e32",
+        "a": 1.0
+      },
+      "ink_faint": {
+        "hex": "#b5beac",
+        "a": 0.6000000238418579
+      },
+      "ink_ghost": {
+        "hex": "#b5beac",
+        "a": 0.20000000298023224
+      },
+      "ink_on_mark": {
+        "hex": "#030708",
+        "a": 1.0
+      },
+      "ink_lit": {
+        "hex": "#b5beac",
+        "a": 0.9200000166893004
+      },
+      "edge_rest": {
+        "hex": "#67f454",
+        "a": 0.2800000011920929
+      },
+      "face_rest": {
+        "hex": "#b5beac",
+        "a": 0.05999999865889549
+      },
+      "mark": {
+        "hex": "#67f454",
+        "a": 1.0
+      },
+      "mark_soft": {
+        "hex": "#67f454",
+        "a": 0.8500000238418579
+      },
+      "mark_dim": {
+        "hex": "#67f454",
+        "a": 0.4000000059604645
+      },
+      "mark_wash": {
+        "hex": "#67f454",
+        "a": 0.10000000149011612
+      },
+      "select": {
+        "hex": "#e397ed",
+        "a": 1.0
+      },
+      "row_active": {
+        "hex": "#67f454",
+        "a": 0.10000000149011612
+      },
+      "hover": {
+        "hex": "#ffffff",
+        "a": 0.119999997317791
+      },
+      "live": {
+        "hex": "#e154f4",
+        "a": 1.0
+      },
+      "ok": {
+        "hex": "#67f454",
+        "a": 1.0
+      },
+      "warn": {
+        "hex": "#e5aa0d",
+        "a": 1.0
+      },
+      "danger": {
+        "hex": "#f4614f",
+        "a": 1.0
+      }
+    },
+    "metric": {
+      "radius": 0.0,
+      "radius_lg": 0.0,
+      "corner_cap": 9999.0,
+      "hairline": 1.0,
+      "border": 1.0,
+      "rule_gap": 2.0,
+      "gap": 5.0,
+      "pad_x": 8.0,
+      "pad_y": 4.0,
+      "chip_px": 7.0,
+      "chip_py": 2.0,
+      "row_h": 17.0,
+      "label_size": 10.0,
+      "bracket": 5.0,
+      "rail": 2.0,
+      "glow": 5.0,
+      "glow_a": 0.1599999964237213,
+      "cut": 8.0,
+      "grain": 1.0,
+      "frost": 3.0,
+      "roughness": 1.0,
+      "lift": 1.0,
+      "marker_alpha": 0.2199999988079071
+    },
+    "type": {
+      "tag": {
+        "base": 9.0,
+        "pt": 9.0
+      },
+      "fine": {
+        "base": 9.5,
+        "pt": 9.5
+      },
+      "note": {
+        "base": 10.0,
+        "pt": 10.0
+      },
+      "small": {
+        "base": 11.0,
+        "pt": 11.0
+      },
+      "body": {
+        "base": 12.0,
+        "pt": 12.0
+      },
+      "lead": {
+        "base": 13.0,
+        "pt": 13.0
+      },
+      "head": {
+        "base": 15.0,
+        "pt": 15.0
+      },
+      "title": {
+        "base": 17.0,
+        "pt": 17.0
+      },
+      "display": {
+        "base": 20.0,
+        "pt": 20.0
+      }
+    },
+    "active_skin": "custom",
+    "scope": "outer",
+    "palette": "terminal-delight",
+    "custom_path": "/home/parker/.cache/td-ops-overlay-correction/coordination/config/terminal-delight/skin.toml"
+  },
+  "isolation": {
+    "fixture_root": "/home/parker/.cache/td-ops-overlay-correction/coordination/home",
+    "shell": "explicit fixture program; no login profile",
+    "collector_canary_invoked": false
+  }
+}

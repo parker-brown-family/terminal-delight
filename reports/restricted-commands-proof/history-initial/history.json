@@ -1,0 +1,82 @@
+{
+  "qualification": "retired; current-source evidence is regenerated separately",
+  "files": [
+    {
+      "file": "application-mutations.json",
+      "sha256": "953981a7c5cb918866caa95ee622009639b1e891e6ca3fa78f0f93cb662af1e6",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "browser.json",
+      "sha256": "aa5836b24d6ff332d987860b17aa7df1218f0d1385f7bb24a899e7588b8065a3",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "clippy-fallback.txt",
+      "sha256": "2801b91e4bd7b7bd1f2c0acc4f782417de95fc1a5a29c95dba4fb8c9d1c36e81",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "clippy.txt",
+      "sha256": "769563de07f2192bcdc3261b928d83b34dfcfeeaf32c1c6c491089d575548867",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "fallback.txt",
+      "sha256": "4098af97715844a7cadb750dd95f47f95c30d3da4cd67ba2952f518d6f418701",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "full.txt",
+      "sha256": "9a2c15dc4e4c1ebedc7ca9342a8500ef20b881eafb51a58550a8b091a732f065",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "module-mutations.json",
+      "sha256": "c6d8f144082b694bb272a98e215ee837a6549373e5e1ab4a2b1c1245c5703b1a",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "narrative.json",
+      "sha256": "cf8c53e4af97a74bdc157c77a49cec5be451946c4a87e84c41693a50180ae94a",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "native-window.json",
+      "sha256": "e9d002ee41de5df870f0edcc477c87c57fe2c7c6c5f460cf9e0b37c9484fd8fb",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "os-final.txt",
+      "sha256": "ea6b020c297b769133c752fd09b2ceda45f5359cd5515bc18c4397602f16416b",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    },
+    {
+      "file": "receipt.json",
+      "sha256": "051b906472b1a5838acba7cd874af68b849b31526d68427b73ab93b1e701bf96",
+      "repository_capture_commit": "478b49f23c20a65aa453a398557128eb0e956fdf",
+      "executed_source_commit": null,
+      "qualification": "historical only; original files do not establish one common source binding"
+    }
+  ]
+}

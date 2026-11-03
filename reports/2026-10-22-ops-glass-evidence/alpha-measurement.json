@@ -1,0 +1,26 @@
+{
+  "method": "ImageMagick reads raw native capture RGBA at fixed physical pixel coordinates. Alpha below 1 means earlier scene pixels were replaced; ordinary source-over atop an opaque frame would remain at 1.",
+  "pixels": {
+    "grouping": {
+      "xy": [
+        1800,
+        1400
+      ],
+      "rgba": "srgba(3,6,9,0.756863)"
+    },
+    "outer_backing": {
+      "xy": [
+        1950,
+        1400
+      ],
+      "rgba": "srgba(10,20,29,1)"
+    },
+    "spine": {
+      "xy": [
+        130,
+        510
+      ],
+      "rgba": "srgba(13,18,16,1)"
+    }
+  }
+}

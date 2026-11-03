@@ -1,6 +1,6 @@
 [package]
 name = "terminal-delight"
-version = "0.4.0-rc.3"
+version = "0.5.0-rc.1"
 edition = "2021"
 license = "MIT"
 description = "Tabful tiling Linux terminal manager — native-snappy, web-app polished, themeable at will"
@@ -30,7 +30,7 @@ alacritty_terminal = { version = "0.26", optional = true }
 # defaults, which bring Rio's own pseudoterminal and event loop (TD has its
 # own); with `graphics`, which is what decodes a PNG a program sends — without
 # it rio-vt fails a PNG picture silently and tells the program it succeeded.
-rio-vt = { version = "=0.5.28", default-features = false, features = ["graphics"] }
+rio-vt = { version = "=0.5.29", default-features = false, features = ["graphics"] }
 # A picture's pixels as the frame gpui draws (src/pane.rs, `picture_texture`).
 # gpui already links it; named here to build the frame, with nothing added.
 image = { version = "0.25", default-features = false }
@@ -42,6 +42,9 @@ base64 = "0.22"
 # the search took a third of the core's throughput. Already in the graph
 # through rio-vt and gpui.
 memchr = "2"
+# Already in gpui; match retained glyphs at Unicode grapheme/column boundaries.
+unicode-segmentation = "1.13"
+unicode-width = "0.2"
 # The flags and modes in src/vt/types.rs, in the bitflags generation both
 # cores use.
 bitflags = "2"
@@ -70,7 +73,14 @@ libc = "0.2.186"
 gpui_wgpu = { path = "../../zed-upstream/crates/gpui_wgpu" }
 serde = { version = "1.0.228", features = ["derive"] }
 serde_json = "1.0"
+# The ask record keeps a question's fingerprint instead of its words.
+sha2 = "0.10"
 toml = "0.8"
+
+[build-dependencies]
+# build.rs fingerprints the window↔host wire for the updater (src/update.rs),
+# with the same sha2 the binary already links, so nothing new enters the graph.
+sha2 = "0.10"
 
 [dev-dependencies]
 # gpui's headless test platform — `TestAppContext`, `VisualTestContext`, the

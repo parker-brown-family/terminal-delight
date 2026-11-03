@@ -1,0 +1,5 @@
+{
+  "capture": false,
+  "reason": "Hidden-window capture timed out twice; activewindow then returned no focused window, so no desktop focus was changed. Visual inspection of the native rail was not collected.",
+  "desktop_focus_changed": false
+}

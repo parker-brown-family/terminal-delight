@@ -1,0 +1,59 @@
+{
+  "date": "2026-10-23",
+  "version": "1.1.0",
+  "binary": "/home/parker/.local/bin/strata",
+  "fixture": "/tmp/strata-upgrade-check/reveal check.mp4",
+  "measurement": "D-Bus method replies, not painted frames or physical click latency",
+  "requests": [
+    {
+      "trial": 1,
+      "cold_activation": true,
+      "seconds": 0.8793,
+      "exit_code": 0,
+      "stdout": "()",
+      "stderr": ""
+    },
+    {
+      "trial": 2,
+      "cold_activation": false,
+      "seconds": 0.0809,
+      "exit_code": 0,
+      "stdout": "()",
+      "stderr": ""
+    },
+    {
+      "trial": 3,
+      "cold_activation": false,
+      "seconds": 0.0799,
+      "exit_code": 0,
+      "stdout": "()",
+      "stderr": ""
+    },
+    {
+      "trial": 4,
+      "cold_activation": false,
+      "seconds": 0.0908,
+      "exit_code": 0,
+      "stdout": "()",
+      "stderr": ""
+    }
+  ],
+  "processes": [
+    {
+      "pid": 3836830,
+      "exe": "/proc/3836830/exe",
+      "resolved_exe": "/home/parker/.local/bin/strata"
+    },
+    {
+      "pid": 3837712,
+      "exe": "/proc/3837712/exe",
+      "resolved_exe": "/app/strata"
+    }
+  ],
+  "archive_sha256": "cb2927cfbf85eafef1faa5316303df9ce51831c7a370204f8a068bd83c690793",
+  "binary_sha256": "fbb77cab62ec9eda6b9d22fb35204304ca9d8a6bd95a8632246611cb46a184e4",
+  "checksum_verified": true,
+  "github_attestation_verified": true,
+  "filemanager1_owner_pid": 3836830,
+  "upstream_closure": "https://github.com/lgse/strata/issues/1833#issuecomment-6372286779"
+}

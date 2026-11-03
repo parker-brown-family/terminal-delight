@@ -1,0 +1,86 @@
+{
+  "pid": 764204,
+  "mode": "old",
+  "binary_sha256": "81eb231005af6354ed33645988a517ef646549f4ebdad566ed22cd245e9a4a06",
+  "panes": [
+    {
+      "tab": 0,
+      "title": "Editable input",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 765000,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    },
+    {
+      "tab": 0,
+      "title": "Untouched neighbor",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 765008,
+      "pane_id": null,
+      "cwd": "/tmp",
+      "exposed": true
+    }
+  ],
+  "captures": {
+    "before": {
+      "at": 686517.746389718,
+      "end": 686517.896628351,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selected": {
+      "at": 686519.322534116,
+      "end": 686519.456662042,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-early": {
+      "at": 686519.587098754,
+      "end": 686519.766916126,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-linger": {
+      "at": 686519.966801029,
+      "end": 686520.118725715,
+      "logical_size": [
+        1400,
+        920
+      ]
+    },
+    "selection-finished": {
+      "at": 686520.467895211,
+      "end": 686520.61848941,
+      "logical_size": [
+        1400,
+        920
+      ]
+    }
+  },
+  "cases": {
+    "selection": {
+      "before": {
+        "line": "keep WRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPED",
+        "point": 145,
+        "at": 686516.982948378,
+        "cols": 58
+      },
+      "after": {
+        "line": "keep WRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDWRAPPEDW",
+        "point": 104,
+        "at": 686519.509499107,
+        "cols": 58
+      },
+      "at": 686519.457120205
+    }
+  }
+}

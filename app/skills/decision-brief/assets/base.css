@@ -423,6 +423,57 @@ footer {
 footer p { margin: 0 0 7px; }
 footer::after { content: var(--wall-label); display: block; margin-top: 12px; opacity: .75; }
 
+/* ---- gel: buttons that ask to be pressed, and the rail of sections ----
+   A gel button is glass that is wet on top: a hard highlight over its upper half, the
+   theme's accent glowing up from underneath, a dark lip at the bottom. nav.sections is a
+   rail of them under the masthead, one per part of the page, held at the top as the reader
+   scrolls, so a long page is entered by its parts. fancy-pants-brief's sections.js fills an
+   empty rail from the page's h2s. section.pane is a part of the page drawn as its own pane. */
+.gel, nav.sections a {
+  position: relative; display: inline-flex; align-items: center; gap: 8px;
+  padding: 8px 16px 9px; border-radius: 999px; cursor: pointer; text-decoration: none;
+  font: 650 12.5px/1.2 var(--mono); letter-spacing: .03em; color: var(--fgb); text-shadow: 0 1px 0 #00000080;
+  border: 1px solid color-mix(in srgb, var(--acc) 42%, #ffffff3d);
+  background:
+    linear-gradient(180deg, #ffffff5c 0%, #ffffff1f 46%, #ffffff00 52%),
+    radial-gradient(120% 95% at 50% 125%, color-mix(in srgb, var(--acc) 58%, transparent), transparent 72%),
+    color-mix(in srgb, var(--bg2) 64%, transparent);
+  box-shadow: inset 0 1px 0 #ffffffa8, inset 0 -2px 5px #00000045, 0 7px 16px -7px #000000b0,
+    0 0 14px -5px color-mix(in srgb, var(--acc) 75%, transparent);
+  -webkit-backdrop-filter: blur(12px) saturate(1.6); backdrop-filter: blur(12px) saturate(1.6);
+  transition: transform .12s ease, filter .12s ease, box-shadow .12s ease;
+}
+.gel:hover, nav.sections a:hover {
+  transform: translateY(-1px); filter: brightness(1.14); color: var(--fgb);
+  box-shadow: inset 0 1px 0 #ffffffc0, inset 0 -2px 5px #00000045, 0 9px 20px -8px #000000b0,
+    0 0 22px -3px color-mix(in srgb, var(--acc) 85%, transparent);
+}
+.gel:active, nav.sections a:active { transform: translateY(1px); box-shadow: inset 0 2px 7px #00000070; }
+.gel .n, nav.sections a .n { color: color-mix(in srgb, var(--acc) 55%, #fff); font-weight: 800; }
+button.gel { font: 650 12.5px/1.2 var(--mono); }
+.gels { display: flex; flex-wrap: wrap; gap: 8px; margin: 0 0 16px; }
+
+nav.sections {
+  position: sticky; top: 12px; z-index: 20; display: flex; flex-wrap: wrap; gap: 8px;
+  margin: 26px 0 8px; padding: 9px 10px; border-radius: 22px;
+  -webkit-backdrop-filter: var(--glass-blur); backdrop-filter: var(--glass-blur);
+  background: linear-gradient(var(--glass-tint), var(--glass-tint-2)), color-mix(in srgb, var(--bg0) 55%, transparent);
+  border: 1px solid var(--glass-edge); box-shadow: var(--glass-shadow);
+}
+nav.sections:empty { display: none; }
+:is(h2, section, figure)[id] { scroll-margin-top: 96px; }
+
+section.pane {
+  margin: 0 0 34px; padding: 6px 30px 28px; border-radius: 22px;
+  -webkit-backdrop-filter: blur(10px) saturate(1.3); backdrop-filter: blur(10px) saturate(1.3);
+  background: linear-gradient(#ffffff0d, #ffffff02), color-mix(in srgb, var(--bg0) 38%, transparent);
+  border: 1px solid var(--line); box-shadow: 0 18px 44px -18px #000000a0, inset 0 1px 0 #ffffff26;
+}
+section.pane > h2:first-child { margin-top: 26px; }
+
+video { display: block; width: 100%; height: auto; border-radius: 12px; background: #000;
+  box-shadow: 0 14px 34px -12px #000000c0, 0 0 0 1px var(--line); }
+
 @media (max-width: 900px) {
   .pair { grid-template-columns: minmax(0, 1fr); }
 }

@@ -23,13 +23,18 @@ use std::os::unix::ffi::OsStrExt;
 use std::os::unix::process::CommandExt;
 use std::path::PathBuf;
 use std::process::{Child, Command, ExitStatus};
+use std::sync::{Arc, Weak};
+use std::time::{Duration, Instant};
 use std::{env, ptr};
 
 use rustix_openpty::openpty;
 use rustix_openpty::rustix::termios::{self, InputModes, OptionalActions, Winsize};
 
-use super::pump::Source;
+use super::pump::{CloseReport, Source};
 use super::WindowSize;
+
+#[cfg(test)]
+mod tests;
 
 /// What to run, where, with what added to its environment.
 #[derive(Clone, Debug, Default)]
@@ -44,42 +49,243 @@ pub struct Options {
 
 /// A program running on a pseudoterminal, seen from the side that reads it.
 pub struct PtySource {
-    child: Child,
-    master: File,
+    child: Option<Child>,
+    master: Option<Arc<File>>,
     /// Readable once the child has exited. `None` on a kernel without
     /// `pidfd_open` (older than 5.3), where the end of the stream is the only
     /// signal.
     pidfd: Option<OwnedFd>,
 }
 
+/// Observing a terminal must not keep its master open after its owner closes it.
+#[derive(Clone)]
+pub struct Monitor(Weak<File>);
+
+impl Monitor {
+    pub fn file(&self) -> Option<Arc<File>> {
+        self.0.upgrade()
+    }
+}
+
 impl PtySource {
     pub fn child(&self) -> &Child {
-        &self.child
+        self.child.as_ref().expect("live PTY child")
     }
 
     pub fn file(&self) -> &File {
-        &self.master
+        self.master.as_deref().expect("live PTY master")
     }
+
+    pub fn monitor(&self) -> Monitor {
+        Monitor(Arc::downgrade(
+            self.master.as_ref().expect("live PTY master"),
+        ))
+    }
+
+    /// Only this owner may signal the child. It retains the unreaped child until
+    /// the last group signal, so neither its PID nor its group can be recycled
+    /// between deciding to close and escalating. No saved PID is an authority.
+    fn close_child(&mut self) -> Option<CloseReport> {
+        let mut child = self.child.take()?;
+        let mut report = CloseReport {
+            hangup_sent: false,
+            kill_sent: false,
+            exit_observed: false,
+            observed_jobs_remaining: None,
+            error: None,
+        };
+        match child.try_wait() {
+            Ok(Some(_)) => {
+                self.master.take();
+                report.exit_observed = true;
+                return Some(report);
+            }
+            Err(err) => {
+                self.master.take();
+                report.error = Some(err.to_string());
+                return Some(report);
+            }
+            Ok(None) => {}
+        }
+        let pid = child.id() as i32;
+        // Interactive shells put jobs in separate process groups. Open pidfds
+        // while the session leader is still ours, then signal those identities,
+        // never numbers copied out of /proc after their owners have disappeared.
+        let mut jobs = session_jobs(pid, Duration::from_millis(100));
+        for (_, fd) in &jobs.held {
+            signal_job(fd, libc::SIGHUP);
+        }
+        // spawn() makes the child a session and process-group leader. Signal
+        // its group while that identity is still reserved by our Child.
+        report.hangup_sent = unsafe { libc::kill(-pid, libc::SIGHUP) } == 0;
+        self.master.take();
+        // Closing the master also hangs up its foreground job. Do not reap the
+        // leader during this grace period: a surviving group member still needs
+        // the escalation even when the leader has already exited.
+        std::thread::sleep(Duration::from_millis(250));
+        // Include jobs started during the grace period. A process that has
+        // deliberately left this terminal's session is outside this close.
+        let fresh = session_jobs(pid, Duration::from_millis(100));
+        report.error = jobs.error.take().or(fresh.error);
+        for (id, fd) in fresh.held {
+            if !jobs
+                .held
+                .iter()
+                .any(|(old, old_fd)| *old == id && job_exited(old_fd) == Some(false))
+            {
+                jobs.held.push((id, fd));
+            }
+        }
+        report.kill_sent = unsafe { libc::kill(-pid, libc::SIGKILL) } == 0;
+        for (_, fd) in &jobs.held {
+            signal_job(fd, libc::SIGKILL);
+        }
+        let until = Instant::now() + Duration::from_millis(250);
+        loop {
+            if !report.exit_observed {
+                match child.try_wait() {
+                    Ok(Some(_)) => report.exit_observed = true,
+                    Err(err) => {
+                        report.error = Some(err.to_string());
+                        return Some(report);
+                    }
+                    Ok(None) => {}
+                }
+            }
+            if report.error.is_none() {
+                report.observed_jobs_remaining = jobs
+                    .held
+                    .iter()
+                    .map(|(_, fd)| job_exited(fd).map(|done| usize::from(!done)))
+                    .collect::<Option<Vec<_>>>()
+                    .map(|n| n.into_iter().sum());
+            }
+            if report.exit_observed && report.observed_jobs_remaining == Some(0) {
+                return Some(report);
+            }
+            if Instant::now() >= until {
+                break;
+            }
+            std::thread::sleep(Duration::from_millis(5));
+        }
+        if report.exit_observed {
+            return Some(report);
+        }
+        // A kernel-blocked child may not exit even after SIGKILL. Release the
+        // pane promptly, retain a reaper, and report that exit is still unknown.
+        report.error = Some("child has not exited after the close deadline".into());
+        if let Err(err) = std::thread::Builder::new()
+            .name("td-reap".into())
+            .spawn(move || {
+                let _ = child.wait();
+            })
+        {
+            report.error = Some(format!("could not start child reaper: {err}"));
+        }
+        eprintln!(
+            "td: pane cleanup pending for child {pid}: {:?}",
+            report.error
+        );
+        Some(report)
+    }
+}
+
+/// A bounded snapshot of identities in this terminal's Unix session. The
+/// unreaped leader reserves the session ID for the duration of both snapshots.
+struct SessionJobs {
+    held: Vec<(i32, OwnedFd)>,
+    error: Option<String>,
+}
+
+fn session_jobs(sid: i32, budget: Duration) -> SessionJobs {
+    let until = Instant::now() + budget;
+    let mut held = Vec::new();
+    let scan = (|| -> io::Result<()> {
+        for entry in std::fs::read_dir("/proc")? {
+            if Instant::now() >= until {
+                return Err(io::Error::new(
+                    io::ErrorKind::TimedOut,
+                    "process scan deadline",
+                ));
+            }
+            let entry = entry?;
+            let Some(pid) = entry
+                .file_name()
+                .to_str()
+                .and_then(|s| s.parse::<i32>().ok())
+            else {
+                continue;
+            };
+            if pid == sid || unsafe { libc::getsid(pid) } != sid {
+                continue;
+            }
+            let raw = unsafe { libc::syscall(libc::SYS_pidfd_open, pid, 0) };
+            if raw < 0 {
+                let err = io::Error::last_os_error();
+                if err.raw_os_error() == Some(libc::ESRCH) {
+                    continue;
+                }
+                return Err(err);
+            }
+            let fd = unsafe { OwnedFd::from_raw_fd(raw as i32) };
+            // Recheck after opening. A reused number cannot grant authority over
+            // a process outside the still-owned terminal session.
+            if unsafe { libc::getsid(pid) } == sid {
+                held.push((pid, fd));
+            }
+        }
+        Ok(())
+    })();
+    // Even an incomplete scan retains every identity already acquired. Losing
+    // them on a timeout would abandon jobs that are safe to signal.
+    SessionJobs {
+        held,
+        error: scan
+            .err()
+            .map(|e| format!("session job inspection incomplete: {e}")),
+    }
+}
+
+fn signal_job(fd: &OwnedFd, signal: i32) {
+    unsafe {
+        libc::syscall(
+            libc::SYS_pidfd_send_signal,
+            fd.as_raw_fd(),
+            signal,
+            ptr::null::<libc::siginfo_t>(),
+            0,
+        );
+    }
+}
+
+fn job_exited(fd: &OwnedFd) -> Option<bool> {
+    let mut poll = libc::pollfd {
+        fd: fd.as_raw_fd(),
+        events: libc::POLLIN,
+        revents: 0,
+    };
+    let result = unsafe { libc::poll(&mut poll, 1, 0) };
+    (result >= 0).then_some(poll.revents & libc::POLLIN != 0)
 }
 
 impl Source for PtySource {
     fn fd(&self) -> BorrowedFd<'_> {
-        self.master.as_fd()
+        self.file().as_fd()
     }
 
     fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
-        self.master.read(buf)
+        self.file().read(buf)
     }
 
     fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
-        self.master.write(buf)
+        self.file().write(buf)
     }
 
     fn resize(&mut self, size: WindowSize) -> io::Result<()> {
         let win = winsize(size);
         let res = unsafe {
             libc::ioctl(
-                self.master.as_raw_fd(),
+                self.file().as_raw_fd(),
                 libc::TIOCSWINSZ,
                 &win as *const Winsize,
             )
@@ -95,31 +301,17 @@ impl Source for PtySource {
     }
 
     fn reap(&mut self) -> Option<ExitStatus> {
-        match self.child.try_wait() {
-            Ok(Some(status)) => Some(status),
-            // Without a pidfd the loop asks only once the stream has closed,
-            // when the child is on its way out; waiting for it is then brief
-            // and is the only way to learn its status.
-            Ok(None) if self.pidfd.is_none() => self.child.wait().ok(),
-            _ => None,
-        }
+        self.child.as_mut()?.try_wait().ok().flatten()
+    }
+
+    fn close(&mut self) -> Option<CloseReport> {
+        self.close_child()
     }
 }
 
 impl Drop for PtySource {
     fn drop(&mut self) {
-        // alacritty's hang-up on the way out: the shell is told its terminal
-        // has gone, and waited for so it does not linger as a zombie. Only a
-        // child not yet reaped is signalled. Once the loop has reaped it, its
-        // pid is free, and may already be another process's. Unreaped, even
-        // a child that has exited still holds its pid, so the check cannot
-        // race.
-        if matches!(self.child.try_wait(), Ok(None)) {
-            unsafe {
-                libc::kill(self.child.id() as i32, libc::SIGHUP);
-            }
-        }
-        let _ = self.child.wait();
+        self.close_child();
     }
 }
 
@@ -213,8 +405,8 @@ pub fn spawn(options: &Options, size: WindowSize) -> io::Result<PtySource> {
     let pidfd = pidfd_open(child.id());
 
     Ok(PtySource {
-        child,
-        master: File::from(master),
+        child: Some(child),
+        master: Some(Arc::new(File::from(master))),
         pidfd,
     })
 }

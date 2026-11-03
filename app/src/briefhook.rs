@@ -4,7 +4,7 @@
 //! Terminal Delight's first-launch page tells a newcomer to *type `claude` at a
 //! prompt*, and until this module an agent started that way was told nothing:
 //! the launcher's briefing (the workbench, how to present work, and the
-//! DECISION BRIEFS paragraph naming the kit) only ever rode on a command line
+//! BRIEFS AND JUDGEMENT CALLS paragraph naming the kit) only ever rode on a command line
 //! the launcher wrote itself, as `--append-system-prompt`. A person who typed
 //! got an agent that had never heard of the bench, and a bench that never
 //! filled.
@@ -44,6 +44,11 @@ use std::path::{Path, PathBuf};
 /// effect, and `uninstall` finds exactly its own entry and nobody else's.
 pub const MARKER: &str = "# terminal-delight:briefing";
 
+/// Set by a wake script ([`crate::agentrest_io::wake_script`]) for the agent it
+/// starts again: the agent woke in a fresh pane, so it is told its pane number
+/// and pid are new ([`crate::surface::WOKE_PARAGRAPH`]).
+pub const WOKE_ENV: &str = "TD_WOKE";
+
 /// The briefing a typed agent is owed, or `None` when it is owed nothing.
 ///
 /// `env` reads the hook's environment, which is the agent's, which is the
@@ -51,8 +56,8 @@ pub const MARKER: &str = "# terminal-delight:briefing";
 /// `kit_root` [`crate::briefkit::default_root`], passed in so a test can point
 /// them somewhere of its own.
 ///
-/// Without a kit the briefing still goes out, minus its DECISION BRIEFS
-/// paragraph — the same rule [`crate::surface::launch_briefing`] applies,
+/// Without a kit the briefing still goes out, minus its BRIEFS AND JUDGEMENT
+/// CALLS paragraph — the same rule [`crate::surface::launch_briefing`] applies,
 /// because an agent sent to read a file that is not there does worse than one
 /// never sent.
 pub fn briefing_for(
@@ -61,12 +66,20 @@ pub fn briefing_for(
     kit_root: Option<&Path>,
 ) -> Option<String> {
     let session = env("TD_SESSION").filter(|s| !s.trim().is_empty())?;
+    // A woken agent is told it moved even when the launcher briefed it: the
+    // briefing it carries cannot know a wake happened.
+    let woke = env(WOKE_ENV).as_deref() == Some("1");
     if env(crate::launcher::BRIEFED_ENV).as_deref() == Some("1") {
-        return None;
+        return woke.then(|| crate::surface::WOKE_PARAGRAPH.to_string());
     }
     let dir = surfaces_root.join(crate::surfacefeed::sanitise(&session));
     let skill = kit_root.and_then(|root| crate::briefkit::write(root).ok());
-    Some(crate::launcher::session_briefing(&dir, skill.as_deref()))
+    let briefing = crate::launcher::session_briefing(&dir, skill.as_deref());
+    Some(if woke {
+        format!("{}\n\n{briefing}", crate::surface::WOKE_PARAGRAPH)
+    } else {
+        briefing
+    })
 }
 
 /// Where Claude Code keeps its user settings: `$CLAUDE_SETTINGS` (the name
@@ -571,8 +584,8 @@ mod tests {
         )
         .expect("a pane with a session is told");
         assert_eq!(typed, launcher);
-        assert!(typed.contains("DECISION BRIEFS"), "{typed}");
-        assert!(typed.contains(&kit.join("SKILL.md").display().to_string()));
+        assert!(typed.contains("BRIEFS AND JUDGEMENT CALLS"), "{typed}");
+        assert!(typed.contains(&kit.join("briefing/SKILL.md").display().to_string()));
     }
 
     /// Outside a Terminal Delight pane the hook runs in every Claude session
@@ -598,6 +611,30 @@ mod tests {
         assert_eq!(briefing_for(env, &d, Some(&d.join("kit"))), None);
     }
 
+    /// A woken agent is told, once, at the start of the session it wakes into,
+    /// that its pane and pid are new and what to do about it, whether or not
+    /// the launcher briefed it. The wake script is what marks it woken.
+    #[test]
+    fn a_woken_agent_is_told_it_moved() {
+        let d = scratch("woke");
+        let woke = (WOKE_ENV, "1");
+        let briefed = (crate::launcher::BRIEFED_ENV, "1");
+        let typed = briefing_for(env_of(&[("TD_SESSION", "work"), woke]), &d, None).unwrap();
+        assert!(typed.starts_with(crate::surface::WOKE_PARAGRAPH), "{typed}");
+        assert!(typed.contains("WORKBENCH"), "and still the whole briefing");
+        let launched = briefing_for(env_of(&[("TD_SESSION", "work"), woke, briefed]), &d, None);
+        assert_eq!(launched.as_deref(), Some(crate::surface::WOKE_PARAGRAPH));
+        let script =
+            crate::agentrest_io::wake_script(&["claude".into(), "--resume".into(), "c".into()]);
+        let export = script
+            .find(&format!("export {WOKE_ENV}=1"))
+            .expect("the wake marks it");
+        assert!(
+            export < script.find("exec ").unwrap(),
+            "before the agent starts"
+        );
+    }
+
     /// No kit, still a briefing — about the bench, without the paragraph that
     /// would send the agent to a file that is not there.
     #[test]
@@ -605,7 +642,7 @@ mod tests {
         let d = scratch("nokit");
         let text = briefing_for(env_of(&[("TD_SESSION", "work")]), &d, None).unwrap();
         assert!(text.contains("WORKBENCH"), "{text}");
-        assert!(!text.contains("DECISION BRIEFS"), "{text}");
+        assert!(!text.contains("BRIEFS AND JUDGEMENT CALLS"), "{text}");
     }
 
     #[test]

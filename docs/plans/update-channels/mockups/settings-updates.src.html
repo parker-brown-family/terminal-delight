@@ -1,0 +1,271 @@
+<!doctype html>
+<html lang="en"><head>
+<title>Settings → Updates, every state</title><!-- briefing: {"id": "update-channels-gate-1", "purpose": "decision"} --><!--BRIEF:head-->
+
+
+
+<style>
+/* Mockups of TD's own overlay: the ADMIN overlay's shape (uppercase header, bordered rows,
+   glyph + bold name + small blurb), drawn at the width the panel opens at. */
+.td{font-family:ui-monospace,"JetBrainsMono Nerd Font",monospace;font-size:13px;line-height:1.45;
+  max-width:560px;margin:14px auto;border:1px solid color-mix(in srgb,var(--fg) 22%,transparent);
+  border-radius:10px;background:color-mix(in srgb,var(--bg0) 82%,transparent);padding:12px 14px;color:var(--fg)}
+.td .hdr{display:flex;justify-content:space-between;font-weight:800;letter-spacing:.12em;font-size:12px;
+  color:color-mix(in srgb,var(--fg) 70%,transparent);margin-bottom:10px}
+.td .seg{display:inline-flex;border:1px solid color-mix(in srgb,var(--fg) 25%,transparent);border-radius:7px;overflow:hidden;margin-bottom:10px}
+.td .seg span{padding:3px 12px;font-weight:700;font-size:12px}
+.td .seg .on{background:color-mix(in srgb,var(--acc) 35%,transparent)}
+.td .kv{display:grid;grid-template-columns:150px 1fr;gap:2px 10px;font-size:12.5px;margin:6px 0 10px}
+.td .kv b{font-weight:600;color:color-mix(in srgb,var(--fg) 55%,transparent)}
+.td .row{display:flex;gap:10px;align-items:center;border:1px solid color-mix(in srgb,var(--fg) 14%,transparent);
+  border-radius:8px;padding:7px 9px;margin:6px 0}
+.td .row.live{border-color:color-mix(in srgb,var(--acc) 60%,transparent)}
+.td .row.warn{border-color:color-mix(in srgb,var(--red) 85%,transparent)}
+.td .row.dim{opacity:.5}
+.td .row .g{font-size:16px;width:20px;text-align:center}
+.td .row .t{font-weight:800}
+.td .row .s{font-size:11px;color:color-mix(in srgb,var(--fg) 62%,transparent)}
+.td .row.warn .s{color:var(--red)}
+.td .notes{border-left:2px solid color-mix(in srgb,var(--fg) 25%,transparent);padding:4px 10px;margin:8px 0;font-size:12px;
+  color:color-mix(in srgb,var(--fg) 75%,transparent)}
+.td .band{background:color-mix(in srgb,var(--yel) 22%,transparent);border:1px solid color-mix(in srgb,var(--yel) 60%,transparent);
+  border-radius:7px;padding:5px 9px;font-size:12px;margin-bottom:10px}
+.td .ok{color:var(--grn)} .td .bad{color:var(--red)} .td .unk{color:color-mix(in srgb,var(--fg) 45%,transparent);font-style:italic}
+.td code{font-size:12px}
+.td pre{margin:6px 0;font-size:12px;padding:6px 9px}
+.pair .td{max-width:none;min-width:0;margin:0} .td pre{white-space:pre-wrap;overflow-wrap:anywhere}
+.amber{border-left:3px solid var(--yel);padding-left:10px}
+.redq{border-left:3px solid var(--red);padding-left:10px}
+.flow text{font-family:ui-monospace,monospace;font-size:13px;fill:var(--fg)}
+.flow .box{fill:color-mix(in srgb,var(--bg0) 70%,transparent);stroke:var(--blu);stroke-width:1.4}
+.flow .grn{stroke:var(--grn)} .flow .red{stroke:var(--red)} .flow .org{stroke:#e08a4a} .flow .yel{stroke:var(--yel)}
+.flow line,.flow path{stroke:color-mix(in srgb,var(--fg) 55%,transparent);stroke-width:1.3;fill:none}
+#fig-figure-2-what-a-window-restart-keeps .lbl{font-size:10px}
+.flow .lbl{font-size:11px;fill:color-mix(in srgb,var(--fg) 70%,transparent)}
+</style>
+</head>
+<body>
+<!--brief-content-->
+<header class="top"><div class="wrap">
+  <div class="eyebrow">Terminal Delight · update channels · Gate 1 mockups · 2026-11-02</div>
+  <h1>Settings → Updates, every state</h1>
+  <p class="lede">TD's settings live under ⚙ CONFIG, so the panel opens from there as UPDATES, drawn here in the shape of the existing ADMIN overlay. Version numbers in the stable mockups are illustrative. The dev commit is the real head of <code>dev/0.5.0</code> today.</p>
+  <nav class="sections"></nav>
+</div></header>
+<main class="wrap">
+  <div class="glass"><span class="h">Where it stands</span>
+    <p>The whole design rests on one fact found in the code: <b>your terminals live in the session host, a separate process that the update does not replace.</b> So almost every update swaps only the window, and the terminals never notice. The rare update that changes how the window talks to the host is the only one that can cost terminals, and it waits for you (figure 1). You answered the one question (it ships in 0.5.0), and your note about the cutover added section 09. Everything marked amber is a call I made, and any of it can be overturned.</p>
+  </div>
+
+  <section class="pane">
+    <h2 id="sec-what-one-press-of-update-does" data-brief-anchor="sec-what-one-press-of-update-does"><span class="n">01</span>What one press of Update does</h2>
+    <figure id="fig-figure-1-the-update-path-drawn" data-brief-anchor="fig-figure-1-the-update-path-drawn">
+      <span class="lbl">Figure 1 · the update path · drawn from the plan, not built yet</span>
+      <svg class="flow" viewBox="0 0 900 330" aria-label="Update flow: download, checksum, smoke check, then window-only restart or a staged full restart; any failure leaves the old build untouched">
+        <rect class="box" x="10" y="20" width="150" height="46" rx="8"/><text x="85" y="48" text-anchor="middle">Download</text>
+        <rect class="box" x="200" y="20" width="170" height="46" rx="8"/><text x="285" y="40" text-anchor="middle">Checksum</text><text class="lbl" x="285" y="57" text-anchor="middle">vs published .sha256</text>
+        <rect class="box" x="410" y="20" width="170" height="46" rx="8"/><text x="495" y="40" text-anchor="middle">Smoke check</text><text class="lbl" x="495" y="57" text-anchor="middle">new build runs --version</text>
+        <rect class="box" x="620" y="20" width="270" height="46" rx="8"/><text x="755" y="40" text-anchor="middle">Same window↔host wire?</text><text class="lbl" x="755" y="57" text-anchor="middle">install it beside the old one</text>
+        <line x1="160" y1="43" x2="200" y2="43"/><line x1="370" y1="43" x2="410" y2="43"/><line x1="580" y1="43" x2="620" y2="43"/>
+        <rect class="box grn" x="470" y="130" width="200" height="60" rx="8"/><text x="570" y="155" text-anchor="middle">Restart window</text><text class="lbl" x="570" y="174" text-anchor="middle">every terminal stays</text>
+        <rect class="box red" x="700" y="130" width="190" height="60" rx="8"/><text x="795" y="155" text-anchor="middle">You choose</text><text class="lbl" x="795" y="174" text-anchor="middle">now, or next cold start</text>
+        <path d="M700 66 L600 130"/><text class="lbl" x="600" y="100">yes</text>
+        <path d="M800 66 L800 130"/><text class="lbl" x="808" y="100">no</text>
+        <rect class="box org" x="10" y="250" width="570" height="56" rx="8"/><text x="295" y="274" text-anchor="middle">Any failure before the swap: new file deleted, old build untouched</text><text class="lbl" x="295" y="292" text-anchor="middle">the launcher or AppImage is never touched until all three checks pass</text>
+        <path d="M85 66 L85 250"/><path d="M285 66 L285 250"/><path d="M495 66 L495 250"/>
+      </svg>
+      <figcaption>Nothing you can see changes until three checks have passed, and terminals end only when someone presses a button that says they will. Green: ready. Red: a decision waits on you. Orange: the failure path.</figcaption>
+    </figure>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-stable-an-update-is-out" data-brief-anchor="sec-stable-an-update-is-out"><span class="n">02</span>Stable, an update is out</h2>
+    <div class="td" id="mock-stable-available" data-brief-anchor="mock-stable-available">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="seg"><span class="on">● STABLE</span><span>DEV</span></div>
+      <div class="kv">
+        <b>Running</b><span>0.5.0 · <code>a41c9e02</code> · 2026-11-20</span>
+        <b>Installed as</b><span>AppImage · ~/Applications/terminal-delight-x86_64.AppImage</span>
+        <b>Available</b><span class="ok">0.5.1 · published 2026-12-04</span>
+        <b>Last checked</b><span>just now</span>
+      </div>
+      <div class="notes">0.5.1 — the System Map remembers zoom per org; agent bands no longer flicker on resize; 4 more fixes… <u>full notes</u></div>
+      <div class="row live"><span class="g">⤓</span><div><div class="t">Update to 0.5.1</div><div class="s">38 MB · checked against the release's published checksum · your terminals keep running</div></div></div>
+      <div class="row"><span class="g">↻</span><div><div class="t">Check now</div><div class="s">asks GitHub's public release list — nothing about you is sent</div></div></div>
+      <div class="row"><span class="g">◷</span><div><div class="t">Check daily: off</div><div class="s">when on, a notification only — never downloads or installs</div></div></div>
+    </div>
+    <p class="amber" id="call-1" data-brief-anchor="call-1">Calls shown here: checking is manual (D5), the checksum is described as exactly what it is (D8), and the "nothing about you is sent" line is a promise the network request has to keep.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-downloaded-and-checked" data-brief-anchor="sec-downloaded-and-checked"><span class="n">03</span>Downloaded and checked</h2>
+    <div class="pair">
+    <div class="td" id="mock-ready-window-only" data-brief-anchor="mock-ready-window-only">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv"><b>Ready</b><span class="ok">0.5.1 installed beside 0.5.0 ✓ checksum ✓ starts</span></div>
+      <div class="row live"><span class="g">⟳</span><div><div class="t">Restart window</div><div class="s">your 23 terminals and 9 agents keep running — they live in the session host, not the window</div></div></div>
+      <div class="row"><span class="g">⏸</span><div><div class="t">Later</div><div class="s">0.5.1 opens the next time a window starts</div></div></div>
+      <div class="s unk">session host: still 0.5.0 (started Nov 20) — it updates at the next cold start, nothing to do</div>
+    </div>
+    <div class="td" id="mock-ready-host-change" data-brief-anchor="mock-ready-host-change">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv"><b>Ready</b><span class="ok">0.6.0 installed beside 0.5.1 ✓ checksum ✓ starts</span></div>
+      <div class="row warn"><span class="g">⚠</span><div><div class="t">This update changes how the window talks to your terminals</div><div class="s">installing it now ends your 23 open terminals and 9 agents</div></div></div>
+      <div class="row live"><span class="g">◷</span><div><div class="t">Install at next cold start</div><div class="s">default — runs the next time TD starts with no terminals open</div></div></div>
+      <div class="row"><span class="g">⏻</span><div><div class="t">Restart everything now</div><div class="s">ends 23 terminals · saved layout is restored, shells start fresh</div></div></div>
+    </div>
+    </div>
+    <p class="amber" id="call-2" data-brief-anchor="call-2">Left: the ordinary case (D1). Right: the rare case where the window and host stop speaking the same wire format (D2). The safe choice is the default, and the costly one names its cost in numbers.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-dev-channel" data-brief-anchor="sec-dev-channel"><span class="n">04</span>Dev channel</h2>
+    <div class="pair">
+    <div class="td" id="mock-dev-ci-build" data-brief-anchor="mock-dev-ci-build">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="seg"><span>STABLE</span><span class="on">● DEV</span></div>
+      <div class="band">⚗ Experimental. Dev builds are the unreleased work on <code>dev/0.5.0</code>. They pass CI, but nobody has lived on them for a week.</div>
+      <div class="kv">
+        <b>Running</b><span>0.5.0-dev · <code>cb8f3d8b</code> · 2026-10-31 19:02</span>
+        <b>Newest dev</b><span class="ok"><code>3e2f69bb</code> · 2026-11-02 · 3 commits ahead</span>
+        <b>Build</b><span class="ok">CI build available · checksum published</span>
+      </div>
+      <div class="notes">3e2f69bb Agents are pointed at the briefing skill…<br>d9aa472d Agent shades as rules and note boxes…<br>+1 more</div>
+      <div class="row live"><span class="g">⤓</span><div><div class="t">Update to 3e2f69bb</div><div class="s">your terminals keep running</div></div></div>
+      <div class="row"><span class="g">⇠</span><div><div class="t">Switch back to Stable</div><div class="s">see section 06</div></div></div>
+    </div>
+    <div class="td" id="mock-dev-source-only" data-brief-anchor="mock-dev-source-only">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="seg"><span>STABLE</span><span class="on">● DEV</span></div>
+      <div class="band">⚗ Experimental: unreleased work on <code>dev/0.5.0</code>.</div>
+      <div class="kv">
+        <b>Newest dev</b><span><code>3e2f69bb</code> · 2026-11-02</span>
+        <b>Build</b><span class="unk">no downloadable build for this commit</span>
+      </div>
+      <div class="row dim"><span class="g">⤓</span><div><div class="t">Update</div><div class="s">nothing to download — TD will not claim a build exists</div></div></div>
+      <div class="s">Build it from source:</div>
+<pre>git clone -b dev/0.5.0 https://github.com/parker-brown-family/terminal-delight
+cd terminal-delight && git checkout 3e2f69bb && cargo build --release</pre>
+    </div>
+    </div>
+    <p class="amber" id="call-3" data-brief-anchor="call-3">Right is today's reality for anyone without a GitHub login: CI builds every dev commit but keeps the build behind sign-in. Making the left panel real for everyone means posting a public dev build, which is a Gate 2 decision. The right panel is what shows until that exists.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-installs-td-will-not-touch" data-brief-anchor="sec-installs-td-will-not-touch"><span class="n">05</span>Installs TD will not touch</h2>
+    <div class="pair">
+    <div class="td" id="mock-source-checkout" data-brief-anchor="mock-source-checkout">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv">
+        <b>Running</b><span>0.5.0-dev · <code>3e2f69bb</code>+dirty</span>
+        <b>Installed as</b><span>source checkout · ~/src/terminal-delight</span>
+      </div>
+      <div class="row warn"><span class="g">✎</span><div><div class="t">3 files have uncommitted changes</div><div class="s">TD never pulls or rebuilds a checkout; your edits are yours</div></div></div>
+      <div class="s">To update this checkout yourself:</div>
+<pre>git -C ~/src/terminal-delight pull --ff-only
+cargo build --release --manifest-path ~/src/terminal-delight/Cargo.toml</pre>
+    </div>
+    <div class="td" id="mock-system-package" data-brief-anchor="mock-system-package">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv">
+        <b>Running</b><span>0.5.1</span>
+        <b>Installed as</b><span>system package · /usr/bin/terminal-delight</span>
+      </div>
+      <div class="row dim"><span class="g">⤓</span><div><div class="t">Update</div><div class="s">your package manager owns this install — update it there</div></div></div>
+      <div class="s">Check now still tells you whether a newer release exists.</div>
+    </div>
+    </div>
+    <p class="amber" id="call-4" data-brief-anchor="call-4">D6. No system package exists yet; the right panel is there so the day one does, TD refuses rather than overwriting it.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-going-back" data-brief-anchor="sec-going-back"><span class="n">06</span>Going back</h2>
+    <div class="pair">
+    <div class="td" id="mock-switch-to-stable" data-brief-anchor="mock-switch-to-stable">
+      <div class="hdr"><span>SWITCH TO STABLE</span><span>✕</span></div>
+      <div class="kv">
+        <b>You run</b><span>0.5.0-dev · <code>3e2f69bb</code></span>
+        <b>Newest stable</b><span>0.4.0 — older than what you run</span>
+      </div>
+      <div class="row live"><span class="g">⇠</span><div><div class="t">Follow Stable from here</div><div class="s">keep this build; the next stable release ≥ 0.5.0 replaces it</div></div></div>
+      <div class="row warn"><span class="g">⤵</span><div><div class="t">Install stable 0.4.0 now (older)</div><div class="s">settings and saved sessions written by 0.5.0 may not read back in 0.4.0</div></div></div>
+    </div>
+    <div class="td" id="mock-roll-back" data-brief-anchor="mock-roll-back">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv"><b>Previous build</b><span>0.5.0 · <code>a41c9e02</code> · kept 2026-12-04</span></div>
+      <div class="row live"><span class="g">↶</span><div><div class="t">Roll back to 0.5.0</div><div class="s">same rule as an update: window only, terminals keep running</div></div></div>
+    </div>
+    </div>
+    <p class="amber" id="call-5" data-brief-anchor="call-5">D3 and D4. The left panel shows the near future, when 0.4.0 is stable. Today the newest stable release is 0.3.0, so a literal "switch back" would trade 0.5 work for a build two releases older. That is why the default is to follow Stable from here.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-when-it-fails" data-brief-anchor="sec-when-it-fails"><span class="n">07</span>When it fails</h2>
+    <div class="td" id="mock-checksum-failure" data-brief-anchor="mock-checksum-failure">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="row warn"><span class="g">✕</span><div><div class="t">0.5.1 did not match its published checksum</div><div class="s">the download was deleted · 0.5.0 is untouched and still running · your terminals were never involved</div></div></div>
+      <div class="kv"><b>expected</b><span><code>9f2c…e41a</code></span><b>got</b><span class="bad"><code>03bd…77c0</code></span></div>
+      <div class="row"><span class="g">↻</span><div><div class="t">Try again</div><div class="s">downloads afresh</div></div></div>
+    </div>
+    <p>The same panel covers a failed download, a smoke check that does not start, and a full disk. Each one names its step and repeats the guarantee from figure 1.</p>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-the-one-question-for-you" data-brief-anchor="sec-the-one-question-for-you"><span class="n">08</span>Answered: it ships in 0.5.0</h2>
+    <div class="callout" id="ask-ship-in-0-5-0" data-brief-anchor="ask-ship-in-0-5-0"><p><b>You said "100% yes."</b> It is built on <code>dev/0.5.0</code>, and to make the November 13 candidate it has to pass the qualification run in the November 9–12 window: at least ten real updates with zero terminals lost, plus the backup checks in section 09.</p></div>
+  </section>
+
+  <section class="pane">
+    <h2 id="sec-what-survives-the-cutover" data-brief-anchor="sec-what-survives-the-cutover"><span class="n">09</span>What survives the cutover, and what is backed up</h2>
+    <p>You asked whether we are 100% sure nobody loses settings, agent state or running processes. <b>Not 100% today.</b> Figure 2 splits everything TD keeps into what has been measured to survive, what will be backed up, what is known to be lost and must be named, and what nobody has listed yet.</p>
+    <figure id="fig-figure-2-what-a-window-restart-keeps" data-brief-anchor="fig-figure-2-what-a-window-restart-keeps">
+      <span class="lbl">Figure 2 · what a window-only update keeps · from swap after-checks 2026-10-22/24/30 and a listing of Parker's own TD folders</span>
+      <svg class="flow" viewBox="0 0 900 215" aria-label="Four columns: measured to survive, backed up before every update, known lost and named, not yet listed">
+        <rect class="box grn" x="10" y="20" width="205" height="190" rx="8"/>
+        <text x="112" y="44" text-anchor="middle">Survives · measured</text>
+        <text class="lbl" x="22" y="74">session host process</text>
+        <text class="lbl" x="22" y="94">every shell + agent process</text>
+        <text class="lbl" x="22" y="114">saved layout + tabs</text>
+        <text class="lbl" x="22" y="134">MCP policy, window geometry</text>
+        <text class="lbl" x="22" y="164">36 / 33 / 22 terminals kept</text>
+        <text class="lbl" x="22" y="180">on three recorded swaps</text>
+        <rect class="box yel" x="235" y="20" width="205" height="190" rx="8"/>
+        <text x="337" y="44" text-anchor="middle">Backed up first · D9</text>
+        <text class="lbl" x="247" y="74">settings + layout (19 MB)</text>
+        <text class="lbl" x="247" y="94">Threshing Floor, agent records</text>
+        <text class="lbl" x="247" y="114">rest / wake, notes, handovers</text>
+        <text class="lbl" x="247" y="144">not copied: conversations,</text>
+        <text class="lbl" x="247" y="160">surfaces, brief backups, 1.2 GB</text>
+        <text class="lbl" x="247" y="176">— append-only; Gate 2 proves it</text>
+        <rect class="box org" x="460" y="20" width="205" height="190" rx="8"/>
+        <text x="562" y="44" text-anchor="middle">Lost · named first · D10</text>
+        <text class="lbl" x="472" y="74">closed tabs waiting for undo</text>
+        <text class="lbl" x="472" y="94">a floating document's scroll</text>
+        <text class="lbl" x="472" y="124">full restart only (D2):</text>
+        <text class="lbl" x="472" y="140">plain shells start fresh;</text>
+        <text class="lbl" x="472" y="156">agents resume with --resume</text>
+        <text class="lbl" x="472" y="172">where the harness allows (D11)</text>
+        <rect class="box" x="685" y="20" width="205" height="190" rx="8" style="stroke:color-mix(in srgb,var(--fg) 40%,transparent);stroke-dasharray:5 4"/>
+        <text x="787" y="44" text-anchor="middle">Not yet listed</text>
+        <text class="lbl" x="697" y="74">anything else the window</text>
+        <text class="lbl" x="697" y="90">holds only in memory</text>
+        <text class="lbl" x="697" y="120">Gate 2 lists it; the</text>
+        <text class="lbl" x="697" y="136">qualification run checks it</text>
+      </svg>
+      <figcaption>Running terminals and agents surviving a window restart has been measured, three times over. Settings are at risk only when going backwards, so the backup exists for rollback. The grey column is honest: until Gate 2 lists what the window holds only in memory, "nothing is lost" cannot be promised. Green: measured. Amber (yellow): my calls, D9–D11. Orange: known losses. Grey dashed: not yet known.</figcaption>
+    </figure>
+    <div class="td" id="mock-restart-names-losses" data-brief-anchor="mock-restart-names-losses">
+      <div class="hdr"><span>UPDATES</span><span>✕</span></div>
+      <div class="kv"><b>Ready</b><span class="ok">0.5.1 installed beside 0.5.0 ✓ checksum ✓ starts</span><b>Backup</b><span class="ok">settings + records saved · 2026-12-04 10:41 · 21 MB</span></div>
+      <div class="row live"><span class="g">⟳</span><div><div class="t">Restart window</div><div class="s">23 terminals and 9 agents keep running</div></div></div>
+      <div class="row warn"><span class="g">⚠</span><div><div class="t">2 closed tabs can still be reopened</div><div class="s">restarting the window lets them go — reopen them first if you want them</div></div></div>
+      <div class="row"><span class="g">⏸</span><div><div class="t">Later</div><div class="s">0.5.1 opens the next time a window starts</div></div></div>
+    </div>
+    <p class="amber" id="call-6" data-brief-anchor="call-6">D9–D11 are new and came from your note. Settings and small records are backed up before every install and restored with rollback, losses are named before the press, and a full restart brings agents back into their conversations where the harness supports it.</p>
+  </section>
+
+  <footer><p>Gate 1 of four for the update-channels feature, revised after your note. Source: <code>docs/plans/update-channels/01-product.md</code>. Nothing is built yet.</p></footer>
+</main>
+<!--/brief-content-->
+
+<!--BRIEF:notes--></body></html>

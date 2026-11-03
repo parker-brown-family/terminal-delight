@@ -1,0 +1,41 @@
+{
+  "harness": "Uninstall and default-terminal production modules copied unchanged; host socket and systemd functions are panic-only stubs, unused by these tests. No GUI linked.",
+  "cases": [
+    {
+      "guard": "protection",
+      "file": "app/src/uninstall/apply.rs",
+      "removed": "if let Some(p) = &fresh.protected {",
+      "replacement": "if let Some(p) = fresh.protected.as_ref().filter(|_| false) {",
+      "test": "uninstall::e2e::a_protected_machine_refuses_and_changes_nothing",
+      "exit": 101,
+      "caught": true
+    },
+    {
+      "guard": "fixture-confinement",
+      "file": "app/src/uninstall/plan.rs",
+      "removed": ".find(|p| !resolve_existing_prefix(p).starts_with(&home))",
+      "replacement": ".find(|_| false)",
+      "test": "uninstall::e2e::a_fixture_whose_directories_reach_outside_its_home_is_refused",
+      "exit": 101,
+      "caught": true
+    },
+    {
+      "guard": "reviewed-bytes",
+      "file": "app/src/uninstall.rs",
+      "removed": "if expect.is_some_and(|want| known::sha256_bytes(&bytes) != want) {",
+      "replacement": "if false && expect.is_some_and(|want| known::sha256_bytes(&bytes) != want) {",
+      "test": "uninstall::tests::a_changed_review_digest_cannot_stage_a_worker",
+      "exit": 101,
+      "caught": true
+    },
+    {
+      "guard": "confirmed-exited-process",
+      "file": "app/src/uninstall.rs",
+      "removed": "if matches!(state, Some('Z' | 'X')) {",
+      "replacement": "if false && matches!(state, Some('Z' | 'X')) {",
+      "test": "uninstall::tests::a_confirmed_exited_child_is_not_a_live_unreadable_td",
+      "exit": 101,
+      "caught": true
+    }
+  ]
+}

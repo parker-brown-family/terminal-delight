@@ -2,15 +2,212 @@
 //! tube registration, headers and effects still run on every parent frame.
 use super::*;
 
+#[derive(Clone, PartialEq)]
+pub(super) struct HistoryContext {
+    pub theme: Theme,
+    pub offset: usize,
+    pub alternate: bool,
+    pub cols: usize,
+    pub rows: usize,
+    pub inverted: bool,
+}
+
 #[derive(Default, PartialEq)]
 pub(super) struct Snapshot {
-    pub lines: styling::Lines,
+    pub lines: std::rc::Rc<styling::Lines>,
+    pub glyphs: styling::Lines,
     pub cell_h: f32,
+    pub cell_w: f32,
+    pub linger: theme::TextLinger,
+    pub context: Option<HistoryContext>,
     pub pad: (f32, f32),
     pub crawl: bool,
     /// The alpha of the phosphor bleed under every letter, or `None` for a
     /// clean grid — which is every design but Intrusive. See [`bleed_runs`].
     pub bleed: Option<f32>,
+    /// An agent's tinted bands by PAINTED row, drawn as lines over the grid.
+    /// Empty unless a skin owns the field. See [`styling::BandRow`].
+    pub bands: std::rc::Rc<styling::Bands>,
+    /// The ink of a band's rules, then of a note's box.
+    pub band_ink: (Hsla, Hsla),
+    /// The PAINTED cell the block cursor was drawn in this frame, `(row,
+    /// column)`, or `None` when no cursor was drawn.
+    pub cursor: Option<(usize, usize)>,
+    /// The cursor afterimage to draw, already resolved: `None` when it is
+    /// off, held by Clean, crawling, or the desktop asked for less motion.
+    pub cursor_trail: Option<theme::CursorTrail>,
+    /// The cursor's own graded ink, which its afterimage fades from.
+    pub cursor_ink: Hsla,
+}
+
+/// Where the cursor stood, fading. One block cell; a streak is several.
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct CursorGhost {
+    pub row: usize,
+    pub column: usize,
+    born: Instant,
+    lifetime: Duration,
+    intensity: f32,
+}
+
+impl CursorGhost {
+    /// Light left, `0..=intensity`: squared like the text's ordinary fade, so
+    /// most of it goes early and the tail is a faint glimmer.
+    pub fn alpha(&self, now: Instant) -> f32 {
+        let age = now.saturating_duration_since(self.born).as_secs_f32();
+        let left = (1.0 - age / self.lifetime.as_secs_f32()).clamp(0.0, 1.0);
+        self.intensity * left * left
+    }
+
+    fn alive(&self, now: Instant) -> bool {
+        now.saturating_duration_since(self.born) < self.lifetime
+    }
+}
+
+/// The most afterimages alive at once. A program repainting the screen
+/// can move the cursor hundreds of times a second; past this the oldest go.
+const CURSOR_GHOSTS_MAX: usize = 64;
+
+/// How long a hidden cursor still counts as standing where it was last drawn.
+/// Long enough to bridge a line editor's redraw, short enough that a cursor
+/// a program hid on purpose does not leave a trail when it comes back.
+const CURSOR_HIDDEN_GRACE: Duration = Duration::from_millis(250);
+
+/// The most of the cursor's light an afterimage keeps: it is drawn over the
+/// letters, and the character beneath it has to stay legible.
+const CURSOR_GHOST_OVER: f32 = 0.5;
+
+/// Record the cursor leaving `from` for `to`. An afterimage is one ghost at
+/// `from`; a streak along one row is a ghost in every cell it crossed, the far
+/// end born earliest so it goes dark first. Paint only: nothing here reads or
+/// writes the terminal.
+pub(super) fn cursor_moved(
+    ghosts: &mut std::collections::VecDeque<CursorGhost>,
+    from: (usize, usize),
+    to: (usize, usize),
+    trail: theme::CursorTrail,
+    now: Instant,
+) {
+    let Some(lifetime) = trail.lifetime() else {
+        ghosts.clear();
+        return;
+    };
+    let intensity = trail.intensity.clamp(0.0, 1.0);
+    let cells: Vec<(usize, Duration)> = match trail.style {
+        theme::CursorTrailStyle::Streak if from.0 == to.0 && from.1 != to.1 => {
+            // Nearest the cursor first, capped, so a long jump smears only
+            // the stretch it lands from.
+            let span = from
+                .1
+                .abs_diff(to.1)
+                .min(theme::CursorTrail::STREAK_MAX_CELLS);
+            let toward_from = |i: usize| {
+                if from.1 < to.1 {
+                    to.1 - i
+                } else {
+                    to.1 + i
+                }
+            };
+            (1..=span)
+                .map(|i| {
+                    // The far end is older by up to half a lifetime.
+                    let head = lifetime.mul_f32(0.5 * (i - 1) as f32 / span as f32);
+                    (toward_from(i), head)
+                })
+                .collect()
+        }
+        _ => vec![(from.1, Duration::ZERO)],
+    };
+    for (column, head) in cells {
+        // A cell already glowing is relit rather than stacked.
+        ghosts.retain(|g| !(g.row == from.0 && g.column == column));
+        ghosts.push_back(CursorGhost {
+            row: from.0,
+            column,
+            born: now.checked_sub(head).unwrap_or(now),
+            lifetime,
+            intensity,
+        });
+    }
+    // Never on the cell the cursor now occupies: the live block is there.
+    ghosts.retain(|g| (g.row, g.column) != to);
+    while ghosts.len() > CURSOR_GHOSTS_MAX {
+        ghosts.pop_front();
+    }
+}
+
+/// The desktop asked for less motion, read once. `TD_REDUCED_MOTION=1` (or
+/// `0`) decides it outright; otherwise the GNOME interface switch that GTK
+/// apps and portals honour, `enable-animations`, read through `gsettings`.
+/// Asked only while a cursor trail is on, so a window that never turns one
+/// on never runs the command.
+pub(crate) fn reduced_motion() -> bool {
+    static REDUCED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *REDUCED.get_or_init(|| {
+        match std::env::var("TD_REDUCED_MOTION").ok().as_deref() {
+            Some("1" | "true" | "yes") => return true,
+            Some("0" | "false" | "no") => return false,
+            _ => {}
+        }
+        std::process::Command::new("gsettings")
+            .args(["get", "org.gnome.desktop.interface", "enable-animations"])
+            .stderr(std::process::Stdio::null())
+            .output()
+            .ok()
+            .filter(|o| o.status.success())
+            .is_some_and(|o| String::from_utf8_lossy(&o.stdout).trim() == "false")
+    })
+}
+
+/// The lines that stand in for an agent's tinted fills: one rule above and one
+/// below each run of consecutive banded rows, and a hairline box round each
+/// note. Positions are in the grid's padded frame, as the afterglow's are.
+fn band_lines(s: &Snapshot) -> Vec<gpui::Div> {
+    let (rule_ink, note_ink) = s.band_ink;
+    let x = |col: usize| s.pad.0 + col as f32 * s.cell_w;
+    let y = |row: usize| s.pad.1 + row as f32 * s.cell_h;
+    let line = |left: f32, top: f32, width: f32| {
+        div()
+            .absolute()
+            .left(px(left))
+            .top(px(top))
+            .w(px(width))
+            .h(px(1.))
+            .bg(rule_ink)
+    };
+    let mut out = Vec::new();
+    let mut row = 0;
+    while row < s.bands.len() {
+        let Some((mut a, mut z)) = s.bands[row].rule else {
+            row += 1;
+            continue;
+        };
+        let first = row;
+        while let Some((a2, z2)) = s.bands.get(row + 1).and_then(|b| b.rule) {
+            a = a.min(a2);
+            z = z.max(z2);
+            row += 1;
+        }
+        let width = (z - a) as f32 * s.cell_w;
+        out.push(line(x(a), y(first), width));
+        out.push(line(x(a), y(row + 1) - 1., width));
+        row += 1;
+    }
+    for (row, band) in s.bands.iter().enumerate() {
+        for &(a, z) in &band.notes {
+            out.push(
+                div()
+                    .absolute()
+                    .left(px(x(a)))
+                    .top(px(y(row)))
+                    .w(px((z - a) as f32 * s.cell_w))
+                    .h(px(s.cell_h))
+                    .border_1()
+                    .border_color(note_ink),
+            );
+        }
+    }
+    out
 }
 
 /// The bleed: two rings of copies, and the alpha each ring takes of the bleed's
@@ -46,23 +243,137 @@ pub(super) fn bleed_runs(runs: &[TextRun], alpha: f32) -> Vec<TextRun> {
 #[derive(Default)]
 pub(super) struct GridPaint {
     snapshot: Snapshot,
+    trail: afterglow::Trail,
+    cursor_ghosts: std::collections::VecDeque<CursorGhost>,
+    /// Where a cursor that is hidden right now was last drawn, and when it
+    /// went. A program may hide the cursor while it redraws, so the frame
+    /// before a move can be one with no cursor in it; the afterimage starts
+    /// from here instead, within [`CURSOR_HIDDEN_GRACE`] of the hiding. A
+    /// cursor that is showing needs none of this: the last frame says where.
+    last_cursor: Option<((usize, usize), Instant)>,
+    live: Option<gpui::Entity<LiveGrid>>,
     #[cfg(test)]
     pub renders: std::rc::Rc<std::cell::Cell<usize>>,
 }
 
+#[derive(Default, PartialEq)]
+struct LiveSnapshot {
+    lines: std::rc::Rc<styling::Lines>,
+    cell_h: f32,
+    cell_w: f32,
+    crawl: bool,
+    bleed: Option<f32>,
+    font_size: Option<f32>,
+}
+
+#[derive(Default)]
+struct LiveGrid {
+    snapshot: LiveSnapshot,
+    #[cfg(test)]
+    renders: std::rc::Rc<std::cell::Cell<usize>>,
+}
+
 impl GridPaint {
+    pub fn is_animating(&self) -> bool {
+        !self.trail.glyphs.is_empty() || !self.cursor_ghosts.is_empty()
+    }
+
+    pub fn clear_afterglow(&mut self) {
+        self.trail.clear();
+        self.cursor_ghosts.clear();
+        self.last_cursor = None;
+        self.snapshot.context = None;
+    }
+
     pub fn replace_if_changed(view: &mut gpui::Entity<Self>, snapshot: Snapshot, cx: &mut App) {
         // Final painted rows include selection, cursor, colours and inversion.
         // A generation counter would miss UI changes without new output.
         if view.read(cx).snapshot != snapshot {
+            let previous = view.read(cx);
+            let mut trail = previous.trail.clone();
+            let mut cursor_ghosts = previous.cursor_ghosts.clone();
+            let now = cx.background_executor().now();
+            // Where the cursor stood: the last frame's, however long it sat
+            // there, or else where it was hidden, if that was moments ago.
+            let hidden = previous
+                .last_cursor
+                .filter(|(_, at)| now.saturating_duration_since(*at) < CURSOR_HIDDEN_GRACE);
+            let from = previous.snapshot.cursor.or(hidden.map(|(at, _)| at));
+            let mut last_cursor = match (snapshot.cursor, previous.snapshot.cursor) {
+                (Some(_), _) => None,
+                (None, Some(was)) => Some((was, now)),
+                (None, None) => hidden,
+            };
+            let compatible = previous.snapshot.context.is_some()
+                && previous.snapshot.context == snapshot.context
+                && previous.snapshot.cell_h == snapshot.cell_h
+                && previous.snapshot.cell_w == snapshot.cell_w
+                && previous.snapshot.pad == snapshot.pad
+                && previous.snapshot.crawl == snapshot.crawl;
+            if compatible {
+                if previous.snapshot.linger != snapshot.linger {
+                    trail.retime(snapshot.linger, cx.background_executor().now());
+                }
+                trail.observe(
+                    &previous.snapshot.glyphs,
+                    &snapshot.glyphs,
+                    cx.background_executor().now(),
+                    snapshot.linger,
+                    snapshot
+                        .context
+                        .as_ref()
+                        .map_or(afterglow::MIN_GLYPH_BUDGET, |c| {
+                            c.cols
+                                .saturating_mul(c.rows)
+                                .max(afterglow::MIN_GLYPH_BUDGET)
+                        }),
+                );
+                // The cursor's afterimage, from where it stood to where it is
+                // drawn now.
+                match (snapshot.cursor_trail, from, snapshot.cursor) {
+                    (None, ..) => cursor_ghosts.clear(),
+                    (Some(cursor_trail), Some(from), Some(to)) if from != to => {
+                        cursor_moved(&mut cursor_ghosts, from, to, cursor_trail, now);
+                    }
+                    _ => {}
+                }
+            } else {
+                trail.clear();
+                cursor_ghosts.clear();
+                last_cursor = None;
+            }
             #[cfg(test)]
             let renders = view.read(cx).renders.clone();
+            let live_snapshot = LiveSnapshot {
+                lines: snapshot.lines.clone(),
+                cell_h: snapshot.cell_h,
+                cell_w: snapshot.cell_w,
+                crawl: snapshot.crawl,
+                bleed: snapshot.bleed,
+                font_size: snapshot.context.as_ref().map(|c| c.theme.font_size),
+            };
+            let live = previous
+                .live
+                .as_ref()
+                .filter(|live| live.read(cx).snapshot == live_snapshot)
+                .cloned();
+            let live = live.unwrap_or_else(|| {
+                cx.new(|_| LiveGrid {
+                    snapshot: live_snapshot,
+                    #[cfg(test)]
+                    renders: Default::default(),
+                })
+            });
             // GPUI collects dirty views BEFORE rendering the parent. Notifying
             // an existing child here is too late for this frame. An immutable
             // replacement has no old paint to reuse, so the change is visible
             // in this very frame, with no extra frame scheduled to catch up.
             *view = cx.new(|_| Self {
                 snapshot,
+                trail,
+                cursor_ghosts,
+                last_cursor,
+                live: Some(live),
                 #[cfg(test)]
                 renders,
             });
@@ -71,17 +382,83 @@ impl GridPaint {
 }
 
 impl Render for GridPaint {
-    fn render(&mut self, _: &mut Window, _: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         #[cfg(test)]
         {
             self.renders.set(self.renders.get() + 1);
         }
+        let now = cx.background_executor().now();
+        self.trail.prune(now);
+        self.cursor_ghosts.retain(|g| g.alive(now));
+        if self.is_animating() {
+            window.request_animation_frame();
+        }
         let s = &self.snapshot;
+        let ink = s.cursor_ink;
         div()
+            .relative()
+            .w_full()
+            .h(px(s.cell_h * s.lines.len() as f32 + 2.0 * s.pad.1))
             .px(px(s.pad.0))
             .py(px(s.pad.1))
             .flex()
             .flex_col()
+            .children(self.live.clone().map(|live| {
+                gpui::AnyView::from(live).cached(
+                    gpui::StyleRefinement::default()
+                        .w_full()
+                        .h(px(s.cell_h * s.lines.len() as f32)),
+                )
+            }))
+            .children(self.trail.paint_groups(now).into_iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .map(|d| {
+                        if s.crawl {
+                            d.left(gpui::relative(0.5)).ml(px((ghost.column as f32
+                                - ghost.leading_columns as f32
+                                - ghost.line_columns as f32 * 0.5)
+                                * s.cell_w))
+                        } else {
+                            d.left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                        }
+                    })
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .h(px(s.cell_h))
+                    .whitespace_nowrap()
+                    .child(StyledText::new(ghost.text).with_runs(ghost.runs))
+            }))
+            // Over the letters, at most half the cursor's own light, so the
+            // character under a fading block still reads. It was drawn under
+            // them first, and on the private-display rig a block behind text
+            // never showed: only the blank cells past a line's end glowed.
+            .children(self.cursor_ghosts.iter().map(|ghost| {
+                div()
+                    .absolute()
+                    .left(px(s.pad.0 + ghost.column as f32 * s.cell_w))
+                    .top(px(s.pad.1 + ghost.row as f32 * s.cell_h))
+                    .w(px(s.cell_w))
+                    .h(px(s.cell_h))
+                    .bg(ink.alpha(ink.a * CURSOR_GHOST_OVER * ghost.alpha(now)))
+            }))
+            // A crawl centres every line, so grid columns no longer place them.
+            .when(!s.crawl, |d| d.children(band_lines(s)))
+    }
+}
+
+impl Render for LiveGrid {
+    fn render(&mut self, _window: &mut Window, _cx: &mut Context<Self>) -> impl IntoElement {
+        #[cfg(test)]
+        self.renders.set(self.renders.get() + 1);
+        let s = &self.snapshot;
+        div()
+            .relative()
+            .flex()
+            .flex_col()
+            .map(|d| match s.font_size {
+                Some(size) => d.text_size(px(size)),
+                None => d,
+            })
             .children(s.lines.iter().cloned().map(|(text, runs)| {
                 if s.crawl {
                     return match crawl_centered_runs(text, runs) {
@@ -128,6 +505,821 @@ mod tests {
     use super::*;
     use crate::pane::harness::Pane;
     use gpui::TestAppContext;
+
+    #[gpui::test]
+    fn fading_letters_reuse_the_live_grid_even_in_intrusive(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, _| {
+            let mut choice = theme::house_outer();
+            choice.id = "intrusive".into();
+            choice.palette = None;
+            choice.follow_omarchy = Some(false);
+            v.appearance.set_theme(theme::ThemeGroup::of(&choice));
+            let mut grade = theme::Grade::neutral();
+            grade.crt = true;
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+        });
+        pane.settle_size();
+        pane.view.update(pane.cx, |v, cx| {
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HOLD");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HNEW"));
+        pane.redraw();
+        let (live, rendered, animated) = pane.view.read_with(pane.cx, |v, cx| {
+            let grid = v.grid_paint.read(cx);
+            let live = grid.live.clone().unwrap();
+            let rendered = live.read(cx).renders.get();
+            (live, rendered, grid.renders.get())
+        });
+        assert!(rendered > 0);
+        for _ in 0..4 {
+            pane.cx.executor().advance_clock(Duration::from_millis(40));
+            pane.view.update(pane.cx, |v, cx| {
+                v.grid_paint.update(cx, |_, cx| cx.notify());
+            });
+            pane.redraw();
+            pane.view.read_with(pane.cx, |v, cx| {
+                let grid = v.grid_paint.read(cx);
+                assert_eq!(grid.live.as_ref().unwrap().entity_id(), live.entity_id());
+                assert_eq!(
+                    live.read(cx).renders.get(),
+                    rendered,
+                    "fade laid out live letters again"
+                );
+                assert!(!grid.trail.glyphs.is_empty());
+            });
+        }
+        assert!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).renders.get())
+                > animated,
+            "fixture did not draw the animated layer"
+        );
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HFRESH"));
+        pane.redraw();
+        pane.view.read_with(pane.cx, |v, cx| {
+            let fresh = v.grid_paint.read(cx).live.as_ref().unwrap().read(cx);
+            assert!(fresh
+                .snapshot
+                .lines
+                .iter()
+                .any(|(text, _)| text.contains("FRESH")));
+            assert_ne!(
+                v.grid_paint.read(cx).live.as_ref().unwrap().entity_id(),
+                live.entity_id(),
+                "new output reused stale live text"
+            );
+        });
+    }
+
+    /// Skin is chrome, design is texture, and crawl/glass are independent.
+    /// Exercise the actual pane and GPU registration for every embedded pair;
+    /// additions to either registry automatically join this regression.
+    #[gpui::test]
+    fn lighting_and_erasure_work_in_every_skin_design_glass_and_crawl_combination(
+        cx: &mut TestAppContext,
+    ) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        let skins = pane.view.read_with(pane.cx, |_, cx| {
+            cx.global::<crate::skin::SkinRegistry>()
+                .builtins
+                .iter()
+                .map(|(id, _)| id.clone())
+                .collect::<Vec<_>>()
+        });
+        assert!(!skins.is_empty());
+        for skin in &skins {
+            for design in theme::builtin_ids() {
+                for glass in [false, true] {
+                    for crawl in [false, true] {
+                        let case = format!("{skin}/{design}/glass={glass}/crawl={crawl}");
+                        pane.cx.update(|window, cx| {
+                            crate::skin::select(cx, skin).unwrap();
+                            window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
+                        });
+                        pane.view.update(pane.cx, |v, cx| {
+                            let mut choice = theme::house_outer();
+                            choice.id = design.into();
+                            choice.seed = None;
+                            choice.palette = None;
+                            choice.follow_omarchy = Some(false);
+                            v.appearance.set_theme(theme::ThemeGroup::of(&choice));
+                            let mut grade = theme::Grade::neutral();
+                            grade.text = 0.8;
+                            grade.crt = glass;
+                            grade.crawl = crawl;
+                            grade.afterglow_ms = Some(220.0);
+                            v.appearance.grade = Some(grade);
+                            v.appearance.pins = theme::GradePins::all();
+                            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+                        });
+                        // Resizing deliberately invalidates retained positions.
+                        // Finish the style's real PTY resize before erasing.
+                        pane.settle_size();
+                        pane.view.update(pane.cx, |v, cx| {
+                            let mut term = v.session.term.lock();
+                            term.advance(b"\x1b[2J\x1b[H\x1b[31mPHOSPHOR\x1b[0m\x1b[1;2H");
+                            term.start_selection(
+                                SelectionType::Simple,
+                                TermPoint::new(Line(0), Column(0)),
+                                Side::Left,
+                            );
+                            term.update_selection(TermPoint::new(Line(0), Column(8)), Side::Left);
+                            drop(term);
+                            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+                        });
+                        crate::warp::set_suppressed(false);
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        let active_glows = crate::warp::rect_glows();
+                        if design == theme::CLEAN {
+                            // Clean holds the light off, whatever the dials say:
+                            // nothing glows and nothing erased lingers.
+                            assert!(
+                                active_glows.iter().all(|g| g.abs() < 1e-5),
+                                "Clean lit the letters: {case}"
+                            );
+                            let linger = pane
+                                .view
+                                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger);
+                            assert_eq!(
+                                (linger.cursor_ms, linger.off_cursor_ms),
+                                (0.0, 0.0),
+                                "Clean lingers: {case}"
+                            );
+                            continue;
+                        }
+                        let expected_glow = if design == "intrusive" { 0.37 } else { 0.20 };
+                        assert!(!active_glows.is_empty(), "no GPU tube: {case}");
+                        assert!(
+                            active_glows
+                                .iter()
+                                .all(|g| (*g - expected_glow).abs() < 1e-5),
+                            "wrong active GPU glow: {case}"
+                        );
+                        let saved = pane.read(|v| v.appearance.clone());
+                        let before = pane.view.read_with(pane.cx, |v, cx| {
+                            let s = &v.grid_paint.read(cx).snapshot;
+                            (s.context.clone().unwrap(), s.cell_w, s.cell_h, s.pad)
+                        });
+                        let colour = pane.view.read_with(pane.cx, |v, cx| {
+                            let grid = v.grid_paint.read(cx);
+                            assert_eq!(
+                                grid.snapshot.linger,
+                                theme::Grade::default().linger_for_focus(true),
+                                "{case}"
+                            );
+                            assert_eq!(grid.snapshot.crawl, crawl, "{case}");
+                            grid.snapshot
+                                .glyphs
+                                .iter()
+                                .find(|(text, _)| text.contains("PHOSPHOR"))
+                                .unwrap()
+                                .1[0]
+                                .color
+                        });
+                        pane.read(|v| {
+                            let mut term = v.session.term.lock();
+                            term.clear_selection();
+                            term.advance(b"\x1b[2J\x1b[H>");
+                        });
+                        pane.redraw();
+                        pane.cx.executor().advance_clock(Duration::from_millis(500));
+                        pane.read(|v| v.session.term.lock().advance(b"\x1b[1;2H"));
+                        pane.redraw();
+                        pane.view.read_with(pane.cx, |v, cx| {
+                            let grid = v.grid_paint.read(cx);
+                            assert!(
+                                grid.snapshot
+                                    .lines
+                                    .iter()
+                                    .any(|(text, _)| text.contains('>')),
+                                "new text delayed: {case}"
+                            );
+                            assert_eq!(
+                                grid.trail
+                                    .glyphs
+                                    .iter()
+                                    .map(|g| g.text.as_str())
+                                    .collect::<String>(),
+                                "PHOSPHOR",
+                                "incomplete erasure: {case}; context={} theme={} cells={:?}->{:?}; pad={:?}->{:?}; grid={:?}->{:?}",
+                                before.0 == *grid.snapshot.context.as_ref().unwrap(),
+                                before.0.theme == grid.snapshot.context.as_ref().unwrap().theme,
+                                (before.1, before.2), (grid.snapshot.cell_w, grid.snapshot.cell_h),
+                                before.3, grid.snapshot.pad,
+                                (before.0.cols, before.0.rows, before.0.offset, before.0.inverted),
+                                { let c = grid.snapshot.context.as_ref().unwrap(); (c.cols, c.rows, c.offset, c.inverted) }
+                            );
+                            for ghost in &grid.trail.glyphs {
+                                assert_eq!(
+                                    ghost.run.color, colour,
+                                    "decorated ghost colour: {case}"
+                                );
+                                assert!(ghost.run.background_color.is_none(), "{case}");
+                                assert!(
+                                    ghost.opacity(cx.background_executor().now()) > 0.0,
+                                    "expired early: {case}"
+                                );
+                            }
+                        });
+                        pane.cx.executor().advance_clock(Duration::from_millis(150));
+                        // The headless platform drops on_request_frame
+                        // callbacks. Deliver the same child notification that
+                        // request_animation_frame supplies on the native one.
+                        pane.view.update(pane.cx, |v, cx| {
+                            v.grid_paint.update(cx, |_, cx| cx.notify());
+                        });
+                        pane.redraw();
+                        assert!(
+                            pane.view.read_with(pane.cx, |v, cx| v
+                                .grid_paint
+                                .read(cx)
+                                .trail
+                                .glyphs
+                                .is_empty()),
+                            "not expired at650ms: {case}"
+                        );
+
+                        pane.cx.update(|window, _| window.blur());
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        let inactive_glows = crate::warp::rect_glows();
+                        assert!(!inactive_glows.is_empty(), "no inactive GPU tube: {case}");
+                        assert!(
+                            inactive_glows.iter().all(|g| *g == 1.0),
+                            "wrong inactive glow: {case}"
+                        );
+                        let fraction = if design == "intrusive" { 0.52 } else { 0.45 };
+                        let text = pane.view.read_with(pane.cx, |v, cx| {
+                            v.grid_paint
+                                .read(cx)
+                                .snapshot
+                                .context
+                                .as_ref()
+                                .unwrap()
+                                .theme
+                                .grade
+                                .text
+                        });
+                        assert!(
+                            (text - 0.8 * fraction).abs() < 1e-5,
+                            "wrong inactive text: {case}"
+                        );
+                        assert!(
+                            pane.read(|v| v.appearance == saved),
+                            "focus mutated settings: {case}"
+                        );
+
+                        // An explicit off is a matched negative control in the
+                        // same real pane, rather than an absent observation.
+                        pane.view.update(pane.cx, |v, _| {
+                            let grade = v.appearance.grade.as_mut().unwrap();
+                            grade.image_glow = Some(0.0);
+                            grade.inactive_image_glow = Some(0.0);
+                            grade.afterglow_ms = Some(0.0);
+                            v.session.term.lock().advance(b"\x1b[2J\x1b[HCONTROL");
+                        });
+                        crate::warp::begin_frame();
+                        pane.redraw();
+                        pane.read(|v| v.session.term.lock().advance(b"\x1b[2J\x1b[H>"));
+                        pane.redraw();
+                        assert!(
+                            crate::warp::rect_glows().iter().all(|g| *g == 0.0),
+                            "off still glows: {case}"
+                        );
+                        assert!(
+                            pane.view.read_with(pane.cx, |v, cx| v
+                                .grid_paint
+                                .read(cx)
+                                .trail
+                                .glyphs
+                                .is_empty()),
+                            "off retains glyphs: {case}"
+                        );
+                    }
+                }
+            }
+        }
+    }
+
+    /// ACTIVE TERMINALS brightness lifts the focused pane's text and ground
+    /// by its gain and gives it back the moment the pane loses focus; unset,
+    /// the focused pane is drawn exactly as before the gauge existed.
+    #[gpui::test]
+    fn active_brightness_lifts_only_the_focused_pane(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'bright fixture\\n'; exec cat");
+        pane.wait_for("bright fixture");
+        let levels = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                let g = v
+                    .grid_paint
+                    .read(cx)
+                    .snapshot
+                    .context
+                    .as_ref()
+                    .unwrap()
+                    .theme
+                    .grade;
+                (g.text, g.background)
+            })
+        };
+        let dress = |pane: &mut Pane, gain: Option<f32>| {
+            pane.view.update(pane.cx, |v, cx| {
+                let mut grade = theme::Grade::neutral();
+                grade.active_brightness = gain;
+                grade.inactive_text = Some(1.0);
+                v.appearance.grade = Some(grade);
+                v.appearance.pins = theme::GradePins::all();
+                cx.notify();
+            });
+            pane.redraw();
+        };
+        dress(&mut pane, None);
+        assert_eq!(levels(&mut pane), (0.5, 0.5), "unset is the old look");
+        dress(&mut pane, Some(1.5));
+        let (text, ground) = levels(&mut pane);
+        assert!((text - 0.75).abs() < 1e-4 && (ground - 0.75).abs() < 1e-4);
+        // Half again the level is half again the lightness, text and ground.
+        let ink = gpui::hsla(0.3, 0.5, 0.4, 1.0);
+        let lifted = |ch| {
+            let mut g = theme::Grade::neutral();
+            g.text = text;
+            g.background = ground;
+            graded(ink, &g, ch).l
+        };
+        assert!((lifted(Channel::Text) - 0.6).abs() < 1e-4);
+        assert!((lifted(Channel::Bg) - 0.6).abs() < 1e-4);
+        pane.cx.update(|window, _| window.blur());
+        pane.redraw();
+        assert_eq!(
+            levels(&mut pane),
+            (0.5, 0.5),
+            "an unfocused pane is not lifted"
+        );
+    }
+
+    #[gpui::test]
+    fn real_focus_changes_only_the_drawn_terminal_text(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'focus fixture\\n'; exec cat");
+        pane.wait_for("focus fixture");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.text = 0.8;
+            grade.afterglow_ms = Some(0.0);
+            grade.cursor_linger_ms = Some(80.0);
+            grade.off_cursor_linger_ms = Some(320.0);
+            grade.inactive_cursor_linger_ms = Some(30.0);
+            grade.inactive_off_cursor_linger_ms = Some(120.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            cx.notify();
+        });
+        pane.redraw();
+        let before = pane.read(|v| v.appearance.clone());
+        let active = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((active - 0.8).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
+        pane.cx.update(|window, _| window.blur());
+        pane.redraw();
+        let inactive = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((inactive - 0.36).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 30.0,
+                off_cursor_ms: 120.0
+            }
+        );
+        pane.cx.update(|window, cx| {
+            window.focus(&pane.view.read(cx).focus_handle.clone(), cx);
+        });
+        pane.redraw();
+        assert!(
+            pane.read(|v| v.appearance == before),
+            "focus changed saved settings"
+        );
+        let active_again = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .snapshot
+                .context
+                .as_ref()
+                .unwrap()
+                .theme
+                .grade
+                .text
+        });
+        assert!((active_again - active).abs() < 0.001);
+        assert_eq!(
+            pane.view
+                .read_with(pane.cx, |v, cx| v.grid_paint.read(cx).snapshot.linger),
+            theme::TextLinger {
+                cursor_ms: 80.0,
+                off_cursor_ms: 320.0
+            }
+        );
+    }
+
+    #[gpui::test]
+    fn adjusting_one_linger_slider_does_not_clear_the_other_trail(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.settle();
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_linger_ms = Some(220.0);
+            grade.off_cursor_linger_ms = Some(650.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[?25l\x1b[2J\x1b[HAB");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KA"));
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[H\x1b[2KC"));
+        pane.redraw();
+        let text = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                v.grid_paint
+                    .read(cx)
+                    .trail
+                    .glyphs
+                    .iter()
+                    .map(|g| g.text.as_str())
+                    .collect::<String>()
+            })
+        };
+        assert_eq!(text(&mut pane), "BA");
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "disabling short linger cleared the erased string"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance
+                .grade
+                .as_mut()
+                .unwrap()
+                .inactive_off_cursor_linger_ms = Some(0.0);
+        });
+        pane.redraw();
+        assert_eq!(
+            text(&mut pane),
+            "B",
+            "an inactive dial changed an active trail"
+        );
+        pane.view.update(pane.cx, |v, _| {
+            v.appearance.grade.as_mut().unwrap().off_cursor_linger_ms = Some(100.0);
+        });
+        pane.redraw();
+        assert!(
+            text(&mut pane).is_empty(),
+            "retiming renewed the trail's birth"
+        );
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .snapshot
+            .lines
+            .iter()
+            .any(|(s, _)| s.contains('C'))));
+    }
+
+    #[gpui::test]
+    fn an_erased_paragraph_survives_bottom_alignment_and_cursor_motion(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.afterglow_ms = Some(220.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[HWHOLE WORD\r\nSECOND ROW\r\nFINAL ROW");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        let old_offset = pane.read(|v| v.paint_offset);
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[2J\x1b[H>"));
+        pane.redraw();
+        assert_ne!(
+            old_offset,
+            pane.read(|v| v.paint_offset),
+            "fixture must move bottom alignment"
+        );
+        let erased = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(
+            erased
+                .iter()
+                .map(|(_, _, s)| s.as_str())
+                .collect::<String>(),
+            "WHOLEWORDSECONDROWFINALROW"
+        );
+        pane.cx.executor().advance_clock(Duration::from_millis(260));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[1;3H"));
+        pane.redraw();
+        let after_cursor = pane.view.read_with(pane.cx, |v, cx| {
+            v.grid_paint
+                .read(cx)
+                .trail
+                .glyphs
+                .iter()
+                .map(|g| (g.row, g.column, g.text.clone()))
+                .collect::<Vec<_>>()
+        });
+        assert_eq!(after_cursor, erased);
+        pane.cx.executor().advance_clock(Duration::from_millis(390));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+    }
+
+    #[gpui::test]
+    fn live_grid_shows_new_text_while_old_glyphs_expire_and_clear_on_cover(
+        cx: &mut TestAppContext,
+    ) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.afterglow_ms = Some(200.0);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[2J\x1b[HOLD");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HNEW"));
+        pane.redraw();
+        let (new_is_live, ghosts) = pane.view.read_with(pane.cx, |v, cx| {
+            let grid = v.grid_paint.read(cx);
+            (
+                grid.snapshot
+                    .lines
+                    .iter()
+                    .any(|(text, _)| text.contains("NEW")),
+                grid.trail.glyphs.len(),
+            )
+        });
+        assert!(new_is_live, "new text was delayed");
+        assert!(ghosts > 0, "replaced letters left no afterglow");
+        pane.cx.executor().advance_clock(Duration::from_millis(250));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[HOLD"));
+        pane.redraw();
+        pane.view.update(pane.cx, |v, cx| {
+            v.set_face(crate::workbench::Face::Workbench, cx)
+        });
+        pane.redraw();
+        assert!(pane.view.read_with(pane.cx, |v, cx| v
+            .grid_paint
+            .read(cx)
+            .trail
+            .glyphs
+            .is_empty()));
+    }
+
+    /// The cursor's afterimage: where the block stood keeps light after it
+    /// moves, never where it now is, fades out on its own clock, and leaves
+    /// nothing when the trail is off. The terminal's cursor is untouched.
+    #[gpui::test]
+    fn a_moved_cursor_leaves_an_afterimage_that_fades(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        let trail = theme::CursorTrail {
+            ms: 200.0,
+            ..theme::CursorTrail::first()
+        };
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_trail = Some(trail);
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session.term.lock().advance(b"\x1b[2J\x1b[3;5H");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        let at = |pane: &mut Pane| {
+            pane.view.read_with(pane.cx, |v, cx| {
+                let g = v.grid_paint.read(cx);
+                (
+                    g.snapshot.cursor,
+                    g.cursor_ghosts
+                        .iter()
+                        .map(|c| (c.row, c.column))
+                        .collect::<Vec<_>>(),
+                )
+            })
+        };
+        let (before, ghosts) = at(&mut pane);
+        let before = before.expect("a drawn cursor");
+        assert!(ghosts.is_empty(), "nothing moved yet");
+        let cursor_before = pane.read(|v| v.session.term.lock().renderable_content().cursor.point);
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[3;12H"));
+        pane.redraw();
+        let (after, ghosts) = at(&mut pane);
+        let after = after.expect("a drawn cursor");
+        assert_ne!(before, after);
+        assert_eq!(ghosts, vec![before], "one afterimage, where it was");
+        assert!(!ghosts.contains(&after), "never under the live cursor");
+        // Paint only: the terminal's cursor is where the program put it.
+        let cursor_after = pane.read(|v| v.session.term.lock().renderable_content().cursor.point);
+        assert_eq!(cursor_after.column.0, 11);
+        assert_eq!(cursor_after.line, cursor_before.line);
+        // A line editor hides the cursor while it redraws, so the frame before
+        // a move often has none: the afterimage starts where it was last drawn.
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[?25l"));
+        pane.redraw();
+        pane.cx.executor().advance_clock(Duration::from_millis(100));
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[3;20H\x1b[?25h"));
+        pane.redraw();
+        let (hidden_hop, ghosts) = at(&mut pane);
+        assert!(
+            ghosts.contains(&after),
+            "a hidden redraw lost the afterimage: {ghosts:?} {hidden_hop:?}"
+        );
+        // It goes dark on its own clock.
+        pane.cx.executor().advance_clock(Duration::from_millis(250));
+        pane.cx.update(|window, _| window.refresh());
+        pane.cx.run_until_parked();
+        assert!(
+            at(&mut pane).1.is_empty(),
+            "the afterimage outlived its lifetime"
+        );
+        // Switched off, a move leaves nothing — and the switch keeps the dials.
+        pane.view.update(pane.cx, |v, cx| {
+            if let Some(g) = v.appearance.grade.as_mut() {
+                g.cursor_trail = Some(theme::CursorTrail { on: false, ..trail });
+            }
+            cx.notify();
+        });
+        pane.redraw();
+        pane.read(|v| v.session.term.lock().advance(b"\x1b[5;2H"));
+        pane.redraw();
+        assert!(at(&mut pane).1.is_empty(), "off means off");
+    }
+
+    /// A carriage return back over a line of text leaves its afterimage too.
+    #[gpui::test]
+    fn a_return_over_text_leaves_an_afterimage(cx: &mut TestAppContext) {
+        let mut pane = Pane::running(cx, "printf 'ready\\n'; exec cat");
+        pane.wait_for("ready");
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = theme::Grade::neutral();
+            grade.cursor_trail = Some(theme::CursorTrail::first());
+            v.appearance.grade = Some(grade);
+            v.appearance.pins = theme::GradePins::all();
+            v.session
+                .term
+                .lock()
+                .advance(b"\x1b[2J\x1b[3;1Hecho the cursor leaves a trail");
+            v.grid_paint.update(cx, |g, _| g.clear_afterglow());
+            cx.notify();
+        });
+        pane.redraw();
+        // A person reads before pressing Home: the cursor has sat still for
+        // seconds, and where it sat is still where the afterimage starts.
+        pane.cx.executor().advance_clock(Duration::from_secs(2));
+        pane.read(|v| v.session.term.lock().advance(b"\r"));
+        pane.redraw();
+        let (cursor, ghosts) = pane.view.read_with(pane.cx, |v, cx| {
+            let g = v.grid_paint.read(cx);
+            (g.snapshot.cursor, g.cursor_ghosts.len())
+        });
+        assert_eq!(cursor.map(|c| c.1), Some(0));
+        assert_eq!(ghosts, 1, "the return left no afterimage");
+    }
+
+    /// A streak lights every cell the cursor crossed on its row, nearest
+    /// first, the far end older so it goes dark first; capped, so a jump
+    /// across a wide line never lays a bar of light down it. Another row, or
+    /// the afterimage style, is one block.
+    #[test]
+    fn a_streak_lights_the_cells_crossed_and_an_afterimage_one() {
+        use std::collections::VecDeque;
+        let now = Instant::now();
+        let streak = theme::CursorTrail {
+            style: theme::CursorTrailStyle::Streak,
+            ..theme::CursorTrail::first()
+        };
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 3), (2, 7), streak, now);
+        let cells: Vec<_> = ghosts.iter().map(|g| (g.row, g.column)).collect();
+        assert_eq!(cells, vec![(2, 6), (2, 5), (2, 4), (2, 3)]);
+        let far = ghosts.iter().find(|g| g.column == 3).unwrap();
+        let near = ghosts.iter().find(|g| g.column == 6).unwrap();
+        assert!(far.alpha(now) < near.alpha(now), "the far end fades first");
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 0), (2, 200), streak, now);
+        assert_eq!(ghosts.len(), theme::CursorTrail::STREAK_MAX_CELLS);
+        assert!(ghosts
+            .iter()
+            .all(|g| g.column >= 200 - theme::CursorTrail::STREAK_MAX_CELLS));
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(&mut ghosts, (2, 3), (4, 7), streak, now);
+        assert_eq!(ghosts.len(), 1, "another row is one block");
+
+        let mut ghosts = VecDeque::new();
+        cursor_moved(
+            &mut ghosts,
+            (2, 3),
+            (2, 7),
+            theme::CursorTrail::first(),
+            now,
+        );
+        assert_eq!(
+            ghosts.iter().map(|g| (g.row, g.column)).collect::<Vec<_>>(),
+            vec![(2, 3)]
+        );
+
+        // Back over a glowing cell: the live cursor's own cell never glows.
+        cursor_moved(
+            &mut ghosts,
+            (2, 7),
+            (2, 3),
+            theme::CursorTrail::first(),
+            now,
+        );
+        assert!(ghosts.iter().all(|g| (g.row, g.column) != (2, 3)));
+
+        // Zero light or zero time is nothing to draw, and clears what was.
+        let dark = theme::CursorTrail {
+            intensity: 0.0,
+            ..theme::CursorTrail::first()
+        };
+        cursor_moved(&mut ghosts, (1, 1), (1, 2), dark, now);
+        assert!(ghosts.is_empty());
+    }
 
     /// The bleed is each run's own colour, fainter, with nothing that would
     /// print four times: no background, no underline, no strike.

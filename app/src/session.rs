@@ -719,6 +719,24 @@ fn codex_session_from_fds(pid: u32, home: &Path) -> Option<String> {
         .and_then(rollout_uuid)
 }
 
+/// The conversation a live Codex is in right now: the rollout it holds open,
+/// and nothing weaker. What a sleeper must wake into. The uuid a pane was
+/// resumed with is not enough here: a `/new` since then moved it to another
+/// conversation, and waking into the old one would look like lost work.
+pub fn codex_held_session(agent_pid: u32, home: &Path) -> Option<String> {
+    codex_session_from_fds(agent_pid, home).filter(|id| safe_resume_id(id))
+}
+
+/// Is `path` the rollout of Codex conversation `session` under `home`?
+/// Rollouts are named `rollout-<time>-<uuid>.jsonl`.
+pub fn is_codex_rollout_of(path: &Path, home: &Path, session: &str) -> bool {
+    path.starts_with(home.join(".codex/sessions"))
+        && path
+            .file_name()
+            .and_then(|n| n.to_str())
+            .is_some_and(|n| n.starts_with("rollout-") && n.ends_with(&format!("-{session}.jsonl")))
+}
+
 /// [`declared_session`] for codex: the rollout the process holds open, or the
 /// uuid it was resumed with. Same contract — a claim or nothing.
 pub fn codex_declared_session(agent_pid: u32, home: &Path) -> Option<String> {
@@ -884,6 +902,26 @@ pub(crate) fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_codex_rollout_is_matched_by_its_conversation_and_its_home() {
+        let home = Path::new("/home/p");
+        let id = "01a17de4-1646-7ec2-ab79-08b7b2d184af";
+        let rollout =
+            Path::new("/home/p/.codex/sessions/2026/10/27/rollout-2026-10-27T08-04-22-01a17de4-1646-7ec2-ab79-08b7b2d184af.jsonl");
+        assert!(is_codex_rollout_of(rollout, home, id));
+        assert!(!is_codex_rollout_of(
+            rollout,
+            home,
+            "01a17de4-1646-7ec2-ab79-08b7b2d184ae"
+        ));
+        assert!(!is_codex_rollout_of(rollout, Path::new("/home/q"), id));
+        assert!(!is_codex_rollout_of(
+            Path::new("/home/p/.claude/projects/x/01a17de4-1646-7ec2-ab79-08b7b2d184af.jsonl"),
+            home,
+            id
+        ));
+    }
 
     #[test]
     fn slug_matches_claude_code_layout() {

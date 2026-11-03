@@ -1,0 +1,48 @@
+{
+  "regions_physical_pixels": {
+    "left_grid": "900x1020+40+170",
+    "right_grid": "860x1020+990+170"
+  },
+  "comparison": {
+    "glow-100": {
+      "left_grid": {
+        "changed_pixels": 75184,
+        "max_channel_delta": 207
+      },
+      "right_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      }
+    },
+    "zero-restored": {
+      "left_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "right_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      }
+    },
+    "crt-off": {
+      "left_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      },
+      "right_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      }
+    },
+    "glow-55": {
+      "left_grid": {
+        "changed_pixels": 72178,
+        "max_channel_delta": 128
+      },
+      "right_grid": {
+        "changed_pixels": 0,
+        "max_channel_delta": 0
+      }
+    }
+  }
+}

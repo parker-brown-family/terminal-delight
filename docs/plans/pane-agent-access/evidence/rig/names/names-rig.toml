@@ -1,0 +1,95 @@
+active = 0
+panes = 7
+lang = "en"
+left_bar = true
+
+[mcp]
+enabled = true
+expose = "agents-only"
+events = true
+writable = false
+
+[[projects]]
+id = 1
+name = "server"
+color = "#5c9ccc"
+
+[[projects]]
+id = 2
+name = "docsite"
+color = "#cc7e5c"
+
+[[groups]]
+id = 7
+name = "auth work"
+color = "#7ccc5c"
+project = 1
+
+[[lines]]
+from = 101
+to = 102
+rung = "ask"
+
+[[lines]]
+from = 102
+to = 103
+rung = "ask"
+
+[[lines]]
+from = 101
+to = 104
+rung = "read"
+
+[[tabs]]
+name = "release lead"
+project = 1
+[tabs.node.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/release"
+resume = "SIZE=512340 MODEL=claude-opus-5-5 STATE=working TASK='cut the release notes' BRIEF='Release notes drafted; waiting on the auth fix before tagging.' /home/parker/.cache/war-room-rig/bin/claude"
+seat = 101
+
+[[tabs]]
+name = "backend lead"
+group = 7
+[tabs.node.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/backend"
+resume = "SIZE=290211 MODEL=claude-sonnet-5-5 STATE=idle BRIEF='Auth refactor assigned; reviewing the refresh change next.' /home/parker/.cache/war-room-rig/bin/claude"
+seat = 102
+
+[[tabs]]
+name = "auth refactor"
+group = 7
+[tabs.node.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/auth"
+name = "auth refactor"
+agents = "read-only"
+resume = "SIZE=360090 MODEL=claude-opus-5-5 STATE=working TASK='finish the expiry path' BRIEF='Token refresh now retries once on a 401. Two tests are left on the expiry path.' /home/parker/.cache/war-room-rig/bin/claude"
+seat = 103
+
+[[tabs]]
+name = "docs pages"
+project = 2
+[tabs.node.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/docs"
+name = "✳ MCP page for the census field"
+resume = "SIZE=141022 MODEL=claude-sonnet-5-5 STATE=idle BRIEF='The MCP page is updated for the new census field.' /home/parker/.cache/war-room-rig/bin/claude"
+seat = 104
+
+[[tabs]]
+name = "scratch"
+[tabs.node.Split]
+dir = "Row"
+ratio = 0.5
+[tabs.node.Split.a.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/scratch"
+resume = "SIZE=65587 STATE=idle /home/parker/.cache/war-room-rig/bin/claude"
+[tabs.node.Split.b.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/lab"
+name = "✳ Bench the reader"
+resume = "SIZE=107511 STATE=working TASK='bench the reader' /home/parker/.cache/war-room-rig/bin/claude"
+
+[[tabs]]
+name = "lab"
+[tabs.node.Leaf]
+cwd = "/home/parker/.cache/war-room-rig/seats/lab"
+resume = "SIZE=107511 STATE=working TASK='run the lab' /home/parker/.cache/war-room-rig/bin/claude"

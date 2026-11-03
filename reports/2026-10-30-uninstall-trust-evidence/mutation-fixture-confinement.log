@@ -1,0 +1,19 @@
+
+running 1 test
+test uninstall::e2e::a_fixture_whose_directories_reach_outside_its_home_is_refused ... FAILED
+
+failures:
+
+failures:
+    uninstall::e2e::a_fixture_whose_directories_reach_outside_its_home_is_refused
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 100 filtered out; finished in 0.01s
+
+   Compiling harness-core v0.0.0 (/home/parker/.cache/td-uninstall-trust/full)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 2.48s
+     Running unittests src/lib.rs (/home/parker/.cache/td-uninstall-trust/full/target/debug/deps/harness_core-7781ced66ba71580)
+
+thread 'uninstall::e2e::a_fixture_whose_directories_reach_outside_its_home_is_refused' (2090440) panicked at src/uninstall/e2e.rs:583:5:
+assertion failed: p.blocked.is_some()
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+error: test failed, to rerun pass `--lib`

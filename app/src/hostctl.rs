@@ -290,6 +290,73 @@ pub fn stand_down_at(path: &Path, budget: Duration) -> std::io::Result<()> {
     ))
 }
 
+/// Ask the host at `path` to save its session and exit, as a tool rather than
+/// a window. The uninstaller uses this: a window hello would make the host
+/// write the uninstaller's pid into `session-<key>.window`, and a removal must
+/// not leave behind a record claiming it is the session's window.
+pub fn close_at(path: &Path, budget: Duration, allow: &dyn Fn(u32) -> bool) -> std::io::Result<()> {
+    let stream = UnixStream::connect(path)?;
+    // Who is listening, by the kernel's word rather than the socket's name:
+    // nothing is asked of a process the caller has not vouched for.
+    let peer = peer_pid(&stream)?;
+    if !allow(peer) {
+        return Err(std::io::Error::new(
+            std::io::ErrorKind::PermissionDenied,
+            format!(
+                "the process listening at {} (pid {peer}) is not one this removal covers",
+                path.display()
+            ),
+        ));
+    }
+    let mut conn = Conn::over(stream, budget)?;
+    // Answered or refused for a version: either way the reply is read here so
+    // it is not taken for the answer to the shutdown.
+    let _ = conn.hello(ClientKind::Tool);
+    conn.send(&Request::Shutdown)?;
+    conn.expect(|reply| match reply {
+        Reply::ShuttingDown => Ok(()),
+        other => Err(other),
+    })?;
+    let deadline = Instant::now() + budget;
+    while Instant::now() < deadline {
+        if probe_at(path, PROBE_BUDGET).is_absent() {
+            return Ok(());
+        }
+        std::thread::sleep(Duration::from_millis(25));
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::TimedOut,
+        format!(
+            "the host at {} was asked to close and is still there",
+            path.display()
+        ),
+    ))
+}
+
+fn peer_pid(stream: &UnixStream) -> std::io::Result<u32> {
+    use std::os::unix::io::AsRawFd;
+    let mut cred = libc::ucred {
+        pid: 0,
+        uid: 0,
+        gid: 0,
+    };
+    let mut len = std::mem::size_of::<libc::ucred>() as libc::socklen_t;
+    // SAFETY: getsockopt writes at most `len` bytes into `cred`, which we own.
+    let rc = unsafe {
+        libc::getsockopt(
+            stream.as_raw_fd(),
+            libc::SOL_SOCKET,
+            libc::SO_PEERCRED,
+            &mut cred as *mut libc::ucred as *mut libc::c_void,
+            &mut len,
+        )
+    };
+    if rc != 0 || cred.pid <= 0 {
+        return Err(std::io::Error::last_os_error());
+    }
+    Ok(cred.pid as u32)
+}
+
 /// One control connection, and the rule that a reply is read by shape.
 struct Conn {
     reader: BufReader<UnixStream>,

@@ -1,0 +1,26 @@
+backend  https://openrouter.ai/api  (OPENROUTER_API_KEY from /home/parker/Work/jev-integrations/.env)   model jev-latest
+file     docsite/pages/restricted.html
+5 sections, 1 request each, 5 questions batched per request
+
+ #  unexpl  ident  seam  pulls  role          heading
+    0-3 lo 0-1 lo 0-3lo 0-1 hi
+------------------------------------------------------------------------------------------------
+ 1    1.67   0.23    --   0.73  turn          Give an unfamiliar command one project
+ 2    2.08   0.11  1.02   0.13  consequence   The selected directory is the file grant
+ 3    1.79   0.11  1.66   0.13  consequence   Terminal output and TD access are deliberate
+ 4    1.37   0.37  0.90   0.10  consequence   A request is visible, and grants nothing
+ 5    1.73   0.22  1.14   0.16  consequence   Use the scope with its limits
+
+Document
+  opens cold to a stranger     0.77   (high is good: a stranger could say what it is about)
+  headings tell the story      0.63   (high is good)
+  arc                        argument
+
+Worst first — repair these
+   3  Terminal output and TD access are deliberately small ends flat
+   4  A request is visible, and grants nothing             ends flat
+   5  Use the scope with its limits                        ends flat
+   2  The selected directory is the file grant             reader must supply too much, ends flat
+   1  Give an unfamiliar command one project               ok
+
+5 section requests + 1 document request in 460 ms wall, slowest 251 ms

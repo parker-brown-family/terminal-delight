@@ -7,6 +7,13 @@
       "action": null
     },
     {
+      "id": "spine",
+      "environment": {
+        "TD_SKIN_SPINE_FIXTURE": "1"
+      },
+      "action": null
+    },
+    {
       "id": "usage",
       "environment": {
         "TD_USAGE_DEMO": "1"
@@ -172,6 +179,20 @@
       "id": "bug",
       "environment": {
         "TD_SKIN_SCENE": "bug"
+      },
+      "action": null
+    },
+    {
+      "id": "artifacts",
+      "environment": {
+        "TD_SKIN_SCENE": "artifacts"
+      },
+      "action": null
+    },
+    {
+      "id": "coordination",
+      "environment": {
+        "TD_SKIN_SCENE": "coordination"
       },
       "action": null
     }
@@ -985,7 +1006,7 @@
         "colour": "mixed"
       },
       "policy": "TD chrome follows the skin; semantic status colours and authored content retain their meaning. Source routing requires per-facet review.",
-      "fixture": null
+      "fixture": "coordination"
     },
     {
       "id": "csd-resize-edges",
@@ -1346,6 +1367,24 @@
       },
       "policy": "Skin frame, action stock and optical UI type; enabled/disabled diagnostics and report state retain their meaning. Opening the fixture never prepares or sends a report.",
       "fixture": "bug"
+    },
+    {
+      "id": "artifact-rail",
+      "name": "Artifact rail and handover cards",
+      "scope": "window",
+      "owner": {
+        "file": "app/src/artifact_rail.rs",
+        "symbol": "render_artifact_rail"
+      },
+      "facets": {
+        "material": "mixed",
+        "boundary": "mixed",
+        "emphasis": "mixed",
+        "typography": "mixed",
+        "colour": "mixed"
+      },
+      "policy": "Native overlay backing and foreground cards follow the skin; agent state colours keep their meaning.",
+      "fixture": "artifacts"
     }
   ]
 }

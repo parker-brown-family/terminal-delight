@@ -70,3 +70,13 @@ bump has to rebase them:
   spare uniform lanes, `glare.w` and `crawl.w`, set through a new
   `set_crt_rects_tubes_bezel`; `set_crt_rects_tubes` and the uniform's size are
   unchanged and send no bezel. Applies after 0001-0004 and 0007.
+- 2026-11-01, on `abbe85a`: `0012-tube-blur` — each tube can soften its own
+  picture. A blur radius in physical px rides the spare `image_glow[i].y` lane,
+  set through a new `set_crt_rects_tubes_blur`; every older setter sends 0, so
+  the uniform's size and every existing caller are unchanged. `tube_blur` in
+  `fs_crt` is the FOCUS backdrop's 32-tap golden-angle disk with each tap
+  clamped inside the tube, used on the flat path and in place of the single
+  sample on the bent one; a blurred tube keeps the pass live like a glowing
+  one. Applies after 0009-0011. It does not apply to a checkout rustfmt has
+  reflowed (the lab's) or to one missing 0009-0011 (`~/Work/zed-upstream` on
+  this date, which already refuses 0009).

@@ -21,7 +21,11 @@ import sys
 import time
 
 binary, key, out = sys.argv[1], sys.argv[2], sys.argv[3]
-sock_path = f"/run/user/{os.getuid()}/terminal-delight/session-{key}.sock"
+# Where the host binds, as hostproto.rs's runtime_dir() decides it.
+_runtime = os.environ.get("XDG_RUNTIME_DIR")
+_dir = (os.path.join(_runtime, "terminal-delight") if _runtime
+        else f"/tmp/terminal-delight-{os.getuid()}")
+sock_path = os.path.join(_dir, f"session-{key}.sock")
 
 # --- stand up a host of our own ------------------------------------------
 if os.path.exists(sock_path):

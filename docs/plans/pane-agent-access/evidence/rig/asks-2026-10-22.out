@@ -1,0 +1,5 @@
+list_panes: {"panes": [["release lead", "read"], ["backend lead", "ask"], ["auth refactor", "ask"], ["docs pages", "read"], ["scratch", "read"], ["lab", "read"]], "hidden": 0}
+backend lead (pid 1115433): OK — terminal-delight · session warroomrig1 · window 1115103 · terminal-delight
+docs pages (pid 1115447): ERROR ask refused (no_line): no line from your seat reaches this pane as far as ask; only a person draws one, in the War Room, or grants a bypass on the rail
+auth refactor (pid 1115441): OK — terminal-delight · session warroomrig1 · window 1115103 · terminal-delight
+scratch (pid 1115454): ERROR ask refused (no_line): no line from your seat reaches this pane as far as ask; only a person draws one, in the War Room, or grants a bypass on the rail

@@ -1,0 +1,13 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 1.71s
+     Running tests/restricted.rs (target/debug/deps/restricted-170347c1d84af9c3)
+
+running 5 tests
+test a_later_host_socket_in_the_work_tree_cannot_bypass_the_gateway ... ok
+test a_nested_same_device_bind_mount_is_refused_before_the_command_starts ... ok
+test a_pending_proposal_is_visible_and_only_the_operator_can_dismiss_it ... ok
+test offline_work_completes_without_host_files_services_processes_credentials_or_control ... ok
+test read_only_fail_closed_and_supervisor_death_do_not_reuse_authority ... ok
+
+test result: ok. 5 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 1.17s
+

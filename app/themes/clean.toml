@@ -1,0 +1,70 @@
+# terminal-delight theme — clean (flat glass, crisp letters, nothing lit)
+#
+# The design a new window wears. Parker, on the flat fresh-install window of
+# 2026-09-25: "the clean must be clean!" — and, choosing how far it reaches on
+# 2026-10-21: "I think we go all the way to C + the border radius is reduced
+# A BUNCH, not perfectly square, but close".
+#
+# So Clean is the zero of the DESIGN row, and it reaches past it:
+#
+#   - every effect below is zero, and while Clean is worn the resolver also
+#     HOLDS the tube and the light off — the bend, the roll, the glare, the
+#     letter glow, the afterglow and the border halos — whatever the GAUGES
+#     dials say. The dials keep their values for the next design (theme.rs,
+#     `hold_clean`).
+#   - `skin = "clean"` asks for the nearly square trim (app/skins/clean.toml).
+#   - `ui = "clean"` asks for the Clean UI set (app/ui/clean.toml): top tabs,
+#     CONFIG in the corner, each pane's title and state. Both are ASKS: a skin
+#     or a switch you choose yourself outranks them. Clean never blocks.
+#
+# It replaced Quiet, whose light colours never showed under a palette and
+# whose dials were already all zero. A saved Quiet reads back as Clean.
+#
+# Colours only show where no palette is chosen; they are the Terminal
+# Delight palette's, so a window without one still looks like the brand.
+name = "clean"
+icon = "○"
+skin = "clean"
+ui = "clean"
+
+# THE LOOK a window starts from the first time it wears this design (see
+# app/src/looks.rs). Only what differs from the house look; everything else,
+# and every change you make while wearing it, is the window's to remember.
+[look]
+crt = false
+
+[colors]
+bg      = "#030708"
+surface = "#0c1823"
+text    = "#cdd4c6"
+accent  = "#67f454"
+faint   = "#282e32"
+cursor  = "#67f454"
+human   = "#29e3ed"   # your own input — cyan, so it is never the accent's complement twice
+ansi = [
+  "#0c1823", "#d6483c", "#44b064", "#c89944",
+  "#45a4ae", "#916d86", "#45a4ae", "#b5beac",
+  "#5a6061", "#f4614f", "#52d07a", "#e5aa0d",
+  "#29e3ed", "#815bad", "#29e3ed", "#dfe2e3",
+]
+
+# TEXTURE: none, and none lit. The resolver holds these at zero anyway while
+# Clean is worn; writing them down keeps the file honest for anyone who copies
+# it into their custom slot.
+[effects]
+scanline_opacity = 0.0
+vignette         = 0.0
+glow             = 0.0
+bloom            = 0.0
+tracking         = 0.0
+flicker          = 0.0
+jiggle           = 0.0
+screen_glare     = 0.0
+bezel            = 0.0
+letter_glow      = 0.0
+
+# No family: the grid wears the desktop's monospace, as Deco does, so a clean
+# window on Omarchy sets its text the way every other terminal there does.
+[font]
+size        = 14.0
+cell_height = 20.0

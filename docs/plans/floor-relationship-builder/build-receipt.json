@@ -1,0 +1,32 @@
+{
+  "code_commit": "0159d220c7fd659e551adde8fc44fd8b7b4f5fe2",
+  "binary": "/home/parker/.local/lib/terminal-delight/td-0159d220-0.5-relationships",
+  "sha256": "bd3cfcd4f5708721363b47f8ef9f8a3d3b6c71559bee557472a0c225293e4237",
+  "cargo_source_tree": "/home/parker/Work/td-threshing-floor/relationships",
+  "status": "staged",
+  "live_window": "not_restarted",
+  "tests": {
+    "default": {
+      "passed": 3000,
+      "ignored": 17
+    },
+    "alacritty": {
+      "passed": 2947,
+      "ignored": 17
+    },
+    "native_view_checks": 44,
+    "clippy_default": "passed",
+    "clippy_alacritty": "passed",
+    "format": "passed",
+    "source_diff_check": "passed"
+  },
+  "gate_archive": "/home/parker/.lean-ctx/archives/42/426e901f0c452bcb.txt",
+  "build": "cargo build --manifest-path app/Cargo.toml --release --locked",
+  "capture": {
+    "file": "evidence/native-ops.png",
+    "skin": "ops",
+    "fixture": "disposable hidden-window session; selected actor, existing relationship and unavailable seat; screenshot is resting layout, drag and batch behavior use native event tests",
+    "source_binary": "/home/parker/.local/lib/terminal-delight/td-0159d220-0.5-relationships"
+  },
+  "packaging": "local development binary only; no AppImage release qualification or live-window cutover performed"
+}

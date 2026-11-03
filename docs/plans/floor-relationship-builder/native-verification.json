@@ -1,0 +1,16 @@
+{
+  "native_binary": "td-0159d220-0.5-relationships",
+  "native_capture": "evidence/native-ops.png",
+  "native_window": "disposable hidden session; cleaned up by fixture rig",
+  "headless_chromium_report_render": "passed; inspected at 1300 by 1000",
+  "figures": 3,
+  "notable_figures": 3,
+  "notable_body_rows": 6,
+  "unique_ids": 25,
+  "external_assets": 0,
+  "annotated_prototype_preserved": {
+    "note_anchors": 2,
+    "concur_anchors": 1
+  },
+  "tests_archive": "/home/parker/.lean-ctx/archives/42/426e901f0c452bcb.txt"
+}

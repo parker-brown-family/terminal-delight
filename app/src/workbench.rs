@@ -957,6 +957,8 @@ impl Line {
                 | Edit::KillWordRight
                 | Edit::KillToStart
                 | Edit::KillToEnd
+                | Edit::KillLine
+                | Edit::ClearInput
                 | Edit::Newline
         ) {
             self.snapshot();
@@ -1026,6 +1028,23 @@ impl Line {
             Edit::KillToEnd => {
                 let end = self.chars();
                 self.cut(self.caret, end);
+            }
+            Edit::KillLine => {
+                let before: Vec<char> = self.text.chars().collect();
+                let start = before[..self.caret]
+                    .iter()
+                    .rposition(|c| *c == '\n')
+                    .map_or(0, |i| i + 1);
+                let end = before[self.caret..]
+                    .iter()
+                    .position(|c| *c == '\n')
+                    .map_or(before.len(), |i| self.caret + i);
+                self.cut(start, end);
+                self.caret = start;
+            }
+            Edit::ClearInput => {
+                self.cut(0, self.chars());
+                self.caret = 0;
             }
             Edit::Submit => self.clear(),
         }
@@ -2195,6 +2214,10 @@ pub enum Edit {
     KillToStart,
     /// ctrl+k: everything from the caret to the end.
     KillToEnd,
+    /// Ctrl+Shift+Backspace: the current newline-delimited line, both sides.
+    KillLine,
+    /// Ctrl+Shift+Alt+Backspace: the entire editable draft.
+    ClearInput,
     /// ctrl+a: the whole draft, selected. See [`Line::mark_all`].
     SelectAll,
     /// shift+enter, alt+enter: a line break IN the draft. It used to be a
@@ -2501,6 +2524,9 @@ pub fn line_edit(key: &str, ctrl: bool, alt: bool, shift: bool) -> Option<Edit> 
         });
     }
     Some(match key {
+        "backspace" if ctrl && shift && alt => Edit::ClearInput,
+        "backspace" if ctrl && shift => Edit::KillLine,
+        "backspace" if shift && !alt => Edit::KillWordLeft,
         "backspace" if ctrl || alt => Edit::KillWordLeft,
         "backspace" => Edit::Backspace,
         "delete" if ctrl || alt => Edit::KillWordRight,
@@ -4385,6 +4411,16 @@ impl Bench {
     /// thing* — and the live turn is the newer of them. Returning the previous
     /// reply as well would draw both, which is the defect [`LiveTurn`] exists
     /// to end.
+    /// The newest response the agent posted, whatever the person has selected
+    /// or whichever shelf is up — what the Threshing Floor quotes as the agent's own
+    /// latest summary. [`Self::showing`] cannot serve: it answers for the screen.
+    pub fn latest_response(&self) -> Option<&crate::surface::Response> {
+        self.surfaces.iter().rev().find_map(|s| match &s.kind {
+            Kind::Response(r) => Some(r),
+            _ => None,
+        })
+    }
+
     pub fn showing(&self) -> Option<&Surface> {
         if self.live_standing().is_some() {
             return None;
@@ -4926,6 +4962,26 @@ mod tests {
                 "doubts": ["maybe"]
             }
         }))
+    }
+
+    /// The Threshing Floor quotes the agent's own newest summary, whichever card the
+    /// person has open: `showing` answers for the screen, this for the agent.
+    #[test]
+    fn latest_response_ignores_the_selected_card() {
+        let mut b = Bench::new();
+        assert!(
+            b.latest_response().is_none(),
+            "nothing posted is nothing, not an empty summary"
+        );
+        b.apply(response("r1", "first"));
+        b.apply(doc("d1", "a document"));
+        b.apply(response("r2", "second"));
+        b.apply(doc("d2", "another"));
+        b.select(&SurfaceId("d1".into()));
+        assert_eq!(
+            b.latest_response().map(|r| r.layman.as_str()),
+            Some("second")
+        );
     }
 
     #[test]
@@ -7196,6 +7252,25 @@ mod tests {
     }
 
     #[test]
+    fn deletion_shortcuts_distinguish_word_line_and_entire_input_and_keep_undo() {
+        let original = "first row\nsecond word\nlast row";
+        let mut line = Line::holding(original);
+        line.place(16); // after "second", before its space
+        line.apply(line_edit("backspace", false, false, true).unwrap());
+        assert_eq!(line.text(), "first row\n word\nlast row");
+        line.apply(Edit::Undo);
+        assert_eq!(line.text(), original);
+        line.apply(line_edit("backspace", true, false, true).unwrap());
+        assert_eq!(line.text(), "first row\n\nlast row");
+        line.apply(Edit::Undo);
+        assert_eq!(line.text(), original);
+        line.apply(line_edit("backspace", true, true, true).unwrap());
+        assert!(line.is_empty());
+        line.apply(Edit::Undo);
+        assert_eq!(line.text(), original);
+    }
+
+    #[test]
     fn the_selection_is_byte_correct_over_multibyte_text() {
         // A char range read as bytes would slice an em dash in half and panic.
         let mut l = Line::holding("é—ü ascii");
@@ -7226,10 +7301,9 @@ mod tests {
 
     #[test]
     fn an_unselecting_key_is_not_given_a_shift_meaning_by_accident() {
-        // Everything that is NOT a motion must read the same with shift held,
-        // or a shifted capital letter would silently become an edit. `enter`
-        // is the one deliberate exception and has its own test.
-        for key in ["backspace", "delete", "z", "a", "w", "u", "k", "d"] {
+        // These non-motion keys retain their shifted meaning. Enter and
+        // Backspace have explicit shifted operations, asserted below.
+        for key in ["delete", "z", "a", "w", "u", "k", "d"] {
             for (ctrl, alt) in [(false, false), (true, false), (false, true)] {
                 let bare = line_edit(key, ctrl, alt, false);
                 let held = line_edit(key, ctrl, alt, true);
@@ -7242,6 +7316,22 @@ mod tests {
         // …and `enter` is the exception, on purpose.
         assert_eq!(line_edit("enter", false, false, false), Some(Edit::Submit));
         assert_eq!(line_edit("enter", false, false, true), Some(Edit::Newline));
+        assert_eq!(
+            line_edit("backspace", false, false, true),
+            Some(Edit::KillWordLeft)
+        );
+        assert_eq!(
+            line_edit("backspace", true, false, true),
+            Some(Edit::KillLine)
+        );
+        assert_eq!(
+            line_edit("backspace", true, true, true),
+            Some(Edit::ClearInput)
+        );
+        assert_eq!(
+            line_edit("backspace", false, true, true),
+            Some(Edit::KillWordLeft)
+        );
     }
 
     #[test]

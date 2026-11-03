@@ -27,7 +27,7 @@ use std::process::ExitStatus;
 use std::sync::mpsc::{self, Receiver, Sender, TryRecvError};
 use std::sync::Arc;
 use std::thread::JoinHandle;
-use std::time::Instant;
+use std::time::{Duration, Instant};
 
 use parking_lot::MutexGuard;
 use polling::{Event as Interest, Events, PollMode, Poller};
@@ -58,6 +58,19 @@ pub enum Msg {
     Resize(WindowSize),
     /// Stop reading and let the source go.
     Shutdown,
+    /// Explicit close, with observed cleanup returned by the source owner.
+    Close(Sender<Option<CloseReport>>),
+}
+
+/// A signal being delivered and an exit being observed are different facts.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct CloseReport {
+    pub hangup_sent: bool,
+    pub kill_sent: bool,
+    pub exit_observed: bool,
+    /// Surviving jobs from the session snapshots; unavailable if inspection failed.
+    pub observed_jobs_remaining: Option<usize>,
+    pub error: Option<String>,
 }
 
 /// The way into a terminal's loop.
@@ -95,6 +108,16 @@ impl Notifier {
         self.send(Msg::Shutdown);
     }
 
+    /// Bounded acknowledgement. A disconnected or delayed loop has no known
+    /// cleanup result; callers must not turn that absence into a successful kill.
+    pub fn close(&self) -> Option<CloseReport> {
+        let (tx, rx) = mpsc::channel();
+        if !self.send(Msg::Close(tx)) {
+            return None;
+        }
+        rx.recv_timeout(Duration::from_secs(1)).ok().flatten()
+    }
+
     /// Queue a message and wake the loop. `false` when the loop has ended.
     pub fn send(&self, msg: Msg) -> bool {
         let sent = self.tx.send(msg).is_ok();
@@ -123,6 +146,11 @@ pub trait Source: Send {
     fn child_fd(&self) -> Option<BorrowedFd<'_>> {
         None
     }
+    /// Release this source after the poller has stopped observing its FDs.
+    fn close(&mut self) -> Option<CloseReport> {
+        None
+    }
+
     /// The program's exit status, once it has exited.
     fn reap(&mut self) -> Option<ExitStatus> {
         None
@@ -214,6 +242,7 @@ impl Pump {
     fn run(mut self) {
         let mut events = Events::new();
         let mut buf = vec![0u8; CHUNK];
+        let mut closing = None;
         'turn: loop {
             let timeout = self
                 .deadline
@@ -249,6 +278,10 @@ impl Pump {
                         }
                     }
                     Ok(Msg::Shutdown) => break 'turn,
+                    Ok(Msg::Close(reply)) => {
+                        closing = Some(reply);
+                        break 'turn;
+                    }
                     Err(TryRecvError::Empty) | Err(TryRecvError::Disconnected) => break,
                 }
             }
@@ -305,6 +338,10 @@ impl Pump {
         let _ = self.poller.delete(self.source.fd());
         if let Some(child) = self.source.child_fd() {
             let _ = self.poller.delete(child);
+        }
+        let report = self.source.close();
+        if let Some(reply) = closing {
+            let _ = reply.send(report);
         }
     }
 

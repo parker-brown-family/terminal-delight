@@ -1,0 +1,8 @@
+parker-brown-family/agent-skills 615a8b1
+briefing/SKILL.md briefing/LICENSE briefing/README.md briefing/assets briefing/reference briefing/scripts briefing/examples briefing/tests/browser.mjs decision-brief/LICENSE decision-brief/assets decision-brief/reference decision-brief/scripts/brief-wall fancy-pants-brief/LICENSE fancy-pants-brief/assets fancy-pants-brief/scripts/fancy-pants
+
+Copied byte for byte from that commit (git archive), every file under
+briefing/, decision-brief/ and fancy-pants-brief/. The binary embeds every
+one (app/src/briefkit.rs) and a test fails if one is missing from its list.
+Do not edit the copied files by hand: change the skill, then run
+scripts/sync-brief-skill and name the new commit above.

@@ -1,0 +1,55 @@
+{
+  "shared_skill": "131d85d",
+  "native_tests": {
+    "default": {
+      "passed": 2817,
+      "failed": 0,
+      "ignored": 11
+    },
+    "alternate": {
+      "passed": 2764,
+      "failed": 0,
+      "ignored": 11
+    },
+    "integration": {
+      "passed": 116,
+      "failed": 0,
+      "ignored": 6,
+      "targets": 7
+    }
+  },
+  "shared_format": {
+    "cases": 15,
+    "checks_passed": 275
+  },
+  "browser_behavior": {
+    "passed": 7
+  },
+  "real_viewer": {
+    "unchanged_read_files": 26,
+    "write_cases_passed": 11,
+    "invalid_cases_refused": 4,
+    "preserves_other_writer_changes": true,
+    "missing_file_refused": true,
+    "mcp_caller_comparison": {
+      "status": "refused",
+      "issue": "https://github.com/parker-brown-family/terminal-delight/issues/1161"
+    },
+    "scripted_test_mode": true
+  },
+  "report_qa": {
+    "widths": [
+      390,
+      720,
+      1200
+    ],
+    "overflow": false,
+    "figures_tagged": 2,
+    "save_buttons": 0,
+    "console_errors": 0
+  },
+  "installation": {
+    "live_window": "previous build",
+    "next_launch": null
+  }
+}

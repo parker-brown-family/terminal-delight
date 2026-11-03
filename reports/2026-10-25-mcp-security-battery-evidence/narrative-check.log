@@ -1,0 +1,26 @@
+backend  https://openrouter.ai/api  (OPENROUTER_API_KEY from /home/parker/Work/jev-integrations/.env)   model jev-latest
+file     reports/2026-10-25-mcp-security-battery.html
+5 sections, 1 request each, 5 questions batched per request
+
+ #  unexpl  ident  seam  pulls  role          heading
+    0-3 lo 0-1 lo 0-3lo 0-1 hi
+------------------------------------------------------------------------------------------------
+ 1    1.36   0.14    --   0.26  complication  Permissions after change
+ 2    1.80   0.28  1.20   0.16  complication  01 What crossed the boundary
+ 3    1.86   0.33  1.11   0.27  consequence   02 What real callers could do
+ 4    1.93   0.42  1.35   0.11  aside         03 The retained checks
+ 5    1.94   0.72  1.31   0.39  consequence   04 What this establishes
+
+Document
+  opens cold to a stranger     0.77   (high is good: a stranger could say what it is about)
+  headings tell the story      0.82   (high is good)
+  arc                        argument
+
+Worst first — repair these
+   5  04 What this establishes                             leans on identifiers, ends flat
+   4  03 The retained checks                               ends flat
+   2  01 What crossed the boundary                         ends flat
+   3  02 What real callers could do                        ends flat
+   1  Permissions after change                             ends flat
+
+5 section requests + 1 document request in 665 ms wall, slowest 439 ms

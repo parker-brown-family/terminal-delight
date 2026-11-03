@@ -31,7 +31,21 @@ use crate::workbench::Step;
 /// go through here.
 const HIGHLIGHT_CAP: usize = 4096;
 
+/// Whether a workbench speaks for its own agent. With no conversation bound,
+/// everything on it was addressed to the pane itself. With one bound, only a
+/// binding better than a guess does: [`crate::vitals::Bond::Guess`] is the rung
+/// that put one pane's words on another pane's bench, and a guessed binding
+/// reads as unknown rather than as a stranger's message.
+pub(crate) fn speaks_for_itself(bound: bool, bond: crate::vitals::Bond) -> bool {
+    !bound || bond != crate::vitals::Bond::Guess
+}
+
 impl TerminalView {
+    /// See [`speaks_for_itself`].
+    pub(crate) fn bench_is_its_own(&self) -> bool {
+        speaks_for_itself(self.wb_conv.is_some(), self.wb_conv_bond)
+    }
+
     // -- dragging over the bench's text -------------------------------------
 
     /// How far the pointer may travel before a press stops being a click.
@@ -53,6 +67,17 @@ impl TerminalView {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> String {
+        // Defence at dispatch as well as selection: a queued pointer must not
+        // turn an off-limits pane's controls into operator input.
+        match self.agent_access {
+            crate::threshing_floor::AgentAccess::Open => {}
+            crate::threshing_floor::AgentAccess::ReadOnly => {
+                return "err a read-only pane takes no scripted pointer".into();
+            }
+            crate::threshing_floor::AgentAccess::OffLimits => {
+                return "err an off-limits pane takes no scripted pointer".into();
+            }
+        }
         // `p` is FLAT, as `bench probe` prints zones. The pane un-bends every
         // pointer through its tube, so the event has to arrive where the
         // glass SHOWS that flat point: invert `unwarp` by walking the error
@@ -1477,7 +1502,13 @@ impl TerminalView {
                 // name nobody chose is worse than a surface that is only on
                 // the bench.
                 Some(w) => {
-                    w.write_surface(&dir, id, doc, self.wb_conv_bond, now);
+                    if let Some(rec) =
+                        crate::benchstore::said(w.open_turn(), id, doc, self.wb_conv_bond, now)
+                    {
+                        if w.write(&dir, rec.clone()) {
+                            crate::artifact_archive::observe(&dir, &dir, w.root(), &rec);
+                        }
+                    }
                 }
                 None => {
                     if let Some(rec) = crate::benchstore::said(
@@ -1526,6 +1557,15 @@ impl TerminalView {
             // line, so the run that survives is the one nearest the moment a
             // key could arrive.
             None => {
+                let scope = format!(
+                    "session={:?};pane={:?};shell={:?}",
+                    crate::surfacefeed::session(),
+                    self.pane_id,
+                    self.session.shell_pid
+                );
+                if let Err(err) = crate::artifact_archive::file_unbound(&dir, &scope, &rec) {
+                    eprintln!("td: unbound artifact could not be preserved: {err}");
+                }
                 const HELD_CAP: usize = 256;
                 if self.wb_unfiled.len() >= HELD_CAP {
                     self.wb_unfiled.remove(0);
@@ -3203,7 +3243,7 @@ impl TerminalView {
         // other terminal on this machine does with a dropped file.
         if self.bench.face() != crate::workbench::Face::Workbench {
             window.focus(&self.focus_handle, cx);
-            self.paste_text(&text);
+            self.paste_image_paths(paths.paths(), cx);
             cx.notify();
             return;
         }
@@ -3503,7 +3543,8 @@ impl TerminalView {
     /// A queue drained on one condition while the other still fails is how a
     /// held line ends up in a shell.
     pub(super) fn bench_drain(&mut self, cx: &mut Context<Self>) {
-        if self.wb_queued.is_empty() || !self.bench_may_write() {
+        if !self.agent_access.takes_writes() || self.wb_queued.is_empty() || !self.bench_may_write()
+        {
             return;
         }
         let queued = std::mem::take(&mut self.wb_queued);
@@ -5103,6 +5144,30 @@ mod press_pick_tests {
             bench_press_pick(None, Some(CARD), None, false),
             None,
             "a modified press on a verb chip is the chip's"
+        );
+    }
+}
+
+#[cfg(test)]
+mod speaks_for_itself_tests {
+    use super::speaks_for_itself;
+    use crate::vitals::Bond;
+
+    /// Only a guessed binding hides the bench's words; a pane with no
+    /// conversation, or one named by the agent, birth or elimination, speaks
+    /// for itself.
+    #[test]
+    fn only_a_guessed_conversation_is_not_the_panes_own() {
+        assert!(
+            speaks_for_itself(false, Bond::Guess),
+            "nothing bound: the bench is the pane's"
+        );
+        for bond in [Bond::Declared, Bond::Birth, Bond::Sole] {
+            assert!(speaks_for_itself(true, bond), "{bond:?}");
+        }
+        assert!(
+            !speaks_for_itself(true, Bond::Guess),
+            "a guessed conversation may be another agent's"
         );
     }
 }

@@ -1,0 +1,65 @@
+{
+  "basis": "GPUI test-window geometry and dispatched native pointer events; no desktop photograph",
+  "native_floor_checks": 49,
+  "full_default_passed": 3005,
+  "full_alacritty_passed": 2952,
+  "existing_ignored_each_core": 17,
+  "final_layout_checks": [
+    "cargo fmt --manifest-path app/Cargo.toml --check",
+    "cargo test --manifest-path app/Cargo.toml --locked threshing_floor_view::tests -- --test-threads=1",
+    "cargo clippy --manifest-path app/Cargo.toml --locked -- -D warnings",
+    "cargo clippy --manifest-path app/Cargo.toml --locked --features core-alacritty -- -D warnings",
+    "cargo build --manifest-path app/Cargo.toml --release --locked"
+  ],
+  "all_exit_codes": 0,
+  "log_results": {
+    "full_gates": [
+      "test result: ok. 2889 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 91.88s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.26s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s",
+      "test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 27.22s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 2836 passed; 0 failed; 11 ignored; 0 measured; 0 filtered out; finished in 89.29s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.23s",
+      "test result: ok. 2 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.06s",
+      "test result: ok. 4 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.08s",
+      "test result: ok. 8 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.69s",
+      "test result: ok. 0 passed; 0 failed; 5 ignored; 0 measured; 0 filtered out; finished in 0.00s",
+      "test result: ok. 84 passed; 0 failed; 1 ignored; 0 measured; 0 filtered out; finished in 29.72s",
+      "test result: ok. 9 passed; 0 failed; 0 ignored; 0 measured; 0 filtered out; finished in 0.05s",
+      "Finished `dev` profile [unoptimized + debuginfo] target(s) in 19.07s",
+      "Finished `dev` profile [unoptimized + debuginfo] target(s) in 18.27s",
+      "Finished `release` profile [optimized] target(s) in 2m 18s"
+    ],
+    "final_layout": [
+      "test result: ok. 49 passed; 0 failed; 0 ignored; 0 measured; 2851 filtered out; finished in 19.61s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 2 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 8 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 5 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 85 filtered out; finished in 0.00s",
+      "test result: ok. 0 passed; 0 failed; 0 ignored; 0 measured; 9 filtered out; finished in 0.00s",
+      "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.54s",
+      "Finished `dev` profile [unoptimized + debuginfo] target(s) in 0.44s",
+      "Finished `release` profile [optimized] target(s) in 0.47s"
+    ]
+  },
+  "report_audit": {
+    "figures": 3,
+    "duplicate_ids": 0,
+    "external_assets": []
+  },
+  "capture": {
+    "native_desktop": "unavailable while locked",
+    "layout_reconstruction": "layout-reconstruction.png",
+    "source": "renderer structure with sample panes and report palette"
+  },
+  "local_archives": {
+    "full_gates": "31/31974bba32aac045",
+    "final_layout": "b7/b7f3fa10f0c1a97f"
+  }
+}

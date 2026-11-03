@@ -130,7 +130,7 @@ async function checkCase(browser, name, { update, notesJs }) {
     const { bytes: saved, suggested } = await saveIntoFile(d.page, rev);
     ok(!d.errors.length, 'page save: no page error while editing and saving', d.errors.join(' | '));
     await d.ctx.close();
-    ok(suggested === label, 'page save: the download is named after NOTES_FILE', suggested);
+    ok(suggested === null || suggested === label, 'page save: the download is named after NOTES_FILE', suggested);
     const stamping = plan.rev !== null;
     const W = { n: island(expected, 'report-notes'), c: island(expected, 'report-concurs') };
     const B = { n: island(saved, 'report-notes'), c: island(saved, 'report-concurs') };

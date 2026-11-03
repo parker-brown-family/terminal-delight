@@ -1,0 +1,228 @@
+======================================================================
+FAIL: test_changed_helper_and_symlink_settings_retained (__main__.Cleanup.test_changed_helper_and_symlink_settings_retained)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 122, in test_changed_helper_and_symlink_settings_retained
+    self.assertNotEqual(self.run_script("install-agent-hooks.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_gnome_changed_shortcut_or_missing_receipt_blocks (__main__.Cleanup.test_gnome_changed_shortcut_or_missing_receipt_blocks)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 200, in test_gnome_changed_shortcut_or_missing_receipt_blocks
+    self.assertNotEqual(self.run_script("install-hotkey.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_gnome_failed_write_keeps_evidence (__main__.Cleanup.test_gnome_failed_write_keeps_evidence)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 207, in test_gnome_failed_write_keeps_evidence
+    self.assertNotEqual(self.run_script("install-hotkey.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_gnome_keeps_later_terminal_choice (__main__.Cleanup.test_gnome_keeps_later_terminal_choice)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 190, in test_gnome_keeps_later_terminal_choice
+    self.assertEqual(d[self.MEDIA + "/terminal"], "['<Super>Return']")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: "['<Primary><Alt>t']" != "['<Super>Return']"
+- ['<Primary><Alt>t']
++ ['<Super>Return']
+
+
+======================================================================
+FAIL: test_gnome_missing_backup_never_guesses_default (__main__.Cleanup.test_gnome_missing_backup_never_guesses_default)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 230, in test_gnome_missing_backup_never_guesses_default
+    self.assertEqual(json.loads(self.gfile.read_text())[self.MEDIA + "/terminal"], "@as []")
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: "['<Primary><Alt>t']" != '@as []'
+- ['<Primary><Alt>t']
++ @as []
+
+
+======================================================================
+FAIL: test_gnome_missing_receipt_preserves_all_settings (__main__.Cleanup.test_gnome_missing_receipt_preserves_all_settings)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 223, in test_gnome_missing_receipt_preserves_all_settings
+    self.assertNotEqual(self.run_script("install-hotkey.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"td-agent-hooks": BROKEN')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='[]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{}\n{}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":null}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-agent-hooks.sh', content='{"hooks":{"Stop":{}}}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"td-agent-hooks": BROKEN')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='[]')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{}\n{}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":null}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_invalid_settings_keep_helper_and_report_failure (__main__.Cleanup.test_invalid_settings_keep_helper_and_report_failure) (script='install-recovery-hook.sh', content='{"hooks":{"Stop":{}}}')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 104, in test_invalid_settings_keep_helper_and_report_failure
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n-- missing\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 168, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 168, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- <<< td-keybindings hotkey <<<\n-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 168, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + U", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 168, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything (__main__.Cleanup.test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything) (value='-- before\n\n-- >>> td-keybindings hotkey >>>\n-- SUPER+ALT+T shows every Terminal Delight key in Omarchy\'s searchable key\n-- menu, the way SUPER+K shows Omarchy\'s own and SUPER+CTRL+K shows Herdr\'s.\n-- The list is the docs site\'s Keys page, copied beside the script by\n-- scripts/install-keys-hotkey.sh in the terminal-delight repo. The seat was\n-- td-send\'s, whose hotkey is retired; T reads for Terminal Delight, and the K\n-- family on SUPER, SUPER+ALT and SUPER+CTRL is all Omarchy\'s already.\no.bind("SUPER + ALT + T", "Terminal Delight keybindings", "/tmp/td-uninstall-test-rxxn3xny/bin/td-keybindings")\n-- <<< td-keybindings hotkey <<<\no.bind(\'X\', \'custom\', \'td-keybindings\')\n')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 168, in test_keys_damaged_duplicate_reversed_edited_blocks_keep_everything
+    self.assertNotEqual(p.returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+======================================================================
+FAIL: test_mixed_nested_hooks_preserve_siblings_and_metadata (__main__.Cleanup.test_mixed_nested_hooks_preserve_siblings_and_metadata) (script='install-agent-hooks.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 94, in test_mixed_nested_hooks_preserve_siblings_and_metadata
+    self.assertEqual(json.loads(self.settings.read_text()), before)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'the[32 chars]p': [], 'UserPromptSubmit': [], 'PreToolUse': [490 chars]]}]}} != {'the[32 chars]p': [{'matcher': '*', 'timeout': 42, 'extra': [923 chars]]}]}}
+Diff is 3409 characters long. Set self.maxDiff to None to see it.
+
+======================================================================
+FAIL: test_mixed_nested_hooks_preserve_siblings_and_metadata (__main__.Cleanup.test_mixed_nested_hooks_preserve_siblings_and_metadata) (script='install-recovery-hook.sh')
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 94, in test_mixed_nested_hooks_preserve_siblings_and_metadata
+    self.assertEqual(json.loads(self.settings.read_text()), before)
+    ~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: {'the[121 chars]d': '/tmp/td-uninstall-test-emin87lg/bin/td-ag[1027 chars] []}} != {'the[121 chars]d': 'unrelated-tool', 'timeout': 9}]}], 'UserP[834 chars]]}]}}
+Diff is 4107 characters long. Set self.maxDiff to None to see it.
+
+======================================================================
+FAIL: test_unrecognized_reference_blocks_helper_removal (__main__.Cleanup.test_unrecognized_reference_blocks_helper_removal)
+----------------------------------------------------------------------
+Traceback (most recent call last):
+  File "/home/parker/Work/td-uninstall-preview/scripts/tests/test_uninstall.py", line 114, in test_unrecognized_reference_blocks_helper_removal
+    self.assertNotEqual(self.run_script("install-agent-hooks.sh", "--uninstall").returncode, 0)
+    ~~~~~~~~~~~~~~~~~~~^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: 0 == 0
+
+----------------------------------------------------------------------
+Ran 14 tests in 2.999s
+
+FAILED (failures=24)

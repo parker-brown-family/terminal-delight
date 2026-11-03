@@ -1,0 +1,42 @@
+const {chromium} = require('/home/parker/.npm/_npx/e41f203b7505f1fb/node_modules/playwright');
+const fs = require('fs');
+(async () => {
+  const browser = await chromium.launch({executablePath:'/usr/bin/chromium',headless:true,args:['--no-sandbox']});
+  const context = await browser.newContext({viewport:{width:1100,height:850},acceptDownloads:true});
+  const page = await context.newPage();
+  const errors=[]; page.on('pageerror', e=>errors.push(e.message));
+  await page.goto('http://127.0.0.1:8786/2026-10-26-agaro-followthrough.html');
+  await page.locator('#one-queue > .note-btn').click();
+  await page.locator('#note-text').fill('QA: preserve the original target identity.');
+  await page.locator('[data-note-action="add"]').click();
+  await page.locator('#d-note [data-close]').first().click();
+  await page.locator('#btn-export').click();
+  const map=await page.locator('#export-out').inputValue();
+  if (!map.includes('preserve the original target identity')) throw Error('note absent from map');
+  await page.locator('#d-export [data-close]').first().click();
+  const downloadPromise=page.waitForEvent('download');
+  await page.locator('#btn-embed').click();
+  const download=await downloadPromise;
+  await download.saveAs('/tmp/agaro-notes-roundtrip.html');
+  const clean=await browser.newContext();
+  const reload=await clean.newPage();
+  await reload.goto('file:///tmp/agaro-notes-roundtrip.html');
+  if(await reload.locator('#note-count').innerText()!=='1') throw Error('saved note absent in fresh browser');
+  await reload.locator('#one-queue > .note-btn').click();
+  if(!(await reload.locator('#note-list').innerText()).includes('preserve the original target identity')) throw Error('saved text differs');
+  await page.locator('details summary').click();
+  const rows=await page.locator('tbody tr').count();
+  const notableRows=await page.locator('tbody tr.notable').count();
+  if(rows!==notableRows) throw Error('unannotatable disposition rows');
+  const widths=[];
+  for(const width of [390,1100]){
+    await page.setViewportSize({width,height:850});
+    const overflow=await page.evaluate(()=>document.documentElement.scrollWidth>innerWidth);
+    if(overflow) throw Error('overflow '+width);
+    widths.push({width,overflow});
+  }
+  if(errors.length) throw Error(errors.join('\n'));
+  fs.writeFileSync('/tmp/agaro-report-qa.json',JSON.stringify({note_map:map,roundtrip_in_fresh_browser:true,disposition_rows:rows,notable_rows:notableRows,widths,page_errors:errors},null,2));
+  await browser.close();
+  console.log('Report notes, export, saved-file reload and responsive checks passed.');
+})().catch(e=>{console.error(e);process.exit(1)});

@@ -1,0 +1,318 @@
+#!/usr/bin/env python3
+"""fancy-pants — every HTML page a person reads, in glass over an Omarchy wallpaper.
+
+    fancy-pants head [--theme T] [--image P] [--out F]    the <head> blocks a page starts with
+    fancy-pants new PAGE --title "…" [--eyebrow "…"]      a starter page: masthead, section rail, one pane
+    fancy-pants dress PAGE [--out F]                       put the look onto a page built without it
+    fancy-pants check PAGE… [--no-render]                  fail a page that is light, flat, or needs the network
+
+The look is decision-brief's, read from the sibling directory rather than copied:
+assets/base.css (the glass, the gel buttons, the components) and scripts/brief-wall (a
+random Omarchy theme and one of its wallpapers, baked in, a light theme turned dark). The
+only thing this directory adds is assets/sections.js, which fills the rail of gel buttons
+that jumps between a page's parts.
+
+`check` is the gate. It reads the page's own CSS, apart from the look's blocks, and fails it
+when the look is missing, when there is no wallpaper, when the page paints an opaque ground
+over the wallpaper or takes over the theme's colours, when it asks for a light colour
+scheme, or when it loads anything from the network. Then it photographs the page in
+headless Chromium and fails it if the picture is light. Exit status 1 means at least one
+page failed.
+"""
+import argparse, html, os, re, shutil, subprocess, sys, tempfile
+from pathlib import Path
+
+HERE = Path(__file__).resolve().parent.parent
+LOOK = HERE.parent / 'decision-brief'
+BASE_CSS = LOOK / 'assets' / 'base.css'
+BRIEF_WALL = LOOK / 'scripts' / 'brief-wall'
+SECTIONS_JS = HERE / 'assets' / 'sections.js'
+
+BASE_MARK = 'decision-brief — glass over an Omarchy wallpaper'
+NOTES_MARK = 'decision-brief — reader notes'
+SECTIONS_MARK = 'fancy-pants-brief — the rail of gel buttons'
+
+# The theme's colour roles. brief-wall writes them; a page that writes them too has
+# replaced the wallpaper's palette with its own.
+ROLES = ('bg', 'bg2', 'bg0', 'fg', 'fg2', 'fgb', 'acc', 'mut', 'sel',
+         'red', 'grn', 'yel', 'blu', 'mag', 'cyn', 'dim', 'wall', 'scrim')
+# Selectors whose background lies between the reader and the wallpaper. html is not one:
+# the root's background is the canvas, and the wall is painted above it.
+GROUNDS = {'body', 'main', '.wrap', 'body > main', 'html body', 'html > body'}
+SEE_THROUGH = {'transparent', 'none', 'inherit', 'initial', 'unset', 'revert'}
+# A photographed page whose mean luminance is above this reads as a light page. The glass
+# briefs measure 30–60; a white page measures above 200.
+LIGHT_MEAN = 120
+
+
+def look_files():
+    missing = [p for p in (BASE_CSS, BRIEF_WALL, SECTIONS_JS) if not p.is_file()]
+    if missing:
+        sys.exit('fancy-pants: the look is not where it should be: ' + ', '.join(map(str, missing)))
+
+
+def head_blocks(theme=None, image=None):
+    look_files()
+    cmd = [sys.executable, str(BRIEF_WALL)]
+    if theme:
+        cmd += ['--theme', theme]
+    if image:
+        cmd += ['--image', image]
+    wall = subprocess.run(cmd, check=True, capture_output=True, text=True).stdout.strip()
+    meta = ('<meta charset="utf-8">\n'
+            '<meta name="viewport" content="width=device-width, initial-scale=1">\n'
+            '<meta name="color-scheme" content="dark">\n')
+    return meta, f'<style>\n{BASE_CSS.read_text()}\n</style>\n{wall}\n'
+
+
+def sections_script():
+    return f'<script>\n{SECTIONS_JS.read_text()}</script>\n'
+
+
+# ---------------------------------------------------------------- verbs that build
+
+def cmd_head(a):
+    meta, look = head_blocks(a.theme, a.image)
+    out = meta + look
+    if a.out:
+        Path(a.out).write_text(out)
+        print(f'fancy-pants: head blocks written to {a.out}', file=sys.stderr)
+    else:
+        sys.stdout.write(out)
+
+
+def cmd_new(a):
+    page = Path(a.page)
+    if page.exists() and not a.force:
+        sys.exit(f'fancy-pants: {page} exists; --force replaces it')
+    meta, look = head_blocks(a.theme, a.image)
+    t, eyebrow = html.escape(a.title), html.escape(a.eyebrow or '')
+    page.write_text(f'''<!doctype html>
+<html lang="en"><head>
+{meta}<title>{t}</title>
+{look}<style>
+/* This page's own CSS. Build what the material needs on top of base.css; never paint
+   body or main, and never redefine --bg, --fg, --acc or the other theme roles. */
+</style>
+</head>
+<body>
+<header class="top"><div class="wrap">
+  <div class="eyebrow">{eyebrow}</div>
+  <h1>{t}</h1>
+  <p class="lede"></p>
+  <nav class="sections"></nav>
+</div></header>
+<main class="wrap">
+  <div class="glass"><span class="h">Where it stands</span>
+    <p></p>
+  </div>
+
+  <section class="pane">
+    <h2><span class="n">01</span></h2>
+    <p></p>
+  </section>
+
+  <footer><p></p></footer>
+</main>
+{sections_script()}</body></html>
+''')
+    print(f'fancy-pants: {page} — fill it in, then: fancy-pants check {page}', file=sys.stderr)
+
+
+def cmd_dress(a):
+    src = Path(a.page)
+    doc = src.read_text()
+    meta, look = head_blocks(a.theme, a.image)
+    add = ''
+    if not re.search(r'<meta[^>]+name=["\']?color-scheme', doc, re.I):
+        add += '<meta name="color-scheme" content="dark">\n'
+    if BASE_MARK not in doc:
+        add += f'<style>\n{BASE_CSS.read_text()}\n</style>\n'
+    if 'id="brief-wall"' not in doc:
+        add += look[look.index('<style id="brief-wall">'):]
+    m = re.search(r'<head\b[^>]*>', doc, re.I)
+    if not add:
+        pass
+    elif m:
+        doc = doc[:m.end()] + '\n' + add + doc[m.end():]
+    else:
+        m = re.search(r'<html\b[^>]*>', doc, re.I)
+        at = m.end() if m else 0
+        doc = doc[:at] + '\n<head>\n' + add + '</head>\n' + doc[at:]
+    if SECTIONS_MARK not in doc:
+        i = doc.lower().rfind('</body>')
+        doc = doc[:i] + sections_script() + doc[i:] if i >= 0 else doc + sections_script()
+    out = Path(a.out) if a.out else src
+    out.write_text(doc)
+    print(f'fancy-pants: dressed {out}; checking it', file=sys.stderr)
+    sys.exit(report([out], render=not a.no_render))
+
+
+# ---------------------------------------------------------------- the gate
+
+STYLE_RE = re.compile(r'<style\b([^>]*)>(.*?)</style>', re.S | re.I)
+RULE_RE = re.compile(r'([^{}]+)\{([^{}]*)\}')
+BG_RE = re.compile(r'(?<![-\w])background(?:-color)?\s*:\s*([^;]+)', re.I)
+
+
+def without_print(css):
+    """Drop @media print blocks: paper is white, and a print rule that says so is right."""
+    out, i = [], 0
+    for m in re.finditer(r'@media\s+(?:only\s+)?print\b[^{]*\{', css, re.I):
+        if m.start() < i:
+            continue
+        out.append(css[i:m.start()])
+        depth, j = 1, m.end()
+        while j < len(css) and depth:
+            depth += {'{': 1, '}': -1}.get(css[j], 0)
+            j += 1
+        i = j
+    out.append(css[i:])
+    return ''.join(out)
+
+
+def own_css(doc):
+    """The page's CSS for the screen, with the look's own blocks taken out."""
+    own = []
+    for attrs, body in STYLE_RE.findall(doc):
+        if 'brief-wall' in attrs or BASE_MARK in body or body.lstrip().startswith('/* ' + NOTES_MARK):
+            continue
+        own.append(without_print(re.sub(r'/\*.*?\*/', '', body, flags=re.S)))
+    return '\n'.join(own)
+
+
+def light(value):
+    """True when a background value is a literal light colour (no var(), no gradient)."""
+    v = value.strip().lower()
+    if v in ('white', '#fff', '#ffffff') or v.startswith(('white ', '#fff ', '#ffffff ')):
+        return True
+    m = re.fullmatch(r'#([0-9a-f]{3}|[0-9a-f]{6})(?:[0-9a-f]{2})?\b.*', v)
+    if not m:
+        m2 = re.match(r'rgba?\(\s*(\d+)[,\s]+(\d+)[,\s]+(\d+)', v)
+        if not m2:
+            return False
+        r, g, b = (int(x) for x in m2.groups())
+    else:
+        h = m.group(1)
+        h = ''.join(c * 2 for c in h) if len(h) == 3 else h
+        r, g, b = (int(h[i:i + 2], 16) for i in (0, 2, 4))
+    return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6
+
+
+def static_check(doc):
+    fails, warns = [], []
+    if BASE_MARK not in doc:
+        fails.append('the look is missing: base.css is not inlined (fancy-pants dress, or start from fancy-pants new)')
+    wall = re.search(r'<style\b[^>]*id="brief-wall"[^>]*>(.*?)</style>', doc, re.S | re.I)
+    if not wall:
+        fails.append('no wallpaper: the <style id="brief-wall"> block is missing')
+    elif 'data:image' not in wall.group(1):
+        fails.append('no wallpaper: the brief-wall block carries no image')
+    for pat, what in ((r'<link\b[^>]*rel=["\']?stylesheet[^>]*href=["\']?(?:https?:)?//', 'a stylesheet'),
+                      (r'<link\b[^>]*href=["\']?(?:https?:)?//[^>]*rel=["\']?stylesheet', 'a stylesheet'),
+                      (r'<script\b[^>]*src=["\']?(?:https?:)?//', 'a script'),
+                      (r'@import\s+(?:url\()?["\']?(?:https?:)?//', 'an @import')):
+        if re.search(pat, doc, re.I):
+            fails.append(f'loads {what} from the network; a page must survive being mailed as one file')
+    if re.search(r'<img\b[^>]*src=["\']?(?:https?:)?//', doc, re.I):
+        warns.append('an <img> comes from the network and will be missing offline')
+    css = own_css(doc)
+    meta = re.search(r'<meta[^>]+name=["\']?color-scheme["\']?[^>]*content=["\']([^"\']*)', doc, re.I)
+    if re.search(r'color-scheme\s*:[^;}]*\blight\b', css, re.I) or (meta and 'light' in meta.group(1).lower()):
+        fails.append('asks for a light colour scheme; these pages are dark, always')
+    covered, roles, bright = set(), set(), set()
+    for sel, decls in RULE_RE.findall(css):
+        sels = {s.strip() for s in sel.split(',')}
+        for value in BG_RE.findall(decls):
+            v = value.strip().lower().replace('!important', '').strip()
+            if sels & GROUNDS and v not in SEE_THROUGH:
+                covered |= sels & GROUNDS
+            if light(v):
+                bright |= {s for s in sels if s}
+        if sels & {':root', 'html'}:
+            roles |= set(re.findall(r'--(' + '|'.join(ROLES) + r')\s*:', decls))
+    if covered:
+        fails.append('paints an opaque ground over the wallpaper: ' + ', '.join(sorted(covered))
+                     + ' { background } — remove it, the wall is the ground')
+    if roles:
+        fails.append("redefines the theme's colour roles: " + ', '.join('--' + r for r in sorted(roles))
+                     + ' — brief-wall owns them; name the page\'s own colours something else')
+    if bright:
+        warns.append('literal light backgrounds on ' + ', '.join(sorted(bright)[:6])
+                     + (' …' if len(bright) > 6 else '') + ' — one milky .glass card is the look, a page of white boxes is not')
+    return fails, warns
+
+
+def render_check(page):
+    """Photograph the page and measure how light it is. None when it cannot be measured."""
+    chrome = shutil.which('chromium') or shutil.which('google-chrome-stable') or shutil.which('google-chrome')
+    if not chrome or not shutil.which('vips'):
+        return None, 'not photographed: needs chromium and vips'
+    with tempfile.TemporaryDirectory() as tmp:
+        shot = os.path.join(tmp, 'page.png')
+        subprocess.run([chrome, '--headless=new', '--disable-gpu', '--hide-scrollbars', '--no-first-run',
+                        f'--user-data-dir={tmp}/profile', '--window-size=1280,1800',
+                        '--virtual-time-budget=4000', f'--screenshot={shot}', Path(page).resolve().as_uri()],
+                       capture_output=True, timeout=90)
+        if not os.path.isfile(shot):
+            return None, 'not photographed: chromium produced no screenshot'
+        grey = os.path.join(tmp, 'grey.v')
+        subprocess.run(['vips', 'colourspace', shot, grey, 'b-w'], check=True, capture_output=True)
+        mean = float(subprocess.run(['vips', 'avg', grey], check=True, capture_output=True, text=True).stdout)
+    return mean, None
+
+
+def report(pages, render=True):
+    status = 0
+    for page in pages:
+        doc = Path(page).read_text(errors='replace')
+        fails, warns = static_check(doc)
+        note = ''
+        if render:
+            mean, why = render_check(page)
+            if mean is None:
+                warns.append(why)
+            else:
+                note = f' · photographed mean luminance {mean:.0f}/255'
+                if mean > LIGHT_MEAN:
+                    fails.append(f'renders light: mean luminance {mean:.0f}/255 against a limit of {LIGHT_MEAN}')
+        print(f"{'FAIL' if fails else 'PASS'}  {page}{note}")
+        for f in fails:
+            print(f'  ✗ {f}')
+        for w in warns:
+            print(f'  · {w}')
+        status |= bool(fails)
+    return status
+
+
+def cmd_check(a):
+    sys.exit(report(a.pages, render=not a.no_render))
+
+
+def main():
+    ap = argparse.ArgumentParser(prog='fancy-pants', description=__doc__.split('\n\n')[0])
+    sub = ap.add_subparsers(dest='verb', required=True)
+    for name in ('head', 'new', 'dress'):
+        p = sub.add_parser(name)
+        p.add_argument('--theme', help='an Omarchy theme by name (default: random)')
+        p.add_argument('--image', help='an exact wallpaper, to keep the one a page already has')
+        if name == 'head':
+            p.add_argument('--out')
+        else:
+            p.add_argument('page')
+        if name == 'new':
+            p.add_argument('--title', required=True)
+            p.add_argument('--eyebrow')
+            p.add_argument('--force', action='store_true')
+        if name == 'dress':
+            p.add_argument('--out', help='write here instead of in place')
+            p.add_argument('--no-render', action='store_true')
+    p = sub.add_parser('check')
+    p.add_argument('pages', nargs='+')
+    p.add_argument('--no-render', action='store_true')
+    a = ap.parse_args()
+    {'head': cmd_head, 'new': cmd_new, 'dress': cmd_dress, 'check': cmd_check}[a.verb](a)
+
+
+if __name__ == '__main__':
+    main()

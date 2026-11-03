@@ -34,7 +34,12 @@ pub fn chamfer(w: f32, h: f32, cut: f32) -> [(f32, f32); 6] {
     [(c, 0.), (w, 0.), (w, h - c), (w - c, h), (0., h), (0., c)]
 }
 
-fn fill_poly(bounds: Bounds<Pixels>, pts: &[(f32, f32)], ink: Hsla, window: &mut Window) {
+fn fill_poly(
+    bounds: Bounds<Pixels>,
+    pts: &[(f32, f32)],
+    ink: impl Into<gpui::Background>,
+    window: &mut Window,
+) {
     let Some((first, rest)) = pts.split_first() else {
         return;
     };
@@ -98,6 +103,129 @@ pub fn plate(face: Hsla, edge: Hsla, cut: f32, floating: bool) -> Div {
                     .map(|(x, y)| (*x + 0.5, *y + 0.5))
                     .collect();
                 stroke_poly(bounds, &inset, edge, 1., window);
+            },
+        )
+        .size_full(),
+    )
+}
+
+/// Gaussian convolution of a one-pixel grid line. Normalising the samples
+/// preserves its total ink: frosting spreads the line instead of darkening it.
+fn frost_kernel(sigma: f32) -> Vec<(f32, f32)> {
+    if sigma <= 0. {
+        return vec![(0., 1.)];
+    }
+    let sigma = sigma.clamp(0.25, 12.);
+    let reach = (sigma * 3.).ceil() as i32;
+    let mut taps: Vec<_> = (-reach..=reach)
+        .map(|i| (i as f32, (-0.5 * (i as f32 / sigma).powi(2)).exp()))
+        .collect();
+    let total: f32 = taps.iter().map(|(_, weight)| weight).sum();
+    for (_, weight) in &mut taps {
+        *weight /= total;
+    }
+    taps
+}
+
+/// Smoked glass over the deck's own grid. The grid is convolved before any
+/// labels are painted, so the frost cannot blur text, buttons or selections.
+/// Desktop transparency and desktop blur remain the compositor's policy.
+pub fn smoked_plate(
+    face: Hsla,
+    edge: Hsla,
+    cut: f32,
+    grid: Option<(Hsla, f32)>,
+    frost: f32,
+) -> Div {
+    let taps = frost_kernel(frost);
+    div().absolute().inset_0().child(
+        canvas(
+            |_, _, _| {},
+            move |bounds, _, window, cx| {
+                let w = f32::from(bounds.size.width);
+                let h = f32::from(bounds.size.height);
+                let c = cut.clamp(0., (w.min(h) / 3.).max(0.));
+                let pts = chamfer(w, h, c);
+                if grid.is_none() && crate::desktop_glass::allowed(window, cx) {
+                    // Replacement blending removes the terminal and the opaque
+                    // overlay beneath this face. Only the desktop can show here.
+                    window.paint_quad(fill(
+                        bounds,
+                        gpui::Background::desktop_cutout(
+                            face.alpha(0.62),
+                            c * window.scale_factor(),
+                        ),
+                    ));
+                } else {
+                    fill_poly(bounds, &pts, face.alpha(1.), window);
+                }
+                if let Some((grid, pitch)) = grid {
+                    let p = pitch.max(8.);
+                    let mut x = p;
+                    while x < w {
+                        for &(off, weight) in &taps {
+                            let at = x + off;
+                            if at < 0. || at + 1. > w {
+                                continue;
+                            }
+                            let top = (c - at).max(0.);
+                            let bottom = h - (c - (w - at - 1.)).max(0.);
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    bounds.origin + point(px(at), px(top)),
+                                    size(px(1.), px((bottom - top).max(0.))),
+                                ),
+                                grid.alpha(grid.a * weight),
+                            ));
+                        }
+                        x += p;
+                    }
+                    let mut y = p;
+                    while y < h {
+                        for &(off, weight) in &taps {
+                            let at = y + off;
+                            if at < 0. || at + 1. > h {
+                                continue;
+                            }
+                            let left = (c - at).max(0.);
+                            let right = w - (c - (h - at - 1.)).max(0.);
+                            window.paint_quad(fill(
+                                Bounds::new(
+                                    bounds.origin + point(px(left), px(at)),
+                                    size(px((right - left).max(0.)), px(1.)),
+                                ),
+                                grid.alpha(grid.a * weight),
+                            ));
+                        }
+                        y += p;
+                    }
+                }
+                // A broad reflection and a bright upper edge give the smoke a
+                // glass surface even when the compositor is fully opaque.
+                fill_poly(
+                    bounds,
+                    &pts,
+                    gpui::linear_gradient(
+                        155.,
+                        gpui::linear_color_stop(gpui::white().alpha(0.055), 0.),
+                        gpui::linear_color_stop(face.alpha(0.16), 1.),
+                    ),
+                    window,
+                );
+                let inset: Vec<_> = chamfer(w - 1., h - 1., c - 0.5)
+                    .iter()
+                    .map(|(x, y)| (*x + 0.5, *y + 0.5))
+                    .collect();
+                stroke_poly(bounds, &inset, edge, 1., window);
+                if w > c + 2. {
+                    window.paint_quad(fill(
+                        Bounds::new(
+                            bounds.origin + point(px(c + 1.), px(1.)),
+                            size(px((w - c - 2.).max(0.)), px(1.)),
+                        ),
+                        gpui::white().alpha(0.10),
+                    ));
+                }
             },
         )
         .size_full(),
@@ -282,6 +410,29 @@ pub fn grid(ink: Hsla, pitch: f32) -> Div {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn frosting_spreads_a_line_without_losing_its_ink() {
+        let taps = frost_kernel(3.);
+        let sum: f32 = taps.iter().map(|(_, w)| w).sum();
+        assert!((sum - 1.).abs() < 0.00001);
+        let center = taps.iter().find(|(at, _)| *at == 0.).unwrap().1;
+        assert!(center < 0.15, "a sharp line must actually spread");
+        let variance: f32 = taps.iter().map(|(at, w)| at * at * w).sum();
+        assert!(
+            (variance - 9.).abs() < 0.2,
+            "the blur follows the requested sigma"
+        );
+        for ((a, aw), (b, bw)) in taps.iter().zip(taps.iter().rev()) {
+            assert_eq!(*a, -*b);
+            assert_eq!(aw, bw);
+        }
+    }
+
+    #[test]
+    fn no_frost_keeps_the_original_grid_line() {
+        assert_eq!(frost_kernel(0.), vec![(0., 1.)]);
+    }
 
     #[test]
     fn a_plate_is_cut_on_one_diagonal_only() {

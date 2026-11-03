@@ -1,0 +1,26 @@
+{
+  "method": "Three disjoint guards removed together from the actual application; each named test fails independently. Exact source restored and all three tests pass.",
+  "mutations": [
+    {
+      "mutation": "routing",
+      "test": "tests::the_sockets_bench_verbs_never_pick_an_off_limits_pane",
+      "result": "killed"
+    },
+    {
+      "mutation": "dispatch",
+      "test": "pane::behaviour::synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane",
+      "result": "killed"
+    },
+    {
+      "mutation": "global-policy",
+      "test": "ctl::tests::an_unscripted_window_refuses_all_global_policy_mutations",
+      "result": "killed"
+    }
+  ],
+  "restored": true,
+  "source_sha256": {
+    "app/src/main.rs": "bc63f66a30c1a1e2b01a6a7a517f552743bf5bd1dfd61fe23cd4621f1a8cb9e2",
+    "app/src/ctl.rs": "ac94b90e7a429b230428401505fbab8c38a5a74e0cd6b845db443cfd56ffaeed",
+    "app/src/pane/bench.rs": "c4299656d67a5b1d0d68416028b74eaab3adaf3c1016a694ba02de04ae622bf5"
+  }
+}

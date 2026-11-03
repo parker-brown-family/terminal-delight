@@ -1,0 +1,35 @@
+{
+  "passed": true,
+  "initialNotes": 1,
+  "originalNotesPreserved": true,
+  "layouts": [
+    {
+      "width": 390,
+      "scrollWidth": 375,
+      "figures": 8,
+      "annotated": 8,
+      "svg": true,
+      "external": []
+    },
+    {
+      "width": 968,
+      "scrollWidth": 953,
+      "figures": 8,
+      "annotated": 8,
+      "svg": true,
+      "external": []
+    },
+    {
+      "width": 1100,
+      "scrollWidth": 1085,
+      "figures": 8,
+      "annotated": 8,
+      "svg": true,
+      "external": []
+    }
+  ],
+  "notes": "add / anchored export / embed / clear local state / reopen passed",
+  "errors": [],
+  "external_requests": [],
+  "sandbox": "Chromium sandbox enabled"
+}

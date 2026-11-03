@@ -1,0 +1,55 @@
+== copies of the shared fixtures in /tmp/brief-autosave-native-viewer-scripted/copies
+   26 briefs
+== read: what the notes layer shows, against what a browser showed
+   window 91106, hidden on special:tdnotes90704
+FAIL 5717474-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/5717474-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/5717474-brief//agent-map.txt)
+FAIL 5717474-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/5717474-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/5717474-expected//agent-map.txt)
+FAIL b689671-saved-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/b689671-saved-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/b689671-saved-brief//agent-map.txt)
+FAIL b689671-saved-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/b689671-saved-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/b689671-saved-expected//agent-map.txt)
+FAIL concur-era-pristine-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/concur-era-pristine-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/concur-era-pristine-brief//agent-map.txt)
+FAIL concur-era-pristine-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/concur-era-pristine-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/concur-era-pristine-expected//agent-map.txt)
+FAIL current-pristine-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/current-pristine-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/current-pristine-brief//agent-map.txt)
+FAIL current-pristine-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/current-pristine-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/current-pristine-expected//agent-map.txt)
+FAIL eca5cb8-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/eca5cb8-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/eca5cb8-brief//agent-map.txt)
+FAIL eca5cb8-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/eca5cb8-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/eca5cb8-expected//agent-map.txt)
+FAIL future-format-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/future-format-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/future-format-brief//agent-map.txt)
+FAIL hostile-text-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/hostile-text-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/hostile-text-brief//agent-map.txt)
+FAIL hostile-text-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/hostile-text-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/hostile-text-expected//agent-map.txt)
+FAIL island-after-script-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/island-after-script-brief//document-notes.json)
+FAIL no-body-close-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/no-body-close-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/no-body-close-brief//agent-map.txt)
+FAIL no-body-close-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/no-body-close-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/no-body-close-expected//agent-map.txt)
+FAIL no-island-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/no-island-brief//document-notes.json)
+FAIL notes-file-override-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/notes-file-override-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/notes-file-override-brief//agent-map.txt)
+FAIL notes-file-override-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/notes-file-override-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/notes-file-override-expected//agent-map.txt)
+FAIL orphan-note-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/orphan-note-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/orphan-note-brief//agent-map.txt)
+FAIL orphan-note-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/orphan-note-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/orphan-note-expected//agent-map.txt)
+FAIL stale-mirrors-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/stale-mirrors-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/stale-mirrors-brief//agent-map.txt)
+FAIL stale-mirrors-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/stale-mirrors-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/stale-mirrors-expected//agent-map.txt)
+FAIL two-islands-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/two-islands-brief//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/two-islands-brief//agent-map.txt)
+FAIL two-islands-expected: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/two-islands-expected//document-notes.json) document_notes' map is not ctl doc notes' map (see /tmp/brief-autosave-native-viewer-scripted/copies/two-islands-expected//agent-map.txt)
+FAIL unreadable-island-brief: document_notes did not find the square over its pane (see /tmp/brief-autosave-native-viewer-scripted/copies/unreadable-island-brief//document-notes.json)
+== bytes: every copy as it was before the window opened it
+   not one of 26 files changed: same sha256, same modification time
+== write: each case's edits made through the note box's commands, saved, and held to expected.html
+   ok 5717474: saved into brief.html ✓
+   ok b689671-saved: saved into brief.html ✓
+   ok concur-era-pristine: saved into brief.html ✓
+   ok current-pristine: saved into brief.html ✓
+   ok eca5cb8: saved into brief.html ✓
+   ok future-format: refused: This brief's notes are in format 2, which is newer than this TD; it will not write a format it does not know.
+   ok hostile-text: saved into brief.html ✓
+   ok island-after-script: refused: This brief's notes island comes after its notes script, so a browser could never show a note saved there.
+   ok no-body-close: saved into brief.html ✓
+   ok no-island: refused: This page has no notes island, so there is nowhere in the file to save a note.
+   ok notes-file-override: saved into brief.html ✓
+   ok orphan-note: saved into brief.html ✓
+   ok stale-mirrors: saved into brief.html ✓
+   ok two-islands: saved into brief.html ✓
+   ok unreadable-island: refused: The notes already in this file cannot be read (the notes island is not JSON: an unterminated string at byte 57), and TD will not overwrite what it cannot read.
+   11 briefs written, each byte-identical to the skill's expected.html but for the times
+== on disk: a brief changed under an open window
+   ok notes changed on disk: 2 notes and 2 concurs shown, the page not drawn again
+   ok the body changed: drawn again, and the submitted note is already saved
+   ok the original HTML keeps both the submitted comment and the other writer's change
+   ok the file removed: saving is off — "The file is no longer on disk, so there is nothing to save into."
+SOMETHING FAILED — logs in /tmp/brief-autosave-native-viewer-scripted

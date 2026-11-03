@@ -1,0 +1,56 @@
+{
+  "local_only": true,
+  "source_head": "a4b6e22528c83e2895c8fa17afcd83f27863e4a9",
+  "source_files": {
+    "scripts/stage-clip.sh": "b8352b991ddc727a2bd7d87c7ad1759872e7abdab418d5694f99a51da01e7223",
+    "scripts/check-ctl-reply.py": "53996b3ab6c7ab06043a2bc24b161beb82e3d07d217a3604720b757e66f0e389"
+  },
+  "controls": [
+    {
+      "control": "plain success",
+      "expected_allowed": true,
+      "exit": 0
+    },
+    {
+      "control": "RPC success",
+      "expected_allowed": true,
+      "exit": 0
+    },
+    {
+      "control": "plain refusal",
+      "expected_allowed": false,
+      "exit": 1
+    },
+    {
+      "control": "RPC error",
+      "expected_allowed": false,
+      "exit": 1
+    },
+    {
+      "control": "tool error",
+      "expected_allowed": false,
+      "exit": 1
+    },
+    {
+      "control": "target error",
+      "expected_allowed": false,
+      "exit": 1
+    },
+    {
+      "control": "unknown receipt",
+      "expected_allowed": false,
+      "exit": 1
+    },
+    {
+      "control": "empty receipt",
+      "expected_allowed": false,
+      "exit": 1
+    }
+  ],
+  "stage_policy_refusal": {
+    "exit": 1,
+    "recorder_started": false,
+    "stderr": "stage-clip: refused or unknown ctl receipt: 1\terr policy refused\n"
+  },
+  "real_window_or_recorder_started": false
+}

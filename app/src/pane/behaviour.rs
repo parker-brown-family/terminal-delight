@@ -15,6 +15,90 @@ use super::harness::{
 use crate::docopen::{Asker, DocSeat, FloatHit};
 use crate::workbench::Face;
 
+#[gpui::test]
+fn queued_input_waits_while_the_pane_is_off_limits(cx: &mut TestAppContext) {
+    use std::io::Read;
+    let mut attached = Pane::attached(cx);
+    attached.pane.running_as(super::PaneMode::Codex);
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.set_on_screen(false, cx);
+        v.bench_deliver(b"queued-canary".to_vec(), cx);
+        assert_eq!(v.bench_queued(), 1);
+        v.agent_access = crate::threshing_floor::AgentAccess::OffLimits;
+        v.set_on_screen(true, cx);
+        assert_eq!(
+            v.bench_queued(),
+            1,
+            "showing a hidden pane must not drain the instruction"
+        );
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_millis(30)))
+        .unwrap();
+    let mut bytes = [0; 128];
+    assert!(
+        attached.host.read(&mut bytes).is_err(),
+        "queued input reached the host"
+    );
+    attached.pane.view.update(attached.pane.cx, |v, cx| {
+        v.agent_access = crate::threshing_floor::AgentAccess::Open;
+        v.bench_drain(cx);
+        assert_eq!(v.bench_queued(), 0);
+    });
+    attached
+        .host
+        .set_read_timeout(Some(std::time::Duration::from_secs(2)))
+        .unwrap();
+    let mut received = [0; 13];
+    attached.host.read_exact(&mut received).unwrap();
+    assert_eq!(&received, b"queued-canary");
+}
+
+#[gpui::test]
+fn synthetic_bench_pointer_refuses_off_limits_but_reaches_an_allowed_pane(cx: &mut TestAppContext) {
+    let pane = Pane::running(cx, "exec cat");
+    let view = pane.view.clone();
+    pane.view.update(pane.cx, |v, _| {
+        v.agent_access = crate::threshing_floor::AgentAccess::OffLimits
+    });
+    for click in [false, true] {
+        let request = crate::ctl::PointerReq {
+            click,
+            x: 20.0,
+            y: 30.0,
+            alt: false,
+            control: false,
+        };
+        let said = pane
+            .cx
+            .update(|window, cx| view.update(cx, |v, cx| v.synthetic_pointer(request, window, cx)));
+        assert!(
+            said.starts_with("err") && said.contains("off-limits"),
+            "{said}"
+        );
+    }
+    pane.view.update(pane.cx, |v, _| {
+        v.agent_access = crate::threshing_floor::AgentAccess::Open
+    });
+    let said = pane.cx.update(|window, cx| {
+        view.update(cx, |v, cx| {
+            v.synthetic_pointer(
+                crate::ctl::PointerReq {
+                    click: false,
+                    x: 20.0,
+                    y: 30.0,
+                    alt: false,
+                    control: false,
+                },
+                window,
+                cx,
+            )
+        })
+    });
+    assert!(!said.starts_with("err"), "allowed positive control: {said}");
+}
+
 /// Observe bytes at the host socket, after real GPUI key dispatch. A final
 /// letter fences the claimed chords: if they leaked, it would not arrive first.
 #[gpui::test]
@@ -170,6 +254,45 @@ fn alt_click_on_a_printed_picture_opens_a_square_and_escape_closes_it(cx: &mut T
 
     pane.keys("escape");
     assert_eq!(pane.float_path(), None, "Escape closes the square");
+}
+
+/// Ctrl+W puts the square away and leaves the tab alone; with no square up it
+/// is the shell's werase again. Closing the tab is Ctrl+Shift+W. Parker,
+/// 2026-10-21: *"Alt+w closes the ENTIRE pane, ctrl+w closes the tab ...
+/// Ctrl-W closes one glow pane at a time."*
+#[gpui::test]
+fn ctrl_w_closes_the_square_not_the_tab(cx: &mut TestAppContext) {
+    let (mut pane, _dir, png) = pane_showing_a_picture(cx, "ctrl-w");
+    pane.settle();
+    let tab_closes = std::rc::Rc::new(std::cell::Cell::new(0));
+    let seen = tab_closes.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::RequestCloseTab, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    assert!(pane.float_path().is_some(), "the square is up");
+    pane.keys("ctrl-w");
+    assert_eq!(pane.float_path(), None, "Ctrl+W closes the square");
+    assert_eq!(tab_closes.get(), 0, "and not the tab");
+
+    // No square: the chord is ^W, and the word before it goes.
+    pane.keys("z z z q ctrl-w d o n e enter");
+    pane.wait_for_row("done");
+    assert!(
+        !pane.rows().iter().any(|r| r.contains("zzzqdone")),
+        "^W reached the shell and erased the word: {:?}",
+        pane.rows()
+    );
+    assert_eq!(tab_closes.get(), 0);
+
+    pane.keys("ctrl-shift-w");
+    assert_eq!(tab_closes.get(), 1, "Ctrl+Shift+W asks to close the tab");
 }
 
 /// Codex's file reference shape: a parenthesized path split across indented
@@ -642,8 +765,8 @@ fn pane_showing_a_brief(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch, S
 }
 
 /// Alt+click the brief open, wait for its page to be laid out, and write a
-/// note into it that is not saved.
-fn open_the_brief_with_an_unsaved_note(pane: &mut Pane, brief: &str) {
+/// note into it. A forced body change exercises a failed automatic save.
+fn open_the_brief_with_a_note(pane: &mut Pane, brief: &str, should_save: bool) {
     let at = pane.point_at(brief);
     pane.click(at, Pane::alt());
     pane.redraw();
@@ -657,6 +780,12 @@ fn open_the_brief_with_an_unsaved_note(pane: &mut Pane, brief: &str) {
         .expect("the brief is laid out, with its notes");
     assert_eq!(report["state"], "notes", "{report}");
     let (nid, _) = BRIEF_ANCHORS[0];
+    let original = std::fs::read(brief).expect("original brief");
+    if !should_save {
+        let mut changed = original.clone();
+        changed.extend_from_slice(b"<!-- changed while open -->");
+        std::fs::write(brief, changed).unwrap();
+    }
     pane.view
         .update(pane.cx, |v, cx| {
             v.doc_note(
@@ -668,7 +797,95 @@ fn open_the_brief_with_an_unsaved_note(pane: &mut Pane, brief: &str) {
             )
         })
         .expect("a note is added");
-    assert_eq!(pane.doc_notes().expect("notes")["unsaved"], 1);
+    assert_eq!(
+        pane.doc_notes().expect("notes")["unsaved"],
+        usize::from(!should_save)
+    );
+    if !should_save {
+        std::fs::write(brief, original).unwrap();
+    }
+}
+
+/// Submit commits synchronously: even immediate close before browser read-back
+/// cannot cancel persistence. Reopening the same path needs no browser storage.
+#[gpui::test]
+fn a_submitted_comment_survives_immediate_close_and_reopen(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "autosave-reopen");
+    open_the_brief_with_a_note(&mut pane, &brief, true);
+    let written = std::fs::read(&brief).unwrap();
+    assert!(String::from_utf8_lossy(&written).contains("Keep the tiles."));
+    pane.keys("escape");
+    assert_eq!(
+        pane.float_path(),
+        None,
+        "saved comments need no close warning"
+    );
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let report = pane.doc_notes().unwrap();
+    assert_eq!(report["unsaved"], 0);
+    assert!(report["map"].as_str().unwrap().contains("Keep the tiles."));
+    assert_eq!(
+        std::fs::read(&brief).unwrap(),
+        written,
+        "reopening never rewrites it"
+    );
+    assert_eq!(
+        std::fs::read_dir(std::path::Path::new(&brief).parent().unwrap())
+            .unwrap()
+            .filter_map(Result::ok)
+            .filter(|entry| entry.path().extension().is_some_and(|ext| ext == "html"))
+            .count(),
+        1,
+        "only the original HTML is present"
+    );
+}
+
+/// A prior successful write's delayed confirmation must not hide a newer
+/// write failure. Both submissions happen before yielding to the executor.
+#[gpui::test]
+fn a_failed_submission_keeps_its_error_after_an_older_confirmation(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "autosave-confirmation");
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let square = pane.float_view().unwrap();
+    let (nid, _) = BRIEF_ANCHORS[0];
+    square.update(pane.cx, |v, cx| {
+        v.notes_command(
+            crate::docview::NotesCommand::Add {
+                nid: nid.into(),
+                text: "Already committed.".into(),
+            },
+            cx,
+        )
+        .unwrap();
+        let mut bytes = std::fs::read(&brief).unwrap();
+        bytes.extend_from_slice(b"<!-- an external body change -->");
+        std::fs::write(&brief, &bytes).unwrap();
+        v.notes_command(
+            crate::docview::NotesCommand::Add {
+                nid: nid.into(),
+                text: "This write must fail.".into(),
+            },
+            cx,
+        )
+        .unwrap();
+    });
+    let before = pane.doc_notes().unwrap();
+    assert_eq!(before["unsaved"], 1);
+    assert!(!before["said"].as_str().unwrap().contains('✓'));
+    pane.redraw();
+    let after = pane.doc_notes().unwrap();
+    assert_eq!(after["unsaved"], 1);
+    assert_eq!(
+        after["said"], before["said"],
+        "stale confirmation must not hide the write error"
+    );
+    let bytes = std::fs::read_to_string(&brief).unwrap();
+    assert!(bytes.contains("Already committed."));
+    assert!(!bytes.contains("This write must fail."));
 }
 
 /// A square holding a note not yet saved into its brief is kept once when it
@@ -682,10 +899,10 @@ fn a_square_with_unsaved_notes_is_kept_once_then_closes(cx: &mut TestAppContext)
     let said_unsaved = |pane: &mut Pane| {
         pane.doc_notes().expect("notes")["said"]
             .as_str()
-            .is_some_and(|s| s.contains("unsaved"))
+            .is_some_and(|s| s.contains("not kept"))
     };
 
-    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    open_the_brief_with_a_note(&mut pane, &brief, false);
     pane.keys("escape");
     assert_eq!(
         pane.float_path(),
@@ -696,7 +913,7 @@ fn a_square_with_unsaved_notes_is_kept_once_then_closes(cx: &mut TestAppContext)
     pane.keys("escape");
     assert_eq!(pane.float_path(), None, "the second Escape closes it");
 
-    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    open_the_brief_with_a_note(&mut pane, &brief, false);
     let close = pane.float_zone(FloatHit::Close).expect("the square's ✕");
     pane.click(Pane::middle(close), Default::default());
     assert_eq!(
@@ -709,7 +926,7 @@ fn a_square_with_unsaved_notes_is_kept_once_then_closes(cx: &mut TestAppContext)
     pane.click(Pane::middle(close), Default::default());
     assert_eq!(pane.float_path(), None, "the second ✕ closes it");
 
-    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    open_the_brief_with_a_note(&mut pane, &brief, false);
     let other = pane.point_at(&png);
     pane.click(other, Pane::alt());
     assert_eq!(
@@ -856,7 +1073,8 @@ fn a_press_on_the_square_is_the_squares_even_over_a_path_or_a_note(cx: &mut Test
     });
     pane.redraw();
     let note = pane
-        .read(|v| v.note_layout().map(|l| l.center))
+        .view
+        .read_with(pane.cx, |v, cx| v.note_layout(cx).map(|l| l.center))
         .expect("the note is laid out");
     let (x, y, w, h) = pane.float_rect().expect("the square");
     let grab = gpui::point(px(x + 40.0), px(y + 11.0));
@@ -952,6 +1170,38 @@ fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane
         "the document is laid out, at its top"
     );
     (pane, dir)
+}
+
+/// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
+/// it; ctrl+↑ and ctrl+shift+↑ go back. The square stays open through all of
+/// it: a key the square claims and its document declines closes the square,
+/// which is what Escape is, and these must not.
+///
+/// Parker, 2026-10-21: *"ctrl seems like it will apply to glow pane, alt applies
+/// to the main pane"*, with paging on shift so ctrl+PageUp/PageDown keep
+/// switching tabs.
+#[gpui::test]
+fn ctrl_arrows_turn_the_floating_square(cx: &mut TestAppContext) {
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "glow-keys");
+    let view = pane.float_view().expect("a square");
+    let at = |pane: &mut Pane| pane.scroll_of(&view).expect("laid out");
+    pane.keys("ctrl-down");
+    pane.redraw();
+    let stepped = at(&mut pane);
+    assert!(stepped > 0.0, "ctrl+down steps the document: {stepped}");
+    assert!(pane.float_view().is_some(), "and the square stays open");
+    pane.keys("ctrl-shift-down");
+    pane.redraw();
+    let paged = at(&mut pane);
+    assert!(
+        paged > stepped * 2.0,
+        "ctrl+shift+down pages it: {stepped} then {paged}"
+    );
+    pane.keys("ctrl-shift-up");
+    pane.keys("ctrl-up");
+    pane.redraw();
+    assert_eq!(at(&mut pane), 0.0, "and the two go back to the top");
+    assert!(pane.float_view().is_some());
 }
 
 /// The wheel over the square moves the document in it, and never the
@@ -3088,7 +3338,7 @@ fn alt_over_a_brief_outlines_its_anchors(cx: &mut TestAppContext) {
 #[gpui::test]
 fn ctrl_shift_enter_over_a_brief_sends_its_notes_as_the_button_does(cx: &mut TestAppContext) {
     let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "send-chord");
-    open_the_brief_with_an_unsaved_note(&mut pane, &brief);
+    open_the_brief_with_a_note(&mut pane, &brief, true);
     let sent = std::rc::Rc::new(std::cell::RefCell::new(Vec::<String>::new()));
     let log = sent.clone();
     let view = pane.view.clone();
@@ -3250,15 +3500,19 @@ fn the_off_limits_toggle_marks_and_unmarks_the_pane_and_says_so(cx: &mut TestApp
         .detach();
     });
     assert!(
-        !pane.read(|v| v.off_limits),
+        !pane.read(|v| v.agent_access.is_off_limits()),
         "a pane starts visible to agents"
     );
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::threshing_floor::AgentAccess::OffLimits, cx)
+    });
     pane.redraw();
-    assert!(pane.read(|v| v.off_limits));
-    pane.view.update(pane.cx, |v, cx| v.toggle_off_limits(cx));
+    assert!(pane.read(|v| v.agent_access.is_off_limits()));
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_agent_access(crate::threshing_floor::AgentAccess::Open, cx)
+    });
     pane.redraw();
-    assert!(!pane.read(|v| v.off_limits));
+    assert!(!pane.read(|v| v.agent_access.is_off_limits()));
     assert_eq!(said.get(), 2, "each change is announced, for the save");
 }
 
@@ -3503,7 +3757,13 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
     pane.keys("ctrl-enter");
     reader.redraw(&mut pane);
     let report = pane.doc_notes().expect("notes");
-    assert_eq!(report["unsaved"], 1, "the note is added: {report}");
+    assert_eq!(report["unsaved"], 0, "submission saved the note: {report}");
+    assert!(
+        std::fs::read_to_string(&brief)
+            .unwrap()
+            .contains("keep the tiles"),
+        "the original HTML contains the comment before any send"
+    );
     assert!(
         report["map"]
             .as_str()
@@ -3531,7 +3791,7 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
         report["concurs"], 1,
         "a press on the space stamps it: {report}"
     );
-    assert_eq!(report["unsaved"], 2);
+    assert_eq!(report["unsaved"], 0, "the concurrence is saved immediately");
 
     // With nothing open, Escape asks for the reader to close. The square it
     // borrowed from is not the thing closing, and keeps every note, so it
@@ -3540,20 +3800,26 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
     pane.keys("escape");
     assert_eq!(closes.get(), 1, "Escape asks to close the reader");
     let report = pane.doc_notes().expect("notes");
-    assert_eq!(
-        report["said"],
-        serde_json::Value::Null,
-        "with no warning about unsaved notes: {report}"
-    );
-    assert_eq!(report["unsaved"], 2, "which are all still there");
+    assert_eq!(report["unsaved"], 0, "both annotations are already on disk");
 
     // Who is beside the brief, as the workspace works it out every frame.
     pane.view.update(pane.cx, |v, cx| {
         v.set_notes_beside(Some("agent".into()), None, cx)
     });
     reader.redraw(&mut pane);
+    let before_send = std::fs::read(&brief).unwrap();
+    let before_mtime = std::fs::metadata(&brief).unwrap().modified().unwrap();
     pane.keys("ctrl-shift-enter");
     reader.redraw(&mut pane);
+    assert_eq!(
+        std::fs::read(&brief).unwrap(),
+        before_send,
+        "Send never rewrites the file"
+    );
+    assert_eq!(
+        std::fs::metadata(&brief).unwrap().modified().unwrap(),
+        before_mtime
+    );
     {
         let sent = sent.borrow();
         assert_eq!(sent.len(), 1, "↪ from the reader sends once: {sent:?}");
@@ -3573,7 +3839,7 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
     };
     assert!(
         island("report-notes").contains("keep the tiles"),
-        "the send saved the note into the brief's notes island"
+        "submission saved the note into the brief's notes island"
     );
     assert!(
         island("report-concurs").contains(nid),
@@ -3654,6 +3920,96 @@ fn a_handover_is_on_its_page_and_opens_into_the_pane_from_there(cx: &mut TestApp
     // And the chord on the page puts it away.
     pane.keys("ctrl-shift-m");
     assert_eq!(pane.float_path(), None, "the page is toggled off");
+}
+
+/// Only a person replaces a square. An agent's `open_document` over a square
+/// that is already up — the person's page, here a picture they Alt+clicked —
+/// is held: the square still shows their page, the agent is answered `held`,
+/// and the file is kept as the pane's handover, not yet opened, for the
+/// artifact rail. With no square up, the same verb opens it. And the rail's
+/// road, which is the person's, opens it over whatever is there.
+///
+/// Parker, 2026-10-22, after an agent's finished turn replaced the page he was
+/// writing a note in: *"definitely will not override the currently open glow
+/// pane"*.
+#[gpui::test]
+fn an_agents_open_never_replaces_a_square_the_person_has_up(cx: &mut TestAppContext) {
+    let (mut pane, dir, png) = pane_showing_a_picture(cx, "held-open");
+    let report = dir.fixture("../README.md", "report.md");
+    let report = report.to_str().expect("UTF-8").to_string();
+    let target =
+        || crate::docopen::drawable_document(std::path::Path::new(&report)).expect("markdown");
+    let mine = std::path::PathBuf::from(&png);
+
+    // The person's page is up.
+    let at = pane.point_at(&png);
+    pane.click(at, Pane::alt());
+    assert_eq!(pane.float_path(), Some(mine.clone()));
+
+    // The agent's open is held.
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(said.starts_with("held "), "{said}");
+    assert_eq!(
+        pane.float_path(),
+        Some(mine.clone()),
+        "the person's square is still the person's"
+    );
+    let key = crate::handover::key_of(&report);
+    assert!(
+        pane.read(|v| v.handovers().contains(&key)),
+        "kept as a handover"
+    );
+    assert!(
+        !pane.read(|v| v.handovers().is_opened(&key)),
+        "and not opened: nobody has seen it"
+    );
+    // Asked again, it is held again and still kept once.
+    let again = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(again.starts_with("held "), "{again}");
+    assert_eq!(pane.read(|v| v.handovers().len()), 1);
+
+    // The rail's road is a person's: the newest handover opens over the square.
+    pane.view
+        .update(pane.cx, |v, cx| v.open_newest_handover(cx));
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&report))
+    );
+    assert!(
+        pane.read(|v| v.handovers().is_opened(&key)),
+        "and now it is opened"
+    );
+
+    // With no square up, the agent's open opens.
+    pane.keys("escape");
+    assert_eq!(pane.float_path(), None);
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target(), cx));
+    assert!(said.starts_with("ok float"), "{said}");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&report))
+    );
+    assert_eq!(desktop_launches(), Vec::<String>::new());
+}
+
+/// A square holding notes not yet saved is held like any other, and the agent
+/// hears `held`, not the old `err` that read as a failure to retry.
+#[gpui::test]
+fn an_agents_open_over_unsaved_notes_is_held_and_keeps_the_notes(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, png) = pane_showing_a_brief(cx, "held-unsaved");
+    open_the_brief_with_a_note(&mut pane, &brief, false);
+    let target = crate::docopen::drawable_document(std::path::Path::new(&png)).expect("a picture");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    assert!(said.starts_with("held "), "{said}");
+    assert_eq!(
+        pane.float_path().as_deref(),
+        Some(std::path::Path::new(&brief))
+    );
+    assert_eq!(
+        pane.doc_notes().expect("notes")["unsaved"],
+        1,
+        "the note is still there"
+    );
 }
 
 /// A `Deliverable:` line an agent printed is read off the pane's real grid,
@@ -4021,7 +4377,7 @@ fn pane_at_a_prompt(cx: &mut TestAppContext, alt: bool) -> Pane {
     let mut pane = Pane::running(
         cx,
         &format!(
-            "{screen}INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
+            "{screen}TERM=xterm-256color INPUTRC=/dev/null HISTFILE= PS1='ready> ' exec bash --norc --noprofile -i"
         ),
     );
     pane.wait_for("ready>");
@@ -4109,4 +4465,329 @@ fn the_alternate_screen_erases_a_selection_only_in_an_agent_pane(cx: &mut TestAp
     other.keys("ctrl-shift-left backspace z enter");
     other.wait_for("ready> echo abc dez");
     other.wait_for_row("abc dez");
+}
+
+#[gpui::test]
+fn backspace_erases_a_mouse_selection_across_a_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let cols = pane.read(|v| v.session.term.lock().columns());
+    let prefix = "x".repeat(cols - 35);
+    let selected = format!("BEGIN{}END", "y".repeat(30));
+    let line = format!("echo {prefix} {selected} tail");
+    pane.read(|v| v.paste_text(&line));
+    pane.wait_for("END tail");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let begin = pane.point_at("BEGIN");
+    let end = pane.point_at("END tail");
+    assert_ne!(begin.y, end.y, "fixture must cross a real grid wrap");
+    pane.press(point(begin.x - px(cell_w * 2.25), begin.y));
+    let last = point(end.x - px(cell_w * 1.75), end.y);
+    pane.drag_to(last);
+    pane.release(last);
+    assert_eq!(pane.read(|v| v.selection_clipboard_text()), Some(selected));
+    pane.keys("backspace");
+    pane.keys("enter");
+    pane.wait_for_row(&format!("{prefix} tail"));
+}
+
+#[gpui::test]
+fn keyboard_selection_and_backspace_cross_every_soft_wrap(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let word = "WRAPPED".repeat(30);
+    pane.read(|v| v.paste_text(&format!("keep {word}")));
+    pane.wait_for("WRAPPED");
+    pane.settle();
+    pane.keys(&vec!["shift-left"; word.len()].join(" "));
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text())
+            .unwrap()
+            .trim_end(),
+        word
+    );
+    pane.keys("backspace");
+    pane.wait_for_row("ready> keep");
+    assert!(!pane.rows().iter().any(|r| r.contains("WRAPPED")));
+}
+
+#[gpui::test]
+fn shift_backspace_deletes_the_previous_word_at_a_real_prompt(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    type_line(&mut pane, "echo first second");
+    pane.keys("shift-backspace z enter");
+    pane.wait_for_row("first z");
+}
+
+#[gpui::test]
+fn control_shift_backspace_erases_both_sides_of_a_wrapped_line(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let text = format!("echo {} END", "word ".repeat(30));
+    pane.read(|v| v.paste_text(&text));
+    pane.wait_for("END");
+    pane.keys("left left ctrl-shift-backspace");
+    pane.wait_for_row("ready>");
+    assert!(!pane.rows().iter().any(|r| r.contains("word")));
+    type_line(&mut pane, "echo kept");
+    pane.keys("enter");
+    pane.wait_for_row("kept");
+}
+
+#[gpui::test]
+fn the_new_shortcuts_distinguish_a_line_from_the_entire_multiline_input(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("first ONE\nsecond TWO\nthird THREE"));
+    pane.wait_for("third THREE");
+    pane.keys("ctrl-shift-backspace");
+    pane.keys("z");
+    pane.wait_for_row("z");
+    let rows = pane.rows().join("\n");
+    assert!(
+        rows.contains("first ONE") && rows.contains("second TWO"),
+        "{rows}"
+    );
+    assert!(!rows.contains("third THREE"), "{rows}");
+    pane.keys("ctrl-alt-shift-backspace");
+    pane.wait_for_row("ready>");
+    let rows = pane.rows().join("\n");
+    assert!(!rows.contains("ONE") && !rows.contains("TWO"), "{rows}");
+}
+
+#[gpui::test]
+fn backspace_erases_selected_literal_newlines_and_keeps_the_suffix(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    pane.read(|v| v.paste_text("prefix\nSELECTONE\nSELECTTWO suffix"));
+    pane.wait_for("SELECTTWO suffix");
+    pane.settle();
+    let cell_w = pane.read(|v| v.cell_w);
+    let start = pane.point_at("SELECTONE");
+    let end = pane.point_at("SELECTTWO");
+    let start = point(start.x - px(cell_w * 4.25), start.y);
+    let end = point(end.x + px(cell_w * 4.25), end.y);
+    pane.press(start);
+    pane.drag_to(end);
+    pane.release(end);
+    assert_eq!(
+        pane.read(|v| v.selection_clipboard_text()).as_deref(),
+        Some("SELECTONE\nSELECTTWO")
+    );
+    pane.keys("backspace");
+    pane.wait_for_row(" suffix");
+    let rows = pane.rows().join("\n");
+    assert!(rows.contains("ready> prefix"), "{rows}");
+    assert!(!rows.contains("SELECT"), "{rows}");
+}
+
+/// Exercise the same owner seam used when the workspace ends its last leaf.
+#[gpui::test]
+fn ending_a_window_owned_terminal_releases_its_child_without_closing_the_window(
+    cx: &mut TestAppContext,
+) {
+    let mut pane = Pane::running(cx, "trap '' HUP; echo ready; while :; do sleep 1; done");
+    pane.wait_for("ready");
+    let pid = pane.read(|v| v.session.shell_pid).expect("an owned child");
+    pane.read(|v| v.close_owned_terminal());
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(2);
+    while std::path::Path::new(&format!("/proc/{pid}")).exists()
+        && std::time::Instant::now() < until
+    {
+        pane.redraw();
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    assert!(
+        !std::path::Path::new(&format!("/proc/{pid}")).exists(),
+        "the owned child was reaped"
+    );
+    pane.redraw();
+}
+
+/// A real note entered through the native document view carries its creation
+/// evidence through a file rewrite and a fresh opening of that view.
+#[gpui::test]
+fn a_native_markdown_note_reopens_on_moved_words_with_its_original_revision(
+    cx: &mut TestAppContext,
+) {
+    use crate::docview::markdown::{NOTE_GUTTER, PAD};
+    use crate::docview::notes_ui::BUTTON_CSS;
+    let dir = Scratch::new("md-evidence-reopen");
+    let root = dir.join("notes");
+    let md = dir.join("plan.md");
+    let original = "The original passage needs a second look.\n\nA different closing passage.\n";
+    std::fs::write(&md, original).unwrap();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'doc {}' 'ready'; exec cat", md.display()),
+    );
+    pane.notes_root(root);
+    pane.wait_for("ready");
+    pane.settle();
+    let at = pane.point_at(md.to_str().unwrap());
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let (x, y, w, _) = pane.float_zone(FloatHit::Body).unwrap();
+    pane.hover(point(px(x + 60.), px(y + PAD + 6.)));
+    pane.redraw();
+    pane.click(
+        point(
+            px(x + w - PAD - NOTE_GUTTER / 2.),
+            px(y + PAD + BUTTON_CSS / 2.),
+        ),
+        Default::default(),
+    );
+    pane.keys("r e v i s e ctrl-enter");
+    let until = std::time::Instant::now() + std::time::Duration::from_secs(5);
+    loop {
+        pane.redraw();
+        let report = pane.doc_notes().unwrap();
+        if report["notes"] == 1 && report["unsaved"] == 0 {
+            break;
+        }
+        assert!(
+            std::time::Instant::now() < until,
+            "note did not save: {report}"
+        );
+        std::thread::sleep(std::time::Duration::from_millis(5));
+    }
+    pane.view.update(pane.cx, |v, cx| {
+        v.close_float(cx);
+    });
+    std::fs::write(&md, format!("A new opening.\n\n{original}")).unwrap();
+    let at = pane.point_at(md.to_str().unwrap());
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let report = pane.doc_notes().unwrap();
+    let map = report["map"].as_str().unwrap();
+    assert!(map.contains("[L3]"), "{map}");
+    assert!(map.contains("revise"), "{map}");
+    assert!(
+        map.contains("The original passage needs a second look."),
+        "{map}"
+    );
+    assert!(
+        map.contains(&crate::artifact_archive::digest(original.as_bytes())),
+        "{map}"
+    );
+    assert!(!map.contains("md-unresolved-"), "{map}");
+}
+
+/// Ctrl+C in an agent pane is a cut: the words typed into the prompt go to
+/// the clipboard, and the ^C still reaches the agent to clear it. Parker,
+/// 2026-11-02: fat-fingering the chord that clears a prompt is *"a REAL AND
+/// AWEFUL PAIN POINT"*. The stand-in reads its terminal raw and prints the
+/// byte it got, so the ^C is seen arriving, not assumed.
+#[gpui::test]
+fn ctrl_c_in_an_agent_prompt_copies_the_words_and_still_clears(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[1m›\\033[22m fix the login bug'; \
+         head -c1 | od -An -tx1; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(pane.clipboard().as_deref(), Some("fix the login bug"));
+}
+
+/// An empty prompt saves nothing. Both agents draw a dim placeholder there —
+/// Codex's `› Ask Codex to do anything`, written exactly as it writes it — and
+/// a ctrl+c on it must leave the person's clipboard as it was. A shell pane,
+/// with words on its line, is untouched too: there ctrl+c is an interrupt.
+#[gpui::test]
+fn ctrl_c_on_an_empty_prompt_or_in_a_shell_keeps_the_clipboard(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[1m›\\033[22m \\033[2mAsk Codex to do anything\\033[22m\\r\\033[2C'; \
+         head -c1 | od -An -tx1; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("what was there"),
+        "the placeholder"
+    );
+
+    let mut shell = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n› fix the login bug'; head -c1 | od -An -tx1; exec cat",
+    );
+    shell.wait_for("ready");
+    shell.settle();
+    shell
+        .cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    shell.keys("ctrl-c");
+    shell.wait_for(" 03");
+    assert_eq!(
+        shell.clipboard().as_deref(),
+        Some("what was there"),
+        "a shell"
+    );
+}
+
+/// Ctrl+C keeps the screenshots too. TD pastes a picture into an agent's
+/// prompt as the path of the file it saved, the agent turns that path into
+/// `[Image #1]`, and the ctrl+c that clears the prompt copies the file's path
+/// back where the tag was. The stand-in turns bracketed paste on, as both
+/// agents do, and draws the tag once the paste's closing marker arrives — the
+/// second `~`, `ESC[201~` — which is what Claude Code was seen to do.
+#[gpui::test]
+fn ctrl_c_copies_a_pasted_screenshot_back_as_its_file(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[?2004h\\033[1m›\\033[22m look at '; \
+         n=0; while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' '); \
+         case $c in 7e) n=$((n+1)); [ $n = 2 ] && printf '\\033[36m[Image #1]\\033[39m please';; \
+         03) printf '\\r\\n 03\\r\\n'; break;; esac; done; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Claude);
+    let shot = std::path::PathBuf::from("/tmp/td-shots/pasted-1.png");
+    pane.view
+        .update(pane.cx, |v, cx| v.paste_image_paths(&[shot], cx));
+    pane.wait_for("please");
+    pane.cx
+        .write_to_clipboard(gpui::ClipboardItem::new_string("what was there".into()));
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("look at /tmp/td-shots/pasted-1.png please")
+    );
+}
+
+/// Only a picture is tracked. A path the agent might turn into a tag but TD
+/// cannot vouch for — here a text file — leaves the tag as the agent drew it,
+/// because a wrong file on the clipboard is worse than none.
+#[gpui::test]
+fn ctrl_c_never_gives_a_tag_a_file_that_is_not_a_picture(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "stty raw -echo; printf 'ready\\r\\n\\r\\n\\033[?2004h\\033[1m›\\033[22m look at '; \
+         n=0; while :; do c=$(dd bs=1 count=1 2>/dev/null | od -An -tx1 | tr -d ' '); \
+         case $c in 7e) n=$((n+1)); [ $n = 2 ] && printf '\\033[36m[Image #1]\\033[39m please';; \
+         03) printf '\\r\\n 03\\r\\n'; break;; esac; done; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    pane.running_as(crate::pane::PaneMode::Codex);
+    let notes = std::path::PathBuf::from("/tmp/td-shots/notes.txt");
+    pane.view
+        .update(pane.cx, |v, cx| v.paste_image_paths(&[notes], cx));
+    pane.wait_for("please");
+    pane.keys("ctrl-c");
+    pane.wait_for(" 03");
+    assert_eq!(
+        pane.clipboard().as_deref(),
+        Some("look at [Image #1] please")
+    );
 }

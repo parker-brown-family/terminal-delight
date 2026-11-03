@@ -1,0 +1,20 @@
+
+running 1 test
+test ctl::tests::a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell ... FAILED
+
+failures:
+
+---- ctl::tests::a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell stdout ----
+
+thread 'ctl::tests::a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell' (2869065) panicked at src/ctl.rs:2349:9:
+assertion `left == right` failed
+  left: Some(9)
+ right: None
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ctl::tests::a_claimed_pane_is_downgraded_unless_the_socket_peer_descends_from_its_shell
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.00s
+

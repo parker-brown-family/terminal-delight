@@ -1,0 +1,22 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.60s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::tests::access_requests_are_bounded_proposals_and_never_change_grants ... FAILED
+
+failures:
+
+---- restricted::tests::access_requests_are_bounded_proposals_and_never_change_grants stdout ----
+
+thread 'restricted::tests::access_requests_are_bounded_proposals_and_never_change_grants' (3027593) panicked at src/restricted.rs:1087:55:
+no note grant
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::tests::access_requests_are_bounded_proposals_and_never_change_grants
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

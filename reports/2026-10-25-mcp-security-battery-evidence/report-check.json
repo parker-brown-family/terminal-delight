@@ -1,0 +1,10 @@
+{
+  "self_contained_assets": true,
+  "unique_ids": 21,
+  "figures": 3,
+  "svg_viewbox_and_labels": true,
+  "inline_script_syntax": "passed",
+  "local_links_resolve": true,
+  "browser_render": "not performed: local-file browser access was blocked; no workaround used",
+  "notes_controls": "bundled decision-brief controls retained; JS syntax and markup checked, interaction not browser-tested"
+}

@@ -1,0 +1,14 @@
+<!doctype html>
+<html lang="en">
+<meta charset="utf-8">
+<title>SVG and HTML links</title>
+<style>body { margin: 30px; } svg { width: 500px; height: 120px; } h2 { margin-top: 400px; }</style>
+<a href="#destination">HTML destination</a>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 500 120">
+  <a href="#destination"><text x="10" y="20">SVG destination</text></a>
+  <a href="brief.html#sec-2"><text x="10" y="45">Relative document</text></a>
+  <a href="https://example.com/other#destination"><text x="10" y="70">External document</text></a>
+  <a href="http://[invalid"><text x="10" y="95">Malformed URL</text></a>
+</svg>
+<h2 id="destination">The destination</h2>
+</html>

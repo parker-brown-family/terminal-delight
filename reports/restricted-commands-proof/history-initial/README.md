@@ -1,0 +1,5 @@
+# Historical evidence from the first Restricted implementation
+
+These files are retained for investigation, not as current-code qualification. Their original receipt combined tests from several earlier source versions with later source hashes. The source commit actually executed is not recoverable from each log and is recorded as unknown, rather than inferred from where the file was committed. history.json records the exact preserved bytes and repository capture commit. The original repository and installed-daily reports differed. The repository report is preserved here; the installed-daily report, including its private reader note, is retained in the local operational evidence. Their human-readable content is replaced by one current review.
+
+The original PR ultimately passed CI run 39710977997 and merged into development as 478b49f23c20a65aa453a398557128eb0e956fdf. Its installed daily composite is td-3ff49b8e-0.5-restricted. That is historical deployment, not an installation by this review-completion run. See the new top-level receipt for current source-bound checks.

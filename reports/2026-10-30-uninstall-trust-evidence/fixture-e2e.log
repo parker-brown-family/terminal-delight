@@ -1,0 +1,58 @@
+== guard, export and old builds, read-only first
+  ok   the machine is not protected: Not protected: uninstall may run on this machine (legion, 6e3cbd12).
+  ok   two builds listed
+  ok   nothing blocks the old-builds count
+== a marker naming this machine makes the removal refuse
+  ok   a protected machine refused
+  ok   nothing was removed while protected
+== plan, review and run
+  ok   the plan was written for review (uninstall-plan-20261031-035253-keep.json)
+The removal is running in the background and will close Terminal Delight.
+Its receipt will be /tmp/td-uninstall-e2e.I0BQ1U/.local/state/terminal-delight-removal/20261031-035253/receipt.md
+  ok   the worker wrote its receipt
+# Terminal Delight was removed in part
+
+15 steps done, 1 not attempted, 0 failed, 0 blocked. Records: kept.
+
+## What happened
+
+- **done** — edit /tmp/td-uninstall-e2e.I0BQ1U/.claude/settings.json — take out TD's entries (1 hook) and nothing else. removed 1 entries
+- **done** — close session hosts in /tmp/td-uninstall-e2e.I0BQ1U/.td-e2e-run/terminal-delight — ask each session host to save and close. 0 host(s) asked to save and close
+- **done** — close session hosts in /tmp/td-uninstall-e2e.I0BQ1U/tmp/terminal-delight-1000 — ask each session host to save and close. 0 host(s) asked to save and close
+- **done** — stop processes running 2 TD executable(s) — close TD's windows and the MCP relays agents started, matched by executable. 1 process(es) closed
+- **not attempted** — thaw frozen panes of 1 session(s) — wake panes that rest had frozen, so they can close. not attempted: HOME is not this account's home
+- **done** — check TD is no longer a default terminal in /tmp/td-uninstall-e2e.I0BQ1U/.config/xdg-terminals.list — make sure the desktop still has a terminal once TD is gone. no terminal list
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/.local/bin/td-agent-hooks — td-agent-hooks, installed by TD (a shipped scripts/td-agent-hooks). removed
+- **done** — remove TD's loose files in /tmp/td-uninstall-e2e.I0BQ1U/tmp — demo layouts TD left in the temp directory. 0 file(s) removed
+- **done** — remove TD's loose files in /tmp/td-uninstall-e2e.I0BQ1U/.td-e2e-run — pictures and sounds TD unpacked beside its runtime directory. 1 file(s) removed; 1 kept: nothing records that TD wrote them (in a runtime directory they go at logout)
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/.td-e2e-run/terminal-delight/ — TD's runtime directory: sockets and live state. already gone
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/tmp/terminal-delight-1000/ — TD's runtime directory: sockets and live state. already gone
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/.cache/terminal-delight/ — TD's cache. removed
+- **done** — remove build /tmp/td-uninstall-e2e.I0BQ1U/.local/lib/terminal-delight/td-e2e0001-current — build td-e2e0001-current. removed
+- **done** — remove build /tmp/td-uninstall-e2e.I0BQ1U/.local/lib/terminal-delight/td-e2e0002-old — build td-e2e0002-old. removed
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/.local/lib/terminal-delight/ if empty — the builds directory, if empty. removed
+- **done** — remove /tmp/td-uninstall-e2e.I0BQ1U/.local/bin/terminal-delight — the terminal-delight launcher. removed
+
+## Left for you
+
+- **Project .mcp.json files** (yours) — a project-scope TD registration lives inside that project's repository, which this does not search. To do it: `grep -rl --include=.mcp.json terminal-delight <your projects directory>`
+- **Your settings, sessions and records are kept** (yours) — /tmp/td-uninstall-e2e.I0BQ1U/.config/terminal-delight and /tmp/td-uninstall-e2e.I0BQ1U/.local/state/terminal-delight stay where they are `/tmp/td-uninstall-e2e.I0BQ1U/.config/terminal-delight`
+
+This receipt, the plan and a copy of every shared file before it was edited are in `/tmp/td-uninstall-e2e.I0BQ1U/.local/state/terminal-delight-removal/20261031-035253`. Delete that directory when you no longer need it.
+== what the receipt and the disk say
+  ok   no step failed or was blocked
+  ok   the decoy TD process was stopped
+  ok   someone else's program still runs
+  ok   removed: .local/bin/terminal-delight
+  ok   removed: .local/bin/td-agent-hooks
+  ok   removed: .local/lib/terminal-delight/td-e2e0001-current
+  ok   removed: .local/lib/terminal-delight/td-e2e0002-old
+  ok   the stranger's file in the runtime dir stays
+  ok   another tool's look-alike stays
+  ok   someone else's hook stays
+  ok   TD's hook is gone
+  ok   nothing left beside the settings file
+  ok   the worker removed its own copy
+  ok   records kept
+  ok   TD's recorded glyph is gone
+uninstall e2e: every check passed (fixture home)

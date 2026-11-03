@@ -96,7 +96,9 @@ fn take_the_turn() {
 }
 
 /// The window a harness pane fills, in logical pixels.
-const WINDOW: (f32, f32) = (1000.0, 640.0);
+// Fit the fixed 100×28 startup grid at the approved 107% text size. Its
+// column count is intentional: wrap/link fixtures are authored against it.
+const WINDOW: (f32, f32) = (1000.0, 720.0);
 
 /// How long the terminal gets to print what a test is waiting for. Generous:
 /// a loaded CI runner starting `sh` is slow, and a pass never waits this long.
@@ -166,6 +168,7 @@ impl Pane {
             term::AttachStreams {
                 bytes: client,
                 announce_resize: Box::new(move |size| heard.lock().unwrap().push(size)),
+                gate: None,
             },
             Some(4242),
         )
@@ -223,6 +226,11 @@ impl Pane {
         cx.executor().allow_parking();
         cx.update(|cx| {
             let mut outer = crate::theme::house_outer();
+            // The house's dials on the design every pane wore before Clean — the
+            // custom slot seeded from Hacker. Clean holds the light and the
+            // afterglow off, and these tests are about the light and the
+            // afterglow; Clean's own hold is tested in theme.rs and grid_paint.rs.
+            outer.id = "hacker".into();
             outer.grade.warp = 0.0;
             // The house sizes, but no colour grading: the house brightness and
             // contrast take every near-black background to exactly black, and
@@ -608,6 +616,23 @@ impl Pane {
         }
     }
 
+    /// A design can change font metrics and stage a debounced PTY resize.
+    /// Wait for that actual resize before measuring content-only behavior.
+    /// Its deadline uses wall time; the housekeeping wake uses the test clock.
+    pub(super) fn settle_size(&mut self) {
+        let deadline = Instant::now() + PATIENCE;
+        loop {
+            self.redraw();
+            if self.read(|v| v.pending_pty.is_none()) {
+                break;
+            }
+            assert!(Instant::now() < deadline, "PTY size did not settle");
+            std::thread::sleep(Duration::from_millis(10));
+            self.cx.executor().advance_clock(Duration::from_millis(33));
+            self.cx.run_until_parked();
+        }
+    }
+
     /// A wheel turn at `at` with `mods` held: `lines` notches, positive
     /// toward the top.
     pub(super) fn wheel(&mut self, at: Point<Pixels>, lines: f32, mods: Modifiers) {
@@ -657,13 +682,15 @@ impl Pane {
         settled: impl Fn(&libc::winsize) -> bool,
     ) -> libc::winsize {
         use std::os::fd::AsRawFd;
-        let fd = self.read(|v| {
+        let master = self.read(|v| {
             v.session
                 .master
                 .as_ref()
                 .expect("a pane that owns its pseudoterminal")
-                .as_raw_fd()
+                .file()
+                .expect("live pseudoterminal")
         });
+        let fd = master.as_raw_fd();
         let deadline = Instant::now() + PATIENCE;
         loop {
             // SAFETY: TIOCGWINSZ writes one `winsize` through the pointer, and
@@ -1033,11 +1060,22 @@ impl PageEngine for FakeDecisionEngine {
 /// Not [`crate::testsync::Scratch`], whose name carries the thread's id in
 /// parentheses: these paths are printed on a pane and clicked, and a person's
 /// paths do not end a directory in `)`. Each test passes a tag of its own.
+///
+/// Rooted at `/tmp`, not `$TMPDIR`, because a test that clicks a printed path
+/// needs that path to fit on one row of the pane. Under a long `$TMPDIR` a
+/// clip's path wrapped and the click landed on the next link (issue 1265).
+/// `$TMPDIR` is used only where `/tmp` cannot be written.
 pub(super) struct Scratch(PathBuf);
 
 impl Scratch {
     pub(super) fn new(tag: &str) -> Scratch {
-        let dir = std::env::temp_dir().join(format!("td-pane-{tag}-{}", std::process::id()));
+        let name = format!("td-pane-{tag}-{}", std::process::id());
+        let dir = Path::new("/tmp").join(&name);
+        let _ = std::fs::remove_dir_all(&dir);
+        if std::fs::create_dir_all(&dir).is_ok() {
+            return Scratch(dir);
+        }
+        let dir = std::env::temp_dir().join(name);
         let _ = std::fs::remove_dir_all(&dir);
         std::fs::create_dir_all(&dir).expect("a scratch directory");
         Scratch(dir)

@@ -13,7 +13,7 @@
 //! has a note; the rule down an anchor's left edge that the brief's stylesheet
 //! gives an anchor with notes; the dashed space that takes a CONCUR stamp,
 //! and the stamp at the angle the brief's own notes.js would give it; and a
-//! bar that counts them, copies the map and saves.
+//! bar that counts them and copies or sends the map.
 //!
 //! # What a browser shows
 //!
@@ -22,16 +22,12 @@
 //! file with no notes island takes no notes, and the bar says so in those
 //! words rather than counting nothing: read-only is not empty.
 //!
-//! # Notes are deltas until they are saved
+//! # Submitted annotations are saved immediately
 //!
-//! A note added, a note deleted, a stamp put down or peeled off is held here
-//! as an edit ([`NoteEdit`]) on top of what the file said, and the page shows
-//! the two together. Nothing reaches the disk until the bar's save is pressed;
-//! the bar says how many edits are waiting. A save reads the file fresh and
-//! applies the edits to what it holds then, so a note another writer added
-//! meanwhile survives, and a note deleted is found by its words rather than
-//! its place. A crash loses what was not saved, which is least-confident
-//! decision 6, taken with open eyes.
+//! Each submitted note, deletion and concurrence is applied to the original
+//! HTML before its input handler returns. The writer reads the file fresh,
+//! preserving annotations another writer added. A failed write leaves the
+//! edits here, reports the reason and keeps the close guard active.
 //!
 //! # No handlers
 //!
@@ -60,6 +56,7 @@ use super::notes::{
     PictureLines, Refusal, FORMAT,
 };
 use super::page::{place, PageToView};
+use crate::keylayer::GlowMove;
 use crate::lang::fill;
 use crate::theme::Theme;
 use crate::EditBuffer;
@@ -216,6 +213,11 @@ pub struct NoteBox {
     /// Open on notes whose words a Markdown file no longer has: they can be
     /// read and deleted, and nothing can be added to them.
     pub gone: bool,
+    /// How far the notes are turned back from the newest, in pixels: 0 shows
+    /// the newest above the draft, which is where a note just added lands.
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"*
+    pub back: f32,
 }
 
 /// A part of the bar or the note box, as the last paint laid it out.
@@ -224,7 +226,6 @@ pub enum Zone {
     CopyMap,
     /// ↪: the map, into the prompt of the agent the brief sits beside.
     Send,
-    Save,
     /// Notes on words a Markdown file no longer has: opens them.
     Gone,
     /// Anywhere on the bar that is not a button.
@@ -374,6 +375,22 @@ impl Said {
 /// that recorded it.
 type Zones = Rc<RefCell<Vec<(Bounds<Pixels>, Zone)>>>;
 
+/// The note box's list as the last paint measured it: the height it was
+/// given and the height its notes needed. `None` until a paint has said,
+/// which is not the same as a list that fits.
+#[derive(Clone, Copy, Debug, Default, PartialEq)]
+pub struct ListRoom {
+    pub view: Option<f32>,
+    pub content: Option<f32>,
+}
+
+impl ListRoom {
+    /// How far the list can turn back from its newest note, when known.
+    pub fn back_max(&self) -> Option<f32> {
+        Some((self.content? - self.view?).max(0.0))
+    }
+}
+
 /// Where a layer's notes are written.
 #[derive(Clone, Debug, PartialEq)]
 pub enum Keeping {
@@ -447,6 +464,8 @@ pub struct NotesLayer {
     concur: ConcurSupport,
     /// The edits made here and not yet saved, oldest first.
     pending: Vec<NoteEdit>,
+    md_frame: Option<super::md_notes::Frame>,
+    md_contexts: Vec<super::md_notes::evidence::EditContext>,
     /// `base` with `pending` applied: what the page shows. `None` unless the
     /// file's notes can be shown at all.
     applied: Option<(NoteMap, ConcurMap)>,
@@ -454,12 +473,13 @@ pub struct NotesLayer {
     writable: Result<(), Refusal>,
     note_box: Option<NoteBox>,
     said: Option<Said>,
-    /// What came of the last ↪, kept apart from `said` because a send saves:
+    /// What came of the last ↪, kept apart from persistence status:
     /// the save's own progress would otherwise write over where the notes
     /// landed before anyone had read it.
     sent: Option<Said>,
     /// A save is running: another waits for it.
     saving: bool,
+    saving_count: usize,
     /// The file is not on disk any more. The page stays up; saving is off.
     gone: bool,
     /// Escape was pressed once with edits unsaved, and the bar said so: the
@@ -474,6 +494,8 @@ pub struct NotesLayer {
     /// what reached the screen, which is not always what a press would find.
     drawn: std::cell::Cell<(usize, usize)>,
     zones: Zones,
+    /// The open box's list, as the last paint measured it, for the wheel.
+    room: Rc<std::cell::Cell<ListRoom>>,
 }
 
 /// What a press on the layer did.
@@ -483,26 +505,22 @@ pub enum LayerPress {
     Pass,
     /// Taken, with nothing more for the view to do.
     Took,
-    /// The bar's save: the view saves, since it holds the engine and the file.
-    Save,
+    /// A submitted annotation changed: the view must persist it now.
+    Edited,
     /// The bar's ↪: the map goes to the pane the brief sits beside, which
-    /// only the workspace can reach, and the view saves as it goes when
-    /// [`Sending::saves`] says so.
+    /// only the workspace can reach. Sending never writes the file.
     Send(Sending),
     /// A picture's delete in the note box: the view takes it off the list
     /// and deletes its file, off the main thread.
     Unattach(Unattaching),
 }
 
-/// What a press on ↪ does: the map it pastes, and whether it saves.
+/// What a press on ↪ sends, including any annotations whose write failed.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Sending {
     /// The map as shown, unsaved edits and all: copy map's text.
     pub map: String,
-    /// The press saves the waiting edits into the file as it sends them.
-    pub saves: bool,
-    /// Edits in the map that will not be in the file after the press: all of
-    /// them where no save can be made, none where one is under way.
+    /// Edits whose automatic write failed; sending does not retry that write.
     pub unsaved: usize,
 }
 
@@ -564,17 +582,21 @@ impl NotesLayer {
             base,
             concur,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -609,17 +631,21 @@ impl NotesLayer {
             base,
             concur: ConcurSupport::NotSupported,
             pending: Vec::new(),
+            md_frame: None,
+            md_contexts: Vec::new(),
             applied: None,
             writable,
             note_box: None,
             said: None,
             sent: None,
             saving: false,
+            saving_count: 0,
             gone: false,
             close_warned: false,
             revealing: false,
             drawn: std::cell::Cell::new((0, 0)),
             zones: Rc::new(RefCell::new(Vec::new())),
+            room: Rc::new(std::cell::Cell::new(ListRoom::default())),
         };
         layer.refresh();
         layer
@@ -715,9 +741,11 @@ impl NotesLayer {
     /// its draft, and what the bar last said.
     pub fn carry_from(&mut self, old: NotesLayer) {
         self.pending = old.pending;
+        self.md_contexts = old.md_contexts;
         self.said = old.said;
         self.sent = old.sent;
         self.saving = old.saving;
+        self.saving_count = old.saving_count;
         self.note_box = old.note_box;
         // The pictures are TD's, not the page's: a new render of the same
         // brief has the same ones.
@@ -872,7 +900,7 @@ impl NotesLayer {
             Shown::Notes { notes, concurs } => {
                 let (mut n, mut c) = (notes.clone(), concurs.clone());
                 let supported = self.concur == ConcurSupport::Supported;
-                for e in &self.pending {
+                for (i, e) in self.pending.iter().enumerate() {
                     let _ = apply(
                         &mut n,
                         &mut c,
@@ -880,6 +908,9 @@ impl NotesLayer {
                         &[nid_of(e)],
                         supported,
                     );
+                    if let Some(context) = self.md_contexts.get(i) {
+                        super::md_notes::evidence::enrich_last(&mut n, e, context);
+                    }
                 }
                 Some((n, c))
             }
@@ -908,6 +939,14 @@ impl NotesLayer {
             (Some((_, c)), ConcurSupport::Supported) => Some(c),
             _ => None,
         }
+    }
+
+    pub fn set_markdown_frame(&mut self, frame: super::md_notes::Frame) {
+        self.md_frame = Some(frame);
+    }
+
+    pub fn markdown_contexts(&self) -> Vec<super::md_notes::evidence::EditContext> {
+        self.md_contexts.clone()
     }
 
     /// The notes on one anchor, saved and waiting.
@@ -1052,8 +1091,7 @@ impl NotesLayer {
     /// or that pane's name when the tab holds more than one — and `None`
     /// means there is none, so there is no button: a brief with nobody beside
     /// it has nobody to send to. A page that shows no notes has no map to
-    /// send, and draws none either. With edits waiting that a press would
-    /// save, the words say it saves too.
+    /// send, and draws none either.
     ///
     /// In English, as the report's `send_to`; the bar draws
     /// [`Self::send_button_in`].
@@ -1072,18 +1110,10 @@ impl NotesLayer {
         let who = beside?;
         self.notes()?;
         let t = &l.strings().parts;
-        let words = if self.saves_on_send() {
-            t.notes_send_button_save_send
-        } else {
-            t.notes_send_button_send
-        };
-        Some((fill(words, &[("who", who)]), self.mappable(anchors)))
-    }
-
-    /// A press on ↪ now would save: there are edits waiting, and a save
-    /// could be made.
-    fn saves_on_send(&self) -> bool {
-        !self.pending.is_empty() && self.can_save().is_ok()
+        Some((
+            fill(t.notes_send_button_send, &[("who", who)]),
+            self.mappable(anchors),
+        ))
     }
 
     /// The first-time line drawn above the bar, in `l`: how to note, how to
@@ -1122,26 +1152,15 @@ impl NotesLayer {
         Some(clauses.join(" · "))
     }
 
-    /// What ↪ does: the map exactly as copy map would give it, notes not yet
-    /// saved included, and whether the press saves them. `None` with nothing
-    /// to send.
-    ///
-    /// A send saves. Parker, 2026-09-25: *"The Send to Agent button should
-    /// also save the doc."* Notes that reached the agent's prompt and not the
-    /// file were gone the next time the brief opened, and the agent reading
-    /// the file found none of them. Where no save can be made — a build
-    /// input, a format newer than TD, a file gone from disk, a save already
-    /// running — the map still goes as shown, and `unsaved` counts what the
-    /// file will not hold, so the bar can say so.
+    /// The same map as copy map, with the count of edits whose write failed.
+    /// Sending is independent of persistence: submitting an annotation saves it.
     pub fn send(&self, anchors: &[Anchor]) -> Option<Sending> {
         if !self.mappable(anchors) {
             return None;
         }
-        let saves = self.saves_on_send();
         Some(Sending {
             map: self.map(anchors)?,
-            saves,
-            unsaved: if saves { 0 } else { self.unsaved() },
+            unsaved: self.unsaved(),
         })
     }
 
@@ -1244,6 +1263,32 @@ impl NotesLayer {
 
     // ── notes, added and taken away ─────────────────────────────────────────
 
+    /// A wheel turn while the note box is open turns its notes, never the
+    /// page under it. `dy` is the turn in pixels, positive towards the top.
+    /// `None` when no box is open; otherwise whether the notes moved.
+    pub fn wheel_box(&mut self, dy: f32) -> Option<bool> {
+        let b = self.note_box.as_mut()?;
+        let was = b.back;
+        let next = (b.back + dy).max(0.0);
+        b.back = match self.room.get().back_max() {
+            Some(max) => next.min(max),
+            None => next,
+        };
+        Some((b.back - was).abs() > f32::EPSILON)
+    }
+
+    /// The open box's notes, turned from the keyboard: a step is an arrow's
+    /// worth, and a page is nine tenths of the list as last measured. Before
+    /// it has been measured a page is a step, the least that can be wrong.
+    fn turn_box(&mut self, mv: GlowMove) {
+        let step = crate::docopen::DOC_ARROW_STEP;
+        let (dir, by) = match mv {
+            GlowMove::Step(dir) => (dir, step),
+            GlowMove::Page(dir) => (dir, self.room.get().view.map_or(step, |h| h * 0.9)),
+        };
+        self.wheel_box(-f32::from(dir) * by);
+    }
+
     /// Open the note box on an anchor, with an empty draft.
     pub fn open(&mut self, nid: String, title: String) {
         if self.note_box.as_ref().is_some_and(|b| b.nid == nid) {
@@ -1254,6 +1299,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: false,
+            back: 0.0,
         });
     }
 
@@ -1265,6 +1311,7 @@ impl NotesLayer {
             title,
             draft: EditBuffer::default(),
             gone: true,
+            back: 0.0,
         });
     }
 
@@ -1299,14 +1346,8 @@ impl NotesLayer {
         }
         self.close_warned = true;
         let n = self.pending.len();
-        let in_store = self.in_store();
         self.said = Some(Said::Refused(Words::said(|l| {
-            let t = &l.strings().parts;
-            if in_store {
-                l.count(&t.notes_close_not_kept_n, n)
-            } else {
-                l.count(&t.notes_close_unsaved_n, n)
-            }
+            l.count(&l.strings().parts.notes_close_not_kept_n, n)
         })));
         true
     }
@@ -1328,6 +1369,18 @@ impl NotesLayer {
         let m = &ks.modifiers;
         if ks.key == "escape" {
             self.note_box = None;
+            return true;
+        }
+        // The square's chords turn the notes while the box is over it, and
+        // plain PageUp/PageDown do too: the draft has no use for them.
+        let plain = !m.control && !m.alt && !m.shift && !m.platform;
+        let turn = match ks.key.as_str() {
+            "pageup" if plain => Some(GlowMove::Page(-1)),
+            "pagedown" if plain => Some(GlowMove::Page(1)),
+            _ => crate::keylayer::glow_chord(&ks.key, m.control, m.shift, m.alt),
+        };
+        if let Some(mv) = turn {
+            self.turn_box(mv);
             return true;
         }
         if !self.has_caret() {
@@ -1427,6 +1480,7 @@ impl NotesLayer {
             return false;
         }
         b.draft = EditBuffer::default();
+        b.back = 0.0;
         let (nid, title) = (b.nid.clone(), b.title.clone());
         self.add_note(nid, title, text, utc_minute(now));
         true
@@ -1434,12 +1488,21 @@ impl NotesLayer {
 
     /// Add a note to an anchor, open or not: the control socket's way in.
     pub fn add_note(&mut self, nid: String, title: String, text: String, ts: String) {
-        self.pending.push(NoteEdit::Add {
+        let edit = NoteEdit::Add {
             nid,
             title,
             text,
             ts,
-        });
+        };
+        if self.in_store() {
+            self.md_contexts
+                .push(super::md_notes::evidence::edit_context(
+                    self.md_frame.as_ref(),
+                    self.notes(),
+                    &edit,
+                ));
+        }
+        self.pending.push(edit);
         self.said = None;
         self.sent = None;
         self.refresh();
@@ -1461,15 +1524,33 @@ impl NotesLayer {
 
     /// Delete a note by its words: the control socket's way in.
     pub fn delete_note(&mut self, nid: String, text: String, ts: Option<String>) {
-        let unsaved = self.pending.iter().rposition(|e| {
-            matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
+        let unsaved = self
+            .pending
+            .iter()
+            .rposition(|e| {
+                matches!(e, NoteEdit::Add { nid: n, text: t, ts: s, .. }
                 if *n == nid && *t == text && ts.as_ref().is_none_or(|ts| ts == s))
-        });
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match unsaved {
             Some(i) => {
                 self.pending.remove(i);
+                if self.in_store() && i < self.md_contexts.len() {
+                    self.md_contexts.remove(i);
+                }
             }
-            None => self.pending.push(NoteEdit::Delete { nid, text, ts }),
+            None => {
+                let edit = NoteEdit::Delete { nid, text, ts };
+                if self.in_store() {
+                    self.md_contexts
+                        .push(super::md_notes::evidence::edit_context(
+                            self.md_frame.as_ref(),
+                            self.notes(),
+                            &edit,
+                        ));
+                }
+                self.pending.push(edit);
+            }
         }
         self.said = None;
         self.sent = None;
@@ -1487,11 +1568,15 @@ impl NotesLayer {
             return Err(Refusal::ConcursUnsupported(nid.into()).sentence());
         }
         let on = self.concurs().is_some_and(|c| c.has(nid));
-        let undo = self.pending.iter().rposition(|e| match e {
-            NoteEdit::Concur { nid: n, .. } => on && n == nid,
-            NoteEdit::Unconcur { nid: n } => !on && n == nid,
-            _ => false,
-        });
+        let undo = self
+            .pending
+            .iter()
+            .rposition(|e| match e {
+                NoteEdit::Concur { nid: n, .. } => on && n == nid,
+                NoteEdit::Unconcur { nid: n } => !on && n == nid,
+                _ => false,
+            })
+            .filter(|i| !self.saving || *i >= self.saving_count);
         match (undo, on) {
             (Some(i), _) => {
                 self.pending.remove(i);
@@ -1513,6 +1598,7 @@ impl NotesLayer {
     /// The edits a save starts with: everything waiting now. What is added
     /// while it runs waits for the next one.
     pub fn begin_save(&mut self) -> Vec<NoteEdit> {
+        self.saving_count = self.pending.len();
         self.saving = true;
         // A note kept as it is written says nothing while it is kept.
         if !self.in_store() {
@@ -1530,6 +1616,7 @@ impl NotesLayer {
     pub fn kept(&mut self, made: usize, notes: NoteMap) {
         self.saving = false;
         self.pending.drain(..made.min(self.pending.len()));
+        self.md_contexts.drain(..made.min(self.md_contexts.len()));
         self.base = Shown::Notes {
             notes,
             concurs: ConcurMap::default(),
@@ -1634,10 +1721,11 @@ impl NotesLayer {
         if self.note_box.is_some() {
             match hit {
                 Some(Zone::CloseBox) => self.note_box = None,
-                Some(Zone::AddNote) => {
-                    self.add(now);
+                Some(Zone::AddNote) if self.add(now) => return LayerPress::Edited,
+                Some(Zone::Delete(i)) if self.can_delete() => {
+                    self.delete_shown(i);
+                    return LayerPress::Edited;
                 }
-                Some(Zone::Delete(i)) if self.can_delete() => self.delete_shown(i),
                 Some(Zone::DeletePicture(i)) if self.can_delete() => {
                     if let Some(u) = self.unattaching(i) {
                         return LayerPress::Unattach(u);
@@ -1657,7 +1745,6 @@ impl NotesLayer {
                 Some(sending) => LayerPress::Send(sending),
                 None => LayerPress::Took,
             },
-            Some(Zone::Save) => LayerPress::Save,
             Some(Zone::Gone) => {
                 if let Some((nid, title)) = self.orphans(anchors).into_iter().next() {
                     self.open_gone(nid, title);
@@ -1771,8 +1858,16 @@ impl NotesLayer {
     /// A canvas that records where its parent was painted as `zone`.
     fn record(&self, zone: Zone) -> impl IntoElement {
         let zones = self.zones.clone();
+        // Only what shows takes a press: a note turned out of the list keeps
+        // its delete's place, under the title or the draft, and a press there
+        // must not reach it.
         canvas(
-            move |bounds, _, _| zones.borrow_mut().push((bounds, zone)),
+            move |bounds, window, _| {
+                let shown = bounds.intersect(&window.content_mask().bounds);
+                if !shown.is_empty() {
+                    zones.borrow_mut().push((shown, zone));
+                }
+            },
             |_, _, _, _| {},
         )
         .absolute()
@@ -1780,7 +1875,12 @@ impl NotesLayer {
     }
 
     /// The marks, drawn: under the bar and the note box.
-    pub fn draw_marks(&self, marks: &[Mark], th: &Theme) -> Vec<AnyElement> {
+    pub fn draw_marks(
+        &self,
+        marks: &[Mark],
+        th: &Theme,
+        sk: &crate::skin::Skin,
+    ) -> Vec<AnyElement> {
         let count = |f: fn(&Mark) -> bool| marks.iter().filter(|m| f(m)).count();
         let (boxes, buttons) = self.drawn.get();
         self.drawn.set((
@@ -1805,13 +1905,17 @@ impl NotesLayer {
                     let (bg, fg, label): (Hsla, Hsla, SharedString) = if *count > 0 {
                         (accent, th.bg, count.to_string().into())
                     } else {
-                        (th.surface, th.text.alpha(0.8), "💬".into())
+                        (
+                            th.surface,
+                            th.text.alpha(0.8),
+                            sk.control("💬", "add").into(),
+                        )
                     };
                     at_rect(div(), *at)
                         .flex()
                         .items_center()
                         .justify_center()
-                        .rounded(px(side * 0.23))
+                        .rounded(sk.capped(side * 0.23))
                         .bg(bg)
                         .border_1()
                         .border_color(if *open { th.text } else { accent })
@@ -1876,7 +1980,7 @@ impl NotesLayer {
             .border_1()
             .border_color(th.accent.alpha(if live { 1.0 } else { 0.3 }))
             .text_color(th.accent.alpha(if live { 1.0 } else { 0.4 }))
-            .child(label.to_string())
+            .child(sk.control_text(label))
             .child(self.record(zone))
     }
 
@@ -1959,13 +2063,6 @@ impl NotesLayer {
                     // unless keeping failed, which `said` carries.
                     Ok(()) if self.in_store() => {}
                     Ok(()) if !self.gone => {
-                        row = row.child(self.button(
-                            t.notes_save_into_file,
-                            Zone::Save,
-                            self.can_save().is_ok(),
-                            th,
-                            sk,
-                        ));
                         if !self.pending.is_empty() {
                             row = row.child(
                                 div()
@@ -1979,7 +2076,7 @@ impl NotesLayer {
                 }
             }
         }
-        // Where the notes went, then the save that went with them.
+        // Delivery and persistence have separate status messages.
         for said in [&self.sent, &self.said].into_iter().flatten() {
             row = row.child(
                 div()
@@ -2157,6 +2254,13 @@ impl NotesLayer {
             list = list.child(div().text_color(th.text.alpha(0.6)).child(t.notes_empty));
         }
         for (i, n) in notes.iter().enumerate() {
+            let evidence = self
+                .in_store()
+                .then(|| {
+                    self.notes()
+                        .and_then(|map| super::md_notes::evidence::summary_at(map, &b.nid, i))
+                })
+                .flatten();
             let mut head = div()
                 .flex()
                 .flex_row()
@@ -2185,7 +2289,15 @@ impl NotesLayer {
                     .border_color(th.accent)
                     .bg(th.bg.alpha(0.5))
                     .child(head)
-                    .child(div().child(n.text.to_string())),
+                    .child(div().child(n.text.to_string()))
+                    .when_some(evidence, |d, evidence| {
+                        d.child(
+                            div()
+                                .text_size(px(body * 0.72))
+                                .text_color(th.faint)
+                                .child(evidence),
+                        )
+                    }),
             );
         }
         let pill = |label: &str, zone: Zone, primary: bool| {
@@ -2221,7 +2333,66 @@ impl NotesLayer {
         }
         // A draft that wraps grows downward, and the box stops at eight
         // tenths of the view. The notes already written give up their room
-        // first, so the draft and Add note stay on screen as it grows.
+        // first, so the draft and Add note stay on screen as it grows. What
+        // they gave up is turned back to by the wheel: the list sits on its
+        // newest note, and `back` lowers it from there: an offset, never a
+        // margin, which would take the height the notes are seen through.
+        let room = self.room.get();
+        let back = room.back_max().map_or(b.back, |max| b.back.min(max));
+        let (seen, needed) = (self.room.clone(), self.room.clone());
+        let mut scroller = div()
+            .relative()
+            .flex()
+            .flex_col()
+            .justify_end()
+            .min_h(px(0.))
+            .overflow_hidden()
+            .child(
+                canvas(
+                    move |bounds, _, _| {
+                        let mut r = seen.get();
+                        r.view = Some(f32::from(bounds.size.height));
+                        seen.set(r);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            )
+            .child(
+                list.flex_none().relative().top(px(back)).child(
+                    canvas(
+                        move |bounds, _, _| {
+                            let mut r = needed.get();
+                            r.content = Some(f32::from(bounds.size.height));
+                            needed.set(r);
+                        },
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                ),
+            );
+        // A thumb on the right edge, only when there is more than shows: as
+        // last measured, so it trails a frame behind a note added or deleted.
+        if let (Some(view_h), Some(content_h), Some(max)) =
+            (room.view, room.content, room.back_max())
+        {
+            if max > 0.5 && content_h > 0.0 {
+                let thumb = (view_h * view_h / content_h).max(16.0).min(view_h);
+                let top = (max - back) / max * (view_h - thumb);
+                scroller = scroller.child(
+                    div()
+                        .absolute()
+                        .right(px(0.))
+                        .top(px(top))
+                        .w(px(3.))
+                        .h(px(thumb))
+                        .rounded(px(2.))
+                        .bg(th.accent.alpha(0.55)),
+                );
+            }
+        }
         let mut content = div()
             .flex()
             .flex_col()
@@ -2229,7 +2400,7 @@ impl NotesLayer {
             .gap(px(10.))
             .px(px(12.))
             .py(px(10.))
-            .child(list.min_h(px(0.)).overflow_hidden());
+            .child(scroller);
         if let Some(pictures) = self.draw_pictures(&b.nid, deletable, th, sk) {
             content = content.child(pictures);
         }
@@ -2575,6 +2746,97 @@ mod tests {
             key: key.into(),
             key_char: ch.map(str::to_string),
         }
+    }
+
+    /// Parker, 2026-10-21: *"trying to add more comments just has them not
+    /// show up! needs to be scrollable for infinite comments!"* Thirty notes
+    /// in a short view: the newest shows above the draft, the wheel turns
+    /// back to the oldest, and only a delete that shows takes a press.
+    #[gpui::test]
+    fn a_long_thread_of_notes_turns_under_the_wheel(cx: &mut gpui::TestAppContext) {
+        let notes: Vec<String> = (0..30)
+            .map(|i| {
+                format!(r#"{{"text":"note {i}","title":"a title","ts":"2026-10-21 18:{i:02}"}}"#)
+            })
+            .collect();
+        let island = format!(r#"{{"a":[{}]}}"#, notes.join(","));
+        let mut l = layer(&island, "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme");
+        let sk = crate::skin::parse(crate::skin::DEFAULT_SKIN_TOML)
+            .expect("the embedded skin")
+            .bake(&th, 1.0);
+        let view = gpui::size(px(600.), px(400.));
+        let cx = cx.add_empty_window();
+        let deletes = |l: &NotesLayer, cx: &mut gpui::VisualTestContext| {
+            l.clear_zones();
+            cx.draw(Point::default(), view, |_, _| {
+                l.draw_box(view, &th, &sk).expect("open")
+            });
+            let zones = l.zones.borrow();
+            let shown: Vec<usize> = zones
+                .iter()
+                .filter_map(|(_, z)| match z {
+                    Zone::Delete(i) => Some(*i),
+                    _ => None,
+                })
+                .collect();
+            let add = zones.iter().any(|(_, z)| *z == Zone::AddNote);
+            (shown, add)
+        };
+        let (shown, add) = deletes(&l, cx);
+        assert!(add, "Add note stays on screen");
+        assert!(shown.contains(&29), "the newest shows: {shown:?}");
+        assert!(
+            !shown.contains(&0),
+            "the oldest is turned out, and takes no press: {shown:?}"
+        );
+        assert!(shown.len() < 30, "thirty do not fit in four hundred pixels");
+        let max = l
+            .room
+            .get()
+            .back_max()
+            .expect("the paint measured the list");
+        assert!(max > 0.0);
+        assert_eq!(l.wheel_box(1e6), Some(true), "the wheel turns the notes");
+        assert_eq!(
+            l.note_box().map(|b| b.back),
+            Some(max),
+            "and stops at the oldest"
+        );
+        assert_eq!(l.wheel_box(10.), Some(false), "past it nothing moves");
+        // The keyboard turns it as the wheel does: ctrl+↓ a step towards the
+        // newest, ctrl+shift+↓ and plain PageDown nine tenths of the list.
+        let press = |l: &mut NotesLayer, chord: &str| {
+            let k = Keystroke::parse(chord).expect("a chord");
+            assert!(l.key(&k, SystemTime::now()), "{chord} is the box's");
+            l.note_box().map(|b| b.back).expect("open")
+        };
+        let view_h = l.room.get().view.expect("measured");
+        let step = crate::docopen::DOC_ARROW_STEP;
+        assert_eq!(press(&mut l, "ctrl-down"), max - step);
+        assert_eq!(press(&mut l, "ctrl-up"), max);
+        assert_eq!(press(&mut l, "ctrl-shift-down"), max - view_h * 0.9);
+        assert_eq!(press(&mut l, "pageup"), max);
+        assert!(
+            l.note_box().is_some_and(|b| b.draft.text().is_empty()),
+            "none of it typed"
+        );
+        let (shown, add) = deletes(&l, cx);
+        assert!(add);
+        assert!(shown.contains(&0), "the oldest shows: {shown:?}");
+        assert!(!shown.contains(&29), "the newest is turned out: {shown:?}");
+        // A note added lands in view.
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
+        for c in ["h", "i"] {
+            assert!(l.key(&ks(c, false, Some(c)), now));
+        }
+        assert!(l.add(now));
+        assert_eq!(l.note_box().map(|b| b.back), Some(0.0));
+        let (shown, _) = deletes(&l, cx);
+        assert!(shown.contains(&30), "the note just added shows: {shown:?}");
+        l.note_box = None;
+        assert_eq!(l.wheel_box(5.), None, "no box: the page takes the turn");
     }
 
     #[test]
@@ -2950,7 +3212,7 @@ mod tests {
         assert!(l.report(&[])["said"]
             .as_str()
             .unwrap()
-            .contains("1 unsaved"));
+            .contains("1 not kept"));
         assert!(!l.guard_close(), "the second closes");
         l.add_note(
             "a".into(),
@@ -3260,7 +3522,7 @@ mod tests {
     fn the_report_says_in_english_what_the_bar_says_in_the_readers_language() {
         use crate::lang::Lang;
         let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
-        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_unsaved_n, 2);
+        let unsaved = |lang: Lang| lang.count(&lang.strings().parts.notes_close_not_kept_n, 2);
         l.say(Said::Refused(Words::said_in(Lang::De, |lang| {
             format!("{} · {}", lang.code(), unsaved(lang))
         })));
@@ -3282,17 +3544,13 @@ mod tests {
         assert_eq!(why.english(), "en: disk full");
     }
 
-    /// ↪ sends what the bar shows, unsaved notes included, and saves them
-    /// as it goes; the button says so while there is something to save.
-    ///
-    /// Mutation-tested: `saves_on_send` answering false, and `send` counting
-    /// the pending edits as unsaved when it saves, each fail this.
+    /// A send never retries or claims persistence, even with edits waiting.
     #[test]
-    fn send_carries_the_map_as_shown_and_saves_it() {
+    fn send_carries_the_map_without_saving() {
         let anchors = vec![anchor("a", Some(rect_css(0.0, 0.0, 700.0, 200.0)), false)];
         let mut l = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
         let clean = l.send(&anchors).expect("a saved note is a map");
-        assert!(!clean.saves, "nothing waiting: a send is only a send");
+        assert_eq!(clean.unsaved, 0);
         l.add_note(
             "a".into(),
             "a title".into(),
@@ -3306,11 +3564,14 @@ mod tests {
             s.map
         );
         assert_eq!(s.map, l.map(&anchors).unwrap(), "the copy map's text");
-        assert!(s.saves, "an unsaved note is saved by the send");
-        assert_eq!(s.unsaved, 0, "none left out of the file");
+        assert_eq!(
+            s.unsaved, 1,
+            "sending does not claim a failed write succeeded"
+        );
+        assert_eq!(l.unsaved(), 1, "sending does not mutate the pending edits");
         assert_eq!(
             l.send_button(&anchors, Some("agent")).map(|b| b.0),
-            Some("↪ save & send to agent".to_string())
+            Some("↪ send to agent".to_string())
         );
     }
 
@@ -3329,7 +3590,6 @@ mod tests {
         );
         l.set_gone(true);
         let s = l.send(&anchors).expect("still a map");
-        assert!(!s.saves, "a file gone from disk takes no save");
         assert_eq!(s.unsaved, 1);
         assert_eq!(
             l.send_button(&anchors, Some("agent")).map(|b| b.0),
@@ -3513,5 +3773,61 @@ mod tests {
         assert_eq!(l.unsaved(), 1, "a delete waiting to be kept");
         let brief = layer(ONE_NOTE, "{}", ConcurSupport::Supported);
         assert!(brief.orphans(&[]).is_empty(), "a brief has no such notes");
+    }
+    #[test]
+    fn deleting_a_note_during_its_save_does_not_discard_the_next_review() {
+        let scratch = crate::testsync::Scratch::new("markdown-inflight-delete");
+        let doc = scratch.path().join("plan.md");
+        let store = scratch.path().join("notes.json");
+        let source = "The reviewed paragraph has these exact original words.";
+        let frame = super::super::md_notes::Frame {
+            revision: Some(crate::artifact_archive::digest(source.as_bytes())),
+            anchors: super::super::md_notes::anchors(&super::super::markdown::parse(source, None)),
+        };
+        let anchor = frame.anchors[0].clone();
+        let mut layer = NotesLayer::for_markdown(&doc, Ok(NoteMap::default()));
+        layer.set_markdown_frame(frame.clone());
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title.clone(),
+            "First note".into(),
+            "first".into(),
+        );
+        let first = layer.begin_save();
+        let first_context = layer.markdown_contexts();
+        layer.add_note(
+            anchor.nid.clone(),
+            anchor.title,
+            "Second note".into(),
+            "second".into(),
+        );
+        layer.delete_note(
+            anchor.nid.clone(),
+            "First note".into(),
+            Some("first".into()),
+        );
+        let saved =
+            super::super::md_notes::keep_with_evidence(&store, &doc, &first, &first_context)
+                .unwrap();
+        layer.kept(1, super::super::md_notes::evidence::display(&saved, &frame));
+        assert_eq!(
+            layer.unsaved(),
+            2,
+            "the second add and the queued delete both remain"
+        );
+        assert_eq!(
+            layer.notes().unwrap().on(&anchor.nid)[0].text,
+            "Second note"
+        );
+        let edits = layer.begin_save();
+        let kept = super::super::md_notes::keep_with_evidence(
+            &store,
+            &doc,
+            &edits,
+            &layer.markdown_contexts(),
+        )
+        .unwrap();
+        assert_eq!(kept.count(), 1);
+        assert_eq!(kept.on(&anchor.nid)[0].text, "Second note");
     }
 }

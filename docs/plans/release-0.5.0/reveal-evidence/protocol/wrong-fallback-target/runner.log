@@ -1,0 +1,2 @@
+/home/parker/Work/td-strata-reveal/docs/plans/release-0.5.0/reveal-poc.py:58: DeprecationWarning: Gio.DBusConnection.register_object is deprecated
+  connection.register_object(OBJECT, interface, receive, None, None)

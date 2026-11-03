@@ -1,0 +1,105 @@
+{
+  "session": "continuity-check-9d9e4671e9",
+  "binary_sha256": "b5c0f33706b233ea648a7f9448c26f50f5fc624731402f114652f5c572bbcf3f",
+  "cases": {
+    "repeat_handover": {
+      "first": "c5da36489453b6b4a26e8da214275e49c33c2f584c71b1d0c73e166358917e61",
+      "second": "f43e7d88bd355065bc04e86e734d821a62c60e6384d0ae44660b719fdc821f16",
+      "captured": true
+    },
+    "moved_note": {
+      "before": {
+        "state": "notes",
+        "label": "review.md",
+        "notes": 1,
+        "concurs": null,
+        "anchors": 2,
+        "read_only": null,
+        "writable": null,
+        "refusal": null,
+        "unsaved": 0,
+        "saving": false,
+        "gone": false,
+        "said": null,
+        "sent": null,
+        "map": "NOTES \u2014 /home/parker/Work/td-authority-lab/humanlayer-native-final/review.md\n1 note on 1 block.\nEach [L<n>] is the line in that file where the block starts.\n\n[L1] The original passage needs a second look.\n  \u00b7 Review the original quotation.\n  Original quotation: \"The original passage needs a second look.\"\nRevision SHA-256: c5da36489453b6b4a26e8da214275e49c33c2f584c71b1d0c73e166358917e61\nAttachment: same revision\n",
+        "open": null,
+        "draft_text": null,
+        "pictures": 0,
+        "pictures_state": "kept",
+        "pictures_open": null,
+        "picture_files": [],
+        "draft": null,
+        "bar": true,
+        "cue": false,
+        "boxes": 0,
+        "buttons": 1,
+        "kept": "store",
+        "send_to": null
+      },
+      "after": {
+        "state": "notes",
+        "label": "review.md",
+        "notes": 1,
+        "concurs": null,
+        "anchors": 3,
+        "read_only": null,
+        "writable": null,
+        "refusal": null,
+        "unsaved": 0,
+        "saving": false,
+        "gone": false,
+        "said": null,
+        "sent": null,
+        "map": "NOTES \u2014 /home/parker/Work/td-authority-lab/humanlayer-native-final/review.md\n1 note on 1 block.\nEach [L<n>] is the line in that file where the block starts.\n\n[L3] The original passage needs a second look.\n  \u00b7 Review the original quotation.\n  Original quotation: \"The original passage needs a second look.\"\nRevision SHA-256: c5da36489453b6b4a26e8da214275e49c33c2f584c71b1d0c73e166358917e61\nAttachment: quotation matched\n",
+        "open": null,
+        "draft_text": null,
+        "pictures": 0,
+        "pictures_state": "kept",
+        "pictures_open": null,
+        "picture_files": [],
+        "draft": null,
+        "bar": true,
+        "cue": false,
+        "boxes": 0,
+        "buttons": 1,
+        "kept": "store",
+        "send_to": null
+      },
+      "capture": {
+        "file": "moved-note.png",
+        "sha256": "a62f543d835977694786e40d368335b5d40ae36027116cf20b02e46d1cdb0804",
+        "size": [
+          1150,
+          940
+        ]
+      }
+    },
+    "rail": {
+      "file": "archive-rail.png",
+      "sha256": "a6136319fe44b4e525c07b7458d6da76ffaa188b1841e02f11bd77f5b275d75e",
+      "size": [
+        1150,
+        940
+      ]
+    },
+    "archive_pointer": {
+      "status": "not exercised",
+      "reason": "The control pointer only targets workbench content. Hidden compositor injection did not open the rail in the first fixture."
+    }
+  },
+  "placement": "private hidden workspace; no focus or pointer change",
+  "closed": true,
+  "gui_pid": 348834,
+  "pane": {
+    "tab": 0,
+    "title": "Private native check",
+    "mode": "SHELL",
+    "is_agent": false,
+    "pid": 349474,
+    "pane_id": null,
+    "cwd": "/tmp",
+    "reach": "read"
+  },
+  "passed": true
+}

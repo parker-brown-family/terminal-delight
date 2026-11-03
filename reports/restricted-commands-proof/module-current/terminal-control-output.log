@@ -1,0 +1,24 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.45s
+     Running unittests src/main.rs (target/debug/deps/terminal_delight-73ed7d4d68427bb2)
+
+running 1 test
+test restricted::tests::output_cannot_invoke_terminal_protocol_even_when_utf8_is_split ... FAILED
+
+failures:
+
+---- restricted::tests::output_cannot_invoke_terminal_protocol_even_when_utf8_is_split stdout ----
+
+thread 'restricted::tests::output_cannot_invoke_terminal_protocol_even_when_utf8_is_split' (3028950) panicked at src/restricted.rs:1246:9:
+assertion `left == right` failed
+  left: "hello é\u{1b}]52;c;SECRET\u{7}\u{9b}31m\n\t世界\r"
+ right: "hello é]52;c;SECRET31m\n\t世界\r"
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    restricted::tests::output_cannot_invoke_terminal_protocol_even_when_utf8_is_split
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 17 filtered out; finished in 0.00s
+
+error: test failed, to rerun pass `--bin terminal-delight`

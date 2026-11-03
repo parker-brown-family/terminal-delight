@@ -1,0 +1,18 @@
+
+running 1 test
+test ctl::tests::an_unscripted_window_refuses_all_global_policy_mutations ... FAILED
+
+failures:
+
+---- ctl::tests::an_unscripted_window_refuses_all_global_policy_mutations stdout ----
+
+thread 'ctl::tests::an_unscripted_window_refuses_all_global_policy_mutations' (2859236) panicked at src/ctl.rs:3120:13:
+mcp on: ok
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    ctl::tests::an_unscripted_window_refuses_all_global_policy_mutations
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 2562 filtered out; finished in 0.00s
+

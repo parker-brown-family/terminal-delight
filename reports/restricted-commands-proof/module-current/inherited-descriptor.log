@@ -1,0 +1,30 @@
+   Compiling terminal-delight v0.0.0 (/home/parker/.cache/td-security-finish/proof/module-mutations-final-3)
+    Finished `test` profile [unoptimized + debuginfo] target(s) in 0.52s
+     Running tests/restricted.rs (target/debug/deps/restricted-170347c1d84af9c3)
+
+running 1 test
+test offline_work_completes_without_host_files_services_processes_credentials_or_control ... FAILED
+
+failures:
+
+---- offline_work_completes_without_host_files_services_processes_credentials_or_control stdout ----
+
+thread 'offline_work_completes_without_host_files_services_processes_credentials_or_control' (3030465) panicked at tests/restricted.rs:205:5:
+stdout=
+stderr=Starting Restricted offline run 9c9c30f8ea21a8f04dd9ac3a53dceb0d: work="/home/parker/tr-35aac24c26d950c3/work" access=read-write TD=none output=plain-text
+Inspect or revoke from Standard: terminal-delight restricted status 9c9c30f8ea21a8f04dd9ac3a53dceb0d / restricted revoke 9c9c30f8ea21a8f04dd9ac3a53dceb0d
+Traceback (most recent call last):
+  File "<string>", line 24, in <module>
+    assert 'host-secret' not in target and 'outside.sock' not in target,target
+           ^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^^
+AssertionError: /home/parker/tr-35aac24c26d950c3/host-secret
+
+note: run with `RUST_BACKTRACE=1` environment variable to display a backtrace
+
+
+failures:
+    offline_work_completes_without_host_files_services_processes_credentials_or_control
+
+test result: FAILED. 0 passed; 1 failed; 0 ignored; 0 measured; 4 filtered out; finished in 0.12s
+
+error: test failed, to rerun pass `--test restricted`

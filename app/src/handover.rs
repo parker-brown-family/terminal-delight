@@ -496,14 +496,17 @@ impl Ledger {
     }
 }
 
-/// What the tests count. The window never needs a number: the chip names the
-/// newest handover rather than counting them, and the page counts its rows.
-#[cfg(test)]
 impl Ledger {
+    /// How many handovers the pane has made. The chip names the newest rather
+    /// than counting them; a Threshing Floor card counts the rest beside it.
     pub fn len(&self) -> usize {
         self.items.len()
     }
+}
 
+/// What the tests count.
+#[cfg(test)]
+impl Ledger {
     pub fn unopened(&self) -> usize {
         self.items
             .iter()
@@ -540,6 +543,7 @@ pub fn surface_doc(h: &Handover) -> Value {
         "kind": "artifact",
         "id": surface_id(&h.key()),
         "title": h.label,
+        "handover_at_ms": h.at_ms,
         "model": {
             "href": h.href,
             "handover": h.source.word(),
@@ -642,6 +646,20 @@ pub fn local(ms: u64) -> Option<Clock> {
         hour: u32::try_from(tm.tm_hour).ok()?,
         minute: u32::try_from(tm.tm_min).ok()?,
         weekday: u32::try_from(tm.tm_wday).ok()?,
+    })
+}
+
+/// When a card on the artifact rail says its newest handover came: the time
+/// on the day it is now, the date and the time on any other. `None` when the
+/// clock cannot place either moment, which the card shows as no time rather
+/// than as a wrong one.
+pub fn card_time(at_ms: u64, now_ms: u64, l: crate::lang::Lang) -> Option<String> {
+    let at = local(at_ms)?;
+    let now = local(now_ms)?;
+    Some(if at.date() == now.date() {
+        at.hhmm()
+    } else {
+        format!("{} {}", short_date(at, l), at.hhmm())
     })
 }
 

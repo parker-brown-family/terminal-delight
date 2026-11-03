@@ -1,0 +1,91 @@
+{
+  "pane": 1,
+  "shell": 3561516,
+  "note": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "posted \u2014 the note is on pane 3561516's glass"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3560531 \u00b7 window 3560658 \u00b7 td-99b9c904-review-dev"
+        }
+      ],
+      "structuredContent": {
+        "pid": 3561516,
+        "posted": true,
+        "instance": {
+          "session": "permissions3560531",
+          "window": 3560658,
+          "build": "td-99b9c904-review-dev"
+        }
+      }
+    }
+  },
+  "open": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/native-dev-final-permissions/own.html \u2014 float pane 1"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3560531 \u00b7 window 3560658 \u00b7 td-99b9c904-review-dev"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/native-dev-final-permissions/own.html",
+        "placement": "here",
+        "pane": 3561516,
+        "said": "float pane 1",
+        "instance": {
+          "session": "permissions3560531",
+          "window": 3560658,
+          "build": "td-99b9c904-review-dev"
+        }
+      }
+    }
+  },
+  "notes": {
+    "jsonrpc": "2.0",
+    "id": 1,
+    "result": {
+      "content": [
+        {
+          "type": "text",
+          "text": "/home/parker/.cache/td-security-finish/proof/native-dev-final-permissions/own.html \u2014 floating over your pane\nno notes to read: the page is not laid out yet"
+        },
+        {
+          "type": "text",
+          "text": "\u2014 terminal-delight \u00b7 session permissions3560531 \u00b7 window 3560658 \u00b7 td-99b9c904-review-dev"
+        }
+      ],
+      "structuredContent": {
+        "path": "/home/parker/.cache/td-security-finish/proof/native-dev-final-permissions/own.html",
+        "place": "float",
+        "pane": 3561516,
+        "found": "float-over-you",
+        "notes": null,
+        "concurs": null,
+        "unsaved": null,
+        "map": null,
+        "state": null,
+        "read_only": null,
+        "why": "the page is not laid out yet",
+        "pictures_attached": [],
+        "instance": {
+          "session": "permissions3560531",
+          "window": 3560658,
+          "build": "td-99b9c904-review-dev"
+        }
+      }
+    }
+  }
+}

@@ -34,6 +34,9 @@ fn ensure_ping() -> PathBuf {
     if !matches!(ok, Ok(true)) {
         let _ = std::fs::write(&p, PING);
     }
+    if let (Some(base), Some(name)) = (p.parent(), p.file_name()) {
+        crate::art::record_asset(base, &name.to_string_lossy(), PING);
+    }
     p
 }
 
