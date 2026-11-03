@@ -25,9 +25,11 @@
 
 ## Slices
 
-1. **Built, tested** — Shift+PgUp/PgDn, Alt+O, Alt+Q with digits, pane marks, back/forward, Alt+E, lookup age, the mark chip.
-2. Scroll mode on Alt+[ (j/k, [ ], { }, e, g/G, /, q).
-3. Constellation: projects, then their tabs; new project and new tab from there.
+1. **Landed** 2026-11-03, PR 1285 — Shift+PgUp/PgDn, Alt+O, Alt+Q with digits, pane marks with their header chip, Alt+0 back/forward and the mouse buttons, Alt+E, lookup age. Ten mutation checks, all caught.
+2. **Landed** 2026-11-03, PR 1287 — scroll mode on Alt+[ (j/k, u/d, g/G, [ ], { }, e/E, /, q). Its write to full-screen programs is row 11 of `docs/security/terminal-input.md`. Five mutation checks, all caught.
+3. **Not built** — the Constellation: projects first, then their tabs, with New project and New tab. Tracked with the shape Parker gave in the follow-up issue *Hands on Keyboard slice 3: the Constellation* (terminal-delight#1289).
+
+Nothing in slices 1 and 2 has been pressed on the live desktop yet; the wave-follow install is where that first happens. Not covered by a test: the panels' digits going to their row, a digit taken with Alt still held, the header chip and scroll strip as drawn, the mouse buttons, and scroll mode over Claude Code's alternate screen.
 
 ## Facts verified
 
@@ -36,4 +38,4 @@
 
 ## Post-hoc difficulty
 
-Unset. It gets filled in when slice 3 lands.
+**5/10 for slices 1–2**, against 6 predicted. The routing ladder made every new chord one table row plus a test. What cost time were the things around it: nine languages per string, a key-up path gpui's test harness does not send, and the terminal-input manifest. The prediction stands for slice 3, which is a new overlay surface.
