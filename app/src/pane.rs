@@ -2947,6 +2947,11 @@ pub struct TerminalView {
     /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
     /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
     pub seat: Option<crate::threshing_floor::SeatId>,
+    /// The Alt+digit this pane is marked with, 1 to 9, if a person held one
+    /// down on it ([`crate::navkeys`]). One pane per digit per window: the
+    /// window clears it from every other pane when it sets it. Saved with the
+    /// leaf, like the seat, so a mark outlives a restart.
+    pub mark: Option<u8>,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -5448,6 +5453,7 @@ impl TerminalView {
             agent_access: crate::threshing_floor::AgentAccess::Open,
             model_label: None,
             seat: None,
+            mark: None,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -6798,7 +6804,7 @@ impl TerminalView {
 
     /// Put a [`Said`] chip up on `row`, and take it down after [`SAID_FOR`]
     /// unless something newer has been said by then.
-    fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
+    pub(crate) fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
         let at = Instant::now();
         self.said = Some(Said { text, row, at });
         cx.notify();
@@ -8026,6 +8032,21 @@ impl TerminalView {
         // steps toward older, ctrl+Home is the oldest row — wherever older is
         // painted; the wheel's per-gesture flip is about physical direction,
         // which a named key doesn't have.
+        // Shift+PgUp / Shift+PgDn page the scrollback in EVERY pane, shells
+        // included — the chord every other Linux terminal uses — on the same
+        // terms as the plain pair: an app that owns its own view keeps it.
+        if let Some(page) = crate::keylayer::shift_page(k) {
+            let tmode = self.session.term.lock().mode();
+            if !tmode.contains(TermMode::ALT_SCREEN) && !tmode.intersects(TermMode::MOUSE_MODE) {
+                let scroll = match page {
+                    crate::keylayer::Paging::PageDown => Scroll::PageDown,
+                    _ => Scroll::PageUp,
+                };
+                self.session.term.lock().scroll_display(scroll);
+                cx.notify();
+                return Handled::Declined;
+            }
+        }
         if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
@@ -8589,6 +8610,71 @@ impl TerminalView {
         }
         drop(term);
         cx.notify();
+    }
+
+    /// Grid lines (alacritty `Line.0`) across scrollback and screen that read
+    /// as an error report ([`crate::navkeys::looks_like_error`]), oldest first.
+    /// A run of error lines (a compiler's message and its context) counts once,
+    /// at its first line, so one press is one error rather than one line.
+    fn error_line_indices(&self) -> Vec<i32> {
+        let term = self.session.term.lock();
+        let grid = &*term;
+        let cols = grid.columns().min(200);
+        let mut out = Vec::new();
+        let mut prev = false;
+        for l in grid.topmost_line().0..=grid.bottommost_line().0 {
+            let row = grid.row(Line(l));
+            let mut s = String::with_capacity(cols);
+            for c in 0..cols {
+                let ch = row[Column(c)].c;
+                s.push(if ch == '\0' { ' ' } else { ch });
+            }
+            let hit = crate::navkeys::looks_like_error(&s);
+            if hit && !prev {
+                out.push(l);
+            }
+            prev = hit;
+        }
+        out
+    }
+
+    /// Alt+E: scroll to the nearest error line above the top of the view
+    /// (`older`), or below it (Alt+Shift+E), and put it at the top. With none
+    /// that way the pane says so rather than doing nothing, because a key that
+    /// silently does nothing reads as a key that is broken. On the alternate
+    /// screen the program owns the view and there is no history to search.
+    /// Returns where it went, for the tests.
+    pub(crate) fn jump_error(&mut self, older: bool, cx: &mut Context<Self>) -> Option<i32> {
+        let older = older ^ self.paint_inverted;
+        if self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN)
+        {
+            return None;
+        }
+        let idx = self.error_line_indices();
+        let top = -(self.session.term.lock().display_offset() as i32);
+        let target = if older {
+            idx.iter().copied().filter(|&l| l < top).max()
+        } else {
+            idx.iter().copied().filter(|&l| l > top).min()
+        };
+        match target {
+            Some(l) => self.scroll_to_line(l, None, cx),
+            None => {
+                let ui = crate::lang::current().strings().ui;
+                let text = if older {
+                    ui.nav_err_none_older
+                } else {
+                    ui.nav_err_none_newer
+                };
+                self.say(text.to_string(), None, cx);
+            }
+        }
+        target
     }
 
     /// The ▲/▼ header buttons in an agent pane whose TUI owns the
@@ -12424,6 +12510,23 @@ impl Render for TerminalView {
                             .text_color(th.accent)
                             .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
+                    }))
+                    // The Alt+digit this pane is marked with, so the person can
+                    // see which key comes back here. Shown whatever the logo
+                    // switch says: it is a key to press, not decoration.
+                    .children(self.mark.map(|n| {
+                        div()
+                            .id("pane-mark")
+                            .debug_selector(|| "pane-mark".into())
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border(sk.box_border(1.))
+                            .border_color(th.accent)
+                            .text_color(th.accent)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(sk.text_px(9.5 * scale))
+                            .child(format!("{n}"))
                     }))
                     // Under a chevron title the focused pane's » replaces the
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
@@ -18105,11 +18208,22 @@ mod tests {
         assert_eq!(alt("3", false), None);
         assert_eq!(alt("m", true), None);
         assert_eq!(
-            alt("q", true),
-            Some(b"\x1bQ".to_vec()),
+            alt("z", true),
+            Some(b"\x1bZ".to_vec()),
             "only the pinned letter"
         );
         crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        // The Hands on Keyboard chords never reach the program, held or not,
+        // and Alt+B, the one Parker first asked for, still does: it is
+        // back-one-word in every shell and agent prompt.
+        for c in ["o", "q", "e", "0"] {
+            assert_eq!(alt(c, false), None, "alt+{c} is the window's");
+        }
+        assert_eq!(
+            alt("b", false),
+            Some(b"\x1bb".to_vec()),
+            "alt+b stays readline's"
+        );
     }
 
     #[test]

@@ -4791,3 +4791,75 @@ fn ctrl_c_never_gives_a_tag_a_file_that_is_not_a_picture(cx: &mut TestAppContext
         Some("look at [Image #1] please")
     );
 }
+
+/// Shift+PgUp pages a SHELL pane's history, where plain PgUp belongs to the
+/// shell (Arch's inputrc binds it to history search) and pages nothing.
+/// Shift+PgDn comes back down. Hands on Keyboard, slice 1.
+#[gpui::test]
+fn shift_page_up_pages_a_shell_and_plain_page_up_stays_the_shells(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "for i in $(seq 1 300); do echo line $i; done; echo ready; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    let offset = |pane: &mut Pane| pane.read(|v| v.session.term.lock().display_offset());
+    // The control: in a shell pane plain PgUp is the program's, so the view
+    // does not move. If this moved, the Shift test below would prove nothing.
+    pane.keys("pageup");
+    assert_eq!(offset(&mut pane), 0, "plain PgUp stays the shell's");
+    pane.keys("shift-pageup");
+    let up = offset(&mut pane);
+    assert!(up > 0, "Shift+PgUp paged the history");
+    pane.keys("shift-pageup");
+    assert!(offset(&mut pane) > up, "and pages again");
+    pane.keys("shift-pagedown");
+    pane.keys("shift-pagedown");
+    assert_eq!(
+        offset(&mut pane),
+        0,
+        "Shift+PgDn came back to the live screen"
+    );
+}
+
+/// Alt+E walks back through the error lines in a pane's history, one press
+/// per error (a message and its context lines count once), and says so when
+/// there is none further, instead of doing nothing.
+#[gpui::test]
+fn alt_e_walks_the_error_lines_and_says_when_there_are_no_more(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "printf '%s\\n' 'error[E0425]: cannot find function' 'error: aborting due to 1 previous error'; \
+         for i in $(seq 1 60); do echo fine $i; done; \
+         echo 'thread main panicked at src/main.rs:3:5:'; \
+         for i in $(seq 1 60); do echo fine $i; done; \
+         echo '0 errors, 2 warnings'; echo ready; exec cat",
+    );
+    pane.wait_for("ready");
+    let errors = pane.read(|v| v.error_line_indices());
+    assert_eq!(
+        errors.len(),
+        2,
+        "two errors; the second rustc line is the same one, '0 errors' is none"
+    );
+    fn jump(pane: &mut Pane, older: bool) -> Option<i32> {
+        pane.view.update(pane.cx, |v, cx| v.jump_error(older, cx))
+    }
+    assert_eq!(
+        jump(&mut pane, true),
+        Some(errors[1]),
+        "the nearest error above comes first"
+    );
+    assert_eq!(jump(&mut pane, true), Some(errors[0]));
+    assert_eq!(jump(&mut pane, true), None, "none further back");
+    assert!(
+        pane.read(|v| v.said.as_ref().map(|s| s.text.clone()))
+            .is_some_and(|t| t.contains("No error above")),
+        "and the pane said so"
+    );
+    assert_eq!(
+        jump(&mut pane, false),
+        Some(errors[1]),
+        "Alt+Shift+E walks forward again"
+    );
+}
