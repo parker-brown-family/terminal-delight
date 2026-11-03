@@ -13,7 +13,7 @@
 <p>Each task row shows what its agents are doing: a robot that breathes while an agent works and blinks when it needs you, ✅ when it finished, ❌ when it finished against an error, 📌 for a pinned note. Fold a branch and those marks roll up onto the branch row, so a folded project still blinks when something inside it asks a question.</p>
 <p>Click a task to go there; a project or group row takes you to its first tab. Drag a task onto a branch to file it, or carry the active tab with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd> and the arrows. <kbd>Alt</kbd>+<kbd>L</kbd> finds a project, group, tab, pane or sticky note by name. A deleted branch or closed tab waits in the bay at the foot of the bar for an hour or more, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back.</p>
 <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd> shows and hides the bar.</p>
-<p class="in-dev">A new 0.5.0 window opens in the Clean design, which lists tabs across the top and keeps the bar shut until you open it.</p>
+<p>A new 0.5.0 window opens in the Clean design, which lists tabs across the top and keeps the bar shut until you open it.</p>
 <p class="invite">Technical has every mark, key, menu and saved setting.</p>
 </section>
 
@@ -132,7 +132,7 @@
 <p><code>level</code> is <code>Promoted</code>, <code>Neutral</code> or <code>Demoted</code>. A missing level means "inherit from the branch", which is a different answer from <code>Neutral</code>. Files from older builds that mention a branch pin or a strip scope still load. Scratch windows and demo windows never show the bar. <code>terminal-delight ctl tab</code> and <code>ctl tabs</code> can name and group your own tab from a script (see <a href="/ctl">ctl</a>); there is no scripting for projects yet.</p>
 
 <h3>In 0.5.0</h3>
-<div class="in-dev">
+<div>
 <ul>
   <li>A new window wears the Clean design, whose UI set asks for tabs across the top instead of the bar. The handle that opens the bar is always there. Opening the bar yourself, with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>B</kbd>, the handle or a new project's name box, is saved as your own choice and keeps it open; <a href="/ui-config">UI CONFIG</a> has the switch.<sup><a href="#s6">6</a></sup></li>
   <li>In tabs view, the project chip at the head of the tab strip opens a switcher listing every top-level project and group in the tree's order, with the one you are in lit. Choosing one goes where a click on its row in the bar would. This applies to every skin. In 0.4.0 the chip goes to the project's first loose tab.</li>
@@ -157,5 +157,5 @@
   <li id="s3">Clicks (<code>go_to_branch</code>), renames, the walk and the carry (<code>bar_carry_move</code>), filing and the group lock (<code>file_initiative</code>, <code>apply_bar_drop</code>), and the four-pane cap on a pane dropped onto the tree (<code>MAX_PANES</code>): <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
   <li id="s4">LOOKUP's rows and ranking: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lookup.rs">lookup.rs</a>; its strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
   <li id="s5">The bay and its retention: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hold.rs">hold.rs</a>, and the plan's <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/plans/left-bar/02-manners.md">manners</a>.</li>
-  <li id="s6">0.5.0: the left-bar switch (<code>set_left_bar</code>), the project switcher, <code>ADD PROJECT</code> and the unboxed spine in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; the Clean UI set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a>.</li>
+  <li id="s6">0.5.0: the left-bar switch (<code>set_left_bar</code>), the project switcher, <code>ADD PROJECT</code> and the unboxed spine in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; the Clean UI set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/ui/clean.toml">app/ui/clean.toml</a>.</li>
 </ol>

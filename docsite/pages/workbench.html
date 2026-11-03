@@ -44,7 +44,7 @@
 
 <h3>Shelves</h3>
 <table>
-  <thead><tr><th>Shelf</th><th>Holds</th><th>Key</th></tr></thead>
+  <thead><tr><th>Shelf</th><th>Holds</th><th>Key, with the tab's pane marks off</th></tr></thead>
   <tbody>
     <tr><td><code>overview</code></td><td>replies (<code>response</code>), and the turn in progress</td><td><kbd>Alt</kbd>+<kbd>1</kbd></td></tr>
     <tr><td><code>artifacts</code></td><td><code>artifact</code>, <code>markdown</code>, <code>table</code>, <code>architecture</code>, and any kind the build does not know</td><td><kbd>Alt</kbd>+<kbd>2</kbd></td></tr>
@@ -74,7 +74,7 @@
   </tbody>
 </table>
 <p>With the hooks on, a question reaches the bench whole and a press answers it directly; the agent never draws its own picker. The hook holds the question only while the bench is the face on screen. On the terminal face, or with no window of this build holding the pane, the picker draws in the terminal as before. It waits up to <code>TD_ASK_WAIT_S</code> seconds (540 by default) and then lets the picker draw. What the hooks write goes to <code>inbound.jsonl</code> in the pane's surfaces folder, which rolls over to <code>.1</code> at <code>TD_INBOUND_CAP</code> bytes (2 MiB by default). Hooks start working in agent sessions started after the install.</p>
-<div class="in-dev"><p>The installer keeps its backup of the settings file under <code>$XDG_STATE_HOME/terminal-delight/backups/</code>, readable only by you, instead of beside the file. It refuses a symlinked settings file and any option other than <code>--uninstall</code>, and records what it installed so the uninstaller removes only that.<sup><a href="#s6">6</a></sup></p></div>
+<div><p>The installer keeps its backup of the settings file under <code>$XDG_STATE_HOME/terminal-delight/backups/</code>, readable only by you, instead of beside the file. It refuses a symlinked settings file and any option other than <code>--uninstall</code>, and records what it installed so the uninstaller removes only that.<sup><a href="#s6">6</a></sup></p></div>
 
 <h3>Questions</h3>
 <p>A question card shows its options as chips, and a digit answers the one on screen. A round of several questions is one card and one row on the rail. Across its top, under <code>QUESTIONS</code>, a tab names each question and ticks the answered ones; answering one moves you to the next. The last tab is <code>✔ SUBMIT</code>, which sends the round however much of it is answered, with no confirmation. It turns green once every question has an answer, and under it the card counts <code>2 of 3 answered</code>. A question left blank goes back to the agent as skipped and reads <code>left blank · the round was submitted without it</code>.<sup><a href="#s7">7</a></sup> The chip under each question says <code>NEXT</code> or <code>SUBMIT</code>, matching the word on the agent's own picker.</p>
@@ -156,7 +156,7 @@
 <h3>The composer</h3>
 <p>On an agent's pane, any printable key on the bench opens the composer: <code>type to the agent</code>, over <code>TYPE ANYWHERE · ENTER SENDS · PASTE TEXT, FILES OR AN IMAGE</code>. The draft is a real text box with line breaks, undo and a selection: <kbd>Ctrl</kbd>+<kbd>A</kbd> selects it all, <kbd>Shift</kbd> with any motion grows a selection, and typing replaces it. <kbd>Ctrl</kbd>+<kbd>C</kbd> copies the selection, or the whole draft when nothing is selected. <kbd>Ctrl</kbd>+<kbd>X</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> do not reach the draft yet: the pane takes them first, so the paste goes into the agent's terminal and <kbd>Ctrl</kbd>+<kbd>X</kbd> sends it <code>^X</code> (<a href="https://github.com/parker-brown-family/terminal-delight/issues/1247">issue 1247</a>). <kbd>Ctrl</kbd>+<kbd>V</kbd> pastes into the draft. <kbd>↑</kbd> on an empty draft walks back through the last 32 messages you sent from this bench.</p>
 <p><kbd>Enter</kbd> sends the draft as one bracketed paste followed by a return, so line breaks inside it stay line breaks. Pasted text keeps its line breaks, and copied files paste as their paths. Drag a file onto the composer and its path lands at the caret: the composer lights up with <code>⤓ DROP TO INSERT THE PATH</code>, several files arrive as several words, and a name with a space in it arrives quoted. A pasted picture is saved and its path goes straight to the agent's prompt, where Claude Code and Codex attach it as an image; the composer counts it, <code>🗎 1 IMAGE</code>, and your words follow it when you send.<sup><a href="#s11">11</a></sup> <kbd>Esc</kbd> closes the composer and drops the draft. The bench has no slash-command completion; the terminal face does.</p>
-<div class="in-dev"><p>The composer gains three deletion keys, each undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>: <kbd>Shift</kbd>+<kbd>Backspace</kbd> deletes the previous word, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> the whole current line, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> everything in the draft.<sup><a href="#s12">12</a></sup></p></div>
+<div><p>The composer gains three deletion keys, each undoable with <kbd>Ctrl</kbd>+<kbd>Z</kbd>: <kbd>Shift</kbd>+<kbd>Backspace</kbd> deletes the previous word, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> the whole current line, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> everything in the draft.<sup><a href="#s12">12</a></sup></p></div>
 
 <h3>The strip</h3>
 <p>The strip across the top of the bench names the agent's state in a word: <code>Working</code>, <code>Waiting on you</code>, <code>Reading your answer</code>, <code>Paused</code>, <code>Blocked</code>, <code>Finished</code>, <code>Exited</code> or <code>Idle</code>. To its right, in order: <code>PAUSE TURN</code> or <code>RESUME TURN</code>, the model and effort dials, then <code>END SESSION</code> or <code>⌁ LAUNCH AGENT</code>.</p>
@@ -184,7 +184,7 @@
   <thead><tr><th>Key</th><th>On the bench</th></tr></thead>
   <tbody>
     <tr><td><kbd>Alt</kbd>+<kbd>K</kbd></td><td>Flip between TERM and BENCH</td></tr>
-    <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd>, <kbd>Tab</kbd></td><td>Jump to a shelf, or cycle through them</td></tr>
+    <tr><td><kbd>Tab</kbd>; <kbd>Alt</kbd>+<kbd>1</kbd>…<kbd>4</kbd> with the tab's pane marks off</td><td>Cycle through the shelves, or jump to one</td></tr>
     <tr><td><kbd>↑</kbd> <kbd>↓</kbd></td><td>Move between rows</td></tr>
     <tr><td><kbd>Enter</kbd></td><td>Run the card's first action; on a bench offering an agent, open the launcher</td></tr>
     <tr><td>a digit</td><td>Answer the question that is waiting</td></tr>
@@ -207,9 +207,9 @@
     <tr><td><kbd>Ctrl</kbd>+<kbd>G</kbd></td><td>Pause the turn</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Z</kbd>, <kbd>Ctrl</kbd>+<kbd>A</kbd></td><td>Undo, select all</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>U</kbd> <kbd>Ctrl</kbd>+<kbd>K</kbd> <kbd>Alt</kbd>+<kbd>D</kbd></td><td>Delete to line start, to line end, a word forward</td></tr>
-    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>Closes the tab, after asking; deletes a word back when no document box is up <span class="dev-tag">0.5.0 dev</span></td></tr>
+    <tr><td><kbd>Ctrl</kbd>+<kbd>W</kbd></td><td>Closes the tab, after asking; deletes a word back when no document box is up</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Delete</kbd></td><td>Delete a word back, a word forward</td></tr>
-    <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> <span class="dev-tag">0.5.0 dev</span></td><td>Delete the previous word, the current line, the whole draft</td></tr>
+    <tr><td><kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd></td><td>Delete the previous word, the current line, the whole draft</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>C</kbd>, <kbd>Ctrl</kbd>+<kbd>V</kbd></td><td>Copy the selection or the whole draft; paste into the draft</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>X</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd></td><td>Reach the agent's terminal, not the draft, today (<a href="https://github.com/parker-brown-family/terminal-delight/issues/1247">issue 1247</a>)</td></tr>
   </tbody>
@@ -232,13 +232,13 @@
 <li id="s3">The empty card and the shelf labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
 <li id="s4">The turn card's words: <code>live_says</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>; the rail's words: <code>lane_word</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>.</li>
 <li id="s5"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-hooks">td-agent-hooks</a>, whose header lists the five events, the 540-second wait and the 2 MiB rollover.</li>
-<li id="s6">The 0.5.0 installer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/scripts/install-agent-hooks.sh">install-agent-hooks.sh on dev/0.5.0</a>.</li>
+<li id="s6">The 0.5.0 installer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/install-agent-hooks.sh">install-agent-hooks.sh</a>.</li>
 <li id="s7">The round's tabs and submit: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>; sending a round: <code>bench_submit_round</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a>.</li>
 <li id="s8">The folder-trust dialog read as a question: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/screenread.rs">screenread.rs</a>.</li>
 <li id="s9">The weight sentence: <code>weight_line</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>; the tabs and readings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>.</li>
 <li id="s10">Held writes: <code>bench_deliver</code> and <code>bench_drain</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>.</li>
 <li id="s11">Sending, pasting and dropping: <code>bench_send</code>, <code>bench_paste</code> and <code>bench_drop</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; the 32 recalled messages: <code>HISTORY_KEPT</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a>.</li>
-<li id="s12">The 0.5.0 deletion keys: <code>line_edit</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/workbench.rs">workbench.rs on dev/0.5.0</a>.</li>
+<li id="s12">The 0.5.0 deletion keys: <code>line_edit</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>.</li>
 <li id="s13">The dials: <code>strip_trailing</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>, <code>dials_live</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a>, and the agent's own model list in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/model_catalog.rs">model_catalog.rs</a>.</li>
 <li id="s14">The conversation record: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>.</li>
 <li id="s15"><a href="https://github.com/parker-brown-family/terminal-delight/issues/629">Move the bench and the channel state off the pane together, keyed by the conversation</a>.</li>

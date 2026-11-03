@@ -78,11 +78,11 @@
   </tbody>
 </table>
 <p>An agent sees only the panes it is allowed to see. When every pane is exposed, the agents' view and the inspector's are the same; when some panes are hidden from agents, the inspector shows you the fuller picture. Branch names, paths and titles in the answers are marked as untrusted terminal data.</p>
-<p class="in-dev">On 0.5.0 which panes an agent may see is decided in the <a href="/threshing-floor">Threshing Floor</a>, so a seated pane is left out of the agents' view unless a line reaches it.<sup><a href="#s6">6</a></sup></p>
+<p>On 0.5.0 which panes an agent may see is decided in the <a href="/threshing-floor">Threshing Floor</a>, so a seated pane is left out of the agents' view unless a line reaches it.<sup><a href="#s6">6</a></sup></p>
 
 <h3>Hiding it</h3>
 <p>In 0.4.0 the signal is always drawn and has no switch. <kbd>Alt</kbd>+<kbd>G</kbd> is listed in the F1 help as <code>Open Git coordination</code>. There is no <code>ctl</code> verb for it.</p>
-<div class="in-dev">
+<div>
 <p>On 0.5.0 the signal is a switch in <a href="/ui-config">UI CONFIG</a>, <code>git notice</code>, saved as <code>git_notice</code> under <code>[outer]</code>. A new window opens in the Clean design, whose UI set hides it, so on a fresh 0.5.0 window the signal is not on screen until you turn it on; TERMINIMALIST asks for the same set. A switch you flip yourself always wins. While the signal is hidden, its red or yellow moves onto the CONFIG button, and <kbd>Alt</kbd>+<kbd>G</kbd> still opens the inspector. The findings and their sentences are the same as in 0.4.0.<sup><a href="#s6">6</a></sup></p>
 </div>
 
@@ -96,5 +96,5 @@
   <li id="s3">The Git commands, <code>GIT_OPTIONAL_LOCKS=0</code>, deadlines and the integration target: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/engstate.rs">engstate.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination.rs">coordination.rs</a> (limits at its top).</li>
   <li id="s4">Seen and expected, the three durations, retention and the file: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination/attention.rs">coordination/attention.rs</a>.</li>
   <li id="s5">The four tools and their schemas: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
-  <li id="s6">0.5.0: the <code>git_notice</code> switch in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>, the Clean set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a>, and the agents' view in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/coordination_view.rs">coordination_view.rs</a>.</li>
+  <li id="s6">0.5.0: the <code>git_notice</code> switch in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>, the Clean set in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/ui/clean.toml">app/ui/clean.toml</a>, and the agents' view in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/coordination_view.rs">coordination_view.rs</a>.</li>
 </ol>

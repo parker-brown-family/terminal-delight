@@ -24,7 +24,7 @@
     <tr><td><kbd>Shift</kbd>+<kbd>Enter</kbd></td><td>new line</td></tr>
     <tr><td><kbd>Esc</kbd></td><td>discard</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>paste text; copied files paste as their paths; an image isn't pasted</td></tr>
-    <tr><td><kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>4</kbd>, <kbd>Alt</kbd>+<kbd>M</kbd></td><td>still work while you write</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>M</kbd>, and <kbd>Alt</kbd>+<kbd>1</kbd>–<kbd>4</kbd> with the tab's pane marks off</td><td>still work while you write</td></tr>
   </tbody>
 </table>
 <p>The rest of the editing keys are the composer's, listed on <a href="/keys#technical-workbench-writing">Keys</a>. Every other key goes into the note. An empty note closes without posting.</p>
@@ -40,7 +40,7 @@
   <li>A comment's only action is <b>copy</b>, and copy is done by the window: it writes the clipboard and nothing else.</li>
   <li>Posting writes the file and draws the card. It doesn't touch the terminal or <code>actions.jsonl</code>.</li>
   <li>The <code>comment</code> kind isn't in the catalogue or the launch briefing, so agents aren't invited to write one, and no <a href="/mcp">MCP</a> tool returns the bench's contents.</li>
-  <li class="in-dev">One MCP tool reads from the bench: <code>ask_agent</code>'s quick answer about another pane carries that pane's newest reply, its brief and plain answer. It looks only at replies, so a comment is never in it.<sup><a href="#s2">2</a></sup></li>
+  <li>One MCP tool reads from the bench: <code>ask_agent</code>'s quick answer about another pane carries that pane's newest reply, its brief and plain answer. It looks only at replies, so a comment is never in it.<sup><a href="#s2">2</a></sup></li>
 </ul>
 
 <h3>The card</h3>
@@ -56,5 +56,5 @@
 
 <ol data-sources>
   <li id="s1">The note box and posting: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>; the comment kind and its one action: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>; the card: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>.</li>
-  <li id="s2">The quick answer: <code>latest_response</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/workbench.rs">workbench.rs</a> and its use in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a>, on dev/0.5.0.</li>
+  <li id="s2">The quick answer: <code>latest_response</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/workbench.rs">workbench.rs</a> and its use in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/threshing_floor_view.rs">threshing_floor_view.rs</a>.</li>
 </ol>

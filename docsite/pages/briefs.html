@@ -31,7 +31,7 @@
 <p><kbd>Ctrl</kbd>+<kbd>Enter</kbd> or <b>Add note</b> adds the note, <kbd>Enter</kbd> starts a new line, and <kbd>Esc</kbd> or a click outside closes the box. A note holds up to 20,000 characters. Each note in the box has a <b>delete</b>.</p>
 <p><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd> and <kbd>Shift</kbd>+<kbd>Insert</kbd> paste text at the caret, and copied files as their paths. A pasted picture, or copied picture files, are attached to the element the note is on: the bar says <code>attached as [doc-image #1]</code>, and the box lists each picture by that name with its time and a <b>delete</b>. Pictures are kept in <code>$XDG_STATE_HOME/terminal-delight/notes/pictures/</code>, never written into the note's words or the document.<sup><a href="#s2">2</a></sup></p>
 <p>A note on words the file no longer has can still be read and deleted, behind <code>N on words no longer here</code>.</p>
-<div class="in-dev"><p>The box's button reads <b>Submit comment</b>. A box with more notes than fit scrolls: the wheel, <kbd>PageUp</kbd> and <kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> turn it, and it opens on the newest. In 0.4.0 older notes past the box's height are hidden.</p></div>
+<div><p>The box's button reads <b>Submit comment</b>. A box with more notes than fit scrolls: the wheel, <kbd>PageUp</kbd> and <kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> turn it, and it opens on the newest. In 0.4.0 older notes past the box's height are hidden.</p></div>
 
 <h3>CONCUR</h3>
 <p>On a brief whose notes script supports stamps, each decision carries a dashed slot reading <code>?</code> over <code>CONCUR</code>. Click it to stamp the decision; click the stamp to peel it off. A concur with no note means the decision is approved as recommended, and the kit tells the agent to read it that way. A brief whose script predates stamps refuses one: <code>This brief's notes script is older than CONCUR stamps, so a stamp saved here would never show.</code><sup><a href="#s3">3</a></sup></p>
@@ -43,11 +43,11 @@
   <li>A brief that is a symbolic link, or has a second name on disk, is never saved into. A brief that changes on disk during the save is left alone, and your notes stay to save again.</li>
   <li>Closing the square with unsaved notes warns once: <code>N unsaved · save them into the file, or close again to leave without them</code>. Closing the pane or the tab does not ask.</li>
 </ul>
-<div class="in-dev"><p>Every note, deletion and stamp is saved into the brief the moment you submit it, so a closed square loses nothing. The bar has no save button, and sending the notes never writes the file. <code>N unsaved</code> appears only when a save failed; the next edit, or <code>ctl doc save</code>, tries again. Closing with notes not yet written warns <code>N not kept · close again to leave without them</code>.<sup><a href="#s4">4</a></sup></p></div>
+<div><p>Every note, deletion and stamp is saved into the brief the moment you submit it, so a closed square loses nothing. The bar has no save button, and sending the notes never writes the file. <code>N unsaved</code> appears only when a save failed; the next edit, or <code>ctl doc save</code>, tries again. Closing with notes not yet written warns <code>N not kept · close again to leave without them</code>.<sup><a href="#s4">4</a></sup></p></div>
 
 <h3>Markdown notes</h3>
 <p>A note on a Markdown file is kept the moment it is added, in <code>$XDG_STATE_HOME/terminal-delight/notes/</code>, one file per document named from the file's name and a hash of its path. The <code>.md</code> is never written. The notes bar has no save button.<sup><a href="#s5">5</a></sup></p>
-<div class="in-dev">
+<div>
 <p>Each new note also keeps what it was written on: the passage's words, the passages either side, and the SHA-256 of the file as it was read. When the file is edited, the note follows its passage:</p>
 <table>
   <thead><tr><th>The note says</th><th>When</th></tr></thead>
@@ -98,7 +98,7 @@ Each [L&lt;n&gt;] is the line in that file where the block starts.
 
 <h3>document_notes</h3>
 <p>An agent connected to the <a href="/mcp">MCP server</a> calls <code>document_notes</code>, with no arguments, to read the notes on the document beside it: a square floating over its own pane, else a pane it opened beside, else the first document pane in its tab. The answer names the file, counts notes, stamps and edits not yet saved, and then gives the map, unsaved notes included. Pasted pictures follow as images, up to eight of up to 3,750,000 bytes each in PNG, JPEG, GIF or WebP; any others are named with the reason. It writes nothing and does not need the writes switch. With nothing open it says <code>nothing is open beside you — no brief floats over your pane, and no pane in your tab shows a document</code>.<sup><a href="#s9">9</a></sup></p>
-<p class="in-dev">A document on a pane marked off-limits to agents is skipped unless it is the caller's own pane.</p>
+<p>A document on a pane marked off-limits to agents is skipped unless it is the caller's own pane.</p>
 
 <h3>What the agent is told</h3>
 <p>The launcher hands a Claude agent its briefing through <code>--append-system-prompt</code>, and writes it to <code>$XDG_STATE_HOME/terminal-delight/surfaces/$TD_SESSION/briefing.txt</code>. When the kit could be written, the briefing carries this paragraph, with the kit's <code>SKILL.md</code> in place of <code>&lt;kit&gt;</code>:<sup><a href="#s10">10</a></sup></p>
@@ -132,7 +132,7 @@ terminal-delight briefing hook off</code></pre>
 <table class="keys">
   <thead><tr><th>Keys</th><th>Where</th><th>What it does</th></tr></thead>
   <tbody>
-    <tr><td><kbd>Alt</kbd>+<kbd>2</kbd>, then <kbd>Enter</kbd></td><td>the bench</td><td>The <code>artifacts</code> shelf, and open the brief's card in the floating square.</td></tr>
+    <tr><td><kbd>Alt</kbd>+<kbd>2</kbd> (with the tab's pane marks off), then <kbd>Enter</kbd></td><td>the bench</td><td>The <code>artifacts</code> shelf, and open the brief's card in the floating square.</td></tr>
     <tr><td><kbd>Alt</kbd> held</td><td>over the document</td><td>Outline every element that takes a note.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>Enter</kbd></td><td>the note box</td><td>Add the note.</td></tr>
     <tr><td><kbd>Ctrl</kbd>+<kbd>V</kbd>, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>V</kbd>, <kbd>Shift</kbd>+<kbd>Insert</kbd></td><td>the note box</td><td>Paste text, paths or pictures.</td></tr>
@@ -161,9 +161,9 @@ terminal-delight briefing hook off</code></pre>
 <li id="s1">What takes a note on a brief: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skills/decision-brief/assets/notes.js">notes.js</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/extract.js">docview/extract.js</a>; in Markdown: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>; the buttons, outlines and hint: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>.</li>
 <li id="s2">The note box and pasting: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>; pictures: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/doc_images.rs">docview/doc_images.rs</a>.</li>
 <li id="s3">The stamp: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes.rs">docview/notes.rs</a>; how the agent reads a bare concur: the kit's <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/skills/decision-brief/SKILL.md">SKILL.md</a>.</li>
-<li id="s4">Saving on submit: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/page.rs">docview/page.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>, on dev/0.5.0.</li>
+<li id="s4">Saving on submit: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/page.rs">docview/page.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes_ui.rs">docview/notes_ui.rs</a>.</li>
 <li id="s5">The Markdown store: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>.</li>
-<li id="s6">Evidence, reattachment and the lock: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/md_notes/evidence.rs">docview/md_notes/evidence.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/docview/md_notes.rs">docview/md_notes.rs</a>, on dev/0.5.0.</li>
+<li id="s6">Evidence, reattachment and the lock: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes/evidence.rs">docview/md_notes/evidence.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>.</li>
 <li id="s7">Who is beside the document: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>; where the map lands and what the bar says: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
 <li id="s8">The brief map: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/notes.rs">docview/notes.rs</a>; the Markdown map: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/md_notes.rs">docview/md_notes.rs</a>.</li>
 <li id="s9"><code>document_notes</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>

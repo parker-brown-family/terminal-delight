@@ -57,8 +57,8 @@
 <h3>bindings</h3>
 <p><code>{"panes": […]}</code>, one row per agent: <code>shell_pid</code>, <code>agent_pid</code>, <code>mode</code>, <code>cwd</code>, <code>session</code>, <code>bond</code>, <code>certain</code>, and the conversation's lineage. <code>bond</code> is how the binding was found: <code>declared</code> (the agent said so), <code>birth</code> (a transcript started with it), <code>sole</code> (the only conversation in its directory) or <code>guess</code>.</p>
 
-<h3>Added on 0.5.0 <span class="dev-tag">0.5.0 dev</span></h3>
-<div class="in-dev">
+<h3>Added on 0.5.0</h3>
+<div>
 <p>Four more verbs: one runs a command with limited reach, one manages UI sets, and two remove Terminal Delight or tidy up after it.<sup><a href="#s2">2</a></sup></p>
 <table>
   <thead><tr><th>Command</th><th>Does</th><th>Exit</th></tr></thead>
@@ -81,5 +81,5 @@
 
 <ol data-sources>
   <li id="s1">The verb roster, usage text, launch options and exits: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>VERBS</code>, <code>USAGE</code>, <code>parse_contract</code>, <code>dispatch</code>); each verb's own flags: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surfacefeed.rs">surfacefeed.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefhook.rs">briefhook.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vitals.rs">vitals.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
-  <li id="s2">0.5.0: the roster in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/restricted.rs">restricted.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall.rs">uninstall.rs</a> and its <code>uninstall/export.rs</code> and <code>uninstall/builds.rs</code>.</li>
+  <li id="s2">0.5.0: the roster in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/restricted.rs">restricted.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uninstall.rs">uninstall.rs</a> and its <code>uninstall/export.rs</code> and <code>uninstall/builds.rs</code>.</li>
 </ol>

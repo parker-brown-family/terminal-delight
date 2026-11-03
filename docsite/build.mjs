@@ -72,7 +72,7 @@ const url = (slug) => (slug === 'index' ? '/' : '/' + slug);
    `<span class="dev-tag">0.5.0 dev</span>` inline mark the parts that are
    development work. When that release ships, delete the key and the classes:
    `grep -rn 'in-dev\|dev-tag\|"release"' docsite` finds every one. */
-const DEV_RELEASES = { '0.5.0': 'the 0.5.0 candidate is planned for 13 November 2026, and stable for 20 November' };
+const DEV_RELEASES = {};
 const devTag = (p) => (p.release ? `<span class="dev-tag">${esc(p.release)} dev</span>` : '');
 const devNote = (p) => {
   if (!p.release) return '';
@@ -204,7 +204,6 @@ const APP_KEY_FIXES = [
 ];
 async function appKeys() {
   const where = 'the key sheet';
-  const main = await readFile(join(ROOT, 'app', 'src', 'main.rs'), 'utf8');
   const lang = await readFile(join(ROOT, 'app', 'src', 'lang.rs'), 'utf8');
   const block = lang.match(/pub const EN: Strings = Strings \{([\s\S]*?)\n\};/);
   if (!block) { fail(where, 'app/src/lang.rs has no EN strings block'); return []; }
@@ -216,26 +215,66 @@ async function appKeys() {
   const chromeBlock = chrome.match(/pub const EN: Chrome = Chrome \{([\s\S]*?)\n\};/);
   if (!chromeBlock) { fail(where, 'app/src/lang/chrome.rs has no EN block'); return []; }
   for (const m of chromeBlock[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[`ui.${m[1]}`] = unescape(m[2]);
-  const start = main.indexOf('let col_a = div()'), end = main.indexOf('// The FEATURES view', start);
-  if (start < 0 || end < 0) { fail(where, 'the help sheet in app/src/main.rs moved; update appKeys()'); return []; }
-  const region = main.slice(start, end), split = region.indexOf('let col_b');
-  const string = (name) => (name in en ? en[name] : (fail(where, `lang.rs has no English string ${name}`), name));
+  /* the help sheet's own strings (`h.*`, `lang/help.rs`), since the 0.5.0 sheet */
+  const helpSrc = await readFile(join(ROOT, 'app', 'src', 'lang', 'help.rs'), 'utf8');
+  const helpBlock = helpSrc.match(/pub const EN: Help = Help \{([\s\S]*?)\n\};/);
+  if (!helpBlock) { fail(where, 'app/src/lang/help.rs has no EN block'); return []; }
+  for (const m of helpBlock[1].matchAll(/^\s+(\w+):\s*"((?:[^"\\]|\\.)*)",/gm)) en[`h.${m[1]}`] = unescape(m[2]);
+  /* Since 0.5.0 the sheet is data: `helpsheet::shortcuts` lists its sections in
+     reading order, and `helpsheet::columns` cuts them into two halves at the
+     point that leaves the heights closest. Read the list, and cut it the same way. */
+  const sheet = await readFile(join(ROOT, 'app', 'src', 'helpsheet.rs'), 'utf8');
+  const start = sheet.indexOf('pub fn shortcuts('), end = sheet.indexOf('pub fn features(', start);
+  if (start < 0 || end < 0) { fail(where, 'app/src/helpsheet.rs has no shortcuts() before features(); update appKeys()'); return []; }
+  const body = sheet.slice(start, end);
+  const string = (name) => (name in en ? en[name] : (fail(where, `no English string ${name}`), name));
+  /* The argument list of the call opening at `open` (just past its paren),
+     split at its top-level commas; strings, chars and comments are skipped. */
+  const args = (src, open) => {
+    const out = []; let depth = 0, cur = '', i = open;
+    for (; i < src.length; i++) {
+      const c = src[i];
+      if (c === '"') { const m = src.slice(i).match(/^"(?:[^"\\]|\\.)*"/); cur += m[0]; i += m[0].length - 1; continue; }
+      if (c === '/' && src[i + 1] === '/') { i = src.indexOf('\n', i); continue; }
+      if ('([{'.includes(c)) depth++;
+      if (')]}'.includes(c)) { if (depth === 0) break; depth--; }
+      if (c === ',' && depth === 0) { out.push(cur.trim()); cur = ''; continue; }
+      cur += c;
+    }
+    if (cur.trim()) out.push(cur.trim());
+    return { out, close: i };
+  };
+  const ref = (e) => { const m = e.match(/^([sh])\.((?:ui\.)?\w+)$/); return m && string(m[1] === 'h' ? `h.${m[2]}` : m[2]); };
   const label = (expr) => {
     let m;
-    if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return m[1];
-    if ((m = expr.match(/^s\.((?:ui\.)?\w+)$/))) return string(m[1]);
-    if ((m = expr.match(/^&format!\("((?:[^"\\]|\\.)*)",\s*s\.((?:ui\.)?\w+)\)$/))) return unescape(m[1]).replace('{}', string(m[2]));
+    if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return unescape(m[1]);
+    const r = ref(expr); if (r != null) return r;
+    if ((m = expr.match(/^format!\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*([sh]\.(?:ui\.)?\w+)\s*,?\s*\)$/))) return unescape(m[1]).replace('{}', ref(m[2]));
     fail(where, `a help row it cannot read: ${expr}`); return expr;
   };
-  /* rustfmt splits a long row over lines and ends it with a comma */
-  const ROW = /row\(\s*("(?:[^"\\]|\\.)*"|&format!\("(?:[^"\\]|\\.)*",\s*s\.(?:ui\.)?\w+\)|s\.(?:ui\.)?\w+)\s*,\s*s\.((?:ui\.)?\w+)\s*,?\s*\)/g;
-  const cols = [region.slice(0, split), region.slice(split)].map((part) =>
-    [...part.matchAll(/section\(\s*s\.(\w+),\s*vec!\[([\s\S]*?)\]\s*,?\s*\)/g)].map((sm) => ({
-      title: string(sm[1]),
-      rows: [...sm[2].matchAll(ROW)].map((rm) => [label(rm[1]), string(rm[2])]),
-    })));
+  const sections = [];
+  for (const sm of body.matchAll(/\bsection\(/g)) {
+    const { out } = args(body, sm.index + sm[0].length);
+    if (out.length !== 2 || !out[1].startsWith('vec![')) { fail(where, `a help section it cannot read: ${out[0]}`); continue; }
+    const rows = [];
+    const list = out[1].slice('vec!['.length);
+    for (const rm of list.matchAll(/\brow\(/g)) {
+      const r = args(list, rm.index + rm[0].length).out;
+      if (r.length !== 2) { fail(where, `a help row it cannot read: ${r.join(', ')}`); continue; }
+      rows.push([label(r[0]), label(r[1])]);
+    }
+    sections.push({ title: label(out[0]), rows });
+  }
+  const cost = (sec) => sec.rows.length + 2, total = sections.reduce((n, sec) => n + cost(sec), 0);
+  let best = [Infinity, 0], left = 0;
+  for (let cut = 0; cut <= sections.length; cut++) {
+    const diff = Math.abs(total - 2 * left);
+    if (diff < best[0]) best = [diff, cut];
+    if (sections[cut]) left += cost(sections[cut]);
+  }
+  const cols = [sections.slice(0, best[1]), sections.slice(best[1])];
   const count = cols.flat().reduce((n, s) => n + s.rows.length, 0);
-  if (cols.some((c) => !c.length) || count < 30) fail(where, `read only ${count} rows from app/src/main.rs; the help sheet's shape changed`);
+  if (cols.some((c) => !c.length) || count < 30) fail(where, `read only ${count} rows from app/src/helpsheet.rs; the help sheet's shape changed`);
   const groupHit = {};
   for (const f of APP_KEY_FIXES) {
     let hit = false;

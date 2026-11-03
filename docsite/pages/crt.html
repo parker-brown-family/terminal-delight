@@ -12,7 +12,7 @@
 <p class="lede">Terminal Delight can draw every pane as a small CRT tube. Its glass curves, its edges fall into shadow, scanlines run across it, and now and then a faint band rolls down it the way it did on an old monitor. Only the panes bend. The tabs, bars and menus around them stay flat, and a click lands on whatever is drawn under the pointer.</p>
 <p>A fresh install opens flat. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, open the <code>▸ CRT</code> row at the foot, and switch <code>crt on</code>. The <a href="/themes">design</a> then decides the texture: scanlines, glow, the rolling band, flicker. The <code>warp</code> slider beside the switch sets the curve, from 0 for flat glass to 1.5.</p>
 <p>Above it, the same tray grades the pane like a monitor: brightness, contrast, colour, gamma, text size, and how brightly lit borders glow.</p>
-<p class="in-dev">Letter glow and the inactive panes' dimming work with the tube off too, erased text fades where it was drawn, and the Clean design holds the tube and every light off.</p>
+<p>Letter glow and the inactive panes' dimming work with the tube off too, erased text fades where it was drawn, and the Clean design holds the tube and every light off.</p>
 <p class="invite">Technical has the warp's formula, every effect and every gauge.</p>
 </section>
 
@@ -142,7 +142,7 @@
 <p><kbd>Ctrl</kbd> and the mouse wheel size whatever is under the pointer: the terminal's text, the workbench, or, over a header or the chrome, the menu bar. One notch is 5%.</p>
 <p>An agent can set the same gauges through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, each as a percentage of its range, with writes on.</p>
 
-<div class="in-dev">
+<div>
 <h3>GAUGES in 0.5.0</h3>
 <p>The sliders sit in four groups, each folded to its heading until you click it: <code>TYPE</code>, <code>PICTURE</code>, <code>ACTIVE TERMINALS</code> and <code>INACTIVE TERMINALS</code>. The CRT row is called <code>CRT GLASS</code>.<sup><a href="#s4">4</a></sup></p>
 <table>
@@ -171,5 +171,5 @@
   <li id="s1">The warp and glare: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0001-td-crt-pass.patch">0001-td-crt-pass.patch</a>; the tube list: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/warp.rs">warp.rs</a>.</li>
   <li id="s2">The rounded glass and its moulding: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0008-glass-rim.patch">0008-glass-rim.patch</a>; the overlay effects, the flat rim and ignition: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/crt.rs">crt.rs</a>.</li>
   <li id="s3">Effects, the CRT switch, gauges, their ranges and defaults: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>; the GAUGES tray: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>; Intrusive: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/themes/intrusive.toml">intrusive.toml</a>.</li>
-  <li id="s4">0.5.0: the gauge groups, lighting by focus, linger, inactive brightness and blur, field colour and Clean's hold: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>; the inactive blur: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/docs/patches/0012-tube-blur.patch">0012-tube-blur.patch</a>; the field under a skin: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/skin.rs">skin.rs</a>; all on dev/0.5.0.</li>
+  <li id="s4">0.5.0: the gauge groups, lighting by focus, linger, inactive brightness and blur, field colour and Clean's hold: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; the inactive blur: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/patches/0012-tube-blur.patch">0012-tube-blur.patch</a>; the field under a skin: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/skin.rs">skin.rs</a>; all on dev/0.5.0.</li>
 </ol>

@@ -23,7 +23,7 @@
   </tbody>
 </table>
 <p>Typing <code>claude</code> or <code>codex</code> at a prompt works too: Terminal Delight notices the agent. Close the window and open it again, and your tabs, splits, directories and agents come back where they were.</p>
-<p class="in-dev">0.5.0 opens a new window in the Clean design, with tabs across the top instead of the left bar and fewer controls on show. See <a href="/ui-config">UI CONFIG</a>.</p>
+<p>0.5.0 opens a new window in the Clean design, with tabs across the top instead of the left bar and fewer controls on show. See <a href="/ui-config">UI CONFIG</a>.</p>
 <p class="invite">Technical has which session a window opens, what is written to disk and when, and what 0.5.0's first window looks like.</p>
 </section>
 
@@ -74,7 +74,7 @@
 <p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.<sup><a href="#s1">1</a></sup></p>
 
 <h3>The first window in 0.5.0</h3>
-<div class="in-dev">
+<div>
 <p>A new window wears the Clean design: no tube and no glow on the letters, corners that are nearly square, and the Terminal Delight palette with INHERIT on, so it follows your Omarchy theme. Clean also asks for its own set of chrome. Tabs run across the top instead of the left bar, and the ◀/▶ handle brings the bar back. The app mark, the Git notice and the agent counter are hidden; the attention pill at the top right stays. The bottom-right glyphs, among them the graveyard and the 📜 artifact rail, fold into a <code>CONFIG</code> menu, and each pane's header comes down to its title, its state and its <code>⋯</code>, with the handover chip and the rest folded in there.<sup><a href="#s4">4</a></sup></p>
 <p>Every one of those is a switch in <a href="/ui-config">UI CONFIG</a>, and a switch you flip there beats Clean. The default for new windows can be changed too. A session saved by an earlier version opens the way it was saved.</p>
 </div>
@@ -90,5 +90,5 @@
   <li id="s1">Session choice: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a> (<code>resolve_session</code>, and the hosted order below it); the window, the quick window, saving and the safety nets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; what a pane remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; the host's idle stop: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
   <li id="s2">The first look and the theme seed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>, <code>init</code>); the mark: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/dirlogo.rs">dirlogo.rs</a> (<code>seed_if_absent</code>).</li>
   <li id="s3">Logs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>; the page cache: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/cache.rs">docview/cache.rs</a>.</li>
-  <li id="s4">0.5.0's first window: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>), the Clean set <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">app/ui/clean.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
+  <li id="s4">0.5.0's first window: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>), the Clean set <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/ui/clean.toml">app/ui/clean.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
 </ol>

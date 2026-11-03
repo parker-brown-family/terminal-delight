@@ -14,7 +14,7 @@
 terminal-delight ctl mcp status
 terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 <p>It names and groups tabs, turns panes to their workbench, opens documents and edits their notes, reads and sets the <a href="/mcp">MCP server</a>'s switches, picks a skin, and hands a new terminal to a window. Its bench commands act on a pane's bench as your typing and clicks would, so they reach the agent in it, and <code>adopt</code> can open a pane running a command. Each command gets one line back, <code>ok</code> or <code>err</code> with the reason. By default it talks to the windows on your active Hyprland workspace, or to the window you're running in for tab commands.</p>
-<p class="in-dev">A live window refuses every command that acts as a person, and every MCP switch change, unless it was launched with <code>TD_MCP_SCRIPTED=1</code>. Status, paint, skin and MCP calls still work.</p>
+<p>A live window refuses every command that acts as a person, and every MCP switch change, unless it was launched with <code>TD_MCP_SCRIPTED=1</code>. Status, paint, skin and MCP calls still work.</p>
 <p class="invite">Technical lists every command and its reply.</p>
 </section>
 
@@ -73,7 +73,7 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 <p>The bench and <code>doc</code> commands that act on one pane pick the focused pane when it qualifies, otherwise the first that does, the active tab's panes first. A pane marked off-limits to agents is never picked by the bench commands.<sup><a href="#s2">2</a></sup></p>
 
 <h3>Live windows and scripted windows</h3>
-<div class="in-dev">
+<div>
 <p>A window reads <code>TD_MCP_SCRIPTED</code> once, when it starts. Unless it is exactly <code>1</code>, the window refuses two families of commands from every caller.<sup><a href="#s3">3</a></sup></p>
 <ul>
   <li>The six MCP switch changes: <code>mcp on|off</code>, <code>mcp writes on|off</code> and <code>mcp expose all|agents</code>. The reply begins <code>err mcp on: nothing changed. Global MCP policy is a person's choice in the Threshing Floor (the agent counter, top right).</code> The switches live in the <a href="/threshing-floor">Threshing Floor</a>.</li>
@@ -100,11 +100,11 @@ terminal-delight ctl doc beside /home/you/notes/plan.md</code></pre>
 
 <h3>What would prove this wrong</h3>
 <p>Two kinds of <code>ctl</code> command reach a terminal's input, both on purpose. The bench commands act on a pane's bench as a person would: <code>bench say</code> sends a line to its agent, <code>bench choose</code> and <code>bench submit</code> press its answers, and <code>bench click</code> presses whatever is under the point, which can answer, pause or end the agent. <code>adopt</code> with <code>--run</code> opens a new pane running a command. <code>bench type</code> only fills the bench's composer. Any other route into a terminal is a bug, and so is a bench command reaching a pane marked off-limits to agents.</p>
-<p class="in-dev">On a window launched without <code>TD_MCP_SCRIPTED=1</code>, any of those commands, or any MCP switch change, that gets past the socket is a bug.</p>
+<p>On a window launched without <code>TD_MCP_SCRIPTED=1</code>, any of those commands, or any MCP switch change, that gets past the socket is a bug.</p>
 </section>
 
 <ol data-sources>
   <li id="s1">The grammar, the client and the replies: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
   <li id="s2">How the bench and document commands pick a pane: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
-  <li id="s3">0.5.0's fence: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/ctl.rs">ctl.rs</a>.</li>
+  <li id="s3">0.5.0's fence: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
 </ol>
