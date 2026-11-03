@@ -100,6 +100,13 @@ pub enum Layer {
     /// The ⋯ overflow menu in the header, which is drawn on BOTH faces. Escape
     /// only, for the same reason.
     HeaderMenu,
+    /// The pane is asking whether to hand an artifact to the browser: Alt+O
+    /// found one TD cannot draw, a web address or a file, and it waits for a
+    /// yes rather than jumping out of the window. Enter is the yes and Escape
+    /// the no; every other key is somebody else's, Alt+O among them, which
+    /// raises the artifact rail instead. Parker, 2026-11-03: *"a little
+    /// dialogue pops up --- ENTER to open a BROWSER with THIS artifact"*.
+    Ask,
     /// This pane mirrored large in the FOCUS modal. Escape closes it and the
     /// paging keys drive the reader's view; every other keystroke flows past, so
     /// you keep directing the agent while you read it big.
@@ -231,6 +238,9 @@ pub struct Up {
     pub reading: bool,
     /// The terminal is in scroll mode (Alt+[).
     pub scroll: bool,
+    /// The pane is asking whether to open an artifact in the browser
+    /// ([`Layer::Ask`]).
+    pub ask: bool,
 }
 
 /// A note is being written in a document this pane shows, on either seat: the
@@ -305,7 +315,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 15] = [
+const LADDER: [Rung; 16] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, u| {
@@ -324,6 +334,9 @@ const LADDER: [Rung; 15] = [
     (Layer::Paint, |k, u| u.paint && paints(k)),
     (Layer::CtxMenu, |k, u| u.ctx_menu && k.key == "escape"),
     (Layer::HeaderMenu, |k, u| u.header_menu && k.key == "escape"),
+    (Layer::Ask, |k, u| {
+        u.ask && !k.alt && !k.control && !k.platform && matches!(k.key, "enter" | "escape")
+    }),
     (Layer::Reader, |k, u| {
         u.reader && (k.key == "escape" || paging(k).is_some())
     }),
@@ -1005,7 +1018,7 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 65,536 state combinations against a corpus of sixteen keys, and the
+    /// All 131,072 state combinations against a corpus of sixteen keys, and the
     /// answer is always the FIRST rung that claims — the whole contract stated
     /// as a property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
@@ -1029,7 +1042,7 @@ mod tests {
             ctrl_shift("v"),
             shift_insert(),
         ];
-        for bits in 0u32..65536 {
+        for bits in 0u32..131072 {
             let up = Up {
                 agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
@@ -1047,6 +1060,7 @@ mod tests {
                 doc_caret: bits & 4096 != 0,
                 scroll: bits & 16384 != 0,
                 reading: bits & 32768 != 0,
+                ask: bits & 65536 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -1073,10 +1087,11 @@ mod tests {
     fn of_any_two_layers_the_earlier_declared_one_wins() {
         // Escape is claimed by every one of these, which is what lets them be
         // compared pairwise at all.
-        let setters: [fn(&mut Up); 10] = [
+        let setters: [fn(&mut Up); 11] = [
             |u| u.paint = true,
             |u| u.ctx_menu = true,
             |u| u.header_menu = true,
+            |u| u.ask = true,
             |u| u.reader = true,
             |u| u.sticky = true,
             |u| u.rename = true,
@@ -1370,6 +1385,21 @@ mod tests {
         };
         assert_eq!(route(&k, &agent), Layer::Window);
         assert_eq!(route(&k, &reading()), Layer::Reading);
+    }
+
+    /// A question about the browser takes Enter and Escape and nothing else:
+    /// Alt+O raises the rail over it, and a letter still reaches the shell.
+    #[test]
+    fn a_question_about_the_browser_takes_enter_and_escape_only() {
+        let up = Up {
+            ask: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&named("enter"), &up), Layer::Ask);
+        assert_eq!(route(&named("escape"), &up), Layer::Ask);
+        assert_eq!(route(&alt("o"), &up), Layer::Window);
+        assert_eq!(route(&ch("a"), &up), Layer::Terminal);
+        assert_eq!(route(&ctrl("enter"), &up), Layer::Terminal);
     }
 
     /// The keys a document being read answers to, and the ones it swallows.
@@ -2193,6 +2223,7 @@ mod tests {
             doc_caret: true,
             reading: true,
             scroll: true,
+            ask: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }

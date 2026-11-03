@@ -236,7 +236,9 @@ impl Backend for MarkdownDoc {
                 let Some(map) = map else {
                     return false;
                 };
-                let Some(rect) = layer.select(&anchors, how, f32::from(map.scroll)) else {
+                let top = f32::from(map.scroll);
+                let bottom = top + f32::from(map.clip.size.height);
+                let Some(rect) = layer.select(&anchors, how, (top, bottom)) else {
                     return false;
                 };
                 if let Some(y) = notes_ui::into_view(rect, &map) {

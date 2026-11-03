@@ -1331,6 +1331,14 @@ const RIGHT_COLUMN_W: f32 = 30.;
 /// numbers, and two were still hanging from the top of the window a day after
 /// their buttons moved to the bottom: a menu that opens at the far end of the
 /// window from the thing that raised it reads as a different control firing.
+/// Whether the FOCUS reader frosts what is outside its glass this frame: not
+/// when it is drawn inline in its pane, and not while the artifact rail is
+/// raised over it, because the frost is a post-pass that would blur the rail
+/// too.
+fn reader_frosts(focus_inline: bool, art_rail: bool) -> bool {
+    !focus_inline && !art_rail
+}
+
 fn over_the_footer<E: Styled>(el: E, scale: f32) -> E {
     el.bottom(px((pane::HICON + 10.) * scale))
         .right(px(RIGHT_COLUMN_W * scale + 12.))
@@ -20864,7 +20872,12 @@ impl Workspace {
     /// pane that handed nothing over raises the rail instead of guessing, and
     /// a window where nothing was handed over says so.
     fn nav_artifact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let open = self.all_leaves().iter().any(|p| p.read(cx).has_float());
+        // A document open, or Alt+O's question about one that is not: either
+        // way the second press raises the rail.
+        let open = self
+            .all_leaves()
+            .iter()
+            .any(|p| p.read(cx).has_float() || p.read(cx).asks_outside());
         let focused = self
             .focused_leaf(window, cx)
             .filter(|p| p.read(cx).handovers().newest().is_some());
@@ -20881,10 +20894,13 @@ impl Workspace {
             }
             navkeys::ArtifactStep::OpenNewest => {
                 if let Some(p) = focused {
-                    p.update(cx, |v, cx| v.open_newest_handover(cx));
+                    p.update(cx, |v, cx| v.ask_newest_handover(cx));
                 }
             }
             navkeys::ArtifactStep::OpenRail => {
+                for p in self.all_leaves() {
+                    p.update(cx, |v, cx| v.put_ask_away(cx));
+                }
                 self.rail_close();
                 self.art_open(cx);
             }
@@ -38701,7 +38717,13 @@ impl Render for Workspace {
             // same rect registered as the lone warp tube so the reader bends
             // and glares like its pane. crawl stays identity: the body
             // already centres crawl rows for readable mirroring.
-            .when(!self.focus_inline, |panel| {
+            // Not while the artifact rail is up over it: the frost is a
+            // post-pass over everything outside the glass, drawn after every
+            // element, so the rail would be frosted wherever it hangs past
+            // the page. The page stays dimmed behind; the frost returns on
+            // the frame the rail closes. Parker, 2026-11-03: *"alt+o twice
+            // CUTS OFF the artifact list! because of screen blur"*.
+            .when(reader_frosts(self.focus_inline, self.art_rail), |panel| {
                 panel.child(Self::reader_frost(
                     focus_ramp,
                     inherit.then_some((hdr_h, glare, k1, k2)),
@@ -39124,6 +39146,22 @@ mod tests {
     /// the two-wake chain still runs from the first old pid to the pane the
     /// agent is in now. A wake whose new pid was not known yet is not written,
     /// and one older than a day is not read back.
+    /// The reader's frost is a post-pass over everything outside its glass,
+    /// so it must stand down while the artifact rail is up, or the rail is
+    /// blurred wherever it hangs past the page.
+    #[test]
+    fn the_reader_stops_frosting_while_the_artifact_rail_is_up() {
+        assert!(reader_frosts(false, false));
+        assert!(!reader_frosts(false, true), "the rail is up: no frost");
+        assert!(!reader_frosts(true, false), "inline: never frosted");
+        // Built from pieces, so this test's own text cannot satisfy it.
+        let wired = concat!(".when(reader_frosts(", "self.focus_inline, self.art_rail)");
+        assert!(
+            include_str!("main.rs").contains(wired),
+            "the frost must be asked through reader_frosts with the rail's state"
+        );
+    }
+
     #[test]
     fn wakes_survive_a_window_swap() {
         let mut before: Vec<Wake<u64>> = Vec::new();
