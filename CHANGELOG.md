@@ -12,6 +12,30 @@ candidate and never shipped stable, so everything below ships in 0.5.0. The
 sections above *Upgrading from 0.3.0* are new since the 0.4.0 candidates; the
 sections from there down are what the 0.4.0 candidates already carried.
 
+### Get around without the mouse
+
+- **Alt+O** opens what the focused pane last handed over. Pressed again while
+  any document is open, it raises the artifact rail with its cards numbered
+  1–9, newest first, and a digit opens that one. Alt+B is left alone: it is
+  back-one-word in every shell and agent prompt.
+- **Alt+Q** opens the NEEDS ME queue with its rows numbered, and a digit goes
+  straight to that pane, with or without Alt still held.
+- **Alt+1–9 are pane marks.** Hold one for 300 ms to mark the pane you are on;
+  tap it from anywhere to come back. A marked pane shows its digit in its
+  header, and the mark is saved with the pane. A mark on nothing, or on a pane
+  that has closed, says so. The switch in a tab's menu turns the digits back
+  over to the program. Tabs are no longer reached by their position.
+- **Alt+0** goes back through the panes you visited, up to nine, and
+  **Alt+Shift+0** forward again. The mouse's back and forward buttons do the
+  same. Nothing is drawn for it.
+- **Shift+PgUp / Shift+PgDn** page the history of every pane, shells included.
+  Plain PgUp stays the shell's.
+- **Alt+E** scrolls to the previous error line in the pane (compiler errors,
+  failed tests, tracebacks, `fatal:`), and **Alt+Shift+E** to the next. With
+  none further it says so.
+- **Lookup (Alt+L)** shows how long ago each pane and tab was last visited or
+  last changed state, with a dash where that is not known.
+
 ### Update Terminal Delight from inside TD
 
 - ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a
@@ -196,13 +220,13 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Keys, prompts, gauges and notes
 
-- **One key reaches a tab.** Alt+1 to Alt+8 jump to a tab by its place in the
-  spine's order, and Alt+9 to the last. Any tab can be pinned to
-  Alt+Shift+<letter>; the pin is saved on the tab, so it survives reordering,
-  filing, a restart and a reattach. The spine's row menu and the tab config menu
-  show the keys, take a pin, refuse a taken letter with the reason, and carry
-  the window's Alt+1–9 switch. A focused terminal gives up only the chords the
-  window holds. (#1260)
+- **One key reaches a tab.** Any tab can be pinned to Alt+Shift+<letter>; the
+  pin is saved on the tab, so it survives reordering, filing, a restart and a
+  reattach. The spine's row menu and the tab config menu show the pin, take a
+  new one, refuse a taken letter with the reason, and carry the window's
+  Alt+1–9 switch. A focused terminal gives up only the chords the window
+  holds. (#1260) Alt+1–9 first jumped to tabs by their place; they are pane
+  marks now (see *Get around without the mouse*).
 - **Ctrl+C in an agent's prompt copies what it is about to clear.** In a Claude
   Code or Codex pane, Ctrl+C on the terminal face first puts the typed words on
   the clipboard and the primary selection, then sends the ^C as before. An empty
@@ -404,9 +428,11 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Upgrading from a 0.4.0 candidate
 
-- **Alt+1 to Alt+9 and Alt+Shift+<letter> now switch tabs**, so a program in
-  a focused terminal no longer receives those chords while the window holds
-  them. Ctrl+C in a Claude Code or Codex prompt also writes the clipboard. (#1260,
+- **Alt+1 to Alt+9 are pane marks and Alt+Shift+<letter> switches tabs**, so
+  a program in a focused terminal no longer receives those chords while the
+  window holds them. The 0.4.0 candidates' Alt+1–9 tab-by-place jump is gone:
+  hold Alt+N on a pane to mark it, tap Alt+N to return. Alt+O, Alt+Q, Alt+E
+  and Alt+0 are also the window's now; Alt+B is still the shell's. Ctrl+C in a Claude Code or Codex prompt also writes the clipboard. (#1260,
   #1251)
 - **The terminal core is rio-vt 0.5.29.** Replacing the window keeps every
   terminal running on its existing host, which keeps the core it started with

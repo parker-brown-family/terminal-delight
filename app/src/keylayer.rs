@@ -379,9 +379,10 @@ pub fn tab_keys() -> TabKeys {
 /// A tab hotkey.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabChord {
-    /// `alt+1`…`alt+8` is that place in the spine's order; `alt+9` is the
-    /// last tab, however many there are, as a browser's is.
-    Position(usize),
+    /// `alt+1`…`alt+9`: the pane carrying that mark ([`crate::navkeys`]).
+    /// A tap goes there and a hold marks the focused pane, so the window
+    /// answers this one on the key coming up, not here.
+    Mark(usize),
     /// `alt+shift+<letter>`: whichever tab that letter is pinned to.
     Pinned(char),
 }
@@ -397,7 +398,7 @@ pub fn tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Tab
         return None;
     };
     match (shift, c) {
-        (false, '1'..='9') => Some(TabChord::Position(c as usize - '0' as usize)),
+        (false, '1'..='9') => Some(TabChord::Mark(c as usize - '0' as usize)),
         (true, c) if c.is_ascii_alphabetic() => Some(TabChord::Pinned(c.to_ascii_lowercase())),
         _ => None,
     }
@@ -407,7 +408,7 @@ pub fn tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Tab
 pub fn held_tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<TabChord> {
     let held = tab_keys();
     tab_chord(key, alt, control, shift).filter(|c| match *c {
-        TabChord::Position(_) => held.digits,
+        TabChord::Mark(_) => held.digits,
         TabChord::Pinned(l) => held.holds_letter(l),
     })
 }
@@ -465,10 +466,50 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     }
     // `l` is LOOKUP; `g` is Git coordination. Neither belongs to a pane.
     key.eq_ignore_ascii_case("g")
+        || nav_chord(key, alt, control, false).is_some()
         || matches!(
             key,
             "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
         )
+}
+
+/// A keyboard-navigation chord the window answers (Hands on Keyboard,
+/// `docs/plans/hands-on-keyboard/`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nav {
+    /// `alt+o`: open what the focused pane handed over; with a document already
+    /// open anywhere in the window, raise the artifact rail instead.
+    Artifact,
+    /// `alt+q`: the NEEDS ME queue, rows numbered so a digit goes.
+    NeedsMe,
+    /// `alt+e`: the previous error line above the view; `alt+shift+e` the next.
+    Error { older: bool },
+    /// `alt+0`: back along the panes you visited; `alt+shift+0` forward.
+    Trail { back: bool },
+}
+
+/// Which navigation chord this is, if any. Shift matters only to the two that
+/// have a direction.
+///
+/// The shifted zero arrives two ways, like the size chords' symbols: the
+/// desktop names it by what it types and drops the shift (`)`), gpui's parser
+/// keeps the shift on `0`. Both are the same press.
+///
+/// The letters are ones readline leaves unbound by default (`o`, `q`, `e`) and
+/// its digit argument (`0`), which Alt+1…9 had already taken from it; `b` is
+/// deliberately not here — it is back-one-word in every shell and agent prompt.
+pub fn nav_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Nav> {
+    if !alt || control {
+        return None;
+    }
+    Some(match key {
+        "o" | "O" => Nav::Artifact,
+        "q" | "Q" => Nav::NeedsMe,
+        "e" | "E" => Nav::Error { older: !shift },
+        "0" => Nav::Trail { back: !shift },
+        ")" => Nav::Trail { back: false },
+        _ => return None,
+    })
 }
 
 /// Chords the PANE owns, on either of its faces.
@@ -671,6 +712,24 @@ pub fn paging(k: &Key) -> Option<Paging> {
         ("end", true) => Paging::Bottom,
         _ => return None,
     })
+}
+
+/// `shift+pgup` / `shift+pgdn`: page this pane's scrollback, in EVERY pane.
+///
+/// Plain PgUp/PgDn page only agent panes, because a shell keeps them (Arch's
+/// inputrc binds PgUp to history search). Shift+PgUp is the chord every other
+/// terminal on Linux uses to page its own history, and no shell binding wants
+/// it, so it is the keyboard's way back up a shell's output. Like the plain
+/// pair it defers to a program that owns its own view — the caller checks.
+pub fn shift_page(k: &Key) -> Option<Paging> {
+    if !k.shift || k.alt || k.control || k.platform || k.function {
+        return None;
+    }
+    match k.key {
+        "pageup" => Some(Paging::PageUp),
+        "pagedown" => Some(Paging::PageDown),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -2019,20 +2078,17 @@ mod tests {
             assert_eq!(route(&three, &up), Layer::Window, "{up:?}");
         }
         // A letter nobody pinned is still the program's.
-        let shift_q = Key {
-            key: "q",
+        let shift_z = Key {
+            key: "z",
             alt: true,
             shift: true,
             ..Key::default()
         };
-        assert_eq!(route(&shift_q, &Up::default()), Layer::Terminal);
+        assert_eq!(route(&shift_z, &Up::default()), Layer::Terminal);
         // Alt+0 and Ctrl+Alt+3 are not tab chords: the second is the tree's.
         assert_eq!(tab_chord("0", true, false, false), None);
         assert_eq!(tab_chord("3", true, true, false), None);
-        assert_eq!(
-            tab_chord("3", true, false, false),
-            Some(TabChord::Position(3))
-        );
+        assert_eq!(tab_chord("3", true, false, false), Some(TabChord::Mark(3)));
         assert_eq!(
             tab_chord("M", true, false, true),
             Some(TabChord::Pinned('m'))
@@ -2044,12 +2100,140 @@ mod tests {
     /// never reach its tab, so it cannot be pinned.
     #[test]
     fn a_pin_refuses_the_letters_the_window_already_answers() {
-        for c in ['w', 'v', 'h', 'l', 'r', 'k', 'g', 'W'] {
+        for c in ['w', 'v', 'h', 'l', 'r', 'k', 'g', 'W', 'o', 'q', 'e', 'Q'] {
             assert!(pin_is_taken(c), "{c}");
         }
-        for c in ['a', 'm', 'q', 'z', 'S'] {
+        for c in ['a', 'm', 'z', 'S', 'b'] {
             assert!(!pin_is_taken(c), "{c}");
         }
-        assert!(pin_is_taken('3'), "digits are positions, not pins");
+        assert!(pin_is_taken('3'), "digits are marks, not pins");
+    }
+
+    fn alt_with(key: &str, shift: bool) -> Key<'_> {
+        Key {
+            key,
+            alt: true,
+            shift,
+            ..Key::default()
+        }
+    }
+
+    #[test]
+    fn the_navigation_chords_read_as_planned() {
+        assert_eq!(nav_chord("o", true, false, false), Some(Nav::Artifact));
+        assert_eq!(nav_chord("q", true, false, false), Some(Nav::NeedsMe));
+        assert_eq!(
+            nav_chord("e", true, false, false),
+            Some(Nav::Error { older: true })
+        );
+        assert_eq!(
+            nav_chord("e", true, false, true),
+            Some(Nav::Error { older: false })
+        );
+        assert_eq!(
+            nav_chord("0", true, false, false),
+            Some(Nav::Trail { back: true })
+        );
+        // The shifted zero, as the parser and as the desktop spell it.
+        assert_eq!(
+            nav_chord("0", true, false, true),
+            Some(Nav::Trail { back: false })
+        );
+        assert_eq!(
+            nav_chord(")", true, false, false),
+            Some(Nav::Trail { back: false })
+        );
+        // Without Alt, or with Ctrl, they are nobody's here.
+        assert_eq!(nav_chord("o", false, false, false), None);
+        assert_eq!(nav_chord("o", true, true, false), None);
+        // Alt+B stays readline's back-one-word.
+        assert_eq!(nav_chord("b", true, false, false), None);
+    }
+
+    /// Every navigation chord leaves whatever surface is on top for the
+    /// window — a note box being written, the bench, a document, a sticky —
+    /// because a chord that works on one face and is dead on another is the
+    /// failure this ladder exists to prevent.
+    #[test]
+    fn the_navigation_chords_reach_the_window_from_every_surface() {
+        let surfaces = [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                agent: true,
+                ..Up::default()
+            },
+        ];
+        for key in ["o", "q", "e", "0"] {
+            for shift in [false, true] {
+                for up in &surfaces {
+                    assert_eq!(
+                        route(&alt_with(key, shift), up),
+                        Layer::Window,
+                        "alt+{key} shift={shift} {up:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(route(&alt_with(")", false), &Up::default()), Layer::Window);
+    }
+
+    /// The letter Parker first asked for, and why it is not taken: Alt+B must
+    /// still reach a shell, and reach it as ESC b.
+    #[test]
+    fn alt_b_still_reaches_the_shell() {
+        assert_eq!(
+            route(&alt_with("b", false), &Up::default()),
+            Layer::Terminal
+        );
+        assert!(!window_chord("b", true, false));
+        assert!(!window_chord("f", true, false));
+        assert!(!window_chord("d", true, false));
+    }
+
+    #[test]
+    fn shift_page_is_shift_and_nothing_else() {
+        let k = |key, shift, control, alt| Key {
+            key,
+            shift,
+            control,
+            alt,
+            ..Key::default()
+        };
+        assert_eq!(
+            shift_page(&k("pageup", true, false, false)),
+            Some(Paging::PageUp)
+        );
+        assert_eq!(
+            shift_page(&k("pagedown", true, false, false)),
+            Some(Paging::PageDown)
+        );
+        assert_eq!(shift_page(&k("pageup", false, false, false)), None);
+        assert_eq!(shift_page(&k("pageup", true, true, false)), None);
+        assert_eq!(shift_page(&k("pageup", true, false, true)), None);
+        assert_eq!(shift_page(&k("home", true, false, false)), None);
+        // And the plain paging table still refuses the shifted pair, so the two
+        // cannot both answer one press.
+        assert_eq!(paging(&k("pageup", true, false, false)), None);
     }
 }

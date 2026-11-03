@@ -282,6 +282,14 @@ impl Workspace {
                 Some(c) => self.art_go(c.key, true, cx),
                 None => return false,
             },
+            // 1 to 9 open that card's artifact, newest first, as Alt+O promised.
+            // A number past the last card is eaten, so it cannot reach a pane
+            // mark while Alt is still held.
+            d if navkeys::row_digit(d).is_some() => {
+                if let Some(c) = navkeys::row_digit(d).and_then(|i| cards.get(i)) {
+                    self.art_go(c.key, true, cx);
+                }
+            }
             _ => return false,
         }
         true
@@ -325,6 +333,18 @@ impl Workspace {
                 .items_center()
                 .gap(px(6.))
                 .text_size(sk.text_px(11.5))
+                // The number a digit opens: 1 is the newest, 9 the last that
+                // has one. Past nine a card has no number and is reached with
+                // the arrows, as before.
+                .when(i < 9, |d| {
+                    d.child(
+                        div()
+                            .flex_none()
+                            .text_color(th.accent)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .child(format!("{}", i + 1)),
+                    )
+                })
                 .when_some(c.place.clone(), |d, place| {
                     d.child(
                         div()

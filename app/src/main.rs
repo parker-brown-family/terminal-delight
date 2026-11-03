@@ -82,6 +82,7 @@ mod mcp;
 mod mcp_tail;
 mod mcp_transport;
 mod model_catalog;
+mod navkeys;
 mod notepaper;
 mod notifpref;
 mod notify;
@@ -792,6 +793,7 @@ impl<L: Clone> Tree<L> {
                     off_limits: s.access.to_saved().0,
                     agents: s.access.to_saved().1,
                     seat: s.seat,
+                    mark: s.mark,
                 }
             }
             Tree::Split {
@@ -836,6 +838,7 @@ impl Node {
                     .map(|(path, scroll)| SavedDocument { path, scroll }),
                 access: view.agent_access,
                 seat: view.seat,
+                mark: view.mark,
             }
         })
     }
@@ -855,6 +858,7 @@ struct LeafState {
     document: Option<SavedDocument>,
     access: threshing_floor::AgentAccess,
     seat: Option<threshing_floor::SeatId>,
+    mark: Option<u8>,
 }
 
 /// The document a pane was showing on its Document face, on its way into the
@@ -951,6 +955,11 @@ enum SavedNode {
         /// the pane, because pane ids restart when the host does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seat: Option<threshing_floor::SeatId>,
+        /// The Alt+digit a person marked this pane with ([`navkeys`]). Absent
+        /// in every file written before marks existed, which reads back as
+        /// unmarked — what those panes were.
+        #[serde(default, skip_serializing_if = "Option::is_none")]
+        mark: Option<u8>,
     },
     Split {
         dir: SplitDir,
@@ -992,6 +1001,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             agents: Option<String>,
             #[serde(default)]
             seat: Option<threshing_floor::SeatId>,
+            #[serde(default)]
+            mark: Option<u8>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
         // legacy `theme` override, else pristine (follows outer for everything).
@@ -1029,6 +1040,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         off_limits: false,
                         agents: None,
                         seat: None,
+                        mark: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
                 }
@@ -1056,6 +1068,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             off_limits: f.off_limits,
                             agents: f.agents.take(),
                             seat: f.seat.take(),
+                            mark: f.mark.take().filter(|n| (1..=navkeys::MARKS).contains(n)),
                         })
                     }
                     "Split" => {
@@ -4790,6 +4803,20 @@ struct Workspace {
     art_order: Vec<u64>,
     /// The card the arrow keys are on.
     art_cursor: usize,
+    /// Alt+1…9 in flight: a tap goes to the marked pane, a hold marks the
+    /// focused one ([`navkeys::MarkGesture`]).
+    mark_gesture: navkeys::MarkGesture<EntityId>,
+    /// The name of the pane each mark was last put on, so a mark whose pane
+    /// has since closed says what it was instead of saying nothing.
+    mark_names: [Option<String>; navkeys::MARKS as usize],
+    /// The panes visited, walked by Alt+0 / Alt+Shift+0 and the mouse's back
+    /// and forward buttons. Never drawn: Parker, *"INTRINSIC and hidden from
+    /// view"*.
+    trail: navkeys::Trail<EntityId>,
+    /// When the person last had each pane focused, for the age lookup shows.
+    /// Only this session: a pane absent here has not been visited since the
+    /// window started, which is not the same as visited long ago.
+    visited: std::collections::HashMap<EntityId, Instant>,
     /// UI CONFIG's page in the painter palette: OUTER (false) or PANES.
     ui_cfg_panes: bool,
     /// Folding rows (UI CONFIG's `option_rows` off): the row opened by a
@@ -6288,6 +6315,7 @@ fn build_node_attached(
             off_limits,
             agents,
             seat,
+            mark,
             ..
         } => {
             let plan = plans.next();
@@ -6332,6 +6360,7 @@ fn build_node_attached(
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
@@ -6339,6 +6368,7 @@ fn build_node_attached(
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.mark = mark;
             });
             // The document it was showing, back on its face over whichever
             // shell the plan gave it, the terminal bound or respawned as ever.
@@ -6371,6 +6401,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             off_limits,
             agents,
             seat,
+            mark,
         } => {
             let pane = make_pane_window_owned(
                 session::PaneRestore {
@@ -6398,6 +6429,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
                 if name.is_some() {
@@ -6405,6 +6437,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.mark = mark;
             });
             restore_document_on(&pane, document.as_ref(), cx);
             Node::Leaf(pane)
@@ -6579,6 +6612,10 @@ impl Workspace {
             art_unseen: false,
             art_order: Vec::new(),
             art_cursor: 0,
+            mark_gesture: navkeys::MarkGesture::new(),
+            mark_names: Default::default(),
+            trail: navkeys::Trail::default(),
+            visited: Default::default(),
             ui_cfg_panes: false,
             fold_open: None,
             fold_hover: None,
@@ -13295,13 +13332,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Vec<gpui::AnyElement> {
         let ui = self.lang.strings().ui;
-        let (place, pin) = self.tab_hotkey_lines(i, cx);
+        let pin = self.tab_hotkey_line(i);
         let capturing = self.hotkey_capture == Some(i);
         let digits = self.tab_digits_on();
         let mut rows = vec![Self::bar_menu_rule(th, s).into_any_element()];
-        if let Some(line) = place {
-            rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
-        }
         match pin {
             Some(line) => {
                 rows.push(Self::bar_menu_row(sk, s, line, MenuTone::Quiet).into_any_element());
@@ -17134,13 +17168,29 @@ impl Workspace {
                     let name = tab.name.clone().unwrap_or_else(|| format!("{}", index + 1));
                     let mut leaves = vec![];
                     tab.root.leaves(&mut leaves);
+                    // How long since each pane was last visited or acted, and
+                    // the tab's age is its freshest pane's. A dash when unknown.
+                    let now = Instant::now();
+                    let touch = |leaf: &Entity<TerminalView>| {
+                        navkeys::last_touch(
+                            self.visited.get(&leaf.entity_id()).copied(),
+                            leaf.read(cx).attention_since(),
+                            now,
+                        )
+                    };
+                    let age = |d: Option<Duration>| attention::age_label_in(self.lang, d);
+                    let tab_touch = leaves.iter().filter_map(|l| touch(l)).min();
                     out.push(Entry {
                         kind: Kind::Tab,
                         text: name.clone(),
-                        place: place(&[&proj, &grp], &count(leaves.len(), Noun::Pane)),
+                        place: place(
+                            &[&proj, &grp],
+                            &format!("{} · {}", count(leaves.len(), Noun::Pane), age(tab_touch)),
+                        ),
                         target: Target::Tab(index),
                     });
                     for leaf in leaves {
+                        let pane_age = age(touch(leaf));
                         let p = leaf.read(cx);
                         let mode = p.mode.label();
                         let title = p
@@ -17152,7 +17202,7 @@ impl Workspace {
                         out.push(Entry {
                             kind: Kind::Pane,
                             text: title.clone(),
-                            place: place(&[&proj, &grp, &name], mode),
+                            place: place(&[&proj, &grp, &name], &format!("{mode} · {pane_age}")),
                             target: Target::Pane(leaf.entity_id()),
                         });
                         let Some(note) = p.saved_note() else {
@@ -20540,43 +20590,197 @@ impl Workspace {
         )
     }
 
-    /// Every tab, in the order the spine lists them with nothing folded.
-    fn tabs_in_spine_order(&self, cx: &App) -> Vec<usize> {
-        let mut order: Vec<usize> = self
-            .tree_rows(false, cx)
-            .into_iter()
-            .filter_map(|r| match r {
-                tree::Row::Task { index, .. } => Some(index),
-                _ => None,
+    /// The pane holding the keyboard in the shown tab, or, when nothing does,
+    /// the one that held it last there.
+    fn focused_leaf(&self, window: &Window, cx: &App) -> Option<Entity<TerminalView>> {
+        let tab = self.tabs.get(self.active)?;
+        let mut ls = Vec::new();
+        tab.root.leaves(&mut ls);
+        ls.iter()
+            .find(|p| p.focus_handle(cx).is_focused(window))
+            .or_else(|| {
+                let id = tab.focused?;
+                ls.iter().find(|p| p.entity_id() == id)
             })
-            .filter(|&i| i < self.tabs.len())
-            .collect();
-        // Never lose a tab the tree did not list: it goes on the end.
-        for i in 0..self.tabs.len() {
-            if !order.contains(&i) {
-                order.push(i);
-            }
-        }
-        order
+            .map(|p| (*p).clone())
     }
 
-    /// The position key that reaches tab `i`, if one does: 1…8 by place, and
-    /// 9 for the last tab.
-    fn tab_position_key(&self, i: usize, cx: &App) -> Option<usize> {
-        let order = self.tabs_in_spine_order(cx);
-        let at = order.iter().position(|&t| t == i)?;
-        if at < 8 {
-            Some(at + 1)
+    /// Say something on the pane the person is looking at, with no window to
+    /// hand: the shown tab's last-focused pane, else its first.
+    fn say_where_looking(&self, text: String, cx: &mut Context<Self>) {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return;
+        };
+        let mut ls = Vec::new();
+        tab.root.leaves(&mut ls);
+        let target = tab
+            .focused
+            .and_then(|id| ls.iter().find(|p| p.entity_id() == id))
+            .or(ls.first())
+            .map(|p| (*p).clone());
+        if let Some(p) = target {
+            p.update(cx, |v, cx| v.say(text, None, cx));
+        }
+    }
+
+    /// Alt+digit went down: start the gesture, and the timer that turns it
+    /// into a hold.
+    fn mark_down(&mut self, n: u8, window: &mut Window, cx: &mut Context<Self>) {
+        let at = Instant::now();
+        let from = self.focused_leaf(window, cx).map(|p| p.entity_id());
+        self.mark_gesture.down(n, at, from);
+        cx.spawn(async move |ws, cx| {
+            cx.background_executor().timer(navkeys::MARK_HOLD).await;
+            let _ = ws.update(cx, |ws, cx| {
+                if let Some(act) = ws.mark_gesture.held(at) {
+                    ws.mark_act(act, cx);
+                }
+            });
+        })
+        .detach();
+    }
+
+    /// A key came up. Only the digit of a mark press in flight means anything
+    /// here; it is matched by the key alone, because Alt may already be up.
+    fn on_key_up(&mut self, ev: &gpui::KeyUpEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        let Some(n) = self.mark_gesture.pending() else {
+            return;
+        };
+        let key = ev.keystroke.key.as_str();
+        if key.len() == 1 && key.as_bytes()[0] == b'0' + n {
+            if let Some(act) = self.mark_gesture.up(n, Instant::now()) {
+                self.mark_act(act, cx);
+            }
+        }
+    }
+
+    /// Carry out a tap (go) or a hold (mark).
+    fn mark_act(&mut self, act: navkeys::MarkAct<EntityId>, cx: &mut Context<Self>) {
+        let ui = self.lang.strings().ui;
+        let leaves = self.all_leaves();
+        match act {
+            navkeys::MarkAct::Go(n) => {
+                if let Some(p) = leaves.iter().find(|p| p.read(cx).mark == Some(n)) {
+                    self.pending_jump = Some(p.entity_id());
+                    cx.notify();
+                    return;
+                }
+                let key = Self::chord_label(keylayer::TabChord::Mark(n as usize));
+                let text = match &self.mark_names[(n - 1) as usize] {
+                    Some(name) => lang::fill(ui.nav_mark_gone, &[("key", &key), ("name", name)]),
+                    None => lang::fill(ui.nav_mark_empty, &[("key", &key)]),
+                };
+                self.say_where_looking(text, cx);
+            }
+            navkeys::MarkAct::Set(n, id) => {
+                let key = Self::chord_label(keylayer::TabChord::Mark(n as usize));
+                let said = lang::fill(ui.nav_mark_set, &[("key", &key)]);
+                let mut name = None;
+                for p in &leaves {
+                    let this = p.entity_id() == id;
+                    p.update(cx, |v, cx| {
+                        if this {
+                            v.mark = Some(n);
+                            name = Some(v.handover_pane_name());
+                            v.say(said.clone(), None, cx);
+                        } else if v.mark == Some(n) {
+                            v.mark = None;
+                            cx.notify();
+                        }
+                    });
+                }
+                if name.is_some() {
+                    self.mark_names[(n - 1) as usize] = name;
+                    self.save(cx);
+                }
+                cx.notify();
+            }
+        }
+    }
+
+    /// One of the Hands on Keyboard chords.
+    fn nav(&mut self, nav: keylayer::Nav, window: &mut Window, cx: &mut Context<Self>) {
+        match nav {
+            keylayer::Nav::Artifact => self.nav_artifact(window, cx),
+            keylayer::Nav::NeedsMe => {
+                if self.rail_on {
+                    self.art_close();
+                    self.rail_toggle(cx);
+                    cx.notify();
+                }
+            }
+            keylayer::Nav::Error { older } => {
+                if let Some(p) = self.focused_leaf(window, cx) {
+                    p.update(cx, |v, cx| {
+                        v.jump_error(older, cx);
+                    });
+                }
+            }
+            keylayer::Nav::Trail { back } => self.trail_step(back, cx),
+        }
+    }
+
+    /// Alt+O. Parker, 2026-11-02: *"alt+o opens current -> alt + o while ANY
+    /// artifact is open opens the ARTIFACTS spine - numbers get allocated to
+    /// select 1-9 most recent is 1"*.
+    ///
+    /// With the rail up it closes it, so the chord that raised it puts it away.
+    /// With nothing open it opens what the focused pane handed over last; a
+    /// pane that handed nothing over raises the rail instead of guessing, and
+    /// a window where nothing was handed over says so.
+    fn nav_artifact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let open = self.all_leaves().iter().any(|p| p.read(cx).has_float());
+        let focused = self
+            .focused_leaf(window, cx)
+            .filter(|p| p.read(cx).handovers().newest().is_some());
+        let step = navkeys::artifact_step(
+            self.art_rail,
+            open,
+            focused.is_some(),
+            !self.art_cards(cx).is_empty(),
+        );
+        match step {
+            navkeys::ArtifactStep::CloseRail => {
+                self.art_close();
+                cx.notify();
+            }
+            navkeys::ArtifactStep::OpenNewest => {
+                if let Some(p) = focused {
+                    p.update(cx, |v, cx| v.open_newest_handover(cx));
+                }
+            }
+            navkeys::ArtifactStep::OpenRail => {
+                self.rail_close();
+                self.art_open(cx);
+            }
+            navkeys::ArtifactStep::SayNone => {
+                let none = self.lang.strings().ui.nav_art_none.to_string();
+                self.say_where_looking(none, cx);
+            }
+        }
+    }
+
+    /// Alt+0 / Alt+Shift+0 and the mouse's back and forward: one step along
+    /// the panes visited, skipping any that have closed.
+    fn trail_step(&mut self, back: bool, cx: &mut Context<Self>) {
+        let alive: std::collections::HashSet<EntityId> =
+            self.all_leaves().iter().map(|p| p.entity_id()).collect();
+        let next = if back {
+            self.trail.back(|id| alive.contains(id))
         } else {
-            (at + 1 == order.len()).then_some(9)
+            self.trail.forward(|id| alive.contains(id))
+        };
+        if let Some(id) = next {
+            self.pending_jump = Some(id);
+            cx.notify();
         }
     }
 
     /// The tab a hotkey reaches, if any.
-    fn tab_for_chord(&self, chord: keylayer::TabChord, cx: &App) -> Option<usize> {
+    fn tab_for_chord(&self, chord: keylayer::TabChord) -> Option<usize> {
         match chord {
-            keylayer::TabChord::Position(9) => self.tabs_in_spine_order(cx).last().copied(),
-            keylayer::TabChord::Position(n) => self.tabs_in_spine_order(cx).get(n - 1).copied(),
+            // A mark names a pane, not a tab: `mark_act` finds it.
+            keylayer::TabChord::Mark(_) => None,
             keylayer::TabChord::Pinned(c) => self.tabs.iter().position(|t| t.hotkey == Some(c)),
         }
     }
@@ -20584,31 +20788,23 @@ impl Workspace {
     /// The chord as a person reads it.
     fn chord_label(chord: keylayer::TabChord) -> String {
         match chord {
-            keylayer::TabChord::Position(n) => format!("Alt+{n}"),
+            keylayer::TabChord::Mark(n) => format!("Alt+{n}"),
             keylayer::TabChord::Pinned(c) => format!("Alt+Shift+{}", c.to_ascii_uppercase()),
         }
     }
 
-    /// What a tab's menus say about reaching it: its place key while the
-    /// digits are on (or that it has none), and its pin, if it has one.
-    fn tab_hotkey_lines(&self, i: usize, cx: &App) -> (Option<String>, Option<String>) {
+    /// What a tab's menus say about reaching it: its pin, if it has one. The
+    /// digits no longer reach tabs by place — they are pane marks — so there is
+    /// no place line to show.
+    fn tab_hotkey_line(&self, i: usize) -> Option<String> {
         let ui = self.lang.strings().ui;
-        let place = self
-            .tab_digits_on()
-            .then(|| match self.tab_position_key(i, cx) {
-                Some(n) => lang::fill(
-                    ui.tab_menu_key_position,
-                    &[("key", &Self::chord_label(keylayer::TabChord::Position(n)))],
-                ),
-                None => ui.tab_menu_key_beyond.to_string(),
-            });
         let pin = self.tabs.get(i).and_then(|t| t.hotkey).map(|c| {
             lang::fill(
                 ui.tab_menu_key_pinned,
                 &[("key", &Self::chord_label(keylayer::TabChord::Pinned(c)))],
             )
         });
-        (place, pin)
+        pin
     }
 
     /// Whether a menu for tab `i` is open to take the letter it is waiting for.
@@ -21694,8 +21890,29 @@ impl Workspace {
         // declines exactly the ones this window holds (see
         // `keylayer::held_tab_chord`), so they arrive here whatever has focus.
         if let Some(chord) = keylayer::held_tab_chord(ks.key.as_str(), m.alt, m.control, m.shift) {
-            if let Some(i) = self.tab_for_chord(chord, cx) {
-                self.activate_tab(i, window, cx);
+            match chord {
+                // Decided when the key comes up (`on_key_up`) or the hold timer
+                // fires, never here: see `navkeys::MarkGesture`. A repeat of a
+                // held key is the same press, not a new one.
+                keylayer::TabChord::Mark(n) => {
+                    if !ev.is_held {
+                        self.mark_down(n as u8, window, cx);
+                    }
+                }
+                keylayer::TabChord::Pinned(_) => {
+                    if let Some(i) = self.tab_for_chord(chord) {
+                        self.activate_tab(i, window, cx);
+                    }
+                }
+            }
+            return;
+        }
+        // Alt+O, Alt+Q, Alt+E and Alt+0: the Hands on Keyboard chords. A focused
+        // terminal declines them (`keylayer::window_chord`), so they arrive here
+        // from every face. Only Alt+E repeats while held, stepping error to error.
+        if let Some(nav) = keylayer::nav_chord(ks.key.as_str(), m.alt, m.control, m.shift) {
+            if !ev.is_held || matches!(nav, keylayer::Nav::Error { .. }) {
+                self.nav(nav, window, cx);
             }
             return;
         }
@@ -26874,6 +27091,18 @@ impl Workspace {
                 self.save(cx);
                 true
             }
+            // A row number GOES there, in one press. Parker, 2026-11-02:
+            // *"person hits alt+q to open the spine who needs me and then 3 for
+            // the 3rd from top"*. A number with no row under it is eaten rather
+            // than passed on, so with Alt still held it cannot fall through to
+            // the pane mark of the same digit.
+            d if navkeys::row_digit(d).is_some() => {
+                if let Some(next) = navkeys::row_digit(d).filter(|&i| i < len) {
+                    self.rail_cursor = next;
+                    self.rail_activate(false, cx);
+                }
+                true
+            }
             _ => match attention::move_cursor(self.rail_cursor, len, key) {
                 Some(next) => {
                     self.rail_cursor = next;
@@ -27522,6 +27751,20 @@ impl Workspace {
                 .flex_row()
                 .gap(px(6. * s))
                 .items_center()
+                // The number a digit goes by: Alt+Q, then 3, is the third row.
+                // Past the ninth there is no number; the arrows still reach it.
+                .child(
+                    div()
+                        .w(px(9. * s))
+                        .text_size(sk.text_px(9.5 * s))
+                        .font_weight(gpui::FontWeight::BOLD)
+                        .text_color(th.accent)
+                        .child(if row_index < 9 {
+                            format!("{}", row_index + 1)
+                        } else {
+                            String::new()
+                        }),
+                )
                 // A row nobody has looked at yet wears a filled dot in its own
                 // lane colour; one already looked at leaves the space empty
                 // rather than drawing a hollow one. Two glyphs would make the
@@ -31162,6 +31405,8 @@ impl Render for Workspace {
             if let Some(tab) = self.tabs.get_mut(ti) {
                 tab.focused = Some(id);
             }
+            self.trail.visit(id);
+            self.visited.insert(id, Instant::now());
         }
         if plan.restore {
             cx.defer_in(window, |ws, window, cx| ws.focus_active(window, cx));
@@ -36954,6 +37199,8 @@ impl Render for Workspace {
                         row("Ctrl+Alt+1…9", s.jump_branch),
                         row("Ctrl+Alt+R", s.rename_row),
                         row(s.k_alt_arrows, s.move_focus_dir),
+                        row("Alt+1 … 9", s.help_marks),
+                        row("Alt+0 / Alt+Shift+0", s.help_back_fwd),
                         row(s.k_drag_subtab, s.drag_subtab),
                         row(s.k_rclick_tab, s.rclick_tab),
                         row("Ctrl+Shift+Z", s.reopen_closed),
@@ -36995,6 +37242,8 @@ impl Render for Workspace {
                     s.s_scroll,
                     vec![
                         row(s.k_scroll_wheel, s.scroll_hist),
+                        row("Shift+PgUp / PgDn", s.scroll_hist),
+                        row("Alt+E / Alt+Shift+E", s.help_next_error),
                         row("Ctrl+Shift+K", s.clear_scroll),
                         row("Ctrl+↑↓ · Ctrl+Shift+↑↓", s.turn_square),
                     ],
@@ -37019,15 +37268,16 @@ impl Render for Workspace {
                         row("Ctrl+↑ / ↓", s.jump_msg),
                         row("Alt+R", s.focus),
                         row(s.k_focus_inherit_key, s.focus_inherit),
-                        row("Alt+1 … 4", s.bench_shelf),
+                        row("Alt+1 … 4 (marks off)", s.bench_shelf),
                         row("Alt+M", s.bench_note),
                         row("Alt+S", s.sticky),
                         row("Alt+Backspace", s.sticky_peel),
                         row(s.k_rclick_note, s.sticky_pin),
                         row(s.k_wheel_key, s.pan_focus),
                         row(s.k_input_colour, s.input_colour),
-                        row("Ctrl+Shift+N", s.rail),
+                        row("Alt+Q · Ctrl+Shift+N", s.rail),
                         row("Ctrl+Shift+M", s.handed_over),
+                        row("Alt+O", s.help_open_artifact),
                         row(
                             &format!("\u{f06a9} {}", s.ui.floor_counter_key),
                             s.ui.floor_help,
@@ -37550,11 +37800,7 @@ impl Render for Workspace {
                         .text_color(th.text.alpha(0.7))
                         .child(ui.tab_menu_keys_hdr),
                 );
-                let (place_line, pin_line) = self.tab_hotkey_lines(i, cx);
-                if let Some(line) = place_line {
-                    keys_box = keys_box.child(note(line));
-                }
-                keys_box = match pin_line {
+                keys_box = match self.tab_hotkey_line(i) {
                     Some(line) => keys_box.child(note(line)).child(
                         Self::bezel_btn(&sk, ui.tab_menu_key_unpin, false)
                             .id("tab-key-unpin")
@@ -38565,15 +38811,33 @@ impl Render for Workspace {
                 // ordinary typing still falls through to the pane — which is
                 // what makes this safe to leave armed over a live terminal.
                 let m = &ev.keystroke.modifiers;
-                if !m.control && !m.alt && !m.platform {
-                    let key = ev.keystroke.key.as_str();
-                    if ws.rail_key(key, cx) || ws.art_key(key, cx) {
-                        cx.stop_propagation();
-                        cx.notify();
-                    }
+                let key = ev.keystroke.key.as_str();
+                // A digit picks a numbered row with or without Alt: Alt+Q then 3
+                // is naturally typed with Alt still down, and that must pick the
+                // third row rather than go to the pane marked 3.
+                let digit = navkeys::row_digit(key).is_some();
+                if !m.control
+                    && !m.platform
+                    && (!m.alt || digit)
+                    && (ws.rail_key(key, cx) || ws.art_key(key, cx))
+                {
+                    cx.stop_propagation();
+                    cx.notify();
                 }
             }))
             .on_key_down(cx.listener(Self::on_key))
+            // The other half of Alt+1…9: the key coming up is what makes it a
+            // tap. In the capture phase so nothing under it can swallow it; it
+            // never stops the event, because a key-up is nobody's to keep.
+            .capture_key_up(cx.listener(Self::on_key_up))
+            // The mouse's back and forward buttons walk the same trail as
+            // Alt+0, from anywhere in the window, before a pane can take them.
+            .capture_any_mouse_down(cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
+                if let MouseButton::Navigate(dir) = ev.button {
+                    cx.stop_propagation();
+                    ws.trail_step(dir == gpui::NavigationDirection::Back, cx);
+                }
+            }))
             .on_scroll_wheel(cx.listener(Self::on_wheel))
             .on_mouse_move(cx.listener(Self::on_mouse_move))
             .on_mouse_up(MouseButton::Left, cx.listener(Self::on_mouse_up))
@@ -38869,9 +39133,9 @@ mod tests {
         assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), None);
         let pin = cx.debug_bounds("bar-key-pin").expect("pin row");
         cx.simulate_click(pin.center(), gpui::Modifiers::default());
-        cx.simulate_keystrokes("q");
+        cx.simulate_keystrokes("z");
         draw(cx);
-        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), Some('q'));
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs[0].hotkey), Some('z'));
         assert!(
             cx.debug_bounds("bar-key-unpin").is_some(),
             "the pin shows, with its undo"
@@ -38911,7 +39175,7 @@ mod tests {
     /// or another tab holds, is refused; and with the digits off Alt+N is the
     /// program's again.
     #[gpui::test]
-    fn a_single_key_reaches_a_tab_by_place_or_by_pin(cx: &mut gpui::TestAppContext) {
+    fn a_single_key_reaches_a_pane_by_mark_or_a_tab_by_pin(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
@@ -38971,32 +39235,107 @@ mod tests {
             assert!(held, "a terminal has the keyboard");
         };
         focus(cx);
-        // Where a new tab is seated is not this test's business; the spine's
-        // order is what the numbers follow.
-        let order = ws.read_with(cx, |ws, cx| ws.tabs_in_spine_order(cx));
-        assert_eq!(order.len(), 3);
-
-        cx.simulate_keystrokes("alt-1");
-        assert_eq!(active(cx), order[0], "alt+1 is the first tab");
-        draw(cx);
-        focus(cx);
-        cx.simulate_keystrokes("alt-9");
-        assert_eq!(
-            active(cx),
-            order[2],
-            "alt+9 is the last, however many there are"
-        );
+        // Alt+1…9 are pane marks (Hands on Keyboard). Holding Alt+2 marks the
+        // pane with the keyboard; tapping it anywhere else comes back. The
+        // harness sends only the key going down, so the key coming up is sent
+        // by hand, which is exactly the half a tap is decided on.
+        let up = |cx: &mut gpui::VisualTestContext, key: &str| {
+            cx.simulate_event(gpui::KeyUpEvent {
+                keystroke: gpui::Keystroke::parse(key).unwrap(),
+            });
+            cx.run_until_parked();
+        };
+        let mark_of = |cx: &mut gpui::VisualTestContext, tab: usize| {
+            ws.read_with(cx, |ws, cx| {
+                let mut ls = vec![];
+                ws.tabs[tab].root.leaves(&mut ls);
+                ls[0].read(cx).mark
+            })
+        };
+        ws.update(cx, |ws, cx| {
+            ws.active = 0;
+            cx.notify();
+        });
         draw(cx);
         focus(cx);
         cx.simulate_keystrokes("alt-2");
-        assert_eq!(active(cx), order[1]);
-        let shown = ws.read_with(cx, |ws, cx| {
-            order
-                .iter()
-                .map(|&i| ws.tab_position_key(i, cx))
-                .collect::<Vec<_>>()
+        assert_eq!(
+            mark_of(cx, 0),
+            None,
+            "nothing is decided while the key is down"
+        );
+        cx.executor().advance_clock(navkeys::MARK_HOLD);
+        cx.run_until_parked();
+        assert_eq!(
+            mark_of(cx, 0),
+            Some(2),
+            "a hold marks the pane it went down on"
+        );
+        up(cx, "2");
+        assert_eq!(active(cx), 0, "the release after a hold does not also go");
+
+        ws.update(cx, |ws, cx| {
+            ws.active = 1;
+            cx.notify();
         });
-        assert_eq!(shown, vec![Some(1), Some(2), Some(3)]);
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-2");
+        up(cx, "2");
+        draw(cx);
+        assert_eq!(
+            active(cx),
+            0,
+            "a tap goes to the marked pane, whatever tab it is in"
+        );
+        assert_eq!(mark_of(cx, 1), None, "and marks nothing");
+
+        // A second hold of the same digit moves the mark; one pane per digit.
+        ws.update(cx, |ws, cx| {
+            ws.active = 1;
+            cx.notify();
+        });
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-2");
+        cx.executor().advance_clock(navkeys::MARK_HOLD);
+        cx.run_until_parked();
+        up(cx, "2");
+        assert_eq!((mark_of(cx, 0), mark_of(cx, 1)), (None, Some(2)));
+
+        // An empty mark goes nowhere.
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-7");
+        up(cx, "7");
+        draw(cx);
+        assert_eq!(active(cx), 1, "alt+7 marks nothing, so nothing moves");
+
+        // Alt+0 goes back along the panes visited, and Alt+Shift+0 forward.
+        draw(cx);
+        focus(cx);
+        cx.simulate_keystrokes("alt-0");
+        draw(cx);
+        let back = active(cx);
+        assert_ne!(back, 1, "alt+0 left the pane we were on");
+        focus(cx);
+        cx.simulate_keystrokes("alt-shift-0");
+        draw(cx);
+        assert_eq!(active(cx), 1, "alt+shift+0 came forward again");
+
+        // Saved with the pane, and read back.
+        let state = ws.read_with(cx, |ws, cx| ws.build_state(cx));
+        let text = toml::to_string(&state).unwrap();
+        let back: StateFile = toml::from_str(&text).unwrap();
+        let marks: Vec<Option<u8>> = back
+            .tabs
+            .iter()
+            .map(|t| match &t.node {
+                SavedNode::Leaf { mark, .. } => *mark,
+                SavedNode::Split { .. } => None,
+            })
+            .collect();
+        assert_eq!(marks, vec![None, Some(2), None]);
         // That the terminal does not ALSO receive a held chord is proved where
         // it is decided: `keylayer`'s routing test and the encoder test
         // `a_held_tab_hotkey_is_never_written_to_the_terminal`. This harness
@@ -42888,6 +43227,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
             resume: resume.map(str::to_string),
@@ -43718,6 +44058,7 @@ mod tests {
             off_limits: true,
             agents: None,
             seat: None,
+            mark: None,
         };
         let text = toml::to_string(&marked).expect("a leaf serialises");
         assert!(text.contains("off_limits = true"), "{text}");
@@ -43728,6 +44069,7 @@ mod tests {
                 off_limits: true,
                 agents: None,
                 seat: None,
+                mark: None,
                 ..
             }
         ));
@@ -43744,6 +44086,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
         };
         let text = toml::to_string(&plain).expect("a leaf serialises");
         assert!(!text.contains("off_limits"), "false is not written: {text}");
@@ -43761,6 +44104,7 @@ mod tests {
             off_limits: false,
             agents: Some(threshing_floor::READ_ONLY_WORD.into()),
             seat: Some(threshing_floor::SeatId(42)),
+            mark: None,
         };
         let text = toml::to_string(&seated).expect("a leaf serialises");
         assert!(
@@ -43795,6 +44139,7 @@ mod tests {
                 off_limits: false,
                 agents: None,
                 seat: None,
+                mark: None,
                 ..
             }
         ));
@@ -46857,6 +47202,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -46938,6 +47284,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
             resume: resume.map(str::to_string),
@@ -47006,6 +47353,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -47019,6 +47367,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: Some("claude --resume rm".into()),
@@ -47090,6 +47439,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
             resume: Some(resume.into()),
@@ -47319,6 +47669,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: resume.map(str::to_string),
@@ -47486,6 +47837,7 @@ cwd = "/z"
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -48005,6 +48357,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    mark: None,
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
                         seed: None,
@@ -48061,6 +48414,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    mark: None,
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
                     resume: Some("claude --resume 48be90b8-5777-44b6-bb6f-1c6069205c0d".into()),
@@ -48099,6 +48453,7 @@ warp = 1.5
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -48620,6 +48975,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
@@ -48867,6 +49223,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
             resume: None,
