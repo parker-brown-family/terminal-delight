@@ -66,6 +66,7 @@ mod feedback;
 mod glyph;
 mod gridwire;
 mod handover;
+mod helpsheet;
 mod hold;
 mod host;
 mod hostctl;
@@ -4720,6 +4721,11 @@ struct Workspace {
     help_open: bool,
     /// Help modal view: false = keyboard shortcuts, true = the full feature list.
     help_features: bool,
+    /// What has been typed into the help sheet's filter. Typing while the
+    /// sheet is up lands here (`help_capture_key`), never in the terminal.
+    help_query: EditBuffer,
+    /// The help sheet's scrolling body, so the arrows and PgUp/PgDn can move it.
+    help_scroll: ScrollHandle,
     /// Active chrome language (the language pack); persisted in state.toml.
     lang: lang::Lang,
     /// Open theme breakout menu, if any.
@@ -6601,6 +6607,8 @@ impl Workspace {
             confirm_close: None,
             help_open: false,
             help_features: false,
+            help_query: EditBuffer::seeded(""),
+            help_scroll: ScrollHandle::new(),
             theme_menu: None,
             palette_help_seen: None,
             menu_at: None,
@@ -21530,6 +21538,89 @@ impl Workspace {
         window.focus(&leaves[i].focus_handle(cx), cx);
         cx.notify();
         true
+    }
+
+    /// The help sheet's keyboard, taken in the capture phase because a
+    /// terminal pane still holds the focus under it. Typing filters the sheet
+    /// (Parker, 2026-11-03: *"TYPING (no click just a raw 'word' will FUZZY
+    /// FILTER live the options)"*), Tab swaps SHORTCUTS and FEATURES, the
+    /// arrows and paging keys scroll it, and Escape clears a query before it
+    /// closes anything.
+    ///
+    /// `false` for what is not the sheet's: chords carrying Ctrl, Alt or Super
+    /// (other than the editing ones) and the function keys, so F1 still closes
+    /// it and the window's chords still work. Every other key is eaten, because
+    /// the sheet is a modal and a stray letter must not land in the shell
+    /// behind it.
+    fn help_capture_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        // Only while the sheet is the top surface: the language picker and the
+        // find and lookup panels it can sit under own their own typing.
+        if !self.help_open
+            || self.lang_picker.is_some()
+            || self.find.is_some()
+            || self.lookup.is_some()
+            || self.agent_launcher.is_some()
+        {
+            return false;
+        }
+        let m = &ks.modifiers;
+        let key = ks.key.as_str();
+        // Ctrl stays the sheet's for word-wise editing and for Ctrl+Home/End.
+        let editing = matches!(
+            key,
+            "backspace" | "delete" | "left" | "right" | "home" | "end"
+        );
+        if m.platform || m.alt || (m.control && !editing) || m.function {
+            return false;
+        }
+        if key.len() > 1 && key.starts_with('f') && key[1..].bytes().all(|b| b.is_ascii_digit()) {
+            return false;
+        }
+        let step = 40.;
+        let page = f32::from(self.help_scroll.bounds().size.height).max(step) * 0.85;
+        match key {
+            "escape" => {
+                if self.help_query.text().is_empty() {
+                    return false;
+                }
+                self.help_query = EditBuffer::seeded("");
+            }
+            "tab" => {
+                self.help_features = !self.help_features;
+                self.help_query = EditBuffer::seeded("");
+                self.help_scroll_to(Some(0.));
+            }
+            "up" => self.help_scroll_by(-step),
+            "down" => self.help_scroll_by(step),
+            "pageup" => self.help_scroll_by(-page),
+            "pagedown" => self.help_scroll_by(page),
+            "home" if m.control => self.help_scroll_to(Some(0.)),
+            "end" if m.control => self.help_scroll_to(None),
+            "enter" => {}
+            _ => {
+                let before = self.help_query.text();
+                self.help_query.apply(key, m, ks.key_char.as_deref(), 48);
+                if self.help_query.text() != before {
+                    self.help_scroll_to(Some(0.));
+                }
+            }
+        }
+        cx.notify();
+        true
+    }
+
+    /// Scroll the help sheet's body by `dy` pixels, positive towards the end.
+    fn help_scroll_by(&mut self, dy: f32) {
+        let at = -f32::from(self.help_scroll.offset().y);
+        self.help_scroll_to(Some(at + dy));
+    }
+
+    /// Scroll the help sheet's body to `y` pixels from its top, clamped; `None`
+    /// is the end.
+    fn help_scroll_to(&mut self, y: Option<f32>) {
+        let max = f32::from(self.help_scroll.max_offset().y).max(0.);
+        let y = y.unwrap_or(max).clamp(0., max);
+        self.help_scroll.set_offset(point(px(0.), px(-y)));
     }
 
     fn on_key(&mut self, ev: &KeyDownEvent, window: &mut Window, cx: &mut Context<Self>) {
@@ -37281,16 +37372,36 @@ impl Render for Workspace {
         });
 
         let help_vp = window.viewport_size();
-        let (help_vw, help_vh) = (f32::from(help_vp.width), f32::from(help_vp.height));
+        let help_vw = f32::from(help_vp.width);
         // A thin TD tile (a narrow Hyprland column) cannot carry the two-column
         // keycap layout: the key column is a fixed 150px, so the description gets
         // squeezed to nothing and wraps ONE CHARACTER PER LINE. Past this width
         // the modal folds to a single column and each row stacks the key above
         // its description, which is the only layout that survives a 400px window.
         let help_narrow = help_vw < 720.;
+        // However the sheet was closed (Esc, a click outside, F1, the ✕), it
+        // opens again with nothing typed.
+        if !self.help_open && !self.help_query.text().is_empty() {
+            self.help_query = EditBuffer::seeded("");
+        }
         let help_overlay = self.help_open.then(|| {
             let sk = &sk;
+            let hs = s.hs;
             let (kc, dc, hc) = (th.accent, th.text.alpha(0.85), th.complement);
+            let query = self.help_query.text();
+            let filtering = !query.trim().is_empty();
+            // Typing searches SHORTCUTS and FEATURES together; with nothing
+            // typed, the pills choose which one is shown.
+            let sections = if filtering {
+                let mut all = helpsheet::shortcuts(s);
+                all.extend(helpsheet::features(s));
+                helpsheet::filter(&all, &query)
+            } else if help_features {
+                helpsheet::features(s)
+            } else {
+                helpsheet::shortcuts(s)
+            };
+            let shown = helpsheet::count(&sections);
             let row = move |k: &str, d: &str| {
                 div()
                     .flex()
@@ -37327,182 +37438,105 @@ impl Render for Workspace {
                             .child(d.to_string()),
                     )
             };
-            let section = move |title: &str, rows: Vec<gpui::Div>| {
-                let mut s = div().flex().flex_col().gap_1().child(
+            let section = move |sec: &helpsheet::Section| {
+                // A filtered sheet mixes both views, so the tour's sections
+                // carry the ✦ their pill does.
+                let title = if filtering && sec.feature {
+                    format!("✦ {}", sec.title)
+                } else {
+                    sec.title.clone()
+                };
+                let mut out = div().flex().flex_col().gap_1().child(
                     div()
                         .text_color(hc)
                         .text_size(sk.text_px(10.5))
                         .font_weight(gpui::FontWeight::BOLD)
-                        .child(title.to_string()),
+                        .child(title),
                 );
-                for r in rows {
-                    s = s.child(r);
+                for r in &sec.rows {
+                    out = out.child(row(&r.key, &r.desc));
                 }
-                s
+                out
             };
-            let col_a = div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .gap_4()
-                .child(section(
-                    s.s_tabs,
-                    vec![
-                        row("Ctrl+Shift+T", s.new_tab),
-                        row("Ctrl+PgUp / PgDn", s.switch_tabs),
-                        row("Ctrl+Shift+PgUp / PgDn", s.move_tab),
-                        row("Alt+V / H · Ctrl+Alt+D", s.split),
-                        row("Alt+W", s.close_pane),
-                        row("Alt+K", s.toggle_bench),
-                        row("Alt+A", s.launch_agent),
-                        row("Alt+L", s.lookup),
-                        row("Alt+G", s.git_coordination),
-                        row("Ctrl+W", s.close_doc),
-                        row("Ctrl+Shift+W", s.close_tab),
-                        row("Ctrl+Alt+↑↓←→", s.walk_tree),
-                        row("Ctrl+Alt+1…9", s.jump_branch),
-                        row("Ctrl+Alt+R", s.rename_row),
-                        row(s.k_alt_arrows, s.move_focus_dir),
-                        row("Alt+1 … 9", s.help_marks),
-                        row("Alt+0 / Alt+Shift+0", s.help_back_fwd),
-                        row(s.k_drag_subtab, s.drag_subtab),
-                        row(s.k_rclick_tab, s.rclick_tab),
-                        row("Ctrl+Shift+Z", s.reopen_closed),
-                    ],
-                ))
-                .child(section(
-                    s.s_edit,
-                    vec![
-                        row(s.k_rclick, s.rclick),
-                        row("Ctrl+Shift+C / V", s.copy_paste),
-                        row("Ctrl+X", s.cut),
-                        row("Shift+Backspace", s.delete_word),
-                        row("Ctrl+Shift+Backspace", s.delete_line),
-                        row("Ctrl+Shift+Alt+Backspace", s.clear_input),
-                        row(s.k_ctrl_arrows, s.word_jump),
-                        row("Ctrl+F", s.find),
-                        row("Ctrl+Shift+F", s.find_all),
-                        row(s.k_dbl_click, s.select_wl),
-                        row("Shift+Enter", s.newline),
-                    ],
-                ))
-                .child(section(
-                    s.s_links,
-                    vec![
-                        row(s.k_ctrl_click, s.open_link),
-                        row(s.k_shift_click, s.reveal_link),
-                        row(s.k_super_ctrl_click, s.reveal_link),
-                        row(s.k_alt_click, s.open_here),
-                        row(s.k_ctrl_alt_click, s.open_beside),
-                    ],
-                ));
-            let col_b = div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .gap_4()
-                .child(section(
-                    s.s_scroll,
-                    vec![
-                        row(s.k_scroll_wheel, s.scroll_hist),
-                        row("Shift+PgUp / PgDn", s.scroll_hist),
-                        row("Alt+E / Alt+Shift+E", s.help_next_error),
-                        row("Alt+[", s.help_scroll_mode),
-                        row("Ctrl+Shift+K", s.clear_scroll),
-                        row("Ctrl+↑↓ · Ctrl+Shift+↑↓", s.turn_square),
-                    ],
-                ))
-                .child(section(
-                    s.s_look,
-                    vec![
-                        row(s.k_theme_icon, s.themes_wheel),
-                        row("Ctrl+Shift+D", s.themes_wheel),
-                        row(&format!("⛭ {}", s.k_display_tray), s.display_tray),
-                        row("Ctrl+Shift+G", s.display_tray),
-                        row(s.ui.help_key_ctrl_wheel, s.outer_size),
-                        row("Ctrl+Shift+= / -", s.outer_size_key),
-                        row(s.k_text_size_key, s.text_size),
-                        row("Ctrl+= / -", s.text_size),
-                        row(s.k_warp_dial, s.warp),
-                    ],
-                ))
-                .child(section(
-                    s.s_agents,
-                    vec![
-                        row("Ctrl+↑ / ↓", s.jump_msg),
-                        row("Alt+R", s.focus),
-                        row(s.k_focus_inherit_key, s.focus_inherit),
-                        row("Alt+1 … 4 (marks off)", s.bench_shelf),
-                        row("Alt+M", s.bench_note),
-                        row("Alt+S", s.sticky),
-                        row("Alt+Backspace", s.sticky_peel),
-                        row(s.k_rclick_note, s.sticky_pin),
-                        row(s.k_wheel_key, s.pan_focus),
-                        row(s.k_input_colour, s.input_colour),
-                        row("Alt+Q · Ctrl+Shift+N", s.rail),
-                        row("Ctrl+Shift+M", s.handed_over),
-                        row("Alt+O", s.help_open_artifact),
-                        row(
-                            &format!("\u{f06a9} {}", s.ui.floor_counter_key),
-                            s.ui.floor_help,
-                        ),
-                        row("Ctrl+Shift+U / Y", s.usage),
-                    ],
-                ))
-                .child(section(s.s_window, vec![row("Ctrl+Alt+T", s.new_window)]));
-            // The FEATURES view (toggled from the header) — there are far too many
-            // to fit as shortcuts, so this is the "what can it even do" tour.
-            let feat_a = div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .gap_4()
-                .child(section(
-                    s.s_feat,
-                    vec![
-                        row(s.kf_tiling, s.f_tiling),
-                        row(s.kf_groups, s.f_groups),
-                        row(s.kf_drag, s.f_drag),
-                        row(s.kf_rename, s.f_rename),
-                        row(s.kf_popout, s.f_popout),
-                    ],
-                ))
-                .child(section(
-                    s.s_theming,
-                    vec![
-                        row(s.kf_themes, s.f_themes),
-                        row(s.kf_perpane, s.f_perpane),
-                        row(s.kf_grade, s.f_grade),
-                    ],
-                ));
-            let feat_b = div()
-                .flex()
-                .flex_col()
-                .flex_1()
-                .min_w(px(0.))
-                .gap_4()
-                .child(section(
-                    s.s_crt,
-                    vec![
-                        row(s.kf_warp, s.f_warp),
-                        row(s.kf_scan, s.f_scan),
-                        row(s.kf_crawl, s.f_crawl),
-                    ],
-                ))
-                .child(section(
-                    s.s_amcp,
-                    vec![
-                        row("claude / codex", s.f_detect),
-                        row(&format!("👓 {}", s.focus_name), s.f_focus),
-                        row(s.kf_restore, s.f_restore),
-                        row(&format!("🤖 {}", s.kf_mcp), s.f_mcp),
-                    ],
-                ));
+            let column = move |secs: Vec<helpsheet::Section>| {
+                secs.iter().fold(
+                    div().flex().flex_col().flex_1().min_w(px(0.)).gap_4(),
+                    |c, sec| c.child(section(sec)),
+                )
+            };
+            let body = if shown == 0 {
+                div()
+                    .w_full()
+                    .py_6()
+                    .flex()
+                    .justify_center()
+                    .text_size(sk.text_px(11.5))
+                    .text_color(th.text.alpha(0.55))
+                    .child(format!("{} · “{}”", hs.no_match, query.trim()))
+            } else {
+                let (left, right) = if help_narrow {
+                    (sections, Vec::new())
+                } else {
+                    helpsheet::columns(sections)
+                };
+                div()
+                    .flex()
+                    .map(|d| {
+                        if help_narrow {
+                            d.flex_col().gap_4()
+                        } else {
+                            d.flex_row().gap_8()
+                        }
+                    })
+                    .w_full()
+                    .child(column(left))
+                    .when(!right.is_empty(), |d| d.child(column(right)))
+            };
+            // The filter box, top centre: there is nothing to click, typing
+            // goes here (`help_capture_key`), as in Omarchy's own key list.
+            let entry = {
+                let eb = render_edit_buffer(
+                    &self.help_query,
+                    1.0,
+                    th.text,
+                    th.accent,
+                    th.accent.alpha(0.3),
+                );
+                let eb = if query.is_empty() {
+                    eb.child(div().text_color(th.text.alpha(0.35)).child(hs.filter_hint))
+                } else {
+                    eb
+                };
+                div()
+                    .id("help-filter")
+                    .debug_selector(|| "help-filter".into())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .w(px(340.))
+                    .max_w_full()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .bg(th.bg.alpha(0.55))
+                    .border(sk.box_border(1.))
+                    .border_color(th.accent.alpha(if filtering { 0.85 } else { 0.4 }))
+                    .text_size(sk.text_px(12.5))
+                    .child(div().text_color(th.accent.alpha(0.8)).child("🔍"))
+                    .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(eb))
+                    .when(filtering, |d| {
+                        d.child(
+                            div()
+                                .text_size(sk.text_px(9.5))
+                                .text_color(th.text.alpha(0.5))
+                                .child(shown.to_string()),
+                        )
+                    })
+            };
             // Header pills: SHORTCUTS ⇄ FEATURES. A million features don't fit as
-            // keycaps, so a click swaps the body to the feature tour.
+            // keycaps, so a click swaps the body to the feature tour. While a
+            // query is typed neither is lit: the body is both.
             let pill = |label: &str, active: bool, want: bool| {
                 div()
                     .px_2()
@@ -37519,6 +37553,8 @@ impl Render for Workspace {
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
                             ws.help_features = want;
+                            ws.help_query = EditBuffer::seeded("");
+                            ws.help_scroll.set_offset(point(px(0.), px(0.)));
                             cx.notify();
                         }),
                     )
@@ -37527,8 +37563,12 @@ impl Render for Workspace {
                 .flex()
                 .flex_row()
                 .gap_1()
-                .child(pill(s.shortcuts, !help_features, false))
-                .child(pill(&format!("✦ {}", s.features), help_features, true));
+                .child(pill(s.shortcuts, !filtering && !help_features, false))
+                .child(pill(
+                    &format!("✦ {}", s.features),
+                    !filtering && help_features,
+                    true,
+                ));
             let close_x = div()
                 .px_2()
                 .py_0p5()
@@ -37571,10 +37611,13 @@ impl Render for Workspace {
                 );
             let panel = div()
                 .id("help-panel")
+                .debug_selector(|| "help-panel".into())
                 .w(gpui::relative(0.94))
                 .max_w(px(940.))
-                .max_h(px(help_vh * 0.88))
-                .overflow_y_scroll()
+                // Of the scrim, not of the window: the scrim is what the card is
+                // centred in, so a cap taken from the window let the card run
+                // past both edges of a scrim smaller than it.
+                .max_h(gpui::relative(0.9))
                 .p_5()
                 .rounded(sk.rad_raw(8.))
                 .border(sk.box_border(2.))
@@ -37594,17 +37637,32 @@ impl Render for Workspace {
                 .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_col()
-                .gap_4()
+                .gap_3()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
                 )
                 .child(
+                    // The filter at the top centre, the close button in its
+                    // corner; under them the title, the view pills and the
+                    // language. Two rows, so a narrow tile keeps all of it.
                     div()
+                        .flex_none()
+                        .relative()
+                        .flex()
+                        .justify_center()
+                        .child(entry)
+                        .child(div().absolute().top_0().right_0().child(close_x)),
+                )
+                .child(
+                    div()
+                        .flex_none()
                         .flex()
                         .flex_row()
+                        .flex_wrap()
                         .items_center()
                         .justify_between()
+                        .gap_2()
                         .child(
                             div()
                                 .text_size(sk.text_px(13.))
@@ -37619,30 +37677,23 @@ impl Render for Workspace {
                                 .items_center()
                                 .gap_3()
                                 .child(tabs)
-                                .child(lang_pick)
-                                .child(close_x),
+                                .child(lang_pick),
                         ),
                 )
                 .child(
-                    // Scroll the whole card: reserving a fixed 150px for the
-                    // header and footer clips rows when those controls wrap.
+                    // Only the rows scroll. `min_h(0)` lets this shrink below
+                    // its content inside the capped card, which is what turns
+                    // overflow into a scroll; the header and footer stay put.
                     div()
                         .id("help-body")
-                        .flex_none()
-                        .flex()
-                        .map(|d| {
-                            if help_narrow {
-                                d.flex_col().gap_4()
-                            } else {
-                                d.flex_row().gap_8()
-                            }
-                        })
-                        .w_full()
-                        .child(if help_features { feat_a } else { col_a })
-                        .child(if help_features { feat_b } else { col_b }),
+                        .min_h(px(0.))
+                        .overflow_y_scroll()
+                        .track_scroll(&self.help_scroll)
+                        .child(body),
                 )
                 .child(
                     div()
+                        .flex_none()
                         .flex()
                         .flex_col()
                         .gap_1()
@@ -37673,25 +37724,27 @@ impl Render for Workspace {
                 )
                 .child(
                     div()
+                        .flex_none()
                         .text_size(sk.text_px(10.))
                         .text_color(th.text.alpha(0.5))
-                        .child(s.help_footer),
+                        .child(hs.footer),
                 );
-            div()
-                .absolute()
-                .inset_0()
-                .bg(th.bg.alpha(0.74))
-                .flex()
-                .items_center()
-                .justify_center()
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.help_open = false;
-                        cx.notify();
-                    }),
-                )
-                .child(panel)
+            // Through the builder, so the glass under the card is flat and the
+            // wheel scrolls the sheet rather than the pane beneath it.
+            self.over_the_glass(
+                div()
+                    .size_full()
+                    .bg(th.bg.alpha(0.74))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .child(panel),
+                |ws, _w, cx| {
+                    ws.help_open = false;
+                    cx.notify();
+                },
+                cx,
+            )
         });
 
         // ---- tab config pane (right-click / ctrl+click a tab) ----
@@ -38974,6 +39027,10 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     return;
                 }
+                if ws.help_capture_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
@@ -39371,6 +39428,118 @@ mod tests {
         );
         draw(cx);
         assert!(pane.update(cx, |v, cx| v.layers_up(cx).header_menu));
+    }
+
+    /// The help sheet is a modal over a live terminal that still holds the
+    /// focus, so its keyboard is taken in the capture phase: typed letters
+    /// filter the sheet and never reach the program behind it, Tab swaps the
+    /// views, the paging keys scroll its body, and Escape clears a query
+    /// before it closes the sheet. The same letters typed with the sheet shut
+    /// do reach `cat`, which is what proves the screen read below can see them.
+    #[gpui::test]
+    fn typing_over_the_help_sheet_filters_it_and_never_reaches_the_shell(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            // short enough that the shortcuts overflow the card and scroll
+            cx.open_window(size(px(968.), px(480.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                let _ = w.draw(cx);
+            });
+            cx.run_until_parked();
+        };
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.focus_active(w, cx)));
+        ws.update(cx, |ws, cx| {
+            ws.help_open = true;
+            cx.notify();
+        });
+        draw(cx);
+        assert!(
+            cx.debug_bounds("help-filter").is_some(),
+            "the filter box is drawn"
+        );
+        // The card fits the window it is drawn in, top and bottom, however
+        // much it holds: the overflow is the body's to scroll.
+        let card = cx.debug_bounds("help-panel").expect("the card is drawn");
+        assert!(
+            card.top() >= px(0.) && card.bottom() <= px(480.),
+            "the card runs off the window: {card:?}"
+        );
+
+        cx.simulate_keystrokes("z q");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.help_query.text()), "zq");
+        cx.simulate_keystrokes("backspace backspace m a r k");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.help_query.text()), "mark");
+
+        // Escape clears the query first, and only then closes.
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.help_open && ws.help_query.text().is_empty()));
+
+        // The body scrolls from the keyboard, and Tab swaps the view to the top.
+        let at = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| -f32::from(ws.help_scroll.offset().y))
+        };
+        let room = ws.read_with(cx, |ws, _| f32::from(ws.help_scroll.max_offset().y));
+        assert!(room > 0., "a 480px window overflows the shortcuts");
+        cx.simulate_keystrokes("pagedown");
+        draw(cx);
+        assert!(at(cx) > 0., "PgDn scrolled the sheet");
+        cx.simulate_keystrokes("ctrl-end");
+        draw(cx);
+        assert_eq!(at(cx), room, "Ctrl+End is the end");
+        cx.simulate_keystrokes("tab");
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.help_features));
+        assert_eq!(at(cx), 0., "a new view starts at its top");
+
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(!ws.read_with(cx, |ws, _| ws.help_open));
+        let screen = pane.read_with(cx, |v, _| v.fixture_screen_text());
+        assert!(
+            !screen.contains("zq") && !screen.contains("mark"),
+            "the sheet let typing through to the shell:\n{screen}"
+        );
+
+        // The control: with the sheet shut, the same letters reach cat.
+        cx.simulate_keystrokes("z q");
+        let mut seen = false;
+        for _ in 0..200 {
+            draw(cx);
+            if pane.read_with(cx, |v, _| v.fixture_screen_text().contains("zq")) {
+                seen = true;
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(10));
+        }
+        assert!(seen, "typing reaches cat once the sheet is shut");
     }
 
     /// One keystroke reaches a tab: Alt+N by place in the spine's order and
@@ -40017,13 +40186,11 @@ mod tests {
     /// now: Ctrl opens with the desktop, Shift reveals (it used to open, and
     /// shared a row with Ctrl), Super+Ctrl still reveals, Alt opens the
     /// floating square, and Ctrl+Alt opens a pane beside. Source-scanned
-    /// because the modal needs a live window.
+    /// because the modal needs a live window; its rows live in `helpsheet`.
     #[test]
     fn the_help_names_every_click_on_a_path() {
-        let src = include_str!("main.rs");
-        let code = &src[..src
-            .find("\n#[cfg(test)]\n#[allow(clippy::items_after_test_module)]\nmod tests")
-            .unwrap_or(src.len())];
+        let src = include_str!("helpsheet.rs");
+        let code = &src[..src.find("\n#[cfg(test)]\nmod tests").unwrap_or(src.len())];
         let at = code.find("s.s_links,").expect("the links section");
         let section = &code[at..at + code[at..].find("],").expect("end of the section")];
         let rows = [
@@ -42399,13 +42566,15 @@ mod tests {
             );
         }
 
-        // And the modal must not keep selling the old meaning.
+        // And the modal must not keep selling the old meaning. Its rows live
+        // in `helpsheet` since the sheet learned to filter.
+        let sheet = include_str!("helpsheet.rs");
         assert!(
-            !code.contains("Ctrl+Alt+R / D"),
+            !code.contains("Ctrl+Alt+R / D") && !sheet.contains("Ctrl+Alt+R / D"),
             "the help modal still lists ctrl+alt+r as a split"
         );
         assert!(
-            code.contains("row(\"Ctrl+Alt+R\", s.rename_row)"),
+            sheet.contains("row(\"Ctrl+Alt+R\", s.rename_row)"),
             "the help modal does not teach the rename chord"
         );
     }

@@ -14,9 +14,11 @@ use serde::{Deserialize, Serialize};
 
 mod chrome;
 mod coord;
+mod help;
 mod parts;
 pub use chrome::Chrome;
 pub use coord::Coord;
+pub use help::Help;
 pub use parts::Parts;
 
 /// A UI language. Serialised lowercase into `state.toml` (`lang = "zh"`); an
@@ -124,7 +126,6 @@ pub struct Strings {
     pub features: &'static str,
     pub demo_btn: &'static str,
     pub demo_sub: &'static str,
-    pub help_footer: &'static str,
     // ── help modal · section headers ──
     pub s_tabs: &'static str,
     pub s_edit: &'static str,
@@ -234,7 +235,6 @@ pub struct Strings {
     pub f_drag: &'static str,
     pub f_rename: &'static str,
     pub f_popout: &'static str,
-    pub f_themes: &'static str,
     pub f_perpane: &'static str,
     pub f_grade: &'static str,
     pub f_warp: &'static str,
@@ -243,7 +243,6 @@ pub struct Strings {
     pub f_detect: &'static str,
     pub f_focus: &'static str,
     pub f_restore: &'static str,
-    pub f_mcp: &'static str,
     // ── shared scope labels (theme panel + DISPLAY tray) ──
     pub scope_pane: &'static str,
     pub scope_outer: &'static str,
@@ -375,7 +374,6 @@ pub struct Strings {
     pub kf_drag: &'static str,
     pub kf_rename: &'static str,
     pub kf_popout: &'static str,
-    pub kf_themes: &'static str,
     pub kf_perpane: &'static str,
     pub kf_grade: &'static str,
     pub kf_warp: &'static str,
@@ -452,6 +450,8 @@ pub struct Strings {
     pub ui: &'static Chrome,
     /// What the pane, workbench, document viewer and the other modules draw.
     pub parts: &'static Parts,
+    /// The help sheet's filter, new shortcut rows and FEATURES tour.
+    pub hs: &'static Help,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -542,7 +542,6 @@ pub const EN: Strings = Strings {
     features: "FEATURES",
     demo_btn: "Spin up a demo of this layout",
     demo_sub: "opens a new window cloning this exact layout, every pane filled with lorem-ipsum — safe to screen-share",
-    help_footer: "Esc or click outside to close · themes are live-editable TOML while it runs",
     s_tabs: "TABS & PANES",
     s_edit: "EDITING & CLIPBOARD",
     s_links: "LINKS",
@@ -626,7 +625,6 @@ pub const EN: Strings = Strings {
     f_drag: "Split, move, or tear off a new window",
     f_rename: "Any tab, task, branch or pane · click away to save",
     f_popout: "Quick window · single-instance aware",
-    f_themes: "Live-editable TOML, ~300ms hot reload",
     f_perpane: "Theme & grade inherit · 'follow outer'",
     f_grade: "Bright/contrast/colour/text/bg/gamma + size",
     f_warp: "GPU curve · 0→1.5 dial · per-pane",
@@ -635,7 +633,6 @@ pub const EN: Strings = Strings {
     f_detect: "Detected · jump messages · done bell",
     f_focus: "Mirror a pane big over a frosted blur",
     f_restore: "Crash / quit → resume the exact chat",
-    f_mcp: "Read-only watch + push · stdio, never TCP",
     scope_pane: "THIS PANE",
     scope_outer: "OUTER",
     follow_outer: "follow outer",
@@ -740,7 +737,6 @@ pub const EN: Strings = Strings {
     kf_drag: "Drag a sub-tab",
     kf_rename: "Right-click to rename",
     kf_popout: "Pop-out scratch",
-    kf_themes: "5 themes + custom",
     kf_perpane: "Per-pane look",
     kf_grade: "Monitor grade",
     kf_warp: "Barrel warp",
@@ -806,6 +802,7 @@ pub const EN: Strings = Strings {
     gc: &coord::EN,
     ui: &chrome::EN,
     parts: &parts::EN,
+    hs: &help::EN,
 };
 
 /// Español.
@@ -816,7 +813,6 @@ pub const ES: Strings = Strings {
     features: "FUNCIONES",
     demo_btn: "Abrir una demo de esta disposición",
     demo_sub: "abre una ventana nueva que clona esta disposición, cada panel lleno de texto de relleno — seguro para compartir pantalla",
-    help_footer: "Esc o clic fuera para cerrar · los temas son TOML editable en vivo mientras corre",
     s_tabs: "PESTAÑAS Y PANELES",
     s_edit: "EDICIÓN Y PORTAPAPELES",
     s_links: "ENLACES",
@@ -900,7 +896,6 @@ pub const ES: Strings = Strings {
     f_drag: "Divide, mueve o desprende una ventana nueva",
     f_rename: "Pestaña, tarea, rama o panel · clic fuera para guardar",
     f_popout: "Ventana rápida · consciente de instancia única",
-    f_themes: "TOML editable en vivo, recarga en ~300ms",
     f_perpane: "Tema y ajuste se heredan · «seguir el exterior»",
     f_grade: "Brillo/contraste/color/texto/fondo/gamma + tamaño",
     f_warp: "Curva por GPU · dial 0→1.5 · por panel",
@@ -909,7 +904,6 @@ pub const ES: Strings = Strings {
     f_detect: "Detectado · saltar entre mensajes · timbre al terminar",
     f_focus: "Refleja un panel en grande sobre un desenfoque esmerilado",
     f_restore: "Caída / cierre → retoma el chat exacto",
-    f_mcp: "Observación solo lectura + push · stdio, nunca TCP",
     scope_pane: "ESTE PANEL",
     scope_outer: "EXTERIOR",
     follow_outer: "seguir el exterior",
@@ -1014,7 +1008,6 @@ pub const ES: Strings = Strings {
     kf_drag: "arrastrar subpestaña",
     kf_rename: "Renombrar con clic derecho",
     kf_popout: "ventana emergente",
-    kf_themes: "5 temas + personalizado",
     kf_perpane: "aspecto por panel",
     kf_grade: "ajuste de monitor",
     kf_warp: "curvatura de barril",
@@ -1080,6 +1073,7 @@ pub const ES: Strings = Strings {
     gc: &coord::ES,
     ui: &chrome::ES,
     parts: &parts::ES,
+    hs: &help::ES,
 };
 
 /// Deutsch.
@@ -1090,7 +1084,6 @@ pub const DE: Strings = Strings {
     features: "FUNKTIONEN",
     demo_btn: "Eine Demo dieses Layouts starten",
     demo_sub: "öffnet ein neues Fenster, das genau dieses Layout klont, jeder Bereich mit Blindtext gefüllt — sicher zum Teilen des Bildschirms",
-    help_footer: "Esc oder Klick außerhalb zum Schließen · Themes sind live editierbares TOML zur Laufzeit",
     s_tabs: "TABS & BEREICHE",
     s_edit: "BEARBEITEN & ZWISCHENABLAGE",
     s_links: "LINKS",
@@ -1174,7 +1167,6 @@ pub const DE: Strings = Strings {
     f_drag: "Teilen, verschieben oder als neues Fenster abtrennen",
     f_rename: "Tab, Aufgabe, Zweig oder Bereich · Klick daneben speichert",
     f_popout: "Schnelles Fenster · berücksichtigt die laufende Instanz",
-    f_themes: "Live editierbares TOML, ~300ms Hot-Reload",
     f_perpane: "Theme & Abstimmung werden vererbt · „Außen folgen“",
     f_grade: "Helligkeit/Kontrast/Farbe/Text/Hintergrund/Gamma + Größe",
     f_warp: "GPU-Wölbung · Regler 0→1.5 · pro Bereich",
@@ -1183,7 +1175,6 @@ pub const DE: Strings = Strings {
     f_detect: "Erkannt · zu Nachrichten springen · Fertig-Glocke",
     f_focus: "Einen Bereich groß über einer Mattglas-Unschärfe spiegeln",
     f_restore: "Absturz / Beenden → genau den Chat wiederaufnehmen",
-    f_mcp: "Schreibgeschützte Beobachtung + Push · stdio, nie TCP",
     scope_pane: "DIESER BEREICH",
     scope_outer: "AUSSEN",
     follow_outer: "Außen folgen",
@@ -1288,7 +1279,6 @@ pub const DE: Strings = Strings {
     kf_drag: "Untertab ziehen",
     kf_rename: "Rechtsklick benennt um",
     kf_popout: "Pop-out-Notizfenster",
-    kf_themes: "5 Themes + eigenes",
     kf_perpane: "Look pro Bereich",
     kf_grade: "Monitor-Abstimmung",
     kf_warp: "Tonnenwölbung",
@@ -1354,6 +1344,7 @@ pub const DE: Strings = Strings {
     gc: &coord::DE,
     ui: &chrome::DE,
     parts: &parts::DE,
+    hs: &help::DE,
 };
 
 /// 中文 (简体).
@@ -1364,7 +1355,6 @@ pub const ZH: Strings = Strings {
     features: "功能",
     demo_btn: "启动此布局的演示",
     demo_sub: "打开一个克隆当前布局的新窗口，每个窗格都填充示例文本——可安全用于共享屏幕",
-    help_footer: "按 Esc 或点击外部关闭 · 运行时主题是可实时编辑的 TOML",
     s_tabs: "标签页与窗格",
     s_edit: "编辑与剪贴板",
     s_links: "链接",
@@ -1448,7 +1438,6 @@ pub const ZH: Strings = Strings {
     f_drag: "拆分、移动或撕出为新窗口",
     f_rename: "标签页、任务、分支或窗格名 · 点击别处即保存",
     f_popout: "快速窗口 · 感知单实例",
-    f_themes: "可实时编辑的 TOML，约 300 毫秒热重载",
     f_perpane: "主题与调校可继承 · “跟随外层”",
     f_grade: "亮度/对比度/颜色/文字/背景/伽马 + 大小",
     f_warp: "GPU 曲面 · 0→1.5 旋钮 · 逐窗格",
@@ -1457,7 +1446,6 @@ pub const ZH: Strings = Strings {
     f_detect: "已检测 · 跳转消息 · 完成提示音",
     f_focus: "在磨砂模糊上放大镜像一个窗格",
     f_restore: "崩溃 / 退出 → 恢复到完全相同的会话",
-    f_mcp: "只读观察 + 推送 · stdio，绝不用 TCP",
     scope_pane: "本窗格",
     scope_outer: "外层",
     follow_outer: "跟随外层",
@@ -1562,7 +1550,6 @@ pub const ZH: Strings = Strings {
     kf_drag: "拖动子标签页",
     kf_rename: "右键重命名",
     kf_popout: "弹出草稿",
-    kf_themes: "5 个主题 + 自定义",
     kf_perpane: "逐窗格外观",
     kf_grade: "显示器调校",
     kf_warp: "桶形弯曲",
@@ -1628,6 +1615,7 @@ pub const ZH: Strings = Strings {
     gc: &coord::ZH,
     ui: &chrome::ZH,
     parts: &parts::ZH,
+    hs: &help::ZH,
 };
 
 /// Français.
@@ -1638,7 +1626,6 @@ pub const FR: Strings = Strings {
     features: "FONCTIONS",
     demo_btn: "Lancer une démo de cette disposition",
     demo_sub: "ouvre une nouvelle fenêtre clonant cette disposition, chaque volet rempli de texte fictif — sûr pour le partage d'écran",
-    help_footer: "Échap ou clic à l'extérieur pour fermer · les thèmes sont du TOML éditable en direct",
     s_tabs: "ONGLETS ET VOLETS",
     s_edit: "ÉDITION ET PRESSE-PAPIERS",
     s_links: "LIENS",
@@ -1722,7 +1709,6 @@ pub const FR: Strings = Strings {
     f_drag: "Diviser, déplacer ou détacher une nouvelle fenêtre",
     f_rename: "Onglet, tâche, branche ou volet · cliquez ailleurs pour enregistrer",
     f_popout: "Fenêtre rapide · consciente de l'instance unique",
-    f_themes: "TOML éditable en direct, rechargement ~300ms",
     f_perpane: "Thème et réglage hérités · « suivre l’extérieur »",
     f_grade: "Lumin./contraste/couleur/texte/fond/gamma + taille",
     f_warp: "Courbe GPU · molette 0→1.5 · par volet",
@@ -1731,7 +1717,6 @@ pub const FR: Strings = Strings {
     f_detect: "Détecté · naviguer entre les messages · cloche de fin",
     f_focus: "Refléter un volet en grand sur un flou dépoli",
     f_restore: "Plantage / fermeture → reprendre le chat exact",
-    f_mcp: "Observation lecture seule + push · stdio, jamais TCP",
     scope_pane: "CE VOLET",
     scope_outer: "EXTÉRIEUR",
     follow_outer: "suivre l’extérieur",
@@ -1836,7 +1821,6 @@ pub const FR: Strings = Strings {
     kf_drag: "glisser un sous-onglet",
     kf_rename: "Clic droit pour renommer",
     kf_popout: "fenêtre détachée",
-    kf_themes: "5 thèmes + perso",
     kf_perpane: "apparence par volet",
     kf_grade: "réglage écran",
     kf_warp: "courbure en tonneau",
@@ -1902,6 +1886,7 @@ pub const FR: Strings = Strings {
     gc: &coord::FR,
     ui: &chrome::FR,
     parts: &parts::FR,
+    hs: &help::FR,
 };
 
 /// Русский.
@@ -1912,7 +1897,6 @@ pub const RU: Strings = Strings {
     features: "ВОЗМОЖНОСТИ",
     demo_btn: "Запустить демо этой раскладки",
     demo_sub: "откроет новое окно, клонирующее эту раскладку, каждая панель заполнена текстом-рыбой — безопасно для демонстрации экрана",
-    help_footer: "Esc или клик снаружи чтобы закрыть · темы — это TOML, редактируемый на ходу",
     s_tabs: "ВКЛАДКИ И ПАНЕЛИ",
     s_edit: "РЕДАКТИРОВАНИЕ И БУФЕР",
     s_links: "ССЫЛКИ",
@@ -1996,7 +1980,6 @@ pub const RU: Strings = Strings {
     f_drag: "Разделить, переместить или отделить новое окно",
     f_rename: "Вкладка, задача, ветка или панель · клик вне сохраняет",
     f_popout: "Быстрое окно · учитывает единственный экземпляр",
-    f_themes: "Редактируемый на ходу TOML, перезагрузка ~300мс",
     f_perpane: "Тема и настройка наследуются · «следовать внешнему»",
     f_grade: "Яркость/контраст/цвет/текст/фон/гамма + размер",
     f_warp: "Изгиб на GPU · регулятор 0→1.5 · по панели",
@@ -2005,7 +1988,6 @@ pub const RU: Strings = Strings {
     f_detect: "Обнаружено · переход по сообщениям · звонок готовности",
     f_focus: "Отразить панель крупно поверх матового размытия",
     f_restore: "Сбой / выход → возобновить точно тот же чат",
-    f_mcp: "Наблюдение только для чтения + push · stdio, никогда TCP",
     scope_pane: "ЭТА ПАНЕЛЬ",
     scope_outer: "ВНЕШНЕЕ",
     follow_outer: "следовать внешнему",
@@ -2110,7 +2092,6 @@ pub const RU: Strings = Strings {
     kf_drag: "тащить подвкладку",
     kf_rename: "Переименование правой кнопкой",
     kf_popout: "всплывающее окно",
-    kf_themes: "5 тем + своя",
     kf_perpane: "вид по панели",
     kf_grade: "настройка монитора",
     kf_warp: "бочкообразный изгиб",
@@ -2176,6 +2157,7 @@ pub const RU: Strings = Strings {
     gc: &coord::RU,
     ui: &chrome::RU,
     parts: &parts::RU,
+    hs: &help::RU,
 };
 
 /// 日本語.
@@ -2186,7 +2168,6 @@ pub const JA: Strings = Strings {
     features: "機能",
     demo_btn: "このレイアウトのデモを起動",
     demo_sub: "このレイアウトを複製した新しいウィンドウを開き、各ペインをダミーテキストで埋めます — 画面共有に安全",
-    help_footer: "Esc または外側をクリックで閉じる · テーマは実行中に編集できる TOML です",
     s_tabs: "タブとペイン",
     s_edit: "編集とクリップボード",
     s_links: "リンク",
@@ -2270,7 +2251,6 @@ pub const JA: Strings = Strings {
     f_drag: "分割、移動、または新しいウィンドウに切り離す",
     f_rename: "タブ・タスク・ブランチ・ペイン名 · 別の場所をクリックで保存",
     f_popout: "クイックウィンドウ · 単一インスタンス対応",
-    f_themes: "実行中に編集できる TOML、約300ミリ秒でリロード",
     f_perpane: "テーマと調整を継承 ·「外側に追従」",
     f_grade: "明るさ/コントラスト/色/文字/背景/ガンマ + サイズ",
     f_warp: "GPU 湾曲 · 0→1.5 ダイヤル · ペインごと",
@@ -2279,7 +2259,6 @@ pub const JA: Strings = Strings {
     f_detect: "検出 · メッセージ移動 · 完了ベル",
     f_focus: "すりガラスのぼかしの上にペインを大きくミラー",
     f_restore: "クラッシュ / 終了 → まったく同じチャットを再開",
-    f_mcp: "読み取り専用監視 + プッシュ · stdio、TCP は使わない",
     scope_pane: "このペイン",
     scope_outer: "外側",
     follow_outer: "外側に追従",
@@ -2384,7 +2363,6 @@ pub const JA: Strings = Strings {
     kf_drag: "サブタブをドラッグ",
     kf_rename: "右クリックで名前変更",
     kf_popout: "ポップアウトスクラッチ",
-    kf_themes: "5 テーマ + カスタム",
     kf_perpane: "ペインごとの外観",
     kf_grade: "モニター調整",
     kf_warp: "樽型湾曲",
@@ -2450,6 +2428,7 @@ pub const JA: Strings = Strings {
     gc: &coord::JA,
     ui: &chrome::JA,
     parts: &parts::JA,
+    hs: &help::JA,
 };
 
 /// 한국어.
@@ -2460,7 +2439,6 @@ pub const KO: Strings = Strings {
     features: "기능",
     demo_btn: "이 레이아웃의 데모 실행",
     demo_sub: "이 레이아웃을 복제한 새 창을 열고 각 패널을 예시 텍스트로 채웁니다 — 화면 공유에 안전",
-    help_footer: "Esc 또는 바깥 클릭으로 닫기 · 테마는 실행 중 편집 가능한 TOML",
     s_tabs: "탭과 패널",
     s_edit: "편집과 클립보드",
     s_links: "링크",
@@ -2544,7 +2522,6 @@ pub const KO: Strings = Strings {
     f_drag: "분할, 이동 또는 새 창으로 떼어내기",
     f_rename: "탭, 작업, 브랜치, 패널 이름 · 다른 곳을 클릭하면 저장",
     f_popout: "빠른 창 · 단일 인스턴스 인식",
-    f_themes: "실행 중 편집 가능한 TOML, 약 300ms 핫 리로드",
     f_perpane: "테마와 보정 상속 · '바깥 따르기'",
     f_grade: "밝기/대비/색/글자/배경/감마 + 크기",
     f_warp: "GPU 곡면 · 0→1.5 다이얼 · 패널별",
@@ -2553,7 +2530,6 @@ pub const KO: Strings = Strings {
     f_detect: "감지됨 · 메시지 이동 · 완료 벨",
     f_focus: "젖빛 흐림 위에 패널을 크게 미러링",
     f_restore: "충돌 / 종료 → 정확히 그 채팅 재개",
-    f_mcp: "읽기 전용 관찰 + 푸시 · stdio, TCP 안 씀",
     scope_pane: "이 패널",
     scope_outer: "바깥",
     follow_outer: "바깥 따르기",
@@ -2658,7 +2634,6 @@ pub const KO: Strings = Strings {
     kf_drag: "하위 탭 끌기",
     kf_rename: "우클릭으로 이름 변경",
     kf_popout: "팝아웃 스크래치",
-    kf_themes: "5개 테마 + 커스텀",
     kf_perpane: "패널별 외관",
     kf_grade: "모니터 보정",
     kf_warp: "배럴 곡면",
@@ -2724,6 +2699,7 @@ pub const KO: Strings = Strings {
     gc: &coord::KO,
     ui: &chrome::KO,
     parts: &parts::KO,
+    hs: &help::KO,
 };
 
 /// हिन्दी.
@@ -2735,7 +2711,6 @@ pub const HI: Strings = Strings {
     demo_btn: "इस लेआउट का डेमो शुरू करें",
     demo_sub:
         "एक नई विंडो खोलता है जो इस लेआउट की नकल करती है, हर पैनल डमी टेक्स्ट से भरा — स्क्रीन शेयर के लिए सुरक्षित",
-    help_footer: "बंद करने के लिए Esc या बाहर क्लिक करें · थीम चलते समय संपादन योग्य TOML हैं",
     s_tabs: "टैब और पैनल",
     s_edit: "संपादन और क्लिपबोर्ड",
     s_links: "लिंक",
@@ -2819,7 +2794,6 @@ pub const HI: Strings = Strings {
     f_drag: "विभाजित करें, ले जाएँ या नई विंडो में अलग करें",
     f_rename: "टैब, कार्य, शाखा या पैनल का नाम · कहीं और क्लिक करें, सहेजा जाएगा",
     f_popout: "त्वरित विंडो · एकल-इंस्टेंस जागरूक",
-    f_themes: "चलते समय संपादन योग्य TOML, ~300ms हॉट रीलोड",
     f_perpane: "थीम और समायोजन विरासत में · 'बाहरी अपनाएँ'",
     f_grade: "चमक/कंट्रास्ट/रंग/टेक्स्ट/पृष्ठभूमि/गामा + आकार",
     f_warp: "GPU वक्र · 0→1.5 डायल · प्रति-पैनल",
@@ -2828,7 +2802,6 @@ pub const HI: Strings = Strings {
     f_detect: "पता चला · संदेश कूदें · पूर्ण घंटी",
     f_focus: "धुँधले कांच पर पैनल को बड़ा मिरर करें",
     f_restore: "क्रैश / बंद → ठीक वही चैट फिर से शुरू करें",
-    f_mcp: "केवल-पढ़ने वाली निगरानी + पुश · stdio, कभी TCP नहीं",
     scope_pane: "यह पैनल",
     scope_outer: "बाहरी",
     follow_outer: "बाहरी अपनाएँ",
@@ -2933,7 +2906,6 @@ pub const HI: Strings = Strings {
     kf_drag: "उप-टैब खींचें",
     kf_rename: "दायाँ-क्लिक कर नाम बदलें",
     kf_popout: "पॉप-आउट स्क्रैच",
-    kf_themes: "5 थीम + कस्टम",
     kf_perpane: "प्रति-पैनल रूप",
     kf_grade: "मॉनिटर समायोजन",
     kf_warp: "बैरल मोड़",
@@ -2999,6 +2971,7 @@ pub const HI: Strings = Strings {
     gc: &coord::HI,
     ui: &chrome::HI,
     parts: &parts::HI,
+    hs: &help::HI,
 };
 
 #[cfg(test)]
@@ -3247,6 +3220,9 @@ mod tests {
         "lang.t_syntax",
         "lang.t_theme",
         "lang.thm_hacker",
+        // German keeps "Skins"; French writes usage the same way.
+        "help.fk_skins",
+        "help.fk_usage",
         "parts.attention_age_hours",
         "parts.attention_age_minutes",
         "parts.attention_age_seconds",
@@ -3328,6 +3304,7 @@ mod tests {
             ("coord", include_str!("lang/coord.rs")),
             ("chrome", include_str!("lang/chrome.rs")),
             ("parts", include_str!("lang/parts.rs")),
+            ("help", include_str!("lang/help.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
