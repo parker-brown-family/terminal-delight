@@ -14,10 +14,14 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Get around without the mouse
 
-- **Alt+O** opens what the focused pane last handed over. Pressed again while
-  any document is open, it raises the artifact rail with its cards numbered
-  1–9, newest first, and a digit opens that one. Alt+B is left alone: it is
-  back-one-word in every shell and agent prompt.
+- **Alt+O climbs from the focused pane outward.** The first press opens what
+  that pane last handed over: a page or Markdown file in the reading frame,
+  anything else behind a question that asks before it leaves for the browser.
+  The second press, over that page or question, lists that pane's own
+  artifacts, numbered 1–9 newest first. The third lists every pane's, and the
+  fourth puts the list away. A digit or Enter opens one. What other panes have
+  open never changes a step. Alt+B is left alone: it is back-one-word in every
+  shell and agent prompt.
 - **Alt+Q** opens the NEEDS ME queue with its rows numbered, and a digit goes
   straight to that pane, with or without Alt still held.
 - **Alt+1–9 are pane marks.** Hold one for 300 ms to mark the pane you are on;

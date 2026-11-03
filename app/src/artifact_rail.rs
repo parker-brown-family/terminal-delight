@@ -90,6 +90,10 @@ pub(crate) struct Card {
     pub opened: bool,
     /// How many older handovers the same pane made.
     pub earlier: usize,
+    /// On the pane's own rail, the handover this card is — every card there
+    /// is one of the same pane's. `None` on the window's rail, where a card
+    /// stands for its pane's newest.
+    pub handover: Option<String>,
 }
 
 /// The cards in the order they are drawn.
@@ -204,7 +208,66 @@ impl Workspace {
 
     pub(crate) fn art_close(&mut self) {
         self.art_rail = false;
+        self.art_scope = None;
         self.art_order.clear();
+    }
+
+    /// Raise one pane's own artifacts: every handover it made, newest first,
+    /// numbered. The second rung of Alt+O's ladder (`navkeys::artifact_step`).
+    pub(crate) fn art_open_pane(&mut self, key: u64, cx: &mut Context<Self>) {
+        self.art_scope = Some(key);
+        self.art_order.clear();
+        self.art_cursor = 0;
+        self.art_rail = true;
+        cx.notify();
+    }
+
+    /// Which rail is up, for Alt+O's ladder.
+    pub(crate) fn art_rail_up(&self) -> navkeys::RailUp {
+        match (self.art_rail, self.art_scope) {
+            (false, _) => navkeys::RailUp::None,
+            (true, Some(_)) => navkeys::RailUp::Pane,
+            (true, None) => navkeys::RailUp::All,
+        }
+    }
+
+    /// One card per handover of the pane `key`, newest first.
+    fn art_pane_cards(&self, key: u64, cx: &App) -> Vec<Card> {
+        let Some(leaf) = self.leaf_by_key(key) else {
+            return Vec::new();
+        };
+        let tab = self.tab_with_leaf(leaf.entity_id()).unwrap_or(0);
+        let place = self
+            .place_of(tab)
+            .project
+            .map(|p| self.branch_label(BarBranch::Project(p)));
+        let v = leaf.read(cx);
+        let ledger = v.handovers();
+        let pane_name = v.handover_pane_name();
+        let task = self
+            .tabs
+            .get(tab)
+            .and_then(|t| t.name.clone())
+            .unwrap_or_else(|| pane_name.clone());
+        ledger
+            .newest_first()
+            .into_iter()
+            .map(|h| Card {
+                key,
+                tab,
+                place: place.clone(),
+                task: task.clone(),
+                who: None,
+                pane_name: pane_name.clone(),
+                state: v.agent_status().state,
+                label: h.label.clone(),
+                kind: h.kind(),
+                at_ms: h.at_ms,
+                opened: ledger.is_opened(&h.key()),
+                earlier: 0,
+                handover: Some(h.key()),
+            })
+            .collect()
     }
 
     /// One card per live pane that has handed something over.
@@ -237,6 +300,7 @@ impl Workspace {
                     at_ms: newest.at_ms,
                     opened: ledger.is_opened(&newest.key()),
                     earlier: ledger.newest_first().len().saturating_sub(1),
+                    handover: None,
                 });
             }
         }
@@ -245,21 +309,35 @@ impl Workspace {
     }
 
     /// The cards as drawn, in the order the keys and the clicks agree on.
-    fn art_shown(&self, cx: &App) -> Vec<Card> {
-        arrange(self.art_cards(cx), &self.art_order)
+    pub(crate) fn art_shown(&self, cx: &App) -> Vec<Card> {
+        match self.art_scope {
+            Some(key) => arrange(self.art_pane_cards(key, cx), &[]),
+            None => arrange(self.art_cards(cx), &self.art_order),
+        }
     }
 
     /// Go to a card's pane, and with `open`, open its newest handover there,
     /// the way the pane's own header chip does. The rail closes so the pane is
     /// in view; the card stays on it for next time.
-    pub(crate) fn art_go(&mut self, key: u64, open: bool, cx: &mut Context<Self>) {
+    pub(crate) fn art_go(
+        &mut self,
+        key: u64,
+        handover: Option<String>,
+        open: bool,
+        cx: &mut Context<Self>,
+    ) {
         self.art_close();
         let Some(leaf) = self.leaf_by_key(key) else {
             cx.notify();
             return;
         };
         if open {
-            leaf.update(cx, |v, cx| v.open_newest_handover(cx));
+            match handover {
+                // A card on the pane's own rail is one artifact: open that
+                // one, asking first if it would leave for the browser.
+                Some(h) => leaf.update(cx, |v, cx| v.ask_handover_by_key(&h, cx)),
+                None => leaf.update(cx, |v, cx| v.open_newest_handover(cx)),
+            }
         }
         self.pending_jump = Some(leaf.entity_id());
         cx.notify();
@@ -294,7 +372,7 @@ impl Workspace {
             "down" => self.art_cursor = (self.art_cursor + 1).min(cards.len().saturating_sub(1)),
             "up" => self.art_cursor = self.art_cursor.saturating_sub(1),
             "enter" => match cards.get(self.art_cursor) {
-                Some(c) => self.art_go(c.key, true, cx),
+                Some(c) => self.art_go(c.key, c.handover.clone(), true, cx),
                 None => return false,
             },
             // 1 to 9 open that card's artifact, newest first, as Alt+O promised.
@@ -302,7 +380,7 @@ impl Workspace {
             // mark while Alt is still held.
             d if navkeys::row_digit(d).is_some() => {
                 if let Some(c) = navkeys::row_digit(d).and_then(|i| cards.get(i)) {
-                    self.art_go(c.key, true, cx);
+                    self.art_go(c.key, c.handover.clone(), true, cx);
                 }
             }
             _ => return false,
@@ -458,9 +536,12 @@ impl Workspace {
                 })
                 .on_mouse_down(
                     MouseButton::Left,
-                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.art_go(key, true, cx);
+                    cx.listener({
+                        let h = c.handover.clone();
+                        move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.art_go(key, h.clone(), true, cx);
+                        }
                     }),
                 );
             list = list.child(
@@ -476,7 +557,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.art_go(key, false, cx);
+                            ws.art_go(key, None, false, cx);
                         }),
                     ),
             );
@@ -491,7 +572,18 @@ impl Workspace {
             .text_size(sk.text_px(9.5))
             .font_weight(gpui::FontWeight::BOLD)
             .text_color(sk.ink.ink_dim)
-            .child(format!("\u{1f4dc} {}", t.cfg_artifacts.to_uppercase()))
+            // The pane's own rail says whose it is, and which key climbs to
+            // the window's.
+            .child(match self.art_scope.and_then(|k| self.leaf_by_key(k)) {
+                Some(leaf) => format!(
+                    "\u{1f4dc} {}",
+                    lang::fill(
+                        t.art_pane_hdr,
+                        &[("pane", &leaf.read(cx).handover_pane_name())]
+                    )
+                ),
+                None => format!("\u{1f4dc} {}", t.cfg_artifacts.to_uppercase()),
+            })
             .child(div().flex_1())
             .when(!cards.is_empty(), |d| d.child(cards.len().to_string()))
             .child(
@@ -569,6 +661,7 @@ mod tests {
             at_ms,
             opened: false,
             earlier: 0,
+            handover: None,
         }
     }
 

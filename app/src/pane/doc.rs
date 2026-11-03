@@ -967,7 +967,7 @@ impl TerminalView {
     }
 
     /// The path the floating square is showing, if one is up.
-    pub(super) fn float_path(&self, cx: &App) -> Option<std::path::PathBuf> {
+    pub(crate) fn float_path(&self, cx: &App) -> Option<std::path::PathBuf> {
         let float = self.float.as_ref()?;
         Some(float.view.read(cx).target().path.clone())
     }
