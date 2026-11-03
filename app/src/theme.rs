@@ -455,9 +455,9 @@ pub enum GradeKey {
     ImageGlow,
     InactiveImageGlow,
     InactiveText,
-    /// How much brighter the focused pane's terminal is drawn: a gain on the
-    /// lightness of its text and background, `1.0` (unset, as it always was)
-    /// up to [`ACTIVE_BRIGHTNESS_MAX`].
+    /// How light the focused pane's terminal is drawn: a gain on the
+    /// lightness of its text and background, from [`ACTIVE_BRIGHTNESS_MIN`]
+    /// through `1.0` (unset, as it always was) up to [`ACTIVE_BRIGHTNESS_MAX`].
     ActiveBrightness,
     InactiveBrightness,
     InactiveBlur,
@@ -495,7 +495,7 @@ impl GradeKey {
             GradeKey::InactiveText => (0.0, 1.0, 0.45),
             // 78% is the 22% black veil every inactive pane has always worn.
             GradeKey::InactiveBrightness => (0.0, 1.0, INACTIVE_BRIGHTNESS),
-            GradeKey::ActiveBrightness => (1.0, ACTIVE_BRIGHTNESS_MAX, 1.0),
+            GradeKey::ActiveBrightness => (ACTIVE_BRIGHTNESS_MIN, ACTIVE_BRIGHTNESS_MAX, 1.0),
             GradeKey::InactiveBlur => (0.0, 1.0, 0.0),
             GradeKey::AfterglowMs => (0.0, 1200.0, 220.0),
             GradeKey::CursorLingerMs | GradeKey::InactiveCursorLingerMs => {
@@ -646,8 +646,8 @@ pub struct Grade {
     /// Fraction of active text intensity while inactive; default 45% / Intrusive 52%.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_text: Option<f32>,
-    /// How much brighter the focused pane's terminal is drawn, `1.0..=`
-    /// [`ACTIVE_BRIGHTNESS_MAX`]. None draws it exactly as it always was.
+    /// How light the focused pane's terminal is drawn, [`ACTIVE_BRIGHTNESS_MIN`]
+    /// `..=` [`ACTIVE_BRIGHTNESS_MAX`]. None draws it exactly as it always was.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub active_brightness: Option<f32>,
     /// How much light an inactive pane keeps under its veil, 0..1. None draws
@@ -1511,12 +1511,13 @@ impl Grade {
     }
 
     /// The gain the focused pane's terminal is drawn at: 1 is as it always
-    /// was, [`ACTIVE_BRIGHTNESS_MAX`] the brightest.
+    /// was, [`ACTIVE_BRIGHTNESS_MIN`] the dimmest, [`ACTIVE_BRIGHTNESS_MAX`]
+    /// the brightest.
     pub fn active_brightness_at_edge(&self) -> f32 {
         self.active_brightness
             .filter(|v| v.is_finite())
             .unwrap_or(1.0)
-            .clamp(1.0, ACTIVE_BRIGHTNESS_MAX)
+            .clamp(ACTIVE_BRIGHTNESS_MIN, ACTIVE_BRIGHTNESS_MAX)
     }
 
     /// The light an inactive pane keeps: 1 is no veil, 0 the darkest one.
@@ -3301,6 +3302,10 @@ pub const INACTIVE_BRIGHTNESS: f32 = 0.78;
 /// The most the ACTIVE TERMINALS brightness gauge lifts the focused pane:
 /// half again as light. Further, ordinary text reaches white and loses its hue.
 pub const ACTIVE_BRIGHTNESS_MAX: f32 = 1.5;
+/// The least light the ACTIVE TERMINALS brightness gauge leaves the focused
+/// pane: a fifth. Parker: *"needs to go way down to like 20%"*. Dimming loses
+/// no hue, because lightness below the midpoint is a mix with black.
+pub const ACTIVE_BRIGHTNESS_MIN: f32 = 0.2;
 
 /// The size a fresh window opens at — the two SIZE channels of
 /// [`house_outer`]'s grade. `scale` is the menu-bar/chrome multiplier

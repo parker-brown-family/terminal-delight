@@ -12,6 +12,61 @@ candidate and never shipped stable, so everything below ships in 0.5.0. The
 sections above *Upgrading from 0.3.0* are new since the 0.4.0 candidates; the
 sections from there down are what the 0.4.0 candidates already carried.
 
+### Get around without the mouse
+
+- **Alt+O** opens what the focused pane last handed over. Pressed again while
+  any document is open, it raises the artifact rail with its cards numbered
+  1–9, newest first, and a digit opens that one. Alt+B is left alone: it is
+  back-one-word in every shell and agent prompt.
+- **Alt+Q** opens the NEEDS ME queue with its rows numbered, and a digit goes
+  straight to that pane, with or without Alt still held.
+- **Alt+1–9 are pane marks.** Hold one for 300 ms to mark the pane you are on;
+  tap it from anywhere to come back. A marked pane shows its digit in its
+  header, and the mark is saved with the pane. A mark on nothing, or on a pane
+  that has closed, says so. The switch in a tab's menu turns the digits back
+  over to the program. Tabs are no longer reached by their position.
+- **Alt+0** goes back through the panes you visited, up to nine, and
+  **Alt+Shift+0** forward again. The mouse's back and forward buttons do the
+  same. Nothing is drawn for it.
+- **Shift+PgUp / Shift+PgDn** page the history of every pane, shells included.
+  Plain PgUp stays the shell's.
+- **Alt+E** scrolls to the previous error line in the pane (compiler errors,
+  failed tests, tracebacks, `fatal:`), and **Alt+Shift+E** to the next. With
+  none further it says so.
+- **Lookup (Alt+L)** shows how long ago each pane and tab was last visited or
+  last changed state, with a dash where that is not known.
+- **Scroll mode (Alt+[)**, tmux's copy mode for this terminal. Letters move
+  the view instead of reaching the program: j/k a line, u/d a page, g/G the
+  ends, [ and ] the previous and next of your turns or an error, { and } your
+  turns only, e/E errors, / to search, q or Escape back to the live bottom. A
+  strip along the bottom lists the keys. In a full-screen program such as
+  Claude Code, lines, pages and turns move the program's own history. Ctrl
+  and Alt chords still pass through, so Ctrl+C reaches a running agent.
+
+### Read an artifact from the keyboard
+
+- **A page or Markdown file you open is opened to read.** An Alt+click on its
+  path, the artifact chip and rail, Alt+O, or a link on the bench opens it in
+  the reading frame: 80% of the window wide and centred, 5% of the window
+  above it and 10% below. The FOCUS reader (Alt+R) uses the same frame. An
+  agent opening its own deliverable still gets the small square beside its
+  prompt, and images and PDFs still open in the square.
+- **While you read, the keyboard is the document's.** j/k and the arrows
+  scroll, Space and Shift+Space page, g and Shift+G go to the top and the end,
+  and + − 0 1 zoom. Tab and Shift+Tab walk the sections, figures and
+  decisions; ] and [ jump to the next decision without a CONCUR stamp; Enter
+  writes a note on the selection, c stamps it, and y copies the notes map.
+  Nothing you type reaches the shell underneath, Ctrl+C included. The window's
+  and the pane's own chords (Alt+arrows, Alt+O, Alt+Q, Alt+A, Ctrl+W …) still
+  work.
+- **Ctrl+Shift+Enter sends the notes to the agent and closes the document**,
+  once they have landed in its prompt. A send that fails leaves it open and
+  says why. The ↪ button does the same.
+- **A video or sound playing over a page takes no keys.** It plays in its box
+  on top of the page in the frame, and the page keeps the keyboard. Escape
+  puts away one thing at a time: the note being written, the selection, the
+  clip, then the document and the frame.
+
 ### Update Terminal Delight from inside TD
 
 - ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a
@@ -196,13 +251,13 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Keys, prompts, gauges and notes
 
-- **One key reaches a tab.** Alt+1 to Alt+8 jump to a tab by its place in the
-  spine's order, and Alt+9 to the last. Any tab can be pinned to
-  Alt+Shift+<letter>; the pin is saved on the tab, so it survives reordering,
-  filing, a restart and a reattach. The spine's row menu and the tab config menu
-  show the keys, take a pin, refuse a taken letter with the reason, and carry
-  the window's Alt+1–9 switch. A focused terminal gives up only the chords the
-  window holds. (#1260)
+- **One key reaches a tab.** Any tab can be pinned to Alt+Shift+<letter>; the
+  pin is saved on the tab, so it survives reordering, filing, a restart and a
+  reattach. The spine's row menu and the tab config menu show the pin, take a
+  new one, refuse a taken letter with the reason, and carry the window's
+  Alt+1–9 switch. A focused terminal gives up only the chords the window
+  holds. (#1260) Alt+1–9 first jumped to tabs by their place; they are pane
+  marks now (see *Get around without the mouse*).
 - **Ctrl+C in an agent's prompt copies what it is about to clear.** In a Claude
   Code or Codex pane, Ctrl+C on the terminal face first puts the typed words on
   the clipboard and the primary selection, then sends the ^C as before. An empty
@@ -214,10 +269,10 @@ sections from there down are what the 0.4.0 candidates already carried.
   `look at /…/pastes/pasted-1.png please`. A tag is paired with a paste only in
   paste order and within ten seconds of it, and a tag it cannot account for
   stays a tag. (#1279)
-- **ACTIVE TERMINALS gains a brightness gauge** that lifts the focused pane,
-  from 100% (unset, the look before) to 150%. It is the partner of INACTIVE
-  TERMINALS' brightness, and MCP reads and sets it as `active_brightness`.
-  (#1277)
+- **ACTIVE TERMINALS gains a brightness gauge** that dims or lifts the focused
+  pane, from 20% through 100% (unset, the look before) to 150%. It is the
+  partner of INACTIVE TERMINALS' brightness, and MCP reads and sets it as
+  `active_brightness`. (#1277)
 - **The cursor can leave a phosphor trail.** GAUGES › CURSOR TRAIL has a
   switch, an afterimage or streak style, and linger (up to 600 ms) and light
   sliders. It is off until you turn it on, and Clean, a crawl and a desktop
@@ -404,9 +459,11 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Upgrading from a 0.4.0 candidate
 
-- **Alt+1 to Alt+9 and Alt+Shift+<letter> now switch tabs**, so a program in
-  a focused terminal no longer receives those chords while the window holds
-  them. Ctrl+C in a Claude Code or Codex prompt also writes the clipboard. (#1260,
+- **Alt+1 to Alt+9 are pane marks and Alt+Shift+<letter> switches tabs**, so
+  a program in a focused terminal no longer receives those chords while the
+  window holds them. The 0.4.0 candidates' Alt+1–9 tab-by-place jump is gone:
+  hold Alt+N on a pane to mark it, tap Alt+N to return. Alt+O, Alt+Q, Alt+E
+  and Alt+0 are also the window's now; Alt+B is still the shell's. Ctrl+C in a Claude Code or Codex prompt also writes the clipboard. (#1260,
   #1251)
 - **The terminal core is rio-vt 0.5.29.** Replacing the window keeps every
   terminal running on its existing host, which keeps the core it started with

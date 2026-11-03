@@ -488,6 +488,10 @@ pub(crate) struct FloatingDoc {
     /// when the clip closes. `None` for every square that is not a clip, and
     /// for a clip opened over the bare terminal.
     below: Option<Box<FloatingDoc>>,
+    /// A person opened this to read it ([`TerminalView::open_to_read`]): it
+    /// came up in the FOCUS frame, and it goes when the frame does. A square
+    /// an agent opened beside itself is not, and stays small.
+    to_read: bool,
 }
 
 impl FloatingDoc {
@@ -511,6 +515,7 @@ impl FloatingDoc {
             _send: send,
             _finished: finished,
             below: None,
+            to_read: false,
         }
     }
 
@@ -2947,6 +2952,14 @@ pub struct TerminalView {
     /// This pane's seat in the Threshing Floor, once a person seats it. Saved with
     /// the leaf so it outlives the pane's number (see `threshing_floor::SeatId`).
     pub seat: Option<crate::threshing_floor::SeatId>,
+    /// The Alt+digit this pane is marked with, 1 to 9, if a person held one
+    /// down on it ([`crate::navkeys`]). One pane per digit per window: the
+    /// window clears it from every other pane when it sets it. Saved with the
+    /// leaf, like the seat, so a mark outlives a restart.
+    pub mark: Option<u8>,
+    /// Scroll mode (Alt+[): plain keys move the view instead of reaching the
+    /// program, until `q` or Escape. See [`crate::navkeys::ScrollMotion`].
+    pub(crate) scroll_mode: bool,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -3235,6 +3248,12 @@ pub struct TerminalView {
     /// it is read is never taken for the one that was lent. `None` while
     /// nothing is lent. See [`TerminalView::reader_document`].
     lent: Option<gpui::EntityId>,
+    /// The clip playing over the page lent to the reader, lent with it, so
+    /// the reader draws it on top of the page and this pane does not.
+    lent_clip: Option<gpui::EntityId>,
+    /// What is lent is a document a person opened to read
+    /// ([`TerminalView::open_to_read`]), so the frame closes when it goes.
+    lent_to_read: bool,
     /// The sticky note pinned to this pane's glass, if any. See [`crate::sticky`]
     /// — in particular why Esc does NOT take it down.
     note: Option<crate::sticky::Sticky>,
@@ -4379,6 +4398,15 @@ impl TerminalView {
         if !on {
             self.take_back(cx);
             *self.read_history.get_mut() = None;
+            // A document a person opened to read goes with the frame it was
+            // read in, clip and all; a square that was already up when the
+            // reader opened over it stays, as it was.
+            let read = |f: &FloatingDoc| f.to_read || f.below.as_ref().is_some_and(|b| b.to_read);
+            while self.float.as_ref().is_some_and(read) {
+                if !self.request_close_float(cx) {
+                    break;
+                }
+            }
         }
     }
 
@@ -4396,30 +4424,90 @@ impl TerminalView {
         cx: &mut Context<Self>,
     ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         let want = if self.being_read {
-            self.read_document()
+            self.read_document(cx)
         } else {
             None
         };
         let want_id = want.as_ref().map(|v| v.entity_id());
         if want_id != self.lent {
+            // A document opened to be read that has gone — Ctrl+W, a link
+            // that replaced it, its file handed to the desktop — takes the
+            // frame it was read in with it, rather than leaving the reader
+            // to fall back on the terminal it was opened over.
+            let ended = self.lent_to_read && want.is_none();
             self.take_back(cx);
             if let Some(view) = &want {
                 view.update(cx, |v, cx| v.lend(true, cx));
             }
             self.lent = want_id;
+            self.lent_to_read = want.as_ref().is_some_and(|w| {
+                let mut floats = self
+                    .float
+                    .iter()
+                    .chain(self.float.iter().filter_map(|f| f.below.as_deref()));
+                floats.any(|f| f.to_read && f.view == *w)
+            });
+            if ended {
+                cx.emit(CloseFocusRead);
+            }
             cx.notify();
         }
         want
     }
 
+    /// The clip the FOCUS frame draws over the page it reads, lent to it with
+    /// the page; `None` when no clip plays over the page being read. Asked
+    /// every frame, after [`Self::reader_document`], on the same terms.
+    pub fn reader_clip(
+        &mut self,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        let want = self
+            .float
+            .as_ref()
+            .filter(|top| top.below.as_ref().is_some_and(|b| self.lends(&b.view)))
+            .map(|top| top.view.clone());
+        let want_id = want.as_ref().map(|v| v.entity_id());
+        if want_id != self.lent_clip {
+            self.take_back_clip(cx);
+            if let Some(view) = &want {
+                view.update(cx, |v, cx| v.lend(true, cx));
+            }
+            self.lent_clip = want_id;
+            cx.notify();
+        }
+        want
+    }
+
+    /// The page or Markdown file being READ in the FOCUS frame, while one is:
+    /// the document that takes every key ([`crate::keylayer::Layer::Reading`]).
+    /// A picture or a PDF lent to the reader is only being looked at.
+    pub(crate) fn reading_view(
+        &self,
+        cx: &App,
+    ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+        if !self.being_read {
+            return None;
+        }
+        self.lent_view()
+            .filter(|v| v.read(cx).target().kind.reads())
+    }
+
     /// The document [`crate::docopen::read_from`] names for this pane now,
     /// while the pane holds one there.
-    fn read_document(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
+    fn read_document(&self, cx: &App) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         use crate::docopen::{DocSeat, ReadFrom};
         let face = self.bench.face();
         let square_up = self.float.is_some() && float_shows_on(face);
         match crate::docopen::read_from(face, square_up) {
-            ReadFrom::Document(DocSeat::Float) => self.float.as_ref().map(|f| f.view.clone()),
+            // A clip over a page is read as the page, with the clip drawn on
+            // top of it in the frame: the page is what takes the keys.
+            ReadFrom::Document(DocSeat::Float) => {
+                self.float.as_ref().map(|f| match f.below.as_deref() {
+                    Some(page) if f.view.read(cx).target().kind.plays() => page.view.clone(),
+                    _ => f.view.clone(),
+                })
+            }
             ReadFrom::Document(DocSeat::Face) => self.doc.as_ref().map(|d| d.view.clone()),
             ReadFrom::Grid => None,
         }
@@ -4430,8 +4518,13 @@ impl TerminalView {
     pub fn lent_view(&self) -> Option<gpui::Entity<crate::docview::DocumentView>> {
         let id = self.lent?;
         let float = self.float.as_ref().map(|f| &f.view);
+        let below = self
+            .float
+            .as_ref()
+            .and_then(|f| f.below.as_ref())
+            .map(|b| &b.view);
         let face = self.doc.as_ref().map(|d| &d.view);
-        [float, face]
+        [float, below, face]
             .into_iter()
             .flatten()
             .find(|v| v.entity_id() == id)
@@ -4442,18 +4535,34 @@ impl TerminalView {
     /// does not. A view drawn in two places measures two boxes, and a page
     /// laid out at each in turn never settles.
     fn lends(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
-        self.lent == Some(view.entity_id())
+        let id = Some(view.entity_id());
+        self.lent == id || self.lent_clip == id
     }
 
     /// Take back whatever was lent to the reader, if this pane still holds
     /// it. A view it no longer holds was handed back where it went:
     /// `show_document` and `float_of` hand back any view they are given.
     fn take_back(&mut self, cx: &mut Context<Self>) {
+        self.take_back_clip(cx);
+        self.lent_to_read = false;
         let view = self.lent_view();
         self.lent = None;
         if let Some(view) = view {
             view.update(cx, |v, cx| v.lend(false, cx));
             cx.notify();
+        }
+    }
+
+    /// Take back the clip lent with the page, if it is still on top here.
+    fn take_back_clip(&mut self, cx: &mut Context<Self>) {
+        let Some(id) = self.lent_clip.take() else {
+            return;
+        };
+        if let Some(view) = self.float.as_ref().map(|f| f.view.clone()) {
+            if view.entity_id() == id {
+                view.update(cx, |v, cx| v.lend(false, cx));
+                cx.notify();
+            }
         }
     }
 
@@ -5448,6 +5557,8 @@ impl TerminalView {
             agent_access: crate::threshing_floor::AgentAccess::Open,
             model_label: None,
             seat: None,
+            mark: None,
+            scroll_mode: false,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -5551,6 +5662,8 @@ impl TerminalView {
                 .unwrap_or_else(Instant::now),
             being_read: false,
             lent: None,
+            lent_clip: None,
+            lent_to_read: false,
             note,
             peeled: None,
             note_hover: None,
@@ -6798,7 +6911,7 @@ impl TerminalView {
 
     /// Put a [`Said`] chip up on `row`, and take it down after [`SAID_FOR`]
     /// unless something newer has been said by then.
-    fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
+    pub(crate) fn say(&mut self, text: String, row: Option<usize>, cx: &mut Context<Self>) {
         let at = Instant::now();
         self.said = Some(Said { text, row, at });
         cx.notify();
@@ -7627,6 +7740,7 @@ impl TerminalView {
             // note box to take. The document is asked first: the note box, then
             // a brief's own dialog, is what Escape puts away before the square
             // itself, and an open note box turns its notes on the same chords.
+            crate::keylayer::Layer::Reading => self.reading_key(ks, cx),
             crate::keylayer::Layer::Float => self.float_key(ks, cx),
             // The Document face: its own keys move the document, and every
             // other key it was handed stops there — the shell is hidden.
@@ -7657,6 +7771,7 @@ impl TerminalView {
                     self.terminal_key(&k, ks, cx)
                 }
             }
+            crate::keylayer::Layer::Scroll => self.scroll_key(&k, cx),
             crate::keylayer::Layer::Terminal => self.terminal_key(&k, ks, cx),
         };
         if handled == Handled::Consumed {
@@ -7669,7 +7784,9 @@ impl TerminalView {
     /// One read per keystroke, so every layer is judged against the same instant
     /// — the alternative is a ladder whose rungs disagree about what is open.
     pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
+        let reading = self.reading_view(cx).is_some();
         crate::keylayer::Up {
+            reading,
             agent: self.mode.is_agent(),
             paint: theme::paint_mode(cx),
             ctx_menu: self.ctx_menu.is_some(),
@@ -7678,7 +7795,11 @@ impl TerminalView {
             // every key, as it does on the pane — Escape puts the note box
             // away, and a page key is the note's — so the reader claims none
             // until the box is closed.
-            reader: self.being_read && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
+            // A document being read takes the reader's keys too, Escape and
+            // paging among them: one ladder of Escape, and one way to page.
+            reader: self.being_read
+                && !reading
+                && !self.lent_view().is_some_and(|v| v.read(cx).has_caret()),
             sticky: self.sticky_composing(),
             rename: self.renaming.is_some(),
             note: self.note.is_some(),
@@ -7693,6 +7814,7 @@ impl TerminalView {
             doc_caret: self
                 .doc_on_face()
                 .is_some_and(|d| d.view.read(cx).has_caret()),
+            scroll: self.scroll_mode,
         }
     }
 
@@ -7831,6 +7953,8 @@ impl TerminalView {
                 // the Workspace, `keystroke_bytes` would send `ESC s` on the way
                 // past. It costs the shell alt+s, which nothing standard binds.
                 "s" => self.sticky_toggle(cx),
+                // Alt+[ enters scroll mode, and leaves it.
+                "[" => self.toggle_scroll_mode(cx),
                 // Alt+Backspace peels it off. The shell loses the binding exactly
                 // when the pane is visibly carrying a note and not otherwise, and
                 // peeling by accident costs one keystroke: alt+s brings the text
@@ -8026,6 +8150,21 @@ impl TerminalView {
         // steps toward older, ctrl+Home is the oldest row — wherever older is
         // painted; the wheel's per-gesture flip is about physical direction,
         // which a named key doesn't have.
+        // Shift+PgUp / Shift+PgDn page the scrollback in EVERY pane, shells
+        // included — the chord every other Linux terminal uses — on the same
+        // terms as the plain pair: an app that owns its own view keeps it.
+        if let Some(page) = crate::keylayer::shift_page(k) {
+            let tmode = self.session.term.lock().mode();
+            if !tmode.contains(TermMode::ALT_SCREEN) && !tmode.intersects(TermMode::MOUSE_MODE) {
+                let scroll = match page {
+                    crate::keylayer::Paging::PageDown => Scroll::PageDown,
+                    _ => Scroll::PageUp,
+                };
+                self.session.term.lock().scroll_display(scroll);
+                cx.notify();
+                return Handled::Declined;
+            }
+        }
         if let Some(nav) = read_nav(k) {
             let paging = matches!(nav, ReadNav::PageUp | ReadNav::PageDown);
             if !paging || self.mode.is_agent() {
@@ -8589,6 +8728,189 @@ impl TerminalView {
         }
         drop(term);
         cx.notify();
+    }
+
+    /// Grid lines (alacritty `Line.0`) across scrollback and screen that read
+    /// as an error report ([`crate::navkeys::looks_like_error`]), oldest first.
+    /// A run of error lines (a compiler's message and its context) counts once,
+    /// at its first line, so one press is one error rather than one line.
+    fn error_line_indices(&self) -> Vec<i32> {
+        let term = self.session.term.lock();
+        let grid = &*term;
+        let cols = grid.columns().min(200);
+        let mut out = Vec::new();
+        let mut prev = false;
+        for l in grid.topmost_line().0..=grid.bottommost_line().0 {
+            let row = grid.row(Line(l));
+            let mut s = String::with_capacity(cols);
+            for c in 0..cols {
+                let ch = row[Column(c)].c;
+                s.push(if ch == '\0' { ' ' } else { ch });
+            }
+            let hit = crate::navkeys::looks_like_error(&s);
+            if hit && !prev {
+                out.push(l);
+            }
+            prev = hit;
+        }
+        out
+    }
+
+    /// Alt+E: scroll to the nearest error line above the top of the view
+    /// (`older`), or below it (Alt+Shift+E), and put it at the top. With none
+    /// that way the pane says so rather than doing nothing, because a key that
+    /// silently does nothing reads as a key that is broken. On the alternate
+    /// screen the program owns the view and there is no history to search.
+    /// Returns where it went, for the tests.
+    pub(crate) fn jump_error(&mut self, older: bool, cx: &mut Context<Self>) -> Option<i32> {
+        let older = older ^ self.paint_inverted;
+        if self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN)
+        {
+            return None;
+        }
+        let idx = self.error_line_indices();
+        let top = -(self.session.term.lock().display_offset() as i32);
+        let target = crate::navkeys::nearest(&idx, top, older);
+        match target {
+            Some(l) => self.scroll_to_line(l, None, cx),
+            None => {
+                let ui = crate::lang::current().strings().ui;
+                let text = if older {
+                    ui.nav_err_none_older
+                } else {
+                    ui.nav_err_none_newer
+                };
+                self.say(text.to_string(), None, cx);
+            }
+        }
+        target
+    }
+
+    /// Alt+[: enter scroll mode, or leave it for the live bottom.
+    pub(crate) fn toggle_scroll_mode(&mut self, cx: &mut Context<Self>) {
+        if self.scroll_mode {
+            self.leave_scroll_mode(cx);
+        } else {
+            self.scroll_mode = true;
+            cx.notify();
+        }
+    }
+
+    fn leave_scroll_mode(&mut self, cx: &mut Context<Self>) {
+        self.scroll_mode = false;
+        let alt = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        if !alt {
+            self.session.term.lock().scroll_display(Scroll::Bottom);
+        }
+        cx.notify();
+    }
+
+    /// The grid lines `[` and `]` step between: your own turns (in an agent
+    /// pane) and error lines, oldest first. A shell's commands are not among
+    /// them: Terminal Delight does not read the prompt marks a shell can emit.
+    fn block_line_indices(&self) -> Vec<i32> {
+        let mut lines = self.error_line_indices();
+        if self.mode.is_agent() {
+            lines.extend(self.human_line_indices());
+        }
+        lines.sort_unstable();
+        lines.dedup();
+        lines
+    }
+
+    /// Scroll a full-screen program (Claude Code paints on the alternate
+    /// screen and keeps its own history) by asking it, the way the ▲/▼
+    /// buttons do: wheel notches when it reports the mouse, else its page key.
+    fn nudge_program(&mut self, older: bool, notches: usize) {
+        let mode = self.session.term.lock().mode();
+        let bytes = if mode.intersects(TermMode::MOUSE_MODE) {
+            wheel_step_bytes(older, mode.contains(TermMode::SGR_MOUSE)).repeat(notches.max(1))
+        } else if older {
+            b"\x1b[5~".to_vec()
+        } else {
+            b"\x1b[6~".to_vec()
+        };
+        self.session.notifier.notify(bytes);
+    }
+
+    /// One key in scroll mode. Every plain key stops here, used or not, so
+    /// nothing typed lands in a program whose output the person scrolled away
+    /// from.
+    pub(crate) fn scroll_motion_key(
+        &mut self,
+        motion: Option<crate::navkeys::ScrollMotion>,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::navkeys::ScrollMotion as M;
+        let Some(motion) = motion else {
+            return;
+        };
+        let ui = crate::lang::current().strings().ui;
+        let alt = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        if alt {
+            let half = (self.session.term.lock().screen_lines() / 2).max(1);
+            match motion {
+                M::Lines(n) => self.nudge_program(n > 0, n.unsigned_abs() as usize),
+                M::PageUp => self.nudge_program(true, half),
+                M::PageDown => self.nudge_program(false, half),
+                M::Turn { older } | M::Block { older } => self.seek_agent_prompt(!older, cx),
+                M::Exit => self.leave_scroll_mode(cx),
+                M::Find => {
+                    self.leave_scroll_mode(cx);
+                    cx.emit(OpenFind { global: false });
+                }
+                M::Top | M::Bottom | M::Error { .. } => {
+                    self.say(ui.nav_scroll_owned.to_string(), None, cx);
+                }
+            }
+            cx.notify();
+            return;
+        }
+        let top = -(self.session.term.lock().display_offset() as i32);
+        match motion {
+            M::Lines(n) => self.session.term.lock().scroll_display(Scroll::Delta(n)),
+            M::PageUp => self.session.term.lock().scroll_display(Scroll::PageUp),
+            M::PageDown => self.session.term.lock().scroll_display(Scroll::PageDown),
+            M::Top => self.session.term.lock().scroll_display(Scroll::Top),
+            M::Bottom => self.session.term.lock().scroll_display(Scroll::Bottom),
+            M::Block { older } => {
+                match crate::navkeys::nearest(&self.block_line_indices(), top, older) {
+                    Some(l) => self.scroll_to_line(l, None, cx),
+                    None => self.say(ui.nav_no_blocks.to_string(), None, cx),
+                }
+            }
+            M::Turn { older } => self.scroll_to_human(!older, cx),
+            M::Error { older } => {
+                self.jump_error(older, cx);
+            }
+            M::Find => {
+                self.leave_scroll_mode(cx);
+                cx.emit(OpenFind { global: false });
+            }
+            M::Exit => self.leave_scroll_mode(cx),
+        }
+        cx.notify();
+    }
+
+    fn scroll_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+        let motion = crate::navkeys::scroll_motion(k.key, k.shift);
+        self.scroll_motion_key(motion, cx);
+        Handled::Consumed
     }
 
     /// The ▲/▼ header buttons in an agent pane whose TUI owns the
@@ -9382,7 +9704,7 @@ impl TerminalView {
                             let (row, _, _) = self.viewport_cell(ev.position);
                             // Refused only for HTML with no engine, which has
                             // already gone to the desktop and said why.
-                            let _ = self.open_float(target, Some(row), cx);
+                            let _ = self.open_to_read(target, Some(row), cx);
                         }
                     }
                     Some(Took::Stop)
@@ -11110,7 +11432,7 @@ impl Render for TerminalView {
                                 MouseButton::Left,
                                 cx.listener(move |v, _, _, cx| {
                                     if let Some(doc) = doc.clone() {
-                                        let _ = v.open_float(doc, Some(row_at), cx);
+                                        let _ = v.open_to_read(doc, Some(row_at), cx);
                                     }
                                     v.ctx_menu = None;
                                     cx.stop_propagation();
@@ -12425,6 +12747,23 @@ impl Render for TerminalView {
                             .text_size(sk.text_px(9.5 * scale))
                             .child(mark)
                     }))
+                    // The Alt+digit this pane is marked with, so the person can
+                    // see which key comes back here. Shown whatever the logo
+                    // switch says: it is a key to press, not decoration.
+                    .children(self.mark.map(|n| {
+                        div()
+                            .id("pane-mark")
+                            .debug_selector(|| "pane-mark".into())
+                            .flex_none()
+                            .px(px(5. * scale))
+                            .rounded(sk.rad(4.))
+                            .border(sk.box_border(1.))
+                            .border_color(th.accent)
+                            .text_color(th.accent)
+                            .font_weight(gpui::FontWeight::BOLD)
+                            .text_size(sk.text_px(9.5 * scale))
+                            .child(format!("{n}"))
+                    }))
                     // Under a chevron title the focused pane's » replaces the
                     // ▸: one lead mark, not two. Unfocused panes keep the ▸, so
                     // the chevron says which pane has the keyboard.
@@ -12876,6 +13215,29 @@ impl Render for TerminalView {
                         .child(said.text.clone()),
                 )
         });
+        // Scroll mode's key strip, along the bottom of the screen, so the keys
+        // the mode answers are in front of the person using them.
+        let scroll_el = (self.scroll_mode && on_terminal).then(|| {
+            let ui = crate::lang::current().strings().ui;
+            div()
+                .absolute()
+                .left(px(grid_pad_x))
+                .right(px(grid_pad_x))
+                .bottom(px(grid_pad_y))
+                .px(px(8.))
+                .py(px(2.))
+                .bg(th.surface.alpha(0.92))
+                .border_1()
+                .border_color(th.accent.alpha(0.8))
+                .rounded(px(4.))
+                .text_color(th.accent)
+                .text_size(sk.text_px(11.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
+                .debug_selector(|| "scroll-strip".into())
+                .child(ui.nav_scroll_strip)
+        });
         // The sticky note. Its geometry comes from the same `content_bounds` the
         // warp tube is registered from, because the note is drawn through the
         // INVERSE of that tube's distortion and the two must be measuring the
@@ -13228,6 +13590,7 @@ impl Render for TerminalView {
                     .children(float_cursor)
                     // Over the square: a link in it can be what prompted it.
                     .children(said_el)
+                    .children(scroll_el)
                     // The glass meets its bezel in rounded, shadowed corners.
                     // Over everything ON the glass, since the lip's shadow falls
                     // on whatever is there; under the ignition, which is light.
@@ -17763,7 +18126,10 @@ mod tests {
         );
         assert!(open.contains("self.bench_open_href("), "{open}");
         let href = method_body(&bench_src, "fn bench_open_href(");
-        assert!(href.contains("self.open_float(target, None, cx)"), "{href}");
+        assert!(
+            href.contains("self.open_to_read(target, None, cx)"),
+            "{href}"
+        );
         let click = method_body(&bench_src, "pub(super) fn bench_doc_click(");
         assert!(click.contains("crate::docopen::click_intent("), "{click}");
         assert!(
@@ -18105,11 +18471,22 @@ mod tests {
         assert_eq!(alt("3", false), None);
         assert_eq!(alt("m", true), None);
         assert_eq!(
-            alt("q", true),
-            Some(b"\x1bQ".to_vec()),
+            alt("z", true),
+            Some(b"\x1bZ".to_vec()),
             "only the pinned letter"
         );
         crate::keylayer::hold_tab_keys(crate::keylayer::TabKeys::default());
+        // The Hands on Keyboard chords never reach the program, held or not,
+        // and Alt+B, the one Parker first asked for, still does: it is
+        // back-one-word in every shell and agent prompt.
+        for c in ["o", "q", "e", "0"] {
+            assert_eq!(alt(c, false), None, "alt+{c} is the window's");
+        }
+        assert_eq!(
+            alt("b", false),
+            Some(b"\x1bb".to_vec()),
+            "alt+b stays readline's"
+        );
     }
 
     #[test]

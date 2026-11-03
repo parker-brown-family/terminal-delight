@@ -1,0 +1,203 @@
+<!doctype html>
+<html lang="en"><head><title>Hands on Keyboard</title><!-- briefing: {"id": "td-hands-on-keyboard", "purpose": "decision"} --><!--BRIEF:head-->
+<style>
+svg{display:block;width:100%;height:auto}.small{font-size:13px;color:var(--dim)}
+svg .k{font:700 18px var(--mono)} svg .kl{font:9.5px var(--mono)} svg .t{font:12px var(--mono)} svg .ts{font:10.5px var(--mono)}
+.cmp{width:100%;border-collapse:collapse;font-size:13.5px}
+.cmp td,.cmp th{padding:7px 9px;border-bottom:1px solid var(--line);vertical-align:top;text-align:left}
+.cmp th{font:700 11px var(--mono);letter-spacing:.1em;text-transform:uppercase;color:var(--dim)}
+.cmp kbd,.strip kbd,.tile kbd{font:12px var(--mono);padding:0 5px;border:1px solid var(--line2);border-radius:5px;color:var(--fgb)}
+.term{font:12.5px/1.75 var(--mono);color:var(--fg);background:color-mix(in srgb,var(--bg0) 92%,transparent);border:1px solid var(--line2);border-radius:10px;overflow:hidden}
+.term .row{display:flex;gap:10px;padding:0 12px;white-space:nowrap;overflow:hidden;text-overflow:clip}
+.term .g{flex:none;width:58px;color:var(--dim)}
+.term .cur{background:color-mix(in srgb,var(--acc) 22%,transparent);box-shadow:inset 3px 0 0 var(--acc)}
+.term .err .g,.term .err span:last-child{color:#f08a8a}
+.term .art span:last-child{color:var(--acc);text-decoration:underline}
+.strip{display:flex;flex-wrap:wrap;gap:6px 12px;padding:8px 12px;border-top:1px solid var(--line2);font:11.5px var(--mono);color:var(--dim)}
+.strip b{color:var(--acc);letter-spacing:.12em}
+.lens{display:flex;gap:8px;margin:0 0 10px;font:700 11px var(--mono);letter-spacing:.12em}
+.lens span{padding:4px 10px;border:1px solid var(--line2);border-radius:999px;color:var(--dim)}
+.lens span.on{color:var(--fgb);border-color:var(--acc);box-shadow:0 0 12px color-mix(in srgb,var(--acc) 40%,transparent)}
+.tiles{display:grid;grid-template-columns:repeat(auto-fill,minmax(150px,1fr));gap:10px}
+.tile{position:relative;min-height:84px;padding:10px 10px 8px;border-radius:10px;border:1px solid var(--line2);background:color-mix(in srgb,var(--bg0) 88%,transparent);font:11px/1.45 var(--mono);color:var(--dim)}
+.tile .h{position:absolute;right:8px;top:6px;font:800 22px var(--mono);color:var(--acc);text-shadow:0 0 14px var(--acc)}
+.tile .nm{color:var(--fgb);font-weight:700;padding-right:26px}
+.tile.wait{border-color:#d03b3b;box-shadow:0 0 0 1px #d03b3b55}
+.tile.done{border-color:#0ca30c}
+.tile.work{border-color:#3987e5}
+.tile.unk{border-style:dashed}
+.spine{font:12.5px/2 var(--mono);color:var(--dim);border:1px solid var(--line2);border-radius:10px;padding:8px 0;background:color-mix(in srgb,var(--bg0) 88%,transparent)}
+.spine div{padding:0 14px;display:flex;justify-content:space-between}
+.spine .grp{color:var(--fg);font-weight:700;letter-spacing:.08em}
+.spine .now{color:var(--fgb);background:color-mix(in srgb,var(--acc) 34%,transparent);box-shadow:inset 3px 0 0 var(--acc)}
+.spine .g1{color:var(--fgb);background:color-mix(in srgb,var(--acc) 22%,transparent)}
+.spine .g2{color:var(--fg);background:color-mix(in srgb,var(--acc) 13%,transparent)}
+.spine .g3{background:color-mix(in srgb,var(--acc) 7%,transparent)}
+.spine .g4{background:color-mix(in srgb,var(--acc) 3%,transparent)}
+.spine em{font-style:normal;color:var(--acc)}
+.look{font:12.5px/1.8 var(--mono);border:1px solid var(--line2);border-radius:10px;background:color-mix(in srgb,var(--bg0) 90%,transparent);padding:10px 14px;color:var(--fg)}
+.look .q{color:var(--fgb);border-bottom:1px solid var(--line2);padding-bottom:6px;margin-bottom:6px}
+.look .sec{color:var(--dim);font-size:11px;letter-spacing:.12em;margin-top:6px}
+.look .sel{background:color-mix(in srgb,var(--acc) 22%,transparent);box-shadow:inset 3px 0 0 var(--acc);margin:0 -14px;padding:0 14px}
+.look .none{color:var(--dim);font-style:italic}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="eyebrow">Briefing · decision · HTML · difficulty 6/10, so one plan page and one approval</div><h1>Hands on Keyboard</h1><p class="lede">A tester on X missed tmux-style keyboard scrolling in Terminal Delight, and you asked for a key that opens the current artifact and a better way to move around thirty tabs than the mouse. Half of it already exists; four choices are yours, and three ideas go further.</p><nav class="sections"></nav></div></header>
+<main class="wrap">
+
+<section class="pane"><h2 id="sec-today" data-brief-anchor="sec-today"><span class="n">01</span> The Alt row is nearly full</h2>
+<p>Terminal Delight owns ten Alt+letters. Your shell and the agent prompts own most of the rest, because readline has used them for forty years.</p>
+<figure id="fig-alt-row" data-brief-anchor="fig-alt-row"><span class="lbl">01 · Who owns each Alt+letter</span>
+<div class="scroller"><svg viewBox="0 0 640 214" role="img" aria-label="QWERTY keyboard coloured by who owns each Alt+letter chord">
+<g class="kb">
+<rect class="mine" x="14" y="10" width="52" height="46" rx="7"/><text class="k ink" x="40" y="36" text-anchor="middle">Q</text><text class="kl mine" x="40" y="50" text-anchor="middle">queue*</text>
+<rect class="struct" x="72" y="10" width="52" height="46" rx="7"/><text class="k ink" x="98" y="36" text-anchor="middle">W</text><text class="kl ink2" x="98" y="50" text-anchor="middle">close</text>
+<rect class="ready" x="130" y="10" width="52" height="46" rx="7"/><text class="k ink" x="156" y="36" text-anchor="middle">E</text><text class="kl ready" x="156" y="50" text-anchor="middle">free</text>
+<rect class="struct" x="188" y="10" width="52" height="46" rx="7"/><text class="k ink" x="214" y="36" text-anchor="middle">R</text><text class="kl ink2" x="214" y="50" text-anchor="middle">focus</text>
+<rect class="fail" x="246" y="10" width="52" height="46" rx="7"/><text class="k ink" x="272" y="36" text-anchor="middle">T</text><text class="kl ink2" x="272" y="50" text-anchor="middle">swap wd</text>
+<rect class="fail" x="304" y="10" width="52" height="46" rx="7"/><text class="k ink" x="330" y="36" text-anchor="middle">Y</text><text class="kl ink2" x="330" y="50" text-anchor="middle">yank</text>
+<rect class="fail" x="362" y="10" width="52" height="46" rx="7"/><text class="k ink" x="388" y="36" text-anchor="middle">U</text><text class="kl ink2" x="388" y="50" text-anchor="middle">UPCASE</text>
+<rect class="ready" x="420" y="10" width="52" height="46" rx="7"/><text class="k ink" x="446" y="36" text-anchor="middle">I</text><text class="kl ready" x="446" y="50" text-anchor="middle">free</text>
+<rect class="mine" x="478" y="10" width="52" height="46" rx="7"/><text class="k ink" x="504" y="36" text-anchor="middle">O</text><text class="kl mine" x="504" y="50" text-anchor="middle">open*</text>
+<rect class="fail" x="536" y="10" width="52" height="46" rx="7"/><text class="k ink" x="562" y="36" text-anchor="middle">P</text><text class="kl ink2" x="562" y="50" text-anchor="middle">model</text>
+<rect class="struct" x="30" y="62" width="52" height="46" rx="7"/><text class="k ink" x="56" y="88" text-anchor="middle">A</text><text class="kl ink2" x="56" y="102" text-anchor="middle">agent</text>
+<rect class="struct" x="88" y="62" width="52" height="46" rx="7"/><text class="k ink" x="114" y="88" text-anchor="middle">S</text><text class="kl ink2" x="114" y="102" text-anchor="middle">sticky</text>
+<rect class="fail" x="146" y="62" width="52" height="46" rx="7"/><text class="k ink" x="172" y="88" text-anchor="middle">D</text><text class="kl ink2" x="172" y="102" text-anchor="middle">kill wd</text>
+<rect class="fail" x="204" y="62" width="52" height="46" rx="7"/><text class="k ink" x="230" y="88" text-anchor="middle">F</text><text class="kl ink2" x="230" y="102" text-anchor="middle">word →</text>
+<rect class="struct" x="262" y="62" width="52" height="46" rx="7"/><text class="k ink" x="288" y="88" text-anchor="middle">G</text><text class="kl ink2" x="288" y="102" text-anchor="middle">git</text>
+<rect class="struct" x="320" y="62" width="52" height="46" rx="7"/><text class="k ink" x="346" y="88" text-anchor="middle">H</text><text class="kl ink2" x="346" y="102" text-anchor="middle">split ↕</text>
+<rect class="ready" x="378" y="62" width="52" height="46" rx="7"/><text class="k ink" x="404" y="88" text-anchor="middle">J</text><text class="kl ready" x="404" y="102" text-anchor="middle">free</text>
+<rect class="struct" x="436" y="62" width="52" height="46" rx="7"/><text class="k ink" x="462" y="88" text-anchor="middle">K</text><text class="kl ink2" x="462" y="102" text-anchor="middle">face</text>
+<rect class="struct" x="494" y="62" width="52" height="46" rx="7"/><text class="k ink" x="520" y="88" text-anchor="middle">L</text><text class="kl ink2" x="520" y="102" text-anchor="middle">lookup</text>
+<rect class="ready" x="58" y="114" width="52" height="46" rx="7"/><text class="k ink" x="84" y="140" text-anchor="middle">Z</text><text class="kl ready" x="84" y="154" text-anchor="middle">free</text>
+<rect class="ready" x="116" y="114" width="52" height="46" rx="7"/><text class="k ink" x="142" y="140" text-anchor="middle">X</text><text class="kl ready" x="142" y="154" text-anchor="middle">free</text>
+<rect class="fail" x="174" y="114" width="52" height="46" rx="7"/><text class="k ink" x="200" y="140" text-anchor="middle">C</text><text class="kl ink2" x="200" y="154" text-anchor="middle">Capital</text>
+<rect class="struct" x="232" y="114" width="52" height="46" rx="7"/><text class="k ink" x="258" y="140" text-anchor="middle">V</text><text class="kl ink2" x="258" y="154" text-anchor="middle">split ↔</text>
+<rect class="crit" x="290" y="114" width="52" height="46" rx="7" stroke-width="2.5"/><text class="k ink" x="316" y="140" text-anchor="middle">B</text><text class="kl crit" x="316" y="154" text-anchor="middle">← word</text>
+<rect class="fail" x="348" y="114" width="52" height="46" rx="7"/><text class="k ink" x="374" y="140" text-anchor="middle">N</text><text class="kl ink2" x="374" y="154" text-anchor="middle">history</text>
+<rect class="struct" x="406" y="114" width="52" height="46" rx="7"/><text class="k ink" x="432" y="140" text-anchor="middle">M</text><text class="kl ink2" x="432" y="154" text-anchor="middle">note</text>
+</g>
+<rect class="struct" x="14" y="182" width="14" height="14" rx="3"/><text class="ts ink2" x="34" y="193">Terminal Delight</text>
+<rect class="fail" x="152" y="182" width="14" height="14" rx="3"/><text class="ts ink2" x="172" y="193">your shell / agent prompt</text>
+<rect class="ready" x="340" y="182" width="14" height="14" rx="3"/><text class="ts ink2" x="360" y="193">free</text>
+<rect class="mine" x="410" y="182" width="14" height="14" rx="3"/><text class="ts ink2" x="430" y="193">yellow = my proposals</text>
+<rect class="crit" x="14" y="200" width="14" height="10" rx="3"/><text class="ts crit" x="34" y="209">red = the key you asked for, already in use</text>
+</svg></div>
+<figcaption><b>Alt+B is "back one word" in every shell and in the Claude and Codex prompts</b>, and Terminal Delight's own code keeps it free on purpose. Taking it for "open artifact" costs that in every pane. Seven letters were free; I would put "open" on <b>Alt+O</b> and "who needs me" on <b>Alt+Q</b>.</figcaption>
+<p class="small">Drawn from the code: the window's and the pane's chord tables in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/keylayer.rs">keylayer.rs</a> on the 0.5.0 line, and the help sheet in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>. Shell column from readline's default emacs bindings; P as the model picker is from Claude Code's docs and was not pressed here. Hyprland binds no bare Alt+letter on this machine (checked the config read-only).</p></figure>
+
+<figure id="fig-paste-vs-today" data-brief-anchor="fig-paste-vs-today"><span class="lbl">02 · The pasted plan against what ships</span>
+<div class="scroller"><table class="cmp">
+<tr><th>Pasted idea</th><th>Today</th><th>Verdict</th></tr>
+<tr><td>Page through history</td><td><kbd>PgUp</kbd> <kbd>PgDn</kbd> in agent panes; <kbd>Ctrl+Home</kbd> <kbd>Ctrl+End</kbd> everywhere</td><td><span class="tag w">gap</span> shell panes have no keyboard page; add <kbd>Shift+PgUp</kbd>, the key every other terminal uses</td></tr>
+<tr><td>Next / previous agent message</td><td><kbd>Ctrl+↑</kbd> <kbd>Ctrl+↓</kbd> steps your own turns</td><td><span class="tag v">exists</span> extend to every block in scroll mode</td></tr>
+<tr><td>Search scrollback</td><td><kbd>Ctrl+F</kbd> this pane, <kbd>Ctrl+Shift+F</kbd> all panes</td><td><span class="tag v">exists</span></td></tr>
+<tr><td>Switch panes by keyboard</td><td><kbd>Alt+arrows</kbd> by direction</td><td><span class="tag v">exists</span></td></tr>
+<tr><td>Alt+H/J/K/L for panes</td><td>H splits, K flips the face, L is lookup</td><td><span class="tag c">collides</span> three of four taken</td></tr>
+<tr><td>Alt+E next error, Alt+A next artifact</td><td>A launches an agent</td><td><span class="tag c">collides</span> move both inside scroll mode</td></tr>
+<tr><td>Jump to tab by number</td><td><kbd>Alt+1…9</kbd> by position, on unless switched off; <kbd>Alt+Shift+letter</kbd> pins a tab from its menu</td><td><span class="tag w">rework</span> by position fails at thirty tabs</td></tr>
+<tr><td>(not pasted) workbench shelf</td><td>help says <kbd>Alt+1…4</kbd></td><td><span class="tag u">unknown</span> the tab digits are checked first, so this may never fire</td></tr>
+</table></div>
+<figcaption><b>Half the pasted list is already in the help sheet</b>, which says the problem is partly that nobody can find the keys. The real gaps are paging a shell, moving between kinds of output, and reaching a pane you cannot see.</figcaption>
+<p class="small">From the code, not pressed. The workbench row is read off the order of the key-routing ladder in keylayer.rs and needs a test before anyone trusts it.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-marks" data-brief-anchor="sec-marks"><span class="n">02</span> Pane marks work like car radio presets</h2>
+<p>Your idea: <kbd>Alt+3</kbd> goes to the pane marked 3, and holding it marks the pane you are on. Car radios work this way, and they teach one lesson: a tap acts when the key comes up.</p>
+<figure id="fig-tap-hold" data-brief-anchor="fig-tap-hold"><span class="lbl">03 · Why a tap must wait for the key to lift</span>
+<div class="scroller"><svg viewBox="0 0 640 214" role="img" aria-label="Timeline of tap and hold on Alt+3 showing why the jump fires on release">
+<line class="wire" x1="120" y1="190" x2="620" y2="190"/><text class="ts ink2" x="120" y="206">0 ms</text><text class="ts ink2" x="300" y="206" text-anchor="middle">350 ms</text><text class="ts ink2" x="620" y="206" text-anchor="end">900 ms</text>
+<line class="mine" x1="300" y1="14" x2="300" y2="190" stroke-dasharray="4 4"/><text class="ts mine" x="306" y="24">hold threshold (yours to tune)</text>
+<text class="t ink" x="10" y="54">tap</text>
+<rect class="struct" x="120" y="40" width="44" height="22" rx="5"/><text class="ts ink" x="170" y="56">key up at 120 ms → go to ③</text>
+<text class="t ink" x="10" y="104">hold</text>
+<rect class="ready" x="120" y="90" width="180" height="22" rx="5"/><rect class="ready" x="300" y="90" width="200" height="22" rx="5" opacity=".45"/><text class="ts ink" x="306" y="106">ring fills, burns ③ onto this pane</text>
+<text class="t crit" x="10" y="154">jump on</text><text class="t crit" x="10" y="168">key down</text>
+<rect class="crit" x="120" y="140" width="10" height="22" rx="3"/><text class="ts crit" x="136" y="156">already moved to the old ③ …</text><text class="ts crit" x="306" y="172">… so the hold marks the wrong pane</text>
+</svg></div>
+<figcaption><b>A tap that fires on key-down moves you before the hold can finish</b>, so the hold would re-mark the pane you just arrived at. Firing on release costs the tap about a tenth of a second.</figcaption>
+<p class="small">A proposal; the 120 ms tap is an estimate of an ordinary keypress, not a measurement.</p></figure>
+<p>A mark follows the agent's conversation, so it survives a sleep and wake. An empty mark says "3 is empty, hold to set"; a closed one says "3 was KEYS · hands on keyboard, closed". <kbd>Alt+0</kbd> goes back to where you came from.</p>
+</section>
+
+<section class="pane"><h2 id="sec-scroll" data-brief-anchor="sec-scroll"><span class="n">03</span> Scroll mode moves by meaning</h2>
+<p><kbd>Alt+[</kbd>, tmux's key with Alt for the prefix, puts the pane in scroll mode: letters move you instead of going to the program. Terminal Delight knows which lines are yours, the agent's, tool calls and links, so you can move by block.</p>
+<figure id="fig-scroll-mode" data-brief-anchor="fig-scroll-mode"><span class="lbl">04 · An agent pane in scroll mode</span>
+<div class="term">
+<div class="row"><span class="g">▌you</span><span>add Shift+PgUp to shell panes</span></div>
+<div class="row"><span class="g">◆ agent</span><span>Reading keylayer.rs before I touch the paging table.</span></div>
+<div class="row"><span class="g">⚙ tool</span><span>Bash  cargo test -p terminal-delight keylayer</span></div>
+<div class="row err cur"><span class="g">✕ error</span><span>error[E0425]: cannot find function `paging_shift` in this scope</span></div>
+<div class="row"><span class="g">◆ agent</span><span>Wrong name; it is paging(). 41 tests pass now.</span></div>
+<div class="row art"><span class="g">▣ link</span><span>docs/plans/hands-on-keyboard/brief.html</span></div>
+<div class="strip"><b>SCROLL</b><span><kbd>j</kbd><kbd>k</kbd> line</span><span><kbd>[</kbd><kbd>]</kbd> block</span><span><kbd>{</kbd><kbd>}</kbd> your turns</span><span><kbd>e</kbd> error</span><span><kbd>a</kbd> artifact</span><span><kbd>/</kbd> find</span><span><kbd>o</kbd> open</span><span><kbd>y</kbd> copy block</span><span><kbd>q</kbd> back</span></div>
+</div>
+<figcaption><b>Inside the mode the whole home row is free</b>, which is where Alt+E and Alt+A from the pasted list belong. In a shell pane, commands only become blocks if the shell marks its prompts, and today Terminal Delight does not read those marks; the strip should say "no command marks here" rather than pretend.</figcaption>
+<p class="small">A mockup with invented transcript lines. Agent blocks come from the conversation file the FOCUS reader already binds to. Shell prompt marks appear only in the test fixtures, not in the parser.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-wild" data-brief-anchor="sec-wild"><span class="n">04</span> Three wild ones</h2>
+<p>Marks need setting up. These three do not.</p>
+<figure id="fig-constellation" data-brief-anchor="fig-constellation"><span class="lbl">05 · Constellation: every pane, two keys away</span>
+<div class="lens"><span class="on">WHERE</span><span>WHO</span><span>NEEDS ME · 2</span></div>
+<div class="tiles">
+<div class="tile wait"><span class="h">a</span><div class="nm">TERMINAL DELIGHT › KEYS</div>hands on keyboard<br>waiting on you · 4 min</div>
+<div class="tile work"><span class="h">s</span><div class="nm">TERMINAL DELIGHT › FLOOR</div>map parity<br>running cargo test</div>
+<div class="tile done"><span class="h">d</span><div class="nm">CINEMA DELIGHT › FILMS</div>showcase retell<br>done · handed over 1</div>
+<div class="tile wait"><span class="h">f</span><div class="nm">JEV › INTEGRATIONS</div>lead scoring<br>waiting on you · 31 min</div>
+<div class="tile work"><span class="h">j</span><div class="nm">WRITERS BLOCK › INBOX</div>learning brief<br>editing a file</div>
+<div class="tile done"><span class="h">k</span><div class="nm">DEV BOX › SURVIVAL KIT</div>desk reserve<br>done</div>
+<div class="tile work"><span class="h">l</span><div class="nm">TERMINAL DELIGHT › MARKETING</div>launch copy<br>thinking</div>
+<div class="tile unk"><span class="h">;</span><div class="nm">APES › DAEMON</div>shell<br>no agent detected</div>
+</div>
+<figcaption><b>One key spreads every pane across the window with a home-row letter on each</b>; type the letter to go there, or Shift with it to open it beside you. Tab changes the lens: <b>WHERE</b> follows the left bar, <b>WHO</b> follows the lines drawn on the Threshing Floor, <b>NEEDS ME</b> sorts by how long each has waited. Eight letters, two deep, reach 64 panes.</figcaption>
+<p class="small">A proposal, drawn with invented names in the pane-naming form the 0.5.0 line uses. Live thumbnails of thirty panes at once are an unmeasured rendering cost. Summon key: <kbd>Alt+Space</kbd>, unbound in Hyprland here; readline uses it to set a mark, which few people press.</p></figure>
+
+<figure id="fig-afterglow" data-brief-anchor="fig-afterglow"><span class="lbl">06 · Afterglow trail: the left bar remembers where you were</span>
+<div class="spine">
+<div class="grp"><span>TERMINAL DELIGHT</span><span></span></div>
+<div class="g2"><span>  KEYS</span><em>2</em></div>
+<div><span>  MARKETING</span><span></span></div>
+<div class="now"><span>  FLOOR</span><em>now</em></div>
+<div><span>  RELEASE</span><span></span></div>
+<div class="grp"><span>JEV</span><span></span></div>
+<div class="g1"><span>  INTEGRATIONS</span><em>1</em></div>
+<div class="g4"><span>  DECISION SPEC</span><em>4</em></div>
+<div class="grp"><span>CINEMA DELIGHT</span><span></span></div>
+<div class="g3"><span>  FILMS</span><em>3</em></div>
+</div>
+<figcaption><b>The last places you stood glow and fade like phosphor</b>, and <kbd>Alt+0</kbd> walks back along the glow: hold Alt, tap 0 to go further back, let go to land. It is Alt+Tab for panes, painted in the same afterglow the cursor already leaves.</figcaption>
+<p class="small">A proposal. How fast the glow fades would sit beside the cursor-linger sliders in GAUGES.</p></figure>
+
+<figure id="fig-go-to-the-work" data-brief-anchor="fig-go-to-the-work"><span class="lbl">07 · Look up the work, not the name</span>
+<div class="look">
+<div class="q">Alt+L  keylayer▏</div>
+<div class="sec">BY NAME</div>
+<div class="none">no project, tab, pane or note is called that</div>
+<div class="sec">BY WHAT IS HAPPENING</div>
+<div class="sel">TERMINAL DELIGHT › KEYS · edited keylayer.rs · 40 s ago</div>
+<div>TERMINAL DELIGHT › REVIEW · Codex reading keylayer.rs · 3 min ago</div>
+<div>TERMINAL DELIGHT › CI · cargo test keylayer, 2 failed · 6 min ago</div>
+</div>
+<figcaption><b>Lookup already finds panes by name; this finds them by the file, command or failure they are working on</b>, so "where is whoever is in the key code" takes one search. <kbd>Alt+Q</kbd>, the queue, is the shortcut for the commonest question of all: take me to the next pane waiting on me, oldest first.</figcaption>
+<p class="small">A proposal. Each agent's recent tool calls are already readable for the MCP tools; whether the window can search them on every keystroke without lag is not measured.</p></figure>
+</section>
+
+<section class="pane grill"><h2 id="sec-decide" data-brief-anchor="sec-decide"><span class="n">05</span> Yours to settle</h2>
+<div class="ask" id="q-open-key" data-brief-anchor="q-open-key"><h3>Which key opens the current artifact?</h3>
+<p>The pane's newest handed-over page opens in the floating square, and the key closes it again. With nothing handed over it says so rather than guessing.</p>
+<span class="rec">Recommend Alt+O. Alt+B works as you asked, at the price of back-one-word in every shell and agent prompt.</span></div>
+<div class="ask" id="q-digits" data-brief-anchor="q-digits"><h3>Do Alt+1–9 become pane marks?</h3>
+<p>Today they jump to tab positions, and are on unless switched off.</p>
+<span class="rec">Recommend yes: positions mean little past nine tabs. Alt+Shift+letter tab pins stay; the workbench shelf gets a test first.</span></div>
+<div class="ask" id="q-hold" data-brief-anchor="q-hold"><h3>Does holding a mark key set it, or peek at it?</h3>
+<p>Peeking (that pane floats over yours until you let go) would be used more often, but needs the same gesture.</p>
+<span class="rec">Recommend hold to set, as you described. Peeking happens inside the Constellation instead: the first letter you type previews that pane big.</span></div>
+<div class="ask" id="q-order" data-brief-anchor="q-order"><h3>What ships first?</h3>
+<p>Four slices, each one usable alone.</p>
+<span class="rec">Recommend: 1 · Shift+PgUp in shell panes and the open-artifact key. 2 · pane marks and Alt+0. 3 · scroll mode. 4 · the Constellation. Afterglow and lookup-by-work after that. A tmux preset with a Ctrl+B prefix waits until someone asks, since Ctrl+B is also readline's back-one-character.</span></div>
+</section>
+
+<footer><p>Primary artifact: this brief. Every key claim above was read from the 0.5.0 branch on 2026-11-02; none of the new chords has been built or pressed.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>

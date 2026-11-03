@@ -278,6 +278,72 @@ pub enum Mark {
         at: Bounds<Pixels>,
         degrees: f32,
     },
+    /// The anchor the keyboard is on: a ring round its whole box.
+    Selected { at: Bounds<Pixels> },
+}
+
+/// Which way the keyboard moves the selection over a document's anchors.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Pick {
+    /// The next (`1`) or previous section, figure or decision.
+    Target(i8),
+    /// The next or previous decision that takes a CONCUR stamp and has none.
+    Decision(i8),
+}
+
+/// Pure. The anchor the keyboard moves to, as an index into `anchors`, which
+/// are in document order. From the selection when there is one, wrapping at
+/// either end; with none, from the top of the view (`view_top`, in the
+/// anchors' own units), so the first press lands on what the reader is
+/// looking at rather than at the top of the file. An anchor with no place
+/// (inside a closed dialog, or not painted yet) is never picked. `None` when
+/// nothing fits: no decisions left to stamp says so by moving nowhere.
+pub fn pick(
+    anchors: &[Anchor],
+    from: Option<&str>,
+    pick: Pick,
+    stamped: &dyn Fn(&str) -> bool,
+    view_top: f32,
+) -> Option<usize> {
+    let (dir, decisions) = match pick {
+        Pick::Target(d) => (d, false),
+        Pick::Decision(d) => (d, true),
+    };
+    let fits = |a: &Anchor| {
+        a.rect.is_some() && (!decisions || (a.concur_zone.is_some() && !stamped(&a.nid)))
+    };
+    let cands: Vec<usize> = (0..anchors.len()).filter(|&i| fits(&anchors[i])).collect();
+    let y = |i: usize| anchors[i].rect.map_or(0.0, |r| r.y);
+    let found = match from.and_then(|nid| anchors.iter().position(|a| a.nid == nid)) {
+        Some(cur) if dir > 0 => cands.iter().find(|&&i| i > cur).or(cands.first()),
+        Some(cur) => cands.iter().rev().find(|&&i| i < cur).or(cands.last()),
+        None if dir > 0 => cands
+            .iter()
+            .find(|&&i| y(i) >= view_top - 1.0)
+            .or(cands.first()),
+        None => cands
+            .iter()
+            .rev()
+            .find(|&&i| y(i) < view_top)
+            .or(cands.last()),
+    };
+    found.copied()
+}
+
+/// Pure. Where to scroll so `rect` reads comfortably: its top a sixth of the
+/// way down the view. In view pixels from the document's top, or `None` when
+/// it is already wholly in the middle four fifths of the view and moving
+/// would only lose the reader's place.
+pub fn into_view(rect: RectCss, map: &PageToView) -> Option<f32> {
+    let k = map.px_per_css;
+    let view_h = f32::from(map.clip.size.height);
+    let scroll = f32::from(map.scroll);
+    let top = rect.y * k - scroll;
+    let bottom = top + rect.h * k;
+    if top >= view_h * 0.1 && bottom <= view_h * 0.9 {
+        return None;
+    }
+    Some((rect.y * k - view_h / 6.0).max(0.0))
 }
 
 /// What a press on the marks landed on.
@@ -472,6 +538,10 @@ pub struct NotesLayer {
     /// Whether a save into this file could be made, and in words why not.
     writable: Result<(), Refusal>,
     note_box: Option<NoteBox>,
+    /// The anchor the keyboard is on, by id: Tab and `]` move it, Enter writes
+    /// a note on it and `c` stamps it ([`Self::select`]). `None` until a key
+    /// has picked one.
+    selected: Option<String>,
     said: Option<Said>,
     /// What came of the last ↪, kept apart from persistence status:
     /// the save's own progress would otherwise write over where the notes
@@ -587,6 +657,7 @@ impl NotesLayer {
             applied: None,
             writable,
             note_box: None,
+            selected: None,
             said: None,
             sent: None,
             saving: false,
@@ -636,6 +707,7 @@ impl NotesLayer {
             applied: None,
             writable,
             note_box: None,
+            selected: None,
             said: None,
             sent: None,
             saving: false,
@@ -1180,6 +1252,11 @@ impl NotesLayer {
         pointer: Option<Point<Pixels>>,
     ) -> Vec<Mark> {
         let mut out = Vec::new();
+        if let Some(a) = self.selected(anchors) {
+            if let Some(at) = a.rect.and_then(|r| place(r, map)) {
+                out.push(Mark::Selected { at });
+            }
+        }
         if self.notes().is_none() {
             return out;
         }
@@ -1301,6 +1378,39 @@ impl NotesLayer {
             gone: false,
             back: 0.0,
         });
+    }
+
+    /// Move the keyboard's selection ([`pick`]) and answer the box it landed
+    /// on, for the view to bring into sight. `None` leaves the selection
+    /// where it was.
+    pub fn select(&mut self, anchors: &[Anchor], how: Pick, view_top: f32) -> Option<RectCss> {
+        let stamped = |nid: &str| self.concurs().is_some_and(|c| c.has(nid));
+        let i = pick(anchors, self.selected.as_deref(), how, &stamped, view_top)?;
+        self.selected = Some(anchors[i].nid.clone());
+        anchors[i].rect
+    }
+
+    /// Escape, with no note box open: let go of the selection. Answers
+    /// whether there was one.
+    pub fn unselect(&mut self) -> bool {
+        self.selected.take().is_some()
+    }
+
+    /// The anchor the keyboard is on, while it is still on the page.
+    pub fn selected<'a>(&self, anchors: &'a [Anchor]) -> Option<&'a Anchor> {
+        let nid = self.selected.as_deref()?;
+        anchors.iter().find(|a| a.nid == nid)
+    }
+
+    /// Enter: open the note box on the selected anchor. Answers whether there
+    /// was one to open it on.
+    pub fn open_selected(&mut self, anchors: &[Anchor]) -> bool {
+        let Some(a) = self.selected(anchors) else {
+            return false;
+        };
+        let (nid, title) = (a.nid.clone(), a.title.clone());
+        self.open(nid, title);
+        true
     }
 
     /// Open the note box on notes whose words the file no longer has, to
@@ -1804,6 +1914,7 @@ impl NotesLayer {
             "sent": self.sent.as_ref().map(|s| s.english().to_string()),
             "map": self.map(anchors),
             "open": self.note_box.as_ref().map(|b| b.nid.clone()),
+            "selected": self.selected.clone(),
             // The words being written in the open note box, which is where a
             // paste lands; null with no box open. The control socket reads the
             // whole report, and `document_notes` takes only its named fields,
@@ -1898,6 +2009,18 @@ impl NotesLayer {
                     .bg(accent.alpha(0.07))
                     .into_any_element(),
                 Mark::Rule { at } => at_rect(div(), *at).bg(accent).into_any_element(),
+                Mark::Selected { at } => at_rect(div(), *at)
+                    .rounded(px(6.))
+                    .border_2()
+                    .border_color(accent)
+                    .shadow(vec![gpui::BoxShadow {
+                        color: accent.alpha(0.45),
+                        offset: gpui::point(px(0.), px(0.)),
+                        blur_radius: px(14.),
+                        spread_radius: px(1.),
+                        inset: false,
+                    }])
+                    .into_any_element(),
                 Mark::Button {
                     at, count, open, ..
                 } => {

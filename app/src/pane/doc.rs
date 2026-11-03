@@ -236,6 +236,39 @@ impl TerminalView {
         Ok(())
     }
 
+    /// Open a document a PERSON asked for: an Alt+click on its path, the
+    /// artifact chip or rail, a link on the bench. A page or a Markdown file
+    /// is opened to be read: it comes up large in the FOCUS frame and takes
+    /// the keyboard there, and closes with it. Parker, 2026-11-02: *"If we
+    /// open an artifact, we intend to read it."* Anything else opens in the
+    /// square as [`Self::open_float`] opens it. An agent opening its own
+    /// deliverable (`open_document`) keeps the small square beside the
+    /// prompt: Parker, the same day, *"agents will AUTO-OPEN artifacts, and
+    /// THOSE should be small"*.
+    pub(crate) fn open_to_read(
+        &mut self,
+        target: crate::docopen::DocTarget,
+        row: Option<usize>,
+        cx: &mut Context<Self>,
+    ) -> Result<(), String> {
+        let reads = target.kind.reads();
+        let path = target.path.clone();
+        self.open_float(target, row, cx)?;
+        if reads && self.float_path(cx).as_deref() == Some(path.as_path()) {
+            if let Some(float) = self.float.as_mut() {
+                float.to_read = true;
+            }
+            cx.emit(OpenFocusRead);
+        }
+        Ok(())
+    }
+
+    /// Whether the square on top was opened to be read
+    /// ([`Self::open_to_read`]).
+    pub(crate) fn float_to_read(&self) -> bool {
+        self.float.as_ref().is_some_and(|f| f.to_read)
+    }
+
     /// Open a video or a sound as a clip: in a glowing box of its own, above
     /// whatever square is up, playing once and closing itself at its end.
     ///
@@ -555,8 +588,28 @@ impl TerminalView {
             crate::docopen::DocSeat::Float => self.float.as_ref().map(|f| f.view.clone()),
             crate::docopen::DocSeat::Face => self.doc.as_ref().map(|d| d.view.clone()),
         };
+        let sent = matches!(said, crate::docview::notes_ui::Said::Done(_));
         if let Some(view) = view {
             view.update(cx, |v, cx| v.notes_said(said, cx));
+        }
+        // ↪ means done: the notes went to the agent, so the floating document
+        // they were written on goes too, and the FOCUS frame with it. Parker,
+        // 2026-11-02: *"assume that send means done and close in a single
+        // keystroke"*. A send that was refused keeps the document up, saying
+        // why. The Document face is a face of the pane, not something opened
+        // over it, so it stays.
+        if sent && seat == crate::docopen::DocSeat::Float {
+            if self.reading_view(cx).is_some() {
+                cx.emit(CloseFocusRead);
+                // Asked once, here: the frame noticing its document gone is
+                // the same ask again.
+                self.lent_to_read = false;
+            }
+            while self.float.is_some() {
+                if !self.request_close_float(cx) {
+                    break;
+                }
+            }
         }
     }
 
@@ -811,7 +864,7 @@ impl TerminalView {
                     self.promote_float(cx);
                     ReaderClick::Opened
                 } else {
-                    match self.open_float(target, None, cx) {
+                    match self.open_to_read(target, None, cx) {
                         Ok(()) => ReaderClick::Opened,
                         // HTML with no engine, already on its way to the desktop.
                         Err(_) => ReaderClick::Handed,
@@ -1164,6 +1217,74 @@ impl TerminalView {
                 self.request_close_float(cx);
             }
         }
+        Handled::Consumed
+    }
+
+    /// A key on a page or Markdown file being read in the FOCUS frame
+    /// ([`crate::keylayer::Layer::Reading`]). Always consumed: nothing typed
+    /// while reading reaches the shell. The document is asked first, so the
+    /// note box takes its typing, a brief's dialog its Escape, and ↪ its
+    /// chord; then [`crate::keylayer::read_key`] says what the key does.
+    ///
+    /// Escape puts away one thing a press: the selection, then a clip
+    /// playing over the page, then the document and the frame together.
+    pub(super) fn reading_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
+        use crate::docview::{notes_ui::Pick, ReadAct, ZoomStep};
+        use crate::keylayer::{GlowMove, Paging, ReadKey};
+        let Some(view) = self.reading_view(cx) else {
+            return Handled::Consumed;
+        };
+        if view.update(cx, |v, cx| v.key(ks, cx)) {
+            return Handled::Consumed;
+        }
+        let m = &ks.modifiers;
+        let Some(key) = crate::keylayer::read_key(&ks.key, m.control, m.shift, m.alt) else {
+            return Handled::Consumed;
+        };
+        let act = |a: ReadAct, cx: &mut Context<Self>| {
+            view.update(cx, |v, cx| v.read_act(a, cx));
+        };
+        match key {
+            ReadKey::Line(d) => view.update(cx, |v, cx| v.glow(GlowMove::Step(d), cx)),
+            ReadKey::Page(d) => view.update(cx, |v, cx| v.glow(GlowMove::Page(d), cx)),
+            ReadKey::End(d) => {
+                let to = if d < 0 { Paging::Top } else { Paging::Bottom };
+                view.update(cx, |v, cx| v.page(to, cx));
+            }
+            ReadKey::Target(d) => act(ReadAct::Pick(Pick::Target(d)), cx),
+            ReadKey::Decision(d) => act(ReadAct::Pick(Pick::Decision(d)), cx),
+            ReadKey::Note => act(ReadAct::Note, cx),
+            ReadKey::Concur => act(ReadAct::Concur, cx),
+            ReadKey::CopyMap => act(ReadAct::CopyMap, cx),
+            // Taken by the view above when its bar draws ↪; with no agent
+            // beside the document there is nobody to send to.
+            ReadKey::Send => {}
+            ReadKey::ZoomIn => {
+                view.update(cx, |v, cx| v.zoom(ZoomStep::In, cx));
+            }
+            ReadKey::ZoomOut => {
+                view.update(cx, |v, cx| v.zoom(ZoomStep::Out, cx));
+            }
+            ReadKey::Fit => {
+                view.update(cx, |v, cx| v.zoom(ZoomStep::Fit, cx));
+            }
+            ReadKey::Actual => {
+                view.update(cx, |v, cx| v.zoom(ZoomStep::Actual, cx));
+            }
+            ReadKey::Escape => {
+                let clip_up = self
+                    .float
+                    .as_ref()
+                    .is_some_and(|top| top.view != view && top.below.is_some());
+                if view.update(cx, |v, cx| v.read_act(ReadAct::Unselect, cx)) {
+                } else if clip_up {
+                    self.request_close_float(cx);
+                } else {
+                    cx.emit(CloseFocusRead);
+                }
+            }
+        }
+        cx.notify();
         Handled::Consumed
     }
 

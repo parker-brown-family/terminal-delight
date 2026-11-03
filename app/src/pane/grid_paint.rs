@@ -811,11 +811,11 @@ mod tests {
         }
     }
 
-    /// ACTIVE TERMINALS brightness lifts the focused pane's text and ground
+    /// ACTIVE TERMINALS brightness dims or lifts the focused pane's text and ground
     /// by its gain and gives it back the moment the pane loses focus; unset,
     /// the focused pane is drawn exactly as before the gauge existed.
     #[gpui::test]
-    fn active_brightness_lifts_only_the_focused_pane(cx: &mut TestAppContext) {
+    fn active_brightness_moves_only_the_focused_pane(cx: &mut TestAppContext) {
         let mut pane = Pane::running(cx, "printf 'bright fixture\\n'; exec cat");
         pane.wait_for("bright fixture");
         let levels = |pane: &mut Pane| {
@@ -858,6 +858,12 @@ mod tests {
         };
         assert!((lifted(Channel::Text) - 0.6).abs() < 1e-4);
         assert!((lifted(Channel::Bg) - 0.6).abs() < 1e-4);
+        // The gauge dims as far as a fifth, and no further.
+        for (gain, level) in [(0.2, 0.1), (0.05, 0.1)] {
+            dress(&mut pane, Some(gain));
+            let (text, ground) = levels(&mut pane);
+            assert!((text - level).abs() < 1e-4 && (ground - level).abs() < 1e-4);
+        }
         pane.cx.update(|window, _| window.blur());
         pane.redraw();
         assert_eq!(

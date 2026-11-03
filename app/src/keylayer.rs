@@ -123,6 +123,17 @@ pub enum Layer {
     /// The inline rename box in the header, also drawn on both faces, also a
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
+    /// A page or a Markdown file being READ: drawn large in the FOCUS frame,
+    /// where a person opened it to read. It takes every key the window's and
+    /// the pane's chords leave, and [`read_key`] says what each does; the rest
+    /// stop here. The shell underneath gets nothing while it is read: Parker,
+    /// 2026-11-02, *"If we open an artifact, we intend to read it."* A clip
+    /// playing over the page is deaf: the page keeps the keys, because a video
+    /// has nothing to note, concur or send.
+    ///
+    /// Below the sticky note and the rename box, whose carets keep their keys,
+    /// and above [`Layer::Float`], whose square is the very document being read.
+    Reading,
     /// A document floating over the terminal face. Escape closes it,
     /// [`send_chord`] is its ↪ while its bar draws one, and [`glow_chord`]
     /// turns it; that is all it takes: every other key still reaches the
@@ -142,6 +153,12 @@ pub enum Layer {
     /// face is showing; what the bench then does with the key is its own ladder,
     /// and it may decline.
     Bench,
+    /// Scroll mode (Alt+[) on the terminal face: every plain key moves the
+    /// view instead of reaching the program, until `q` or Escape. Ctrl and Alt
+    /// chords pass under it, so Ctrl+C still reaches a running agent and the
+    /// window's chords still work. Below the bench and the document, which
+    /// hide the terminal this mode is moving.
+    Scroll,
     /// The terminal: keyboard selection, the scrollback keys, and the
     /// pseudoterminal itself. The floor — everything not claimed above lands
     /// here, and so does everything [`Layer::Paint`] and [`Layer::Bench`] hand
@@ -208,6 +225,12 @@ pub struct Up {
     /// face already takes every key the chords leave, and this says whether
     /// the paste chord is one of them ([`note_caret`]).
     pub doc_caret: bool,
+    /// A page or a Markdown file is lent to the FOCUS frame and being read
+    /// there ([`Layer::Reading`]). The pane says `reader: false` while it is,
+    /// so the reader's own Escape and paging do not jump the pane's chords.
+    pub reading: bool,
+    /// The terminal is in scroll mode (Alt+[).
+    pub scroll: bool,
 }
 
 /// A note is being written in a document this pane shows, on either seat: the
@@ -282,7 +305,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 13] = [
+const LADDER: [Rung; 15] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, u| {
@@ -295,7 +318,8 @@ const LADDER: [Rung; 13] = [
                 && !u.rename
                 && !note_caret(u)
                 && !u.document
-                && !u.bench)
+                && !u.bench
+                && !u.reading)
     }),
     (Layer::Paint, |k, u| u.paint && paints(k)),
     (Layer::CtxMenu, |k, u| u.ctx_menu && k.key == "escape"),
@@ -306,6 +330,7 @@ const LADDER: [Rung; 13] = [
     (Layer::PaneChord, pane_chord),
     (Layer::Sticky, |_, u| u.sticky),
     (Layer::Rename, |_, u| u.rename),
+    (Layer::Reading, |_, u| u.reading),
     (Layer::Float, |k, u| {
         u.float
             && (u.float_caret
@@ -315,6 +340,9 @@ const LADDER: [Rung; 13] = [
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
+    (Layer::Scroll, |k, u| {
+        u.scroll && !k.control && !k.alt && !k.platform
+    }),
 ];
 
 /// The topmost layer that claims this keystroke, or [`Layer::Terminal`].
@@ -379,9 +407,10 @@ pub fn tab_keys() -> TabKeys {
 /// A tab hotkey.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum TabChord {
-    /// `alt+1`…`alt+8` is that place in the spine's order; `alt+9` is the
-    /// last tab, however many there are, as a browser's is.
-    Position(usize),
+    /// `alt+1`…`alt+9`: the pane carrying that mark ([`crate::navkeys`]).
+    /// A tap goes there and a hold marks the focused pane, so the window
+    /// answers this one on the key coming up, not here.
+    Mark(usize),
     /// `alt+shift+<letter>`: whichever tab that letter is pinned to.
     Pinned(char),
 }
@@ -397,7 +426,7 @@ pub fn tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Tab
         return None;
     };
     match (shift, c) {
-        (false, '1'..='9') => Some(TabChord::Position(c as usize - '0' as usize)),
+        (false, '1'..='9') => Some(TabChord::Mark(c as usize - '0' as usize)),
         (true, c) if c.is_ascii_alphabetic() => Some(TabChord::Pinned(c.to_ascii_lowercase())),
         _ => None,
     }
@@ -407,7 +436,7 @@ pub fn tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Tab
 pub fn held_tab_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<TabChord> {
     let held = tab_keys();
     tab_chord(key, alt, control, shift).filter(|c| match *c {
-        TabChord::Position(_) => held.digits,
+        TabChord::Mark(_) => held.digits,
         TabChord::Pinned(l) => held.holds_letter(l),
     })
 }
@@ -465,10 +494,50 @@ pub fn window_chord(key: &str, alt: bool, control: bool) -> bool {
     }
     // `l` is LOOKUP; `g` is Git coordination. Neither belongs to a pane.
     key.eq_ignore_ascii_case("g")
+        || nav_chord(key, alt, control, false).is_some()
         || matches!(
             key,
             "left" | "right" | "up" | "down" | "r" | "v" | "h" | "w" | "k" | "l"
         )
+}
+
+/// A keyboard-navigation chord the window answers (Hands on Keyboard,
+/// `docs/plans/hands-on-keyboard/`).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Nav {
+    /// `alt+o`: open what the focused pane handed over; with a document already
+    /// open anywhere in the window, raise the artifact rail instead.
+    Artifact,
+    /// `alt+q`: the NEEDS ME queue, rows numbered so a digit goes.
+    NeedsMe,
+    /// `alt+e`: the previous error line above the view; `alt+shift+e` the next.
+    Error { older: bool },
+    /// `alt+0`: back along the panes you visited; `alt+shift+0` forward.
+    Trail { back: bool },
+}
+
+/// Which navigation chord this is, if any. Shift matters only to the two that
+/// have a direction.
+///
+/// The shifted zero arrives two ways, like the size chords' symbols: the
+/// desktop names it by what it types and drops the shift (`)`), gpui's parser
+/// keeps the shift on `0`. Both are the same press.
+///
+/// The letters are ones readline leaves unbound by default (`o`, `q`, `e`) and
+/// its digit argument (`0`), which Alt+1…9 had already taken from it; `b` is
+/// deliberately not here — it is back-one-word in every shell and agent prompt.
+pub fn nav_chord(key: &str, alt: bool, control: bool, shift: bool) -> Option<Nav> {
+    if !alt || control {
+        return None;
+    }
+    Some(match key {
+        "o" | "O" => Nav::Artifact,
+        "q" | "Q" => Nav::NeedsMe,
+        "e" | "E" => Nav::Error { older: !shift },
+        "0" => Nav::Trail { back: !shift },
+        ")" => Nav::Trail { back: false },
+        _ => return None,
+    })
 }
 
 /// Chords the PANE owns, on either of its faces.
@@ -528,7 +597,9 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
-            "a" | "s" => true,
+            // `[` enters and leaves scroll mode: tmux's copy-mode key, with Alt
+            // in place of the prefix.
+            "a" | "s" | "[" => true,
             "backspace" => up.note,
             _ => false,
         };
@@ -566,7 +637,10 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
         if k.key == "w" {
             return up.float && !up.float_caret;
         }
-        return matches!(k.key, "f" | "x");
+        // Find and cut act on the terminal, and a cut with nothing selected
+        // hands ^X to the shell: while a document is read, the shell is
+        // hidden and gets nothing, so both are the document's to swallow.
+        return !up.reading && matches!(k.key, "f" | "x");
     }
     false
 }
@@ -671,6 +745,109 @@ pub fn paging(k: &Key) -> Option<Paging> {
         ("end", true) => Paging::Bottom,
         _ => return None,
     })
+}
+
+/// What a key does to a document being read ([`Layer::Reading`]).
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum ReadKey {
+    /// A wheel notch: `-1` towards the top.
+    Line(i8),
+    /// Most of the view.
+    Page(i8),
+    /// The top (`-1`) or the end (`1`).
+    End(i8),
+    /// The next (`1`) or previous section, figure or decision.
+    Target(i8),
+    /// The next or previous decision with no CONCUR stamp yet.
+    Decision(i8),
+    /// Write a note on the selected target.
+    Note,
+    /// Stamp the selected decision, or lift its stamp.
+    Concur,
+    /// Copy the notes map.
+    CopyMap,
+    /// Send the notes to the agent beside the document, and close it: Parker,
+    /// 2026-11-02, *"assume that send means done and close in a single
+    /// keystroke"*.
+    Send,
+    ZoomIn,
+    ZoomOut,
+    Fit,
+    Actual,
+    /// Put away one thing: a draft, a selection, a clip, then the document.
+    Escape,
+}
+
+/// The reading keys. `None` is a key the document swallows and does nothing
+/// with: nothing reaches the shell while a document is read.
+///
+/// Plain letters are free here because the frame takes every key the window
+/// and the pane leave, which is why reading needs no prefix. Ctrl+Shift+Enter
+/// stays the send it is everywhere else ([`send_chord`]), so the note box and
+/// the page share one send; Ctrl+↑/↓ and Ctrl+Home/End keep the moves they
+/// make on the square and in the reader.
+pub fn read_key(key: &str, control: bool, shift: bool, alt: bool) -> Option<ReadKey> {
+    use ReadKey::*;
+    if alt {
+        return None;
+    }
+    if send_chord(key, control, shift, alt) {
+        return Some(Send);
+    }
+    if control {
+        if let Some(mv) = glow_chord(key, control, shift, alt) {
+            return Some(match mv {
+                GlowMove::Step(d) => Line(d),
+                GlowMove::Page(d) => Page(d),
+            });
+        }
+        return match key {
+            "home" => Some(End(-1)),
+            "end" => Some(End(1)),
+            _ => None,
+        };
+    }
+    let back = if shift { -1 } else { 1 };
+    Some(match key {
+        "j" | "down" if !shift => Line(1),
+        "k" | "up" if !shift => Line(-1),
+        "space" => Page(back),
+        "pagedown" => Page(1),
+        "pageup" => Page(-1),
+        "home" => End(-1),
+        "end" => End(1),
+        "g" => End(if shift { 1 } else { -1 }),
+        "tab" => Target(back),
+        "]" | "}" => Decision(1),
+        "[" | "{" => Decision(-1),
+        "enter" if !shift => Note,
+        "c" if !shift => Concur,
+        "y" if !shift => CopyMap,
+        "escape" => Escape,
+        "+" | "=" => ZoomIn,
+        "-" if !shift => ZoomOut,
+        "0" if !shift => Fit,
+        "1" if !shift => Actual,
+        _ => return None,
+    })
+}
+
+/// `shift+pgup` / `shift+pgdn`: page this pane's scrollback, in EVERY pane.
+///
+/// Plain PgUp/PgDn page only agent panes, because a shell keeps them (Arch's
+/// inputrc binds PgUp to history search). Shift+PgUp is the chord every other
+/// terminal on Linux uses to page its own history, and no shell binding wants
+/// it, so it is the keyboard's way back up a shell's output. Like the plain
+/// pair it defers to a program that owns its own view — the caller checks.
+pub fn shift_page(k: &Key) -> Option<Paging> {
+    if !k.shift || k.alt || k.control || k.platform || k.function {
+        return None;
+    }
+    match k.key {
+        "pageup" => Some(Paging::PageUp),
+        "pagedown" => Some(Paging::PageDown),
+        _ => None,
+    }
 }
 
 #[cfg(test)]
@@ -828,7 +1005,7 @@ mod tests {
 
     /// The ladder is total and monotone over every combination of state.
     ///
-    /// All 8,192 state combinations against a corpus of sixteen keys, and the
+    /// All 65,536 state combinations against a corpus of sixteen keys, and the
     /// answer is always the FIRST rung that claims — the whole contract stated
     /// as a property rather than as rows. A variant moved in the enum fails this
     /// without anybody having to remember to add a case for it.
@@ -852,7 +1029,7 @@ mod tests {
             ctrl_shift("v"),
             shift_insert(),
         ];
-        for bits in 0u16..16384 {
+        for bits in 0u32..65536 {
             let up = Up {
                 agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
@@ -868,6 +1045,8 @@ mod tests {
                 float_caret: bits & 1024 != 0,
                 float_sends: bits & 2048 != 0,
                 doc_caret: bits & 4096 != 0,
+                scroll: bits & 16384 != 0,
+                reading: bits & 32768 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -894,13 +1073,14 @@ mod tests {
     fn of_any_two_layers_the_earlier_declared_one_wins() {
         // Escape is claimed by every one of these, which is what lets them be
         // compared pairwise at all.
-        let setters: [fn(&mut Up); 9] = [
+        let setters: [fn(&mut Up); 10] = [
             |u| u.paint = true,
             |u| u.ctx_menu = true,
             |u| u.header_menu = true,
             |u| u.reader = true,
             |u| u.sticky = true,
             |u| u.rename = true,
+            |u| u.reading = true,
             |u| u.float = true,
             |u| u.document = true,
             |u| u.bench = true,
@@ -1115,6 +1295,113 @@ mod tests {
             float: true,
             ..Up::default()
         }
+    }
+
+    // ── a document being read ───────────────────────────────────────────────
+
+    /// A page lent to the FOCUS frame from a square, as a person opening an
+    /// artifact leaves it: the square is up, the reader is not claiming.
+    fn reading() -> Up {
+        Up {
+            agent: true,
+            float: true,
+            float_sends: true,
+            reading: true,
+            ..Up::default()
+        }
+    }
+
+    /// Nothing a person types while reading reaches the shell: a letter, Enter,
+    /// Ctrl+C and the find and cut chords all stop at the document. Parker
+    /// concurred on 2026-11-02 that Ctrl+C is swallowed too.
+    #[test]
+    fn a_document_being_read_takes_every_key_the_chords_leave() {
+        let up = reading();
+        for k in [
+            ch("j"),
+            ch("c"),
+            named("enter"),
+            named("tab"),
+            named("escape"),
+            named("pageup"),
+            ctrl("c"),
+            ctrl("f"),
+            ctrl("x"),
+            ctrl("up"),
+            ctrl_shift("enter"),
+        ] {
+            assert_eq!(route(&k, &up), Layer::Reading, "{k:?}");
+        }
+    }
+
+    /// The window's and the pane's chords keep working over the frame, the
+    /// sibling's navigation keys among them: reading must never swallow the
+    /// key that moves you somewhere else.
+    #[test]
+    fn the_window_and_pane_chords_pass_over_a_document_being_read() {
+        let up = reading();
+        assert_eq!(route(&named("f1"), &up), Layer::Help);
+        assert_eq!(route(&alt("k"), &up), Layer::Face);
+        for k in [
+            alt("left"),
+            alt("r"),
+            alt("l"),
+            alt("w"),
+            alt("o"),
+            alt("q"),
+            alt("e"),
+            alt("0"),
+        ] {
+            assert_eq!(route(&k, &up), Layer::Window, "{k:?}");
+        }
+        for k in [alt("a"), alt("s"), ctrl("w"), ctrl_shift("t")] {
+            assert_eq!(route(&k, &up), Layer::PaneChord, "{k:?}");
+        }
+    }
+
+    /// Ctrl+↑/↓ steps your own turns in an agent pane, and scrolls a document
+    /// being read instead: the document is what is in front of you.
+    #[test]
+    fn ctrl_arrows_scroll_the_document_being_read_not_the_turns() {
+        let k = ctrl("up");
+        let agent = Up {
+            agent: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&k, &agent), Layer::Window);
+        assert_eq!(route(&k, &reading()), Layer::Reading);
+    }
+
+    /// The keys a document being read answers to, and the ones it swallows.
+    #[test]
+    fn the_reading_keys() {
+        use ReadKey::*;
+        let rk = |key, control, shift| read_key(key, control, shift, false);
+        assert_eq!(rk("j", false, false), Some(Line(1)));
+        assert_eq!(rk("down", false, false), Some(Line(1)));
+        assert_eq!(rk("k", false, false), Some(Line(-1)));
+        assert_eq!(rk("space", false, false), Some(Page(1)));
+        assert_eq!(rk("space", false, true), Some(Page(-1)));
+        assert_eq!(rk("g", false, false), Some(End(-1)));
+        assert_eq!(rk("g", false, true), Some(End(1)));
+        assert_eq!(rk("tab", false, false), Some(Target(1)));
+        assert_eq!(rk("tab", false, true), Some(Target(-1)));
+        assert_eq!(rk("]", false, false), Some(Decision(1)));
+        assert_eq!(rk("[", false, false), Some(Decision(-1)));
+        assert_eq!(rk("enter", false, false), Some(Note));
+        assert_eq!(rk("c", false, false), Some(Concur));
+        assert_eq!(rk("y", false, false), Some(CopyMap));
+        assert_eq!(rk("enter", true, true), Some(Send));
+        assert_eq!(rk("up", true, false), Some(Line(-1)));
+        assert_eq!(rk("down", true, true), Some(Page(1)));
+        assert_eq!(rk("end", true, false), Some(End(1)));
+        assert_eq!(rk("escape", false, false), Some(Escape));
+        assert_eq!(rk("0", false, false), Some(Fit));
+        // Swallowed: a key with no reading meaning, and Ctrl+C.
+        assert_eq!(rk("q", false, false), None);
+        assert_eq!(rk("c", true, false), None);
+        // Alt is never the document's: the window and the pane own those.
+        assert_eq!(read_key("o", false, false, true), None);
     }
 
     /// Escape closes the square before the shell underneath ever sees it, and
@@ -1904,6 +2191,8 @@ mod tests {
             float_caret: true,
             float_sends: true,
             doc_caret: true,
+            reading: true,
+            scroll: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }
@@ -2019,20 +2308,17 @@ mod tests {
             assert_eq!(route(&three, &up), Layer::Window, "{up:?}");
         }
         // A letter nobody pinned is still the program's.
-        let shift_q = Key {
-            key: "q",
+        let shift_z = Key {
+            key: "z",
             alt: true,
             shift: true,
             ..Key::default()
         };
-        assert_eq!(route(&shift_q, &Up::default()), Layer::Terminal);
+        assert_eq!(route(&shift_z, &Up::default()), Layer::Terminal);
         // Alt+0 and Ctrl+Alt+3 are not tab chords: the second is the tree's.
         assert_eq!(tab_chord("0", true, false, false), None);
         assert_eq!(tab_chord("3", true, true, false), None);
-        assert_eq!(
-            tab_chord("3", true, false, false),
-            Some(TabChord::Position(3))
-        );
+        assert_eq!(tab_chord("3", true, false, false), Some(TabChord::Mark(3)));
         assert_eq!(
             tab_chord("M", true, false, true),
             Some(TabChord::Pinned('m'))
@@ -2044,12 +2330,193 @@ mod tests {
     /// never reach its tab, so it cannot be pinned.
     #[test]
     fn a_pin_refuses_the_letters_the_window_already_answers() {
-        for c in ['w', 'v', 'h', 'l', 'r', 'k', 'g', 'W'] {
+        for c in ['w', 'v', 'h', 'l', 'r', 'k', 'g', 'W', 'o', 'q', 'e', 'Q'] {
             assert!(pin_is_taken(c), "{c}");
         }
-        for c in ['a', 'm', 'q', 'z', 'S'] {
+        for c in ['a', 'm', 'z', 'S', 'b'] {
             assert!(!pin_is_taken(c), "{c}");
         }
-        assert!(pin_is_taken('3'), "digits are positions, not pins");
+        assert!(pin_is_taken('3'), "digits are marks, not pins");
+    }
+
+    fn alt_with(key: &str, shift: bool) -> Key<'_> {
+        Key {
+            key,
+            alt: true,
+            shift,
+            ..Key::default()
+        }
+    }
+
+    #[test]
+    fn the_navigation_chords_read_as_planned() {
+        assert_eq!(nav_chord("o", true, false, false), Some(Nav::Artifact));
+        assert_eq!(nav_chord("q", true, false, false), Some(Nav::NeedsMe));
+        assert_eq!(
+            nav_chord("e", true, false, false),
+            Some(Nav::Error { older: true })
+        );
+        assert_eq!(
+            nav_chord("e", true, false, true),
+            Some(Nav::Error { older: false })
+        );
+        assert_eq!(
+            nav_chord("0", true, false, false),
+            Some(Nav::Trail { back: true })
+        );
+        // The shifted zero, as the parser and as the desktop spell it.
+        assert_eq!(
+            nav_chord("0", true, false, true),
+            Some(Nav::Trail { back: false })
+        );
+        assert_eq!(
+            nav_chord(")", true, false, false),
+            Some(Nav::Trail { back: false })
+        );
+        // Without Alt, or with Ctrl, they are nobody's here.
+        assert_eq!(nav_chord("o", false, false, false), None);
+        assert_eq!(nav_chord("o", true, true, false), None);
+        // Alt+B stays readline's back-one-word.
+        assert_eq!(nav_chord("b", true, false, false), None);
+    }
+
+    /// Every navigation chord leaves whatever surface is on top for the
+    /// window — a note box being written, the bench, a document, a sticky —
+    /// because a chord that works on one face and is dead on another is the
+    /// failure this ladder exists to prevent.
+    #[test]
+    fn the_navigation_chords_reach_the_window_from_every_surface() {
+        let surfaces = [
+            Up::default(),
+            Up {
+                bench: true,
+                ..Up::default()
+            },
+            Up {
+                document: true,
+                ..Up::default()
+            },
+            Up {
+                float: true,
+                float_caret: true,
+                ..Up::default()
+            },
+            Up {
+                sticky: true,
+                ..Up::default()
+            },
+            Up {
+                rename: true,
+                ..Up::default()
+            },
+            Up {
+                agent: true,
+                ..Up::default()
+            },
+        ];
+        for key in ["o", "q", "e", "0"] {
+            for shift in [false, true] {
+                for up in &surfaces {
+                    assert_eq!(
+                        route(&alt_with(key, shift), up),
+                        Layer::Window,
+                        "alt+{key} shift={shift} {up:?}"
+                    );
+                }
+            }
+        }
+        assert_eq!(route(&alt_with(")", false), &Up::default()), Layer::Window);
+    }
+
+    /// The letter Parker first asked for, and why it is not taken: Alt+B must
+    /// still reach a shell, and reach it as ESC b.
+    #[test]
+    fn alt_b_still_reaches_the_shell() {
+        assert_eq!(
+            route(&alt_with("b", false), &Up::default()),
+            Layer::Terminal
+        );
+        assert!(!window_chord("b", true, false));
+        assert!(!window_chord("f", true, false));
+        assert!(!window_chord("d", true, false));
+    }
+
+    #[test]
+    fn shift_page_is_shift_and_nothing_else() {
+        let k = |key, shift, control, alt| Key {
+            key,
+            shift,
+            control,
+            alt,
+            ..Key::default()
+        };
+        assert_eq!(
+            shift_page(&k("pageup", true, false, false)),
+            Some(Paging::PageUp)
+        );
+        assert_eq!(
+            shift_page(&k("pagedown", true, false, false)),
+            Some(Paging::PageDown)
+        );
+        assert_eq!(shift_page(&k("pageup", false, false, false)), None);
+        assert_eq!(shift_page(&k("pageup", true, true, false)), None);
+        assert_eq!(shift_page(&k("pageup", true, false, true)), None);
+        assert_eq!(shift_page(&k("home", true, false, false)), None);
+        // And the plain paging table still refuses the shifted pair, so the two
+        // cannot both answer one press.
+        assert_eq!(paging(&k("pageup", true, false, false)), None);
+    }
+
+    /// Scroll mode takes the plain keys and nothing else: Ctrl+C must still
+    /// reach a running agent, and the window's chords must still work.
+    #[test]
+    fn scroll_mode_takes_plain_keys_and_lets_chords_through() {
+        let up = Up {
+            scroll: true,
+            ..Up::default()
+        };
+        for key in ["j", "k", "g", "q", "[", "escape", "/"] {
+            let k = Key {
+                key,
+                ..Key::default()
+            };
+            assert_eq!(route(&k, &up), Layer::Scroll, "{key}");
+        }
+        let shift_g = Key {
+            key: "g",
+            shift: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&shift_g, &up), Layer::Scroll);
+        let ctrl_c = Key {
+            key: "c",
+            control: true,
+            ..Key::default()
+        };
+        assert_eq!(
+            route(&ctrl_c, &up),
+            Layer::Terminal,
+            "ctrl+c reaches the agent"
+        );
+        assert_eq!(route(&alt_with("o", false), &up), Layer::Window);
+        // Alt+[ is the pane's, in and out of the mode.
+        assert_eq!(route(&alt_with("[", false), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&alt_with("[", false), &Up::default()),
+            Layer::PaneChord
+        );
+        // And without the mode, a plain letter is the program's as ever.
+        let j = Key {
+            key: "j",
+            ..Key::default()
+        };
+        assert_eq!(route(&j, &Up::default()), Layer::Terminal);
+        // The bench, which hides the terminal, keeps its keys.
+        let bench = Up {
+            scroll: true,
+            bench: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&j, &bench), Layer::Bench);
     }
 }

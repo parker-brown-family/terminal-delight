@@ -458,6 +458,9 @@ jobs:
           sudo apt-get install -y -qq libxcb1 libxcb-xkb1 libxkbcommon0 libxkbcommon-x11-0 \
             || echo "::warning::could not install the runtime libraries"
           mkdir -p wire/new
+          # download-artifact drops the executable bit, as the first run of
+          # this step found (Permission denied on 117eef8e).
+          chmod +x dist/terminal-delight-x86_64.AppImage
           (cd wire/new && ../../dist/terminal-delight-x86_64.AppImage --appimage-extract usr/bin/terminal-delight >/dev/null) \
             || { echo "::warning::could not extract the new build; no attestation"; exit 0; }
           [ -f wire/old/terminal-delight-x86_64.AppImage ] || exit 0

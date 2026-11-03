@@ -50,6 +50,35 @@ this document. Run it when managing the release; do not assume a timer ran it.
 it is not a channel: nobody outside the project is pointed at it. A release is a
 chosen, tested snapshot of it.
 
+## Waves on the development branch
+
+Since 2026-11-02 the development branch takes work in waves. Parker: *"smash
+work into that branch and keep our local machine AGGRESSIVELY up to date with
+work going in for manual testing and cut the next RC after each wave."* Every
+change waiting on a 37-minute CI run against the newest branch head had made
+eight small changes take about five hours to land, one after another.
+
+- **Landing does not wait for CI.** `dev/0.5.0` has no required checks, no
+  up-to-date rule and no required review; it still refuses force-pushes and
+  deletion. Land with a merge commit once your own gates pass: for anything
+  under `app/`, `cargo fmt --check`, `cargo clippy --locked -- -D warnings` and
+  `cargo test --locked --no-fail-fast`.
+- **CI still runs on every push, and reports.** A red run names the push that
+  broke the branch. Before landing, look at the branch's newest run; if it is
+  red, fix that first. The Dev channel's `dev-build` is published only from a
+  green run, so a red push reaches nobody outside this machine.
+- **Outside contributions still wait for green CI and a review**, because the
+  branch is installed on Parker's machine within minutes of landing.
+- **Parker's machine follows the branch.** A user timer runs `td-wave-follow`
+  every five minutes: it builds the branch head, runs the tests, installs the
+  build and, once he has stepped away from the desk, swaps his window onto it,
+  keeping the session host and every pane. A build that changes how the window
+  talks to its terminals is installed and waits for a restart he chooses. Its
+  state is `~/.local/state/terminal-delight/wave-follow.json`.
+- **A wave ends when Parker says cut.** The development branch goes into `main`
+  as one pull request. `main` keeps its required checks, so the full CI gates
+  the wave there, once. Green, it is tagged as the next candidate, as below.
+
 ## Schedule
 
 A **minor release every four weeks**, on Mondays:

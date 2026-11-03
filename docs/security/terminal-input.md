@@ -38,6 +38,7 @@ audited 2026-09-08:
 | 7 | `pane.rs` | `seek_agent_prompt` | `alt+↑` / `alt+↓` **and the ▲/▼ header buttons** — walks an alt-screen agent's own scrollback with synthetic wheel notches, or PageUp/PageDown when the program has not asked for mouse reports; a bounded async walk, see below | keystroke + pointer |
 | 8 | `pane.rs:2471` | `new_restored` | a **freshly spawned** shell is handed its recorded command line — session restore, the dead-agent *resurrect* menu, `ctl adopt --run`, or `TD_SEED_RESUME` at launch | see below |
 | 9 | `pane.rs` | `send_notes` | a press on **↪** in a brief's notes bar, or its chord **ctrl+shift+enter** over the square while the button is drawn — the brief's notes map, pasted into the prompt of the agent pane the brief sits beside, bracketed and **never followed by Enter**; on the bench face it goes into the composer instead and writes nothing here; see below | pointer + keystroke |
+| 11 | `pane.rs` | `nudge_program` | scroll mode (`alt+[`) over an alt-screen program: `k`/`j` a line, `u`/`d` half a screen, sent as synthetic wheel notches, or one PageUp/PageDown when the program has not asked for mouse reports; one write per keypress, see below | keystroke |
 | 10 | `pane.rs` | `type_prompt` | **another agent**, along a line a person drew at `prompt` in the Threshing Floor: `prompt_agent` over MCP, typed by `Workspace::prompt_tick` when `prompt.rs` decides. One bracketed paste of the cleaned words, then one carriage return after the paste shows at the worker's own prompt; see below | agent, under a person's grant |
 
 The editing keys share site #1. Shift+Backspace sends backward-word deletion;
@@ -165,6 +166,12 @@ These look like the concern and are not. Recorded so the next reader does not re
   stops early on three unchanged frames or when a human prompt scrolls into view. Synthetic,
   bounded, navigational, started by a keypress **or a click on ▲/▼** — it moves the view, not the
   cursor in a prompt.
+- **Scroll mode's nudge (#11).** The keyboard twin of wheel-to-arrows (#4) and of #7's byte shapes:
+  a key pressed in scroll mode over a full-screen program asks it to scroll its own history, because
+  on the alternate screen the terminal has none to move. The same two shapes as #7 — wheel notches
+  when the program holds the mouse, else PageUp/PageDown — and never arrows, for #7's reason. One
+  write per keypress, made inside the key handler and not in a loop: a line is one notch, a page
+  is half the screen's rows of notches. Navigational only; it never types into a prompt.
 - **↪ send to agent (#9).** The one write that lands in a pane other than the one the gesture was
   made on: ↪ sits in the notes bar of a brief, and the workspace routes the press to the agent pane
   that brief sits beside — the pane a floating square is over, the pane a split was opened beside,
@@ -290,7 +297,7 @@ check whose expectation is wrong on the day it ships is a check somebody switche
 
 ```
 sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'self\.send\('  # expect: 4 — run_line, terminal_key twice (the erase and the key), cut_selection
-sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 11 — the ten rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
+sed '/^#\[cfg(test)\]/q' app/src/pane.rs | rg -c 'notifier\.notify\('  # expect: 12 — the eleven rows above but #5, which writes through send, with #2 and #4 twice each; code only, since the tests quote the call
 rg -c 'keepalive' app/src/main.rs           # expect: 2  — the module doc, and the header-glyph count comment
 rg -n 'Msg::Input|notifier\.0|notifier:' app/src   # expect: the type in vt/pump.rs and vt/socket.rs's test, the field in term.rs, and host.rs's own three writes (the recipe, write_to, a test) — nothing in pane.rs or main.rs
 ```

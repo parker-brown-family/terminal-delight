@@ -8,6 +8,7 @@ For each PR:
 
 - Record its intended release with GitHub’s milestone field, or explicitly say `unassigned` when no release has been selected. Missing metadata does not mean approved, deferred or irrelevant.
 - Set the base branch to the selected integration branch. Release intent and merge destination are separate facts. Do not retarget another owner’s work merely because it looks related.
+- Land on `dev/0.5.0` by the waves rule in RELEASING.md: merging does not wait for CI, so run your own gates, check the branch’s newest CI run first, and fix a red branch before landing more. Outside contributions still wait for green CI and a review.
 - Use area labels to describe the work. Release membership belongs in the milestone rather than a second version label.
 - State why the change fits the release and preserve its validation evidence. A milestone is a plan; passing review and tests, integration and the tagged candidate determine what actually ships.
 
