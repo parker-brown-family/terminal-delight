@@ -4111,6 +4111,68 @@ fn a_clip_over_a_page_being_read_leaves_the_page_the_keys(cx: &mut TestAppContex
     assert_eq!(pane.float_path(), None, "and the page goes with it");
 }
 
+/// Alt+O on a handover TD cannot draw — a web address — asks before it
+/// leaves the window: the card waits, Escape takes it down with nothing
+/// opened, and Enter hands the address to the browser and counts it opened.
+/// A letter typed meanwhile still reaches the shell. Parker, 2026-11-03:
+/// *"a little dialogue pops up --- ENTER to open a BROWSER with THIS
+/// artifact"*.
+#[gpui::test]
+fn alt_o_on_a_web_artifact_asks_before_the_browser(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    let href = "https://github.com/parker-brown-family/terminal-delight/pull/1292".to_string();
+    pane.view.update(pane.cx, |v, cx| {
+        v.hand_over(
+            Some("PR 1292".into()),
+            href.clone(),
+            crate::handover::Source::Declared,
+            cx,
+        );
+    });
+    let before = desktop_launches().len();
+
+    pane.view.update(pane.cx, |v, cx| v.ask_newest_handover(cx));
+    pane.redraw();
+    assert!(
+        pane.read(|v| v.asks_outside()),
+        "it asks rather than opening"
+    );
+    assert_eq!(
+        desktop_launches().len(),
+        before,
+        "nothing went to the browser yet"
+    );
+
+    pane.keys("escape");
+    assert!(
+        !pane.read(|v| v.asks_outside()),
+        "Escape takes the question down"
+    );
+    assert_eq!(desktop_launches().len(), before, "with nothing opened");
+
+    pane.view.update(pane.cx, |v, cx| v.ask_newest_handover(cx));
+    pane.keys("a");
+    assert!(
+        pane.read(|v| v.asks_outside()),
+        "a letter does not answer it"
+    );
+    pane.keys("enter");
+    assert!(!pane.read(|v| v.asks_outside()));
+    assert!(
+        desktop_launches()
+            .get(before)
+            .is_some_and(|l| l.ends_with(&format!("xdg-open {href}"))),
+        "Enter hands the address to the browser: {:?}",
+        desktop_launches()
+    );
+    let key = pane.read(|v| v.handovers().newest().map(|h| h.key()));
+    assert!(
+        key.is_some_and(|k| pane.read(|v| v.handovers().is_opened(&k))),
+        "and counts it opened"
+    );
+}
+
 /// An agent opening its own deliverable keeps the small square beside its
 /// prompt: Parker, 2026-11-02, *"agents will AUTO-OPEN artifacts, and THOSE
 /// should be small"*. Only a person's open asks for the reading frame.

@@ -292,19 +292,24 @@ pub enum Pick {
 }
 
 /// Pure. The anchor the keyboard moves to, as an index into `anchors`, which
-/// are in document order. From the selection when there is one, wrapping at
-/// either end; with none, from the top of the view (`view_top`, in the
-/// anchors' own units), so the first press lands on what the reader is
-/// looking at rather than at the top of the file. An anchor with no place
-/// (inside a closed dialog, or not painted yet) is never picked. `None` when
-/// nothing fits: no decisions left to stamp says so by moving nowhere.
+/// are in document order. From the selection while it is on screen, wrapping
+/// at either end. With none, or with one the reader has scrolled away from,
+/// from the screen (`view`, top and bottom in the anchors' own units): Tab
+/// takes the first thing on it and Shift+Tab the last, so the key lands on
+/// what is being read, never back where the reader was five pages ago.
+/// Parker, 2026-11-03: *"if they have something selected up 5 pages ... read
+/// read read... TAB. the FIRST item on screen gets selected!"* An anchor with
+/// no place (inside a closed dialog, or not painted yet) is never picked.
+/// `None` when nothing fits: no decisions left to stamp says so by moving
+/// nowhere.
 pub fn pick(
     anchors: &[Anchor],
     from: Option<&str>,
     pick: Pick,
     stamped: &dyn Fn(&str) -> bool,
-    view_top: f32,
+    view: (f32, f32),
 ) -> Option<usize> {
+    let (view_top, view_bottom) = view;
     let (dir, decisions) = match pick {
         Pick::Target(d) => (d, false),
         Pick::Decision(d) => (d, true),
@@ -314,7 +319,15 @@ pub fn pick(
     };
     let cands: Vec<usize> = (0..anchors.len()).filter(|&i| fits(&anchors[i])).collect();
     let y = |i: usize| anchors[i].rect.map_or(0.0, |r| r.y);
-    let found = match from.and_then(|nid| anchors.iter().position(|a| a.nid == nid)) {
+    let on_screen = |i: usize| {
+        anchors[i]
+            .rect
+            .is_some_and(|r| r.y + r.h > view_top && r.y < view_bottom)
+    };
+    let cur = from
+        .and_then(|nid| anchors.iter().position(|a| a.nid == nid))
+        .filter(|&i| on_screen(i));
+    let found = match cur {
         Some(cur) if dir > 0 => cands.iter().find(|&&i| i > cur).or(cands.first()),
         Some(cur) => cands.iter().rev().find(|&&i| i < cur).or(cands.last()),
         None if dir > 0 => cands
@@ -324,7 +337,7 @@ pub fn pick(
         None => cands
             .iter()
             .rev()
-            .find(|&&i| y(i) < view_top)
+            .find(|&&i| y(i) < view_bottom)
             .or(cands.last()),
     };
     found.copied()
@@ -1383,9 +1396,9 @@ impl NotesLayer {
     /// Move the keyboard's selection ([`pick`]) and answer the box it landed
     /// on, for the view to bring into sight. `None` leaves the selection
     /// where it was.
-    pub fn select(&mut self, anchors: &[Anchor], how: Pick, view_top: f32) -> Option<RectCss> {
+    pub fn select(&mut self, anchors: &[Anchor], how: Pick, view: (f32, f32)) -> Option<RectCss> {
         let stamped = |nid: &str| self.concurs().is_some_and(|c| c.has(nid));
-        let i = pick(anchors, self.selected.as_deref(), how, &stamped, view_top)?;
+        let i = pick(anchors, self.selected.as_deref(), how, &stamped, view)?;
         self.selected = Some(anchors[i].nid.clone());
         anchors[i].rect
     }
@@ -2584,14 +2597,12 @@ impl NotesLayer {
                     .py(px(8.))
                     .border_b_1()
                     .border_color(th.faint)
-                    .child(div().font_weight(FontWeight::BOLD).child(b.title.clone()))
-                    .child(
-                        div()
-                            .text_size(px(body * 0.75))
-                            .text_color(th.faint)
-                            .font_family(SharedString::from(sk.font_family.clone()))
-                            .child(format!("#{}", b.nid)),
-                    ),
+                    // The element's title only. Its id is a machine name,
+                    // grown from the first words of its text, and it reads
+                    // as noise: Parker, 2026-11-03, *"HUMAN SHOULDN'T SEE
+                    // THE ELEMENT title! machine names will get too long!"*
+                    // The map an agent is handed still names it by id.
+                    .child(div().font_weight(FontWeight::BOLD).child(b.title.clone())),
             )
             .child(content);
         Some(
@@ -2733,6 +2744,46 @@ mod tests {
             has_concur: None,
             line: None,
         }
+    }
+
+    /// Tab walks from the selection while it is on screen. Once the reader
+    /// has scrolled away from it, Tab lands on the first thing on the screen
+    /// and Shift+Tab on the last, never back where the selection was.
+    #[test]
+    fn tab_starts_from_the_screen_once_the_selection_is_scrolled_away() {
+        let at = |y: f32| Some(rect_css(0.0, y, 400.0, 100.0));
+        let anchors: Vec<Anchor> = (0..8)
+            .map(|i| anchor(&format!("a{i}"), at(i as f32 * 500.0), false))
+            .collect();
+        let none = |_: &str| false;
+        let next = Pick::Target(1);
+        // Reading the top of the page: from a0, Tab goes to a1.
+        assert_eq!(
+            pick(&anchors, Some("a0"), next, &none, (0.0, 800.0)),
+            Some(1)
+        );
+        // Five pages on, a0 is far above the screen (2400..3200, which shows
+        // a5 and a6): Tab takes a5, the first on screen, not a1.
+        assert_eq!(
+            pick(&anchors, Some("a0"), next, &none, (2400.0, 3200.0)),
+            Some(5)
+        );
+        // Shift+Tab takes the last on screen, a6.
+        assert_eq!(
+            pick(
+                &anchors,
+                Some("a0"),
+                Pick::Target(-1),
+                &none,
+                (2400.0, 3200.0)
+            ),
+            Some(6)
+        );
+        // From a selection on screen, the walk goes on from it.
+        assert_eq!(
+            pick(&anchors, Some("a5"), next, &none, (2400.0, 3200.0)),
+            Some(6)
+        );
     }
 
     fn view() -> PageToView {

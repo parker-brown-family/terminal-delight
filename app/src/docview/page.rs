@@ -1561,7 +1561,8 @@ impl PageDoc {
                     return false;
                 };
                 let top = f32::from(map.scroll) / map.px_per_css;
-                let Some(rect) = layer.select(anchors, how, top) else {
+                let bottom = top + f32::from(map.clip.size.height) / map.px_per_css;
+                let Some(rect) = layer.select(anchors, how, (top, bottom)) else {
                     return false;
                 };
                 (

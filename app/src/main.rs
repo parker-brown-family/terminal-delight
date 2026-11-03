@@ -20872,7 +20872,12 @@ impl Workspace {
     /// pane that handed nothing over raises the rail instead of guessing, and
     /// a window where nothing was handed over says so.
     fn nav_artifact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let open = self.all_leaves().iter().any(|p| p.read(cx).has_float());
+        // A document open, or Alt+O's question about one that is not: either
+        // way the second press raises the rail.
+        let open = self
+            .all_leaves()
+            .iter()
+            .any(|p| p.read(cx).has_float() || p.read(cx).asks_outside());
         let focused = self
             .focused_leaf(window, cx)
             .filter(|p| p.read(cx).handovers().newest().is_some());
@@ -20889,10 +20894,13 @@ impl Workspace {
             }
             navkeys::ArtifactStep::OpenNewest => {
                 if let Some(p) = focused {
-                    p.update(cx, |v, cx| v.open_newest_handover(cx));
+                    p.update(cx, |v, cx| v.ask_newest_handover(cx));
                 }
             }
             navkeys::ArtifactStep::OpenRail => {
+                for p in self.all_leaves() {
+                    p.update(cx, |v, cx| v.put_ask_away(cx));
+                }
                 self.rail_close();
                 self.art_open(cx);
             }
