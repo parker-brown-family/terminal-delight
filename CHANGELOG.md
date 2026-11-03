@@ -79,6 +79,28 @@ sections from there down are what the 0.4.0 candidates already carried.
   puts away one thing at a time: the note being written, the selection, the
   clip, then the document and the frame.
 
+### The help sheet (F1) filters as you type
+
+- **Type to filter.** With the help sheet open, whatever you type lands in a
+  box at the top centre and narrows the sheet live, as Omarchy's own key list
+  does. Every word must be found in a row's key, its description or its
+  section's name, so "scroll mode" lists that whole section. A query searches
+  SHORTCUTS and FEATURES together. Nothing you type reaches the terminal
+  behind the sheet. Escape clears the query, and a second Escape closes.
+- **It scrolls, and fits the window.** The card is capped to the space it is
+  drawn in, and only its rows scroll: by wheel, by ↑ ↓, PgUp and PgDn, and to
+  the ends by Ctrl+Home and Ctrl+End. Tab swaps SHORTCUTS and FEATURES.
+- **Every chord from this release is on it**, in a new GET AROUND section
+  (marks, back and forward, the mouse's side buttons, pinned tabs, Alt+Q and
+  a digit), plus WHILE A DOCUMENT IS OPEN (the reading keys) and IN SCROLL
+  MODE. Ctrl+Insert and Shift+Insert, Ctrl+Shift+A, Ctrl+Shift+B, and PgUp
+  and Ctrl+Home in agent panes are listed for the first time.
+- **FEATURES is rebuilt for 0.5.0**: forty-five entries in six sections,
+  from the workbench, NEEDS ME and the Threshing Floor to the reading frame,
+  briefs, pane marks, skins, updates and Restricted commands, each with its
+  chord where it has one. The stale "5 themes" and "stdio, never TCP" lines
+  are gone. All of it is in the nine languages.
+
 ### Update Terminal Delight from inside TD
 
 - ⚙ CONFIG › UPDATES, and `terminal-delight update` from a terminal, find a

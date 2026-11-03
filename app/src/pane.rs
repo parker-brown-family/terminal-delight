@@ -6083,6 +6083,17 @@ impl TerminalView {
         self.tokens_banked.saturating_add(self.turn_peak_tokens)
     }
 
+    /// The visible screen as text, one line per row, for a window-level test
+    /// that has to know what reached the program.
+    #[cfg(test)]
+    pub(crate) fn fixture_screen_text(&self) -> String {
+        let (rows, _) = self.grid_snapshot();
+        rows.iter()
+            .map(|r| r.iter().collect::<String>())
+            .collect::<Vec<_>>()
+            .join("\n")
+    }
+
     /// Give a window-level fixture the same reader cleanup as the pane harness.
     #[cfg(test)]
     pub(crate) fn fixture_shutdown(&self) -> impl FnOnce() + 'static {
