@@ -37244,6 +37244,7 @@ impl Render for Workspace {
                         row(s.k_scroll_wheel, s.scroll_hist),
                         row("Shift+PgUp / PgDn", s.scroll_hist),
                         row("Alt+E / Alt+Shift+E", s.help_next_error),
+                        row("Alt+[", s.help_scroll_mode),
                         row("Ctrl+Shift+K", s.clear_scroll),
                         row("Ctrl+↑↓ · Ctrl+Shift+↑↓", s.turn_square),
                     ],

@@ -199,6 +199,77 @@ impl<P: Clone + PartialEq> Trail<P> {
     }
 }
 
+/// One key in scroll mode (Alt+[), and what it moves.
+///
+/// Scroll mode is tmux's copy mode for this terminal: letters stop going to
+/// the program and move the view instead. Terminal Delight knows more than
+/// lines — which lines are your turns and which are errors — so it moves by
+/// those too.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum ScrollMotion {
+    /// Positive is toward older lines.
+    Lines(i32),
+    PageUp,
+    PageDown,
+    Top,
+    Bottom,
+    /// `[` / `]`: the previous / next block — one of your turns or an error.
+    Block {
+        older: bool,
+    },
+    /// `{` / `}`: the previous / next of your own turns.
+    Turn {
+        older: bool,
+    },
+    /// `e` / `E`: the previous / next error line.
+    Error {
+        older: bool,
+    },
+    /// `/`: search this pane, which leaves the mode for the find panel.
+    Find,
+    /// `q` or Escape: leave, back at the live bottom.
+    Exit,
+}
+
+/// What a key does in scroll mode. `None` is a key the mode has no use for;
+/// the mode still takes it, so a stray letter never reaches the program from a
+/// view the person has scrolled away from.
+///
+/// The braces arrive two ways, like every shifted symbol: the desktop names
+/// `{` and drops the shift, gpui's parser keeps the shift on `[`. Both are
+/// the same press, and so are `G` and shift+`g`.
+pub fn scroll_motion(key: &str, shift: bool) -> Option<ScrollMotion> {
+    use ScrollMotion::*;
+    Some(match (key, shift) {
+        ("k" | "up", false) => Lines(1),
+        ("j" | "down", false) => Lines(-1),
+        ("pageup" | "u" | "b", false) => PageUp,
+        ("pagedown" | "d" | "f" | "space", false) => PageDown,
+        ("g" | "home", false) => Top,
+        ("g", true) | ("G", _) | ("end", _) => Bottom,
+        ("[", false) => Block { older: true },
+        ("]", false) => Block { older: false },
+        ("[", true) | ("{", _) => Turn { older: true },
+        ("]", true) | ("}", _) => Turn { older: false },
+        ("e", false) => Error { older: true },
+        ("e", true) | ("E", _) => Error { older: false },
+        ("/", _) => Find,
+        ("q" | "escape", _) => Exit,
+        _ => return None,
+    })
+}
+
+/// The nearest line of interest above (`older`) or below `top`, the grid line
+/// at the top of the view. Lines are alacritty's `Line.0`: negative is
+/// scrollback, and smaller is older.
+pub fn nearest(lines: &[i32], top: i32, older: bool) -> Option<i32> {
+    if older {
+        lines.iter().copied().filter(|&l| l < top).max()
+    } else {
+        lines.iter().copied().filter(|&l| l > top).min()
+    }
+}
+
 /// How long ago a pane was last attended to: the newer of the person last
 /// visiting it and its agent last changing state. Parker, on lookup: *"It is
 /// very important to include the age of the pane's last visit, or action"*.
@@ -590,5 +661,43 @@ mod tests {
             "this pane has none: choose from the rail"
         );
         assert_eq!(artifact_step(false, false, false, false), SayNone);
+    }
+
+    #[test]
+    fn scroll_mode_keys_read_as_drawn_on_its_strip() {
+        use ScrollMotion::*;
+        assert_eq!(scroll_motion("k", false), Some(Lines(1)));
+        assert_eq!(scroll_motion("j", false), Some(Lines(-1)));
+        assert_eq!(scroll_motion("g", false), Some(Top));
+        assert_eq!(scroll_motion("g", true), Some(Bottom));
+        assert_eq!(scroll_motion("G", false), Some(Bottom));
+        assert_eq!(scroll_motion("[", false), Some(Block { older: true }));
+        assert_eq!(scroll_motion("]", false), Some(Block { older: false }));
+        // The braces, as the parser and as the desktop spell them.
+        assert_eq!(scroll_motion("[", true), Some(Turn { older: true }));
+        assert_eq!(scroll_motion("{", false), Some(Turn { older: true }));
+        assert_eq!(scroll_motion("]", true), Some(Turn { older: false }));
+        assert_eq!(scroll_motion("}", false), Some(Turn { older: false }));
+        assert_eq!(scroll_motion("e", false), Some(Error { older: true }));
+        assert_eq!(scroll_motion("e", true), Some(Error { older: false }));
+        assert_eq!(scroll_motion("/", false), Some(Find));
+        assert_eq!(scroll_motion("q", false), Some(Exit));
+        assert_eq!(scroll_motion("escape", false), Some(Exit));
+        assert_eq!(scroll_motion("x", false), None);
+        assert_eq!(scroll_motion("enter", false), None);
+    }
+
+    #[test]
+    fn nearest_steps_strictly_past_the_top_line() {
+        let lines = [-90, -40, -10, 5];
+        assert_eq!(
+            nearest(&lines, -40, true),
+            Some(-90),
+            "not the line already at the top"
+        );
+        assert_eq!(nearest(&lines, -40, false), Some(-10));
+        assert_eq!(nearest(&lines, -90, true), None);
+        assert_eq!(nearest(&lines, 5, false), None);
+        assert_eq!(nearest(&[], 0, true), None);
     }
 }

@@ -35,6 +35,13 @@ sections from there down are what the 0.4.0 candidates already carried.
   none further it says so.
 - **Lookup (Alt+L)** shows how long ago each pane and tab was last visited or
   last changed state, with a dash where that is not known.
+- **Scroll mode (Alt+[)**, tmux's copy mode for this terminal. Letters move
+  the view instead of reaching the program: j/k a line, u/d a page, g/G the
+  ends, [ and ] the previous and next of your turns or an error, { and } your
+  turns only, e/E errors, / to search, q or Escape back to the live bottom. A
+  strip along the bottom lists the keys. In a full-screen program such as
+  Claude Code, lines, pages and turns move the program's own history. Ctrl
+  and Alt chords still pass through, so Ctrl+C reaches a running agent.
 
 ### Update Terminal Delight from inside TD
 

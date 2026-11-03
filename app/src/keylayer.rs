@@ -142,6 +142,12 @@ pub enum Layer {
     /// face is showing; what the bench then does with the key is its own ladder,
     /// and it may decline.
     Bench,
+    /// Scroll mode (Alt+[) on the terminal face: every plain key moves the
+    /// view instead of reaching the program, until `q` or Escape. Ctrl and Alt
+    /// chords pass under it, so Ctrl+C still reaches a running agent and the
+    /// window's chords still work. Below the bench and the document, which
+    /// hide the terminal this mode is moving.
+    Scroll,
     /// The terminal: keyboard selection, the scrollback keys, and the
     /// pseudoterminal itself. The floor — everything not claimed above lands
     /// here, and so does everything [`Layer::Paint`] and [`Layer::Bench`] hand
@@ -208,6 +214,8 @@ pub struct Up {
     /// face already takes every key the chords leave, and this says whether
     /// the paste chord is one of them ([`note_caret`]).
     pub doc_caret: bool,
+    /// The terminal is in scroll mode (Alt+[).
+    pub scroll: bool,
 }
 
 /// A note is being written in a document this pane shows, on either seat: the
@@ -282,7 +290,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 13] = [
+const LADDER: [Rung; 14] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, u| {
@@ -315,6 +323,9 @@ const LADDER: [Rung; 13] = [
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
+    (Layer::Scroll, |k, u| {
+        u.scroll && !k.control && !k.alt && !k.platform
+    }),
 ];
 
 /// The topmost layer that claims this keystroke, or [`Layer::Terminal`].
@@ -569,7 +580,9 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
-            "a" | "s" => true,
+            // `[` enters and leaves scroll mode: tmux's copy-mode key, with Alt
+            // in place of the prefix.
+            "a" | "s" | "[" => true,
             "backspace" => up.note,
             _ => false,
         };
@@ -911,7 +924,7 @@ mod tests {
             ctrl_shift("v"),
             shift_insert(),
         ];
-        for bits in 0u16..16384 {
+        for bits in 0u16..32768 {
             let up = Up {
                 agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
@@ -927,6 +940,7 @@ mod tests {
                 float_caret: bits & 1024 != 0,
                 float_sends: bits & 2048 != 0,
                 doc_caret: bits & 4096 != 0,
+                scroll: bits & 16384 != 0,
             };
             for k in &keys {
                 let want = LADDER
@@ -1963,6 +1977,7 @@ mod tests {
             float_caret: true,
             float_sends: true,
             doc_caret: true,
+            scroll: true,
         };
         assert_eq!(route(&named("f1"), &everything), Layer::Help);
     }
@@ -2235,5 +2250,58 @@ mod tests {
         // And the plain paging table still refuses the shifted pair, so the two
         // cannot both answer one press.
         assert_eq!(paging(&k("pageup", true, false, false)), None);
+    }
+
+    /// Scroll mode takes the plain keys and nothing else: Ctrl+C must still
+    /// reach a running agent, and the window's chords must still work.
+    #[test]
+    fn scroll_mode_takes_plain_keys_and_lets_chords_through() {
+        let up = Up {
+            scroll: true,
+            ..Up::default()
+        };
+        for key in ["j", "k", "g", "q", "[", "escape", "/"] {
+            let k = Key {
+                key,
+                ..Key::default()
+            };
+            assert_eq!(route(&k, &up), Layer::Scroll, "{key}");
+        }
+        let shift_g = Key {
+            key: "g",
+            shift: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&shift_g, &up), Layer::Scroll);
+        let ctrl_c = Key {
+            key: "c",
+            control: true,
+            ..Key::default()
+        };
+        assert_eq!(
+            route(&ctrl_c, &up),
+            Layer::Terminal,
+            "ctrl+c reaches the agent"
+        );
+        assert_eq!(route(&alt_with("o", false), &up), Layer::Window);
+        // Alt+[ is the pane's, in and out of the mode.
+        assert_eq!(route(&alt_with("[", false), &up), Layer::PaneChord);
+        assert_eq!(
+            route(&alt_with("[", false), &Up::default()),
+            Layer::PaneChord
+        );
+        // And without the mode, a plain letter is the program's as ever.
+        let j = Key {
+            key: "j",
+            ..Key::default()
+        };
+        assert_eq!(route(&j, &Up::default()), Layer::Terminal);
+        // The bench, which hides the terminal, keeps its keys.
+        let bench = Up {
+            scroll: true,
+            bench: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&j, &bench), Layer::Bench);
     }
 }
