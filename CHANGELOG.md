@@ -69,6 +69,9 @@ sections from there down are what the 0.4.0 candidates already carried.
 - **Tab starts from the screen.** Once you have scrolled away from the
   selection, Tab picks the first section on screen and Shift+Tab the last,
   rather than carrying on from where you were pages ago.
+- **A selection lands loud and then reads quietly.** The section Tab or ]
+  selects is highlighted in full for a second, fades over the next, and keeps
+  its border.
 - **The note box names the element by its title only**, not by its id.
 - **Alt+O asks before it leaves the window.** When the newest artifact is a
   web address or a file TD cannot draw, a small card names it: Enter opens it
@@ -78,6 +81,32 @@ sections from there down are what the 0.4.0 candidates already carried.
   on top of the page in the frame, and the page keeps the keyboard. Escape
   puts away one thing at a time: the note being written, the selection, the
   clip, then the document and the frame.
+- **Moving to another pane puts the document away.** Alt+arrows and the pane
+  marks still take you elsewhere while you read, and the frame now closes as
+  focus lands on the other pane, so nothing you type there goes into a shell
+  hidden behind the page.
+
+### The help sheet (F1) filters as you type
+
+- **Type to filter.** With the help sheet open, whatever you type lands in a
+  box at the top centre and narrows the sheet live, as Omarchy's own key list
+  does. Every word must be found in a row's key, its description or its
+  section's name, so "scroll mode" lists that whole section. A query searches
+  SHORTCUTS and FEATURES together. Nothing you type reaches the terminal
+  behind the sheet. Escape clears the query, and a second Escape closes.
+- **It scrolls, and fits the window.** The card is capped to the space it is
+  drawn in, and only its rows scroll: by wheel, by ↑ ↓, PgUp and PgDn, and to
+  the ends by Ctrl+Home and Ctrl+End. Tab swaps SHORTCUTS and FEATURES.
+- **Every chord from this release is on it**, in a new GET AROUND section
+  (marks, back and forward, the mouse's side buttons, pinned tabs, Alt+Q and
+  a digit), plus WHILE A DOCUMENT IS OPEN (the reading keys) and IN SCROLL
+  MODE. Ctrl+Insert and Shift+Insert, Ctrl+Shift+A, Ctrl+Shift+B, and PgUp
+  and Ctrl+Home in agent panes are listed for the first time.
+- **FEATURES is rebuilt for 0.5.0**: forty-six entries in six sections,
+  from the workbench, NEEDS ME and the Threshing Floor to the reading frame,
+  briefs, pane marks, skins, phosphor burn, updates and Restricted commands, each with its
+  chord where it has one. The stale "5 themes" and "stdio, never TCP" lines
+  are gone. All of it is in the nine languages.
 
 ### Update Terminal Delight from inside TD
 

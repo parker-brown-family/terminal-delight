@@ -364,6 +364,39 @@ pub fn promotes(floating: Option<&std::path::Path>, clicked: &std::path::Path) -
     floating == Some(clicked)
 }
 
+/// Where the keyboard is, as the reading frame sees it.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+pub enum FrameFocus {
+    /// On the pane whose document the frame is reading.
+    Read,
+    /// On another pane of the window.
+    Other,
+    /// On neither: the window itself, an overlay, or nothing yet.
+    Elsewhere,
+}
+
+/// Pure. Whether the reading frame closes now that focus is at `focus`,
+/// and whether its pane has held focus since the frame opened (`seen`).
+///
+/// A document being read takes every key its pane is handed, so the frame
+/// promises that nothing typed while reading reaches a shell. Alt+arrows and
+/// the pane marks are window chords and still move focus, by design: the
+/// frame must never swallow the key that takes you somewhere else. Focus on
+/// another pane therefore puts the frame away, document and all, rather than
+/// leave it drawn over a shell that now takes the typing (issue 1293).
+///
+/// Only once the read pane has been seen holding focus: opening the frame
+/// hands focus to that pane a beat later, and until it lands, focus is still
+/// wherever the open came from. Focus on the window or an overlay is neither
+/// a move nor a landing.
+pub fn frame_follows_focus(focus: FrameFocus, seen: bool) -> (bool, bool) {
+    match focus {
+        FrameFocus::Read => (false, true),
+        FrameFocus::Other => (seen, seen),
+        FrameFocus::Elsewhere => (false, seen),
+    }
+}
+
 /// What a key does on a pane's Document face.
 #[derive(Clone, Copy, PartialEq, Debug)]
 pub enum DocKey {
@@ -1868,5 +1901,32 @@ mod tests {
         assert_eq!(send_label(2, "CLAUDE"), "CLAUDE");
         let long = send_label(3, "an agent pane whose title runs on and on");
         assert!(long.ends_with('…') && long.chars().count() <= 24, "{long}");
+    }
+
+    /// The reading frame closes when focus lands on another pane, but only
+    /// once its own pane has held focus; the window and overlays move nothing.
+    #[test]
+    fn the_reading_frame_follows_focus_off_its_pane() {
+        use FrameFocus::*;
+        assert_eq!(
+            frame_follows_focus(Other, false),
+            (false, false),
+            "before its pane takes focus"
+        );
+        assert_eq!(
+            frame_follows_focus(Read, false),
+            (false, true),
+            "its pane takes focus"
+        );
+        assert_eq!(
+            frame_follows_focus(Elsewhere, true),
+            (false, true),
+            "an overlay is not a move"
+        );
+        assert_eq!(
+            frame_follows_focus(Other, true),
+            (true, true),
+            "another pane: it closes"
+        );
     }
 }

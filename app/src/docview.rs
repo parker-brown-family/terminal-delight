@@ -191,6 +191,9 @@ pub struct DocumentView {
     /// its pane draws "being read"; see [`Self::lend`]. `None` while it is
     /// drawn in its own seat.
     lent: Option<Lent>,
+    /// Which keyboard selection the fade timer is drawing for: a newer one
+    /// stops the older timer ([`Self::redraw_while_the_selection_fades`]).
+    fade_epoch: u64,
     /// The view's own size and the window's scale factor, as the last paint
     /// measured them. `None` until it has painted once: an unmeasured view is
     /// not a zero-sized one, and nothing that needs the size runs without it.
@@ -809,6 +812,7 @@ impl DocumentView {
             theme: None,
             seat: DocSeat::Float,
             lent: None,
+            fade_epoch: 0,
             frame: Rc::new(Cell::new(None)),
             flips: Rc::new(Cell::new((None, 0))),
             placed: Rc::new(Cell::new(None)),
@@ -1122,8 +1126,39 @@ impl DocumentView {
         let changed = self.backend.read_act(act, cx);
         if changed {
             cx.notify();
+            if matches!(act, ReadAct::Pick(_)) {
+                self.redraw_while_the_selection_fades(cx);
+            }
         }
         changed
+    }
+
+    /// Draw the view again every frame's worth of time until a new
+    /// selection's wash has faded ([`notes_ui::selection_glow`]): nothing
+    /// else asks for a frame while a page sits still. A newer selection
+    /// takes over, and the older one's timer stops.
+    fn redraw_while_the_selection_fades(&mut self, cx: &mut Context<Self>) {
+        self.fade_epoch = self.fade_epoch.wrapping_add(1);
+        let epoch = self.fade_epoch;
+        let until = notes_ui::SELECTION_FULL + notes_ui::SELECTION_FADE;
+        cx.spawn(async move |this, cx| {
+            let started = std::time::Instant::now();
+            loop {
+                cx.background_executor()
+                    .timer(std::time::Duration::from_millis(33))
+                    .await;
+                let more = this
+                    .update(cx, |v, cx| {
+                        cx.notify();
+                        v.fade_epoch == epoch
+                    })
+                    .unwrap_or(false);
+                if !more || started.elapsed() > until {
+                    break;
+                }
+            }
+        })
+        .detach();
     }
 
     /// Whether a note is being written in a brief's note box: while it is,
