@@ -159,7 +159,7 @@ pub fn shortcuts(s: &Strings) -> Vec<Section> {
                 row("c", h.r_concur),
                 row("y", h.r_copy_map),
                 row("Ctrl+Shift+Enter", h.r_send),
-                row("+ / − · 0 · 1", h.r_zoom),
+                row("+ / − · Ctrl+= / - · 0 · 1", h.r_zoom),
                 row("Esc", h.r_escape),
                 row("Alt+O", h.r_list),
                 row("Ctrl+W", s.close_doc),
