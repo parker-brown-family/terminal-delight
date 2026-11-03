@@ -4823,6 +4823,9 @@ struct Workspace {
     /// The cards' order as it stood when the rail opened (row keys), so a
     /// card never moves under the pointer while the rail is up.
     art_order: Vec<u64>,
+    /// Which pane's own artifacts the rail is showing, or `None` for every
+    /// pane's. Alt+O climbs from one to the other (`navkeys::artifact_step`).
+    art_scope: Option<u64>,
     /// The card the arrow keys are on.
     art_cursor: usize,
     /// Alt+1…9 in flight: a tap goes to the marked pane, a hold marks the
@@ -6638,6 +6641,7 @@ impl Workspace {
             art_bumps: 0,
             art_unseen: false,
             art_order: Vec::new(),
+            art_scope: None,
             art_cursor: 0,
             mark_gesture: navkeys::MarkGesture::new(),
             mark_names: Default::default(),
@@ -20872,19 +20876,21 @@ impl Workspace {
     /// pane that handed nothing over raises the rail instead of guessing, and
     /// a window where nothing was handed over says so.
     fn nav_artifact(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        // A document open, or Alt+O's question about one that is not: either
-        // way the second press raises the rail.
-        let open = self
-            .all_leaves()
-            .iter()
-            .any(|p| p.read(cx).has_float() || p.read(cx).asks_outside());
-        let focused = self
-            .focused_leaf(window, cx)
-            .filter(|p| p.read(cx).handovers().newest().is_some());
+        // Only the focused pane decides a rung: what other panes have open is
+        // theirs. Its page being read, or Alt+O's question over it, is the
+        // first rung climbed.
+        let focused = self.focused_leaf(window, cx);
+        let (showing, has) = focused.as_ref().map_or((false, false), |p| {
+            let v = p.read(cx);
+            (
+                v.has_float() || v.asks_outside(),
+                v.handovers().newest().is_some(),
+            )
+        });
         let step = navkeys::artifact_step(
-            self.art_rail,
-            open,
-            focused.is_some(),
+            self.art_rail_up(),
+            showing,
+            has,
             !self.art_cards(cx).is_empty(),
         );
         match step {
@@ -20897,11 +20903,19 @@ impl Workspace {
                     p.update(cx, |v, cx| v.ask_newest_handover(cx));
                 }
             }
+            navkeys::ArtifactStep::OpenPaneRail => {
+                if let Some(p) = focused {
+                    p.update(cx, |v, cx| v.put_ask_away(cx));
+                    self.rail_close();
+                    self.art_open_pane(p.entity_id().as_u64(), cx);
+                }
+            }
             navkeys::ArtifactStep::OpenRail => {
                 for p in self.all_leaves() {
                     p.update(cx, |v, cx| v.put_ask_away(cx));
                 }
                 self.rail_close();
+                self.art_close();
                 self.art_open(cx);
             }
             navkeys::ArtifactStep::SayNone => {
@@ -39364,6 +39378,161 @@ mod tests {
     /// tab through a reorder and a save; a letter the window already answers,
     /// or another tab holds, is refused; and with the digits off Alt+N is the
     /// program's again.
+    #[gpui::test]
+    /// Alt+O climbs Parker's ladder from the FOCUSED pane: its newest artifact,
+    /// then its own artifacts, then every pane's, then away. And what another
+    /// pane has open never decides a rung — the bug of 2026-11-03, when the
+    /// first press went straight to every pane's rail because some other pane
+    /// in the window had a document up.
+    fn alt_o_climbs_from_the_focused_panes_newest_to_every_panes(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx)
+                })
+            });
+        }
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let dir = std::env::temp_dir().join(format!("td-alt-o-ladder-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = |name: &str| {
+            let f = dir.join(name);
+            std::fs::write(&f, format!("# {name}\n")).unwrap();
+            f.to_string_lossy().into_owned()
+        };
+        let leaf = |cx: &mut gpui::VisualTestContext, tab: usize| {
+            ws.read_with(cx, |ws, _| {
+                let mut ls = vec![];
+                ws.tabs[tab].root.leaves(&mut ls);
+                ls[0].clone()
+            })
+        };
+        let (mine, other) = (leaf(cx, 0), leaf(cx, 1));
+        let (older, newer, theirs) = (page("older.md"), page("newer.md"), page("theirs.md"));
+        cx.update(|_, cx| {
+            mine.update(cx, |v, cx| {
+                v.hand_over(
+                    Some("older".into()),
+                    older.clone(),
+                    handover::Source::Declared,
+                    cx,
+                );
+            });
+        });
+        // Strictly later, so "newest" is not a tie.
+        std::thread::sleep(std::time::Duration::from_millis(5));
+        cx.update(|_, cx| {
+            mine.update(cx, |v, cx| {
+                v.hand_over(
+                    Some("newer".into()),
+                    newer.clone(),
+                    handover::Source::Declared,
+                    cx,
+                );
+            });
+            other.update(cx, |v, cx| {
+                v.hand_over(
+                    Some("theirs".into()),
+                    theirs.clone(),
+                    handover::Source::Declared,
+                    cx,
+                );
+                // The other pane has its document open: that must not move the
+                // focused pane's first rung.
+                v.open_newest_handover(cx);
+            });
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                let _ = w.draw(cx);
+            });
+            cx.run_until_parked();
+        };
+        let focus_mine = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    ws.active = 0;
+                    ws.focus_active(w, cx);
+                })
+            });
+            cx.run_until_parked();
+        };
+        let rail = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, cx| (ws.art_rail_up(), ws.art_shown(cx).len()))
+        };
+        draw(cx);
+        focus_mine(cx);
+        assert!(
+            other.read_with(cx, |v, _| v.has_float()),
+            "the other pane has its page open"
+        );
+        assert!(!mine.read_with(cx, |v, _| v.has_float()));
+
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert_eq!(
+            rail(cx).0,
+            navkeys::RailUp::None,
+            "1: no rail, whatever the other pane has open"
+        );
+        let shown = mine.read_with(cx, |v, cx| v.float_path(cx));
+        assert_eq!(
+            shown.as_deref(),
+            Some(std::path::Path::new(&newer)),
+            "1: the focused pane's NEWEST artifact"
+        );
+
+        focus_mine(cx);
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert_eq!(
+            rail(cx),
+            (navkeys::RailUp::Pane, 2),
+            "2: this pane's own two artifacts"
+        );
+
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert_eq!(
+            rail(cx),
+            (navkeys::RailUp::All, 2),
+            "3: every pane's, one card each"
+        );
+
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert_eq!(rail(cx).0, navkeys::RailUp::None, "4: away");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[gpui::test]
     fn a_single_key_reaches_a_pane_by_mark_or_a_tab_by_pin(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
