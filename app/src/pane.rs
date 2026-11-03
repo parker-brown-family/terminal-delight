@@ -2952,6 +2952,9 @@ pub struct TerminalView {
     /// window clears it from every other pane when it sets it. Saved with the
     /// leaf, like the seat, so a mark outlives a restart.
     pub mark: Option<u8>,
+    /// Scroll mode (Alt+[): plain keys move the view instead of reaching the
+    /// program, until `q` or Escape. See [`crate::navkeys::ScrollMotion`].
+    pub(crate) scroll_mode: bool,
     /// Whether this pane is in the tab being shown, written by the workspace
     /// on every draw (`Workspace::render`). An atomic so the workspace can set
     /// it while only reading the pane, and so it is never a frame stale.
@@ -5454,6 +5457,7 @@ impl TerminalView {
             model_label: None,
             seat: None,
             mark: None,
+            scroll_mode: false,
             staged: restore.clone(),
             title: DEFAULT_TITLE.into(),
             name: None,
@@ -7663,6 +7667,7 @@ impl TerminalView {
                     self.terminal_key(&k, ks, cx)
                 }
             }
+            crate::keylayer::Layer::Scroll => self.scroll_key(&k, cx),
             crate::keylayer::Layer::Terminal => self.terminal_key(&k, ks, cx),
         };
         if handled == Handled::Consumed {
@@ -7699,6 +7704,7 @@ impl TerminalView {
             doc_caret: self
                 .doc_on_face()
                 .is_some_and(|d| d.view.read(cx).has_caret()),
+            scroll: self.scroll_mode,
         }
     }
 
@@ -7837,6 +7843,8 @@ impl TerminalView {
                 // the Workspace, `keystroke_bytes` would send `ESC s` on the way
                 // past. It costs the shell alt+s, which nothing standard binds.
                 "s" => self.sticky_toggle(cx),
+                // Alt+[ enters scroll mode, and leaves it.
+                "[" => self.toggle_scroll_mode(cx),
                 // Alt+Backspace peels it off. The shell loses the binding exactly
                 // when the pane is visibly carrying a note and not otherwise, and
                 // peeling by accident costs one keystroke: alt+s brings the text
@@ -8657,11 +8665,7 @@ impl TerminalView {
         }
         let idx = self.error_line_indices();
         let top = -(self.session.term.lock().display_offset() as i32);
-        let target = if older {
-            idx.iter().copied().filter(|&l| l < top).max()
-        } else {
-            idx.iter().copied().filter(|&l| l > top).min()
-        };
+        let target = crate::navkeys::nearest(&idx, top, older);
         match target {
             Some(l) => self.scroll_to_line(l, None, cx),
             None => {
@@ -8675,6 +8679,128 @@ impl TerminalView {
             }
         }
         target
+    }
+
+    /// Alt+[: enter scroll mode, or leave it for the live bottom.
+    pub(crate) fn toggle_scroll_mode(&mut self, cx: &mut Context<Self>) {
+        if self.scroll_mode {
+            self.leave_scroll_mode(cx);
+        } else {
+            self.scroll_mode = true;
+            cx.notify();
+        }
+    }
+
+    fn leave_scroll_mode(&mut self, cx: &mut Context<Self>) {
+        self.scroll_mode = false;
+        let alt = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        if !alt {
+            self.session.term.lock().scroll_display(Scroll::Bottom);
+        }
+        cx.notify();
+    }
+
+    /// The grid lines `[` and `]` step between: your own turns (in an agent
+    /// pane) and error lines, oldest first. A shell's commands are not among
+    /// them: Terminal Delight does not read the prompt marks a shell can emit.
+    fn block_line_indices(&self) -> Vec<i32> {
+        let mut lines = self.error_line_indices();
+        if self.mode.is_agent() {
+            lines.extend(self.human_line_indices());
+        }
+        lines.sort_unstable();
+        lines.dedup();
+        lines
+    }
+
+    /// Scroll a full-screen program (Claude Code paints on the alternate
+    /// screen and keeps its own history) by asking it, the way the ▲/▼
+    /// buttons do: wheel notches when it reports the mouse, else its page key.
+    fn nudge_program(&mut self, older: bool, notches: usize) {
+        let mode = self.session.term.lock().mode();
+        let bytes = if mode.intersects(TermMode::MOUSE_MODE) {
+            wheel_step_bytes(older, mode.contains(TermMode::SGR_MOUSE)).repeat(notches.max(1))
+        } else if older {
+            b"\x1b[5~".to_vec()
+        } else {
+            b"\x1b[6~".to_vec()
+        };
+        self.session.notifier.notify(bytes);
+    }
+
+    /// One key in scroll mode. Every plain key stops here, used or not, so
+    /// nothing typed lands in a program whose output the person scrolled away
+    /// from.
+    pub(crate) fn scroll_motion_key(
+        &mut self,
+        motion: Option<crate::navkeys::ScrollMotion>,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::navkeys::ScrollMotion as M;
+        let Some(motion) = motion else {
+            return;
+        };
+        let ui = crate::lang::current().strings().ui;
+        let alt = self
+            .session
+            .term
+            .lock()
+            .mode()
+            .contains(TermMode::ALT_SCREEN);
+        if alt {
+            let half = (self.session.term.lock().screen_lines() / 2).max(1);
+            match motion {
+                M::Lines(n) => self.nudge_program(n > 0, n.unsigned_abs() as usize),
+                M::PageUp => self.nudge_program(true, half),
+                M::PageDown => self.nudge_program(false, half),
+                M::Turn { older } | M::Block { older } => self.seek_agent_prompt(!older, cx),
+                M::Exit => self.leave_scroll_mode(cx),
+                M::Find => {
+                    self.leave_scroll_mode(cx);
+                    cx.emit(OpenFind { global: false });
+                }
+                M::Top | M::Bottom | M::Error { .. } => {
+                    self.say(ui.nav_scroll_owned.to_string(), None, cx);
+                }
+            }
+            cx.notify();
+            return;
+        }
+        let top = -(self.session.term.lock().display_offset() as i32);
+        match motion {
+            M::Lines(n) => self.session.term.lock().scroll_display(Scroll::Delta(n)),
+            M::PageUp => self.session.term.lock().scroll_display(Scroll::PageUp),
+            M::PageDown => self.session.term.lock().scroll_display(Scroll::PageDown),
+            M::Top => self.session.term.lock().scroll_display(Scroll::Top),
+            M::Bottom => self.session.term.lock().scroll_display(Scroll::Bottom),
+            M::Block { older } => {
+                match crate::navkeys::nearest(&self.block_line_indices(), top, older) {
+                    Some(l) => self.scroll_to_line(l, None, cx),
+                    None => self.say(ui.nav_no_blocks.to_string(), None, cx),
+                }
+            }
+            M::Turn { older } => self.scroll_to_human(!older, cx),
+            M::Error { older } => {
+                self.jump_error(older, cx);
+            }
+            M::Find => {
+                self.leave_scroll_mode(cx);
+                cx.emit(OpenFind { global: false });
+            }
+            M::Exit => self.leave_scroll_mode(cx),
+        }
+        cx.notify();
+    }
+
+    fn scroll_key(&mut self, k: &crate::keylayer::Key, cx: &mut Context<Self>) -> Handled {
+        let motion = crate::navkeys::scroll_motion(k.key, k.shift);
+        self.scroll_motion_key(motion, cx);
+        Handled::Consumed
     }
 
     /// The ▲/▼ header buttons in an agent pane whose TUI owns the
@@ -12979,6 +13105,29 @@ impl Render for TerminalView {
                         .child(said.text.clone()),
                 )
         });
+        // Scroll mode's key strip, along the bottom of the screen, so the keys
+        // the mode answers are in front of the person using them.
+        let scroll_el = (self.scroll_mode && on_terminal).then(|| {
+            let ui = crate::lang::current().strings().ui;
+            div()
+                .absolute()
+                .left(px(grid_pad_x))
+                .right(px(grid_pad_x))
+                .bottom(px(grid_pad_y))
+                .px(px(8.))
+                .py(px(2.))
+                .bg(th.surface.alpha(0.92))
+                .border_1()
+                .border_color(th.accent.alpha(0.8))
+                .rounded(px(4.))
+                .text_color(th.accent)
+                .text_size(sk.text_px(11.))
+                .whitespace_nowrap()
+                .overflow_hidden()
+                .text_ellipsis()
+                .debug_selector(|| "scroll-strip".into())
+                .child(ui.nav_scroll_strip)
+        });
         // The sticky note. Its geometry comes from the same `content_bounds` the
         // warp tube is registered from, because the note is drawn through the
         // INVERSE of that tube's distortion and the two must be measuring the
@@ -13331,6 +13480,7 @@ impl Render for TerminalView {
                     .children(float_cursor)
                     // Over the square: a link in it can be what prompted it.
                     .children(said_el)
+                    .children(scroll_el)
                     // The glass meets its bezel in rounded, shadowed corners.
                     // Over everything ON the glass, since the lip's shadow falls
                     // on whatever is there; under the ignition, which is light.

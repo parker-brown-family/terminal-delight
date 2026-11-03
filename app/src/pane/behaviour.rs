@@ -4863,3 +4863,55 @@ fn alt_e_walks_the_error_lines_and_says_when_there_are_no_more(cx: &mut TestAppC
         "Alt+Shift+E walks forward again"
     );
 }
+
+/// Scroll mode, driven by its keys in a running shell: Alt+[ enters, the
+/// letters move the view rather than reaching the program, `[` and `]` step
+/// between errors, `g`/`G` reach the ends, and `q` leaves at the live bottom.
+#[gpui::test]
+fn scroll_mode_moves_the_view_with_letters_and_q_leaves_it(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        "echo 'error: first'; for i in $(seq 1 80); do echo fine $i; done; \
+         echo 'error: second'; for i in $(seq 1 80); do echo fine $i; done; \
+         echo ready; exec cat",
+    );
+    pane.wait_for("ready");
+    pane.settle();
+    let offset = |pane: &mut Pane| pane.read(|v| v.session.term.lock().display_offset());
+    let errors = pane.read(|v| v.error_line_indices());
+    assert_eq!(errors.len(), 2);
+
+    // The control: outside the mode, `k` is the program's and moves nothing.
+    pane.keys("k");
+    assert_eq!(offset(&mut pane), 0);
+    pane.keys("backspace");
+
+    pane.keys("alt-[");
+    assert!(pane.read(|v| v.scroll_mode), "alt+[ enters scroll mode");
+    pane.keys("k");
+    pane.keys("k");
+    assert_eq!(offset(&mut pane), 2, "k moves up a line at a time");
+    pane.keys("j");
+    assert_eq!(offset(&mut pane), 1);
+    pane.keys("[");
+    assert_eq!(
+        offset(&mut pane),
+        -errors[1] as usize,
+        "[ steps to the nearer error"
+    );
+    pane.keys("[");
+    assert_eq!(
+        offset(&mut pane),
+        -errors[0] as usize,
+        "and on to the older one"
+    );
+    pane.keys("shift-g");
+    assert_eq!(offset(&mut pane), 0, "G is the live bottom");
+    pane.keys("g");
+    let top = offset(&mut pane);
+    assert!(top >= -errors[0] as usize, "g is the top of the history");
+    pane.keys("x"); // a key the mode has no use for: taken, not typed
+    pane.keys("q");
+    assert!(!pane.read(|v| v.scroll_mode), "q leaves");
+    assert_eq!(offset(&mut pane), 0, "back at the live bottom");
+}
