@@ -333,7 +333,7 @@ impl TerminalView {
             }
             Some(path) => match crate::docopen::drawable_document(&path) {
                 Some(target) => {
-                    let _ = self.open_float(target, None, cx);
+                    let _ = self.open_to_read(target, None, cx);
                 }
                 None => open_with_system(&path.to_string_lossy()),
             },
@@ -379,7 +379,7 @@ impl TerminalView {
             return;
         }
         if let Some(target) = crate::docopen::drawable_document(&path) {
-            let _ = self.open_float(target, None, cx);
+            let _ = self.open_to_read(target, None, cx);
         }
         cx.notify();
     }

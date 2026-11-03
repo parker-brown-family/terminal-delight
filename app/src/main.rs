@@ -4534,9 +4534,23 @@ impl ReaderGlass {
         }
     }
 
+    /// The reading frame's share of the window: 80% wide and centred, 5% of
+    /// the height above it and 10% below. Parker, 2026-11-02: *"We have been
+    /// at 80% width, centered horizontally, and 5% padded at the top of the
+    /// screen and 10% padded at the bottom."* One frame for the terminal
+    /// read big and for a document opened to read.
+    const WIDE: f32 = 0.8;
+    const ABOVE: f32 = 0.05;
+    const BELOW: f32 = 0.10;
+
+    /// How far down the window the frame starts.
+    fn top_in_window(win_h: f32) -> f32 {
+        win_h * Self::ABOVE
+    }
+
     fn in_window(win_w: f32, win_h: f32) -> Self {
-        let panel_w = (win_w * 0.8).max(320.);
-        let panel_h = (win_h * 0.8).max(240.);
+        let panel_w = (win_w * Self::WIDE).max(320.);
+        let panel_h = (win_h * (1.0 - Self::ABOVE - Self::BELOW)).max(240.);
         // A third roomier than the old 16px, so the text breathes inside the glass.
         let pad = 21.0_f32;
         let pad_x = (panel_w * 0.07).max(pad);
@@ -5325,6 +5339,11 @@ struct Workspace {
     /// do the moves until the button comes up: a picture being panned, a
     /// video's track being scrubbed.
     focus_doc_holding: bool,
+    /// Where the clip playing over a page in the reader was last drawn, in
+    /// window coordinates: a press inside it is the clip's, not the page's.
+    focus_clip_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
+    /// A press went to that clip, so its release goes there too.
+    focus_clip_holding: bool,
     /// The conversation the reader reads, while it reads an agent pane whose
     /// transcript is bound for certain. Dropped with the reader, which stops
     /// its reading.
@@ -6817,6 +6836,8 @@ impl Workspace {
             focus_sel: None,
             focus_sel_drag: false,
             focus_doc_holding: false,
+            focus_clip_bounds: Arc::new(Mutex::new(None)),
+            focus_clip_holding: false,
             focus_talk: None,
             focus_inline: false,
             focus_turn_nav: transcript::TurnNav::default(),
@@ -15747,8 +15768,12 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        // A pane opened again over itself is still being read: telling it
+        // otherwise would close the document it has just opened to read.
         if let Some(prev) = self.focus_read.take().and_then(|w| w.upgrade()) {
-            prev.update(cx, |v, cx| v.set_being_read(false, cx));
+            if prev != pane {
+                prev.update(cx, |v, cx| v.set_being_read(false, cx));
+            }
         }
         pane.update(cx, |v, cx| v.set_being_read(true, cx));
         self.focus_read = Some(pane.downgrade());
@@ -19823,10 +19848,12 @@ impl Workspace {
         ramp: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
+        let wh = self.last_win.map_or(800., |(_, _, _, h)| h);
         self.over_the_glass(glass, |ws, _window, cx| ws.close_focus_read(cx), cx)
             .flex()
-            .items_center()
+            .items_start()
             .justify_center()
+            .pt(px(ReaderGlass::top_in_window(wh)))
             .bg(hsla(0., 0., 0., 0.6 * ramp))
     }
 
@@ -19908,6 +19935,93 @@ impl Workspace {
         Some((pos - b.origin, b.contains(&pos)))
     }
 
+    /// The clip its pane lent with the page being read, while one plays.
+    fn focus_lent_clip(&self, cx: &mut App) -> Option<Entity<docview::DocumentView>> {
+        let pane = self.focus_read.as_ref()?.upgrade()?;
+        pane.update(cx, |v, cx| v.reader_clip(cx))
+    }
+
+    /// The box a clip plays in over the page in the reader: inside the page,
+    /// with the page's edge showing round it, as a clip sits over the square
+    /// it covers on the pane ([`docopen::clip_home`]); a sound only as tall
+    /// as its waveform. Measured from where the page was last drawn.
+    fn focus_clip_box(
+        &self,
+        clip: Option<&Entity<docview::DocumentView>>,
+        accent: Hsla,
+        bg: Hsla,
+        phosphor: f32,
+        cx: &App,
+    ) -> Option<AnyElement> {
+        let clip = clip?;
+        let page = (*self.focus_body_bounds.lock().unwrap())?;
+        let (w, h) = (f32::from(page.size.width), f32::from(page.size.height));
+        // The page has no strip of its own in the reader, so the box is cut
+        // as if it had one: clip_home takes the strip off the top.
+        let whole = docopen::FloatRect {
+            x: 0.0,
+            y: -docopen::FLOAT_STRIP_H,
+            w,
+            h: h + docopen::FLOAT_STRIP_H,
+        };
+        let mut r = docopen::clip_home(whole);
+        if clip.read(cx).target().kind == docopen::DocKind::Audio {
+            r = docopen::sound_box(r, docview::video::BAR_H);
+        }
+        let store = self.focus_clip_bounds.clone();
+        Some(
+            div()
+                .absolute()
+                .left(px(r.x))
+                .top(px(r.y.max(0.0)))
+                .w(px(r.w))
+                .h(px(r.h))
+                .bg(bg)
+                .border_2()
+                .border_color(accent)
+                .rounded(px(6.))
+                .shadow(float_shadows(accent, phosphor))
+                .overflow_hidden()
+                .child(
+                    canvas(
+                        move |bounds, _window, _cx| *store.lock().unwrap() = Some(bounds),
+                        |_, _, _, _| {},
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+                .child(
+                    gpui::AnyView::from(clip.clone())
+                        .cached(gpui::StyleRefinement::default().size_full()),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// A press inside the clip playing over the page in the reader is the
+    /// clip's: its play bar. Answers whether it was.
+    fn focus_clip_press(
+        &mut self,
+        ev: &MouseDownEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(clip) = self.focus_lent_clip(cx) else {
+            *self.focus_clip_bounds.lock().unwrap() = None;
+            return false;
+        };
+        let Some(b) = *self.focus_clip_bounds.lock().unwrap() else {
+            return false;
+        };
+        if !b.contains(&ev.position) {
+            return false;
+        }
+        let at = ev.position - b.origin;
+        let mods = ev.modifiers;
+        self.focus_clip_holding = clip.update(cx, |v, cx| v.press(at, mods, window, cx));
+        true
+    }
+
     /// The FOCUS reader over a document its pane has lent it: the terminal's
     /// glass, holding the pane's own document view at the glass's size.
     ///
@@ -19924,6 +20038,7 @@ impl Workspace {
         &self,
         pane: &Entity<TerminalView>,
         view: Entity<docview::DocumentView>,
+        clip: Option<Entity<docview::DocumentView>>,
         ramp: f32,
         phosphor: f32,
         cx: &mut Context<Self>,
@@ -19942,7 +20057,7 @@ impl Workspace {
         let (bg, text, accent) = pane.read(cx).reader_palette(cx);
         let sk = skin::skin(cx, 1.);
         let s = lang::current().strings();
-        let (name, zoom) = {
+        let (name, zoom, reads) = {
             let v = view.read(cx);
             let name = v
                 .target()
@@ -19954,7 +20069,14 @@ impl Workspace {
                 docview::ImageZoom::Fit => s.float_fit.to_string(),
                 docview::ImageZoom::Scale(z) => format!("{:.0}%", z * 100.0),
             });
-            (name, zoom)
+            (name, zoom, v.target().kind.reads())
+        };
+        // A page or Markdown file is read from the keyboard: the header says
+        // how, where it would otherwise only say how to close.
+        let keys = if reads {
+            s.ui.focus_read_keys
+        } else {
+            s.ui.focus_esc
         };
         let header = div()
             .h(px(hdr_h))
@@ -19972,7 +20094,7 @@ impl Workspace {
                 &[("name", &name)],
             ))
             .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
-            .child(div().text_color(text.alpha(0.6)).child(s.ui.focus_esc));
+            .child(div().text_color(text.alpha(0.6)).child(keys));
         let store = self.focus_body_bounds.clone();
         let body = div()
             .flex_1()
@@ -19992,12 +20114,16 @@ impl Workspace {
                         .absolute()
                         .inset_0(),
                     )
-                    .child(view),
+                    .child(view)
+                    .children(self.focus_clip_box(clip.as_ref(), accent, bg, phosphor, cx)),
             )
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, ev: &MouseDownEvent, window, cx| {
                     cx.stop_propagation(); // the glass, not the scrim behind it
+                    if ws.focus_clip_press(ev, window, cx) {
+                        return;
+                    }
                     let (Some(view), Some((at, true))) =
                         (ws.focus_lent(cx), ws.focus_doc_local(ev.position))
                     else {
@@ -20056,6 +20182,11 @@ impl Workspace {
             .on_mouse_up(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseUpEvent, _w, cx| {
+                    if std::mem::take(&mut ws.focus_clip_holding) {
+                        if let Some(clip) = ws.focus_lent_clip(cx) {
+                            clip.update(cx, |v, cx| v.release(cx));
+                        }
+                    }
                     if std::mem::take(&mut ws.focus_doc_holding) {
                         if let Some(view) = ws.focus_lent(cx) {
                             view.update(cx, |v, cx| v.release(cx));
@@ -20129,8 +20260,12 @@ impl Workspace {
             platform: m.platform,
         };
         match pane.update(cx, |v, cx| v.reader_click(&text, col, mods, cx)) {
+            // A page opened to be read is read in this same frame, which
+            // its pane asks for; anything else would sit under the reader.
             pane::ReaderClick::Opened => {
-                self.close_focus_read(cx);
+                if !pane.read(cx).float_to_read() {
+                    self.close_focus_read(cx);
+                }
                 true
             }
             pane::ReaderClick::Handed => true,
@@ -38107,8 +38242,21 @@ impl Render for Workspace {
         let focus_doc = focus_pane
             .as_ref()
             .and_then(|pane| pane.update(cx, |v, cx| v.reader_document(cx)));
+        // A clip playing over the page being read is drawn on top of it,
+        // in the frame: lent with the page, so its pane does not draw it too.
+        let focus_clip = match (&focus_pane, &focus_doc) {
+            (Some(pane), Some(_)) => pane.update(cx, |v, cx| v.reader_clip(cx)),
+            _ => None,
+        };
         let focus_overlay = if let (Some(pane), Some(view)) = (&focus_pane, focus_doc) {
-            Some(self.focus_document_overlay(pane, view, focus_ramp, th.grade.phosphor, cx))
+            Some(self.focus_document_overlay(
+                pane,
+                view,
+                focus_clip,
+                focus_ramp,
+                th.grade.phosphor,
+                cx,
+            ))
         } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             // An agent pane whose transcript the sweep bound for certain reads
@@ -42140,7 +42288,7 @@ mod tests {
             "a flat read opens at the pane's own letters, whatever its width"
         );
         assert_eq!((glass.avail_w / (cell_w * ms)).floor() as usize, 175);
-        assert_eq!((glass.avail_h / (cell_h * ms)).floor() as usize, 46);
+        assert_eq!((glass.avail_h / (cell_h * ms)).floor() as usize, 49);
 
         assert!(
             Workspace::reader_scale(false, fit, Workspace::FZ_MIN) < 1.0,

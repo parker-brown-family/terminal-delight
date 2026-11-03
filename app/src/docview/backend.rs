@@ -161,6 +161,13 @@ pub trait Backend {
         false
     }
 
+    /// A reading key's ask of the document's notes: move the selection,
+    /// write on it, stamp it, copy the map. Answers whether anything changed.
+    /// Only a document that takes notes has anchors to move between.
+    fn read_act(&mut self, _act: super::ReadAct, _cx: &mut Context<DocumentView>) -> bool {
+        false
+    }
+
     /// Whether something is being written, so the pane hands the view every
     /// key that is not a chord. Only a brief's note box takes typing.
     fn has_caret(&self) -> bool {

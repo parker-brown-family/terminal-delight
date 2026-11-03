@@ -56,6 +56,14 @@ pub enum DocKind {
 }
 
 impl DocKind {
+    /// Whether a person opening it means to read it: a page or a Markdown
+    /// file, which takes notes, opens in the FOCUS frame and takes the
+    /// keyboard there. An image or a PDF keeps the square, and a clip has
+    /// nothing to note.
+    pub fn reads(self) -> bool {
+        matches!(self, DocKind::Markdown | DocKind::Html)
+    }
+
     /// Whether it plays rather than sits still: a video or a sound. Either
     /// one opens in the square as a clip, above whatever square is up, and
     /// closes itself at its end.

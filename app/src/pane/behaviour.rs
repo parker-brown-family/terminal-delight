@@ -3865,8 +3865,277 @@ fn a_brief_in_the_reader_takes_notes_and_stamps_and_sends_them(cx: &mut TestAppC
         "at the square's own zoom"
     );
     assert_eq!(
+        pane.float_path(),
+        None,
+        "an Alt+click opened the brief to be read, so it goes with the frame"
+    );
+}
+
+/// A brief a person opens is opened to be read: it asks for the FOCUS frame,
+/// and there the keyboard is the brief's. Tab and `]` walk its sections and
+/// its decisions, `c` stamps the decision the selection is on, Enter writes a
+/// note on it, and nothing typed reaches the shell. ↪ sends the notes and,
+/// once the workspace says they landed, closes the brief and the frame.
+///
+/// Parker, 2026-11-02: *"If we open an artifact, we intend to read it"*;
+/// *"keystrokes to concur with any of the decisions that are made. And send
+/// to agent with a single keystroke"*; and, on the plan, *"AND CLOSES THE
+/// ARTIFACT!"*.
+#[gpui::test]
+fn a_brief_opened_by_a_person_is_read_from_the_keyboard(cx: &mut TestAppContext) {
+    use super::harness::FakeDecisionEngine;
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "read-keys");
+    pane.html_engine(Ok(std::sync::Arc::new(FakeDecisionEngine)));
+    let asks = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let seen = asks.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+    let closes = reader_closes(&mut pane);
+
+    let at = pane.point_at(&brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    assert_eq!(
+        asks.get(),
+        1,
+        "an Alt+click on a brief asks for the reading frame"
+    );
+    assert!(
+        pane.read(|v| v.float_to_read()),
+        "and the brief is held to be read"
+    );
+
+    let mut reader = pane.open_reader((1200.0, 800.0));
+    reader.wait(&mut pane, 300);
+    let page = pane.lent().expect("the brief is lent to the frame");
+    let report = |pane: &mut Pane| pane.doc_notes().expect("notes");
+
+    // Reading keys move the brief, and none of them reaches the shell.
+    let place = page.read_with(pane.cx, |v, _| v.reading_now());
+    pane.keys("space");
+    reader.redraw(&mut pane);
+    assert_ne!(
+        page.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "Space turns a page of the brief"
+    );
+    pane.keys("g");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        page.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "g goes back to the top"
+    );
+
+    // Tab selects what the reader is looking at; ] the decision waiting.
+    let (first, _) = BRIEF_ANCHORS[0];
+    let (second, _) = BRIEF_ANCHORS[1];
+    pane.keys("tab");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        report(&mut pane)["selected"],
+        first,
+        "Tab lands on the first section"
+    );
+    pane.keys("tab");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        report(&mut pane)["selected"],
+        second,
+        "and walks on to the next"
+    );
+    pane.keys("]");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        report(&mut pane)["selected"],
+        first,
+        "] finds the one decision still waiting for a stamp, wrapping round"
+    );
+    pane.keys("c");
+    reader.redraw(&mut pane);
+    assert_eq!(report(&mut pane)["concurs"], 1, "c stamps it");
+    pane.keys("]");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        report(&mut pane)["selected"],
+        first,
+        "with every decision stamped, ] has nowhere to go and stays"
+    );
+
+    // Enter writes on the selection; Escape puts the box, then the
+    // selection, away, and only then asks to close.
+    pane.keys("enter");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        report(&mut pane)["open"],
+        first,
+        "Enter opens a note on the selection"
+    );
+    pane.keys("o k space b y space k e y");
+    pane.keys("ctrl-enter");
+    reader.redraw(&mut pane);
+    assert!(
+        report(&mut pane)["map"]
+            .as_str()
+            .is_some_and(|m| m.contains("ok by key")),
+        "the note is written from the keyboard"
+    );
+    pane.keys("escape");
+    reader.redraw(&mut pane);
+    assert_eq!(report(&mut pane)["open"], serde_json::Value::Null);
+    assert_eq!(
+        report(&mut pane)["selected"],
+        first,
+        "the selection outlives the box"
+    );
+    pane.keys("escape");
+    reader.redraw(&mut pane);
+    assert_eq!(report(&mut pane)["selected"], serde_json::Value::Null);
+    assert_eq!(
+        closes.get(),
+        0,
+        "two Escapes put away two things, not the frame"
+    );
+
+    // ↪, and the workspace saying it landed, closes the brief and the frame.
+    let sent = std::rc::Rc::new(std::cell::RefCell::new(0usize));
+    let log = sent.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::SendNotesBeside, _| {
+            *log.borrow_mut() += 1
+        })
+        .detach();
+    });
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_notes_beside(Some("agent".into()), None, cx)
+    });
+    reader.redraw(&mut pane);
+    pane.keys("ctrl-shift-enter");
+    reader.redraw(&mut pane);
+    assert_eq!(*sent.borrow(), 1, "one chord sends the notes");
+    pane.view.update(pane.cx, |v, cx| {
+        let said =
+            crate::docview::notes_ui::Said::Done(crate::docview::notes_ui::Words::as_is("landed"));
+        v.doc_said(crate::docopen::DocSeat::Float, said, cx)
+    });
+    pane.redraw();
+    assert_eq!(closes.get(), 1, "landed, the frame is asked to close");
+    assert_eq!(pane.float_path(), None, "and the brief closes with it");
+    reader.close(&mut pane);
+
+    // The control: with the frame gone, typing reaches `cat`, which echoes it.
+    // Anything typed while reading would have arrived before this did.
+    pane.keys("z q z q enter");
+    pane.wait_for("zqzq");
+    let screen = pane.rows().join("\n");
+    assert!(
+        !screen.contains("ok by key") && !screen.contains("okbykey") && !screen.contains("gtt"),
+        "nothing typed while reading reached the shell: {screen}"
+    );
+}
+
+/// A clip playing over a page being read is deaf: the page keeps the keys,
+/// because a video has nothing to note, concur or send, and the frame draws
+/// the clip over the page rather than reading the clip instead. Escape puts
+/// the clip away first, and the page and its frame on the next press.
+///
+/// Parker, 2026-11-02: *"we might have multiple glow panes if there's a
+/// video. So we need to be very careful about who's swallowing what
+/// keystroke. The HTML or Markdown file should always be the one swallowing
+/// keystrokes"*.
+#[gpui::test]
+fn a_clip_over_a_page_being_read_leaves_the_page_the_keys(cx: &mut TestAppContext) {
+    let dir = Scratch::new("clip-while-reading");
+    let film = dir.join("film.mp4");
+    std::fs::write(&film, b"\0\0\0\x20ftypisom\0\0\x02\0isomiso2avc1mp41").expect("write");
+    let page = dir.fixture("tests/fixtures/page/brief.html", "welcome.html");
+    let page = page.to_str().expect("UTF-8").to_string();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' 'page {page}' 'ready'; exec cat"),
+    );
+    pane.html_engine(Ok(std::sync::Arc::new(FakeBriefEngine)));
+    pane.video_ready(Ok(()));
+    pane.wait_for("ready");
+    let closes = reader_closes(&mut pane);
+
+    let at = pane.point_at(&page);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    let square = pane.float_view().expect("the page, opened to read");
+    let mut reader = pane.open_reader((1200.0, 800.0));
+    reader.wait(&mut pane, 300);
+
+    let clip = crate::docopen::drawable_document(&film).expect("a video");
+    pane.view
+        .update(pane.cx, |v, cx| v.open_float(clip, None, cx))
+        .expect("the clip opens over the page");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        pane.lent().map(|v| v.entity_id()),
+        Some(square.entity_id()),
+        "the frame still reads the page, not the clip"
+    );
+    let drawn_clip = pane.view.update(pane.cx, |v, cx| v.reader_clip(cx));
+    assert!(drawn_clip.is_some(), "and draws the clip over it");
+    let up = pane.view.update(pane.cx, |v, cx| v.layers_up(cx));
+    assert!(
+        up.reading,
+        "the page being read takes the keys under the clip"
+    );
+    let place = square.read_with(pane.cx, |v, _| v.reading_now());
+    pane.keys("space");
+    reader.redraw(&mut pane);
+    assert_ne!(
+        square.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "Space under the clip turns a page of the page"
+    );
+
+    pane.keys("escape");
+    reader.redraw(&mut pane);
+    assert_eq!(
+        pane.float_view(),
+        Some(square),
+        "Escape puts the clip away first"
+    );
+    assert_eq!(closes.get(), 0, "and leaves the frame open");
+    pane.keys("escape");
+    assert_eq!(closes.get(), 1, "the next Escape asks to close the frame");
+    reader.close(&mut pane);
+    assert_eq!(pane.float_path(), None, "and the page goes with it");
+}
+
+/// An agent opening its own deliverable keeps the small square beside its
+/// prompt: Parker, 2026-11-02, *"agents will AUTO-OPEN artifacts, and THOSE
+/// should be small"*. Only a person's open asks for the reading frame.
+#[gpui::test]
+fn an_agent_opening_a_brief_keeps_the_small_square(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "agent-opens");
+    let asks = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let seen = asks.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+            seen.set(seen.get() + 1)
+        })
+        .detach();
+    });
+    let target = crate::docopen::drawable_document(std::path::Path::new(&brief)).expect("a page");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    pane.redraw();
+    assert!(said.starts_with("ok float"), "{said}");
+    assert_eq!(asks.get(), 0, "no reading frame for an agent's open");
+    assert!(!pane.read(|v| v.float_to_read()));
+    assert_eq!(
         pane.float_path().as_deref(),
-        Some(std::path::Path::new(&brief))
+        Some(std::path::Path::new(&brief)),
+        "it floats in the square"
     );
 }
 

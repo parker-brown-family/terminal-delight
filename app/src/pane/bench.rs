@@ -2474,7 +2474,7 @@ impl TerminalView {
     fn bench_open_href(&mut self, href: &str, cx: &mut Context<Self>) {
         match self.document_of(href) {
             Some(target) => {
-                let _ = self.open_float(target, None, cx);
+                let _ = self.open_to_read(target, None, cx);
             }
             None => open_with_system(href),
         }
@@ -2610,7 +2610,7 @@ impl TerminalView {
         match crate::docopen::click_intent(mods, doc.is_some(), true, revealable.is_some(), false) {
             ClickIntent::OpenHere => {
                 if let Some(target) = doc {
-                    let _ = self.open_float(target, None, cx);
+                    let _ = self.open_to_read(target, None, cx);
                 }
             }
             ClickIntent::OpenBeside => {

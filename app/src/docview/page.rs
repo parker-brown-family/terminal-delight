@@ -1541,6 +1541,58 @@ impl PageDoc {
         self.notes.as_ref().is_some_and(NotesLayer::has_caret)
     }
 
+    /// A reading key's ask of the notes ([`super::ReadAct`]): the selection
+    /// moves and is scrolled into sight, Enter opens the note box on it, `c`
+    /// stamps it through the same edit the control socket makes, and `y`
+    /// copies the map. Answers whether anything changed.
+    pub fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
+        use super::ReadAct;
+        let Some(r) = self.current.as_ref() else {
+            return false;
+        };
+        let map = self.map_for(r);
+        let Some(layer) = self.notes.as_mut() else {
+            return false;
+        };
+        let anchors = &r.layout.anchors;
+        let (scroll_to, concur) = match act {
+            ReadAct::Pick(how) => {
+                let Some(map) = map else {
+                    return false;
+                };
+                let top = f32::from(map.scroll) / map.px_per_css;
+                let Some(rect) = layer.select(anchors, how, top) else {
+                    return false;
+                };
+                (
+                    notes_ui::into_view(rect, &map).map(|y| y / map.px_per_css),
+                    None,
+                )
+            }
+            ReadAct::Note => return layer.open_selected(anchors),
+            ReadAct::Unselect => return layer.unselect(),
+            ReadAct::CopyMap => {
+                layer.copy_map(anchors, cx);
+                return true;
+            }
+            ReadAct::Concur => {
+                let Some(a) = layer.selected(anchors).filter(|a| a.concur_zone.is_some()) else {
+                    return false;
+                };
+                (None, Some(a.nid.clone()))
+            }
+        };
+        if let Some(nid) = concur {
+            return self
+                .notes_command(super::NotesCommand::Concur { nid }, cx)
+                .is_ok();
+        }
+        if let Some(css) = scroll_to {
+            self.scroll_to(css, cx);
+        }
+        true
+    }
+
     /// A paste into the note being written: see [`NotesLayer::paste`]. Words
     /// wait in the draft like typed ones, so nothing is saved here; a picture
     /// is kept at once, in TD's folder, never in the brief.
@@ -2324,6 +2376,10 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
 // fragment, follows its file and carries a brief's notes. It does not zoom or
 // follow a drag, so those are the trait's defaults.
 impl Backend for PageDoc {
+    fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
+        PageDoc::read_act(self, act, cx)
+    }
+
     fn element(
         &mut self,
         view: &Drawn,
