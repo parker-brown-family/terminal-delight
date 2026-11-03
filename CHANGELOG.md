@@ -214,10 +214,10 @@ sections from there down are what the 0.4.0 candidates already carried.
   `look at /…/pastes/pasted-1.png please`. A tag is paired with a paste only in
   paste order and within ten seconds of it, and a tag it cannot account for
   stays a tag. (#1279)
-- **ACTIVE TERMINALS gains a brightness gauge** that lifts the focused pane,
-  from 100% (unset, the look before) to 150%. It is the partner of INACTIVE
-  TERMINALS' brightness, and MCP reads and sets it as `active_brightness`.
-  (#1277)
+- **ACTIVE TERMINALS gains a brightness gauge** that dims or lifts the focused
+  pane, from 20% through 100% (unset, the look before) to 150%. It is the
+  partner of INACTIVE TERMINALS' brightness, and MCP reads and sets it as
+  `active_brightness`. (#1277)
 - **The cursor can leave a phosphor trail.** GAUGES › CURSOR TRAIL has a
   switch, an afterimage or streak style, and linger (up to 600 ms) and light
   sliders. It is off until you turn it on, and Clean, a crawl and a desktop
