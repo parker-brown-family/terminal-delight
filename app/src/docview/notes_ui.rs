@@ -343,6 +343,23 @@ pub fn pick(
     found.copied()
 }
 
+/// How long a new selection shows its wash in full, and then how long the
+/// wash takes to fade; the ring stays after it. Parker, 2026-11-03: *"FULL
+/// highlight lasts 1 second, then FADED over 1 second.. border persists"*.
+pub const SELECTION_FULL: std::time::Duration = std::time::Duration::from_millis(1000);
+pub const SELECTION_FADE: std::time::Duration = std::time::Duration::from_millis(1000);
+
+/// Pure. How strong a selection's wash is `since` it was made: 1 for
+/// [`SELECTION_FULL`], falling evenly to 0 over [`SELECTION_FADE`], and 0
+/// from then on.
+pub fn selection_glow(since: std::time::Duration) -> f32 {
+    if since <= SELECTION_FULL {
+        return 1.0;
+    }
+    let fading = (since - SELECTION_FULL).as_secs_f32() / SELECTION_FADE.as_secs_f32();
+    (1.0 - fading).clamp(0.0, 1.0)
+}
+
 /// Pure. Where to scroll so `rect` reads comfortably: its top a sixth of the
 /// way down the view. In view pixels from the document's top, or `None` when
 /// it is already wholly in the middle four fifths of the view and moving
@@ -555,6 +572,9 @@ pub struct NotesLayer {
     /// a note on it and `c` stamps it ([`Self::select`]). `None` until a key
     /// has picked one.
     selected: Option<String>,
+    /// When the keyboard last moved the selection: its wash shows in full,
+    /// then fades, and the ring stays ([`selection_glow`]).
+    selected_at: Option<std::time::Instant>,
     said: Option<Said>,
     /// What came of the last ↪, kept apart from persistence status:
     /// the save's own progress would otherwise write over where the notes
@@ -671,6 +691,7 @@ impl NotesLayer {
             writable,
             note_box: None,
             selected: None,
+            selected_at: None,
             said: None,
             sent: None,
             saving: false,
@@ -721,6 +742,7 @@ impl NotesLayer {
             writable,
             note_box: None,
             selected: None,
+            selected_at: None,
             said: None,
             sent: None,
             saving: false,
@@ -1400,6 +1422,7 @@ impl NotesLayer {
         let stamped = |nid: &str| self.concurs().is_some_and(|c| c.has(nid));
         let i = pick(anchors, self.selected.as_deref(), how, &stamped, view)?;
         self.selected = Some(anchors[i].nid.clone());
+        self.selected_at = Some(std::time::Instant::now());
         anchors[i].rect
     }
 
@@ -2022,18 +2045,30 @@ impl NotesLayer {
                     .bg(accent.alpha(0.07))
                     .into_any_element(),
                 Mark::Rule { at } => at_rect(div(), *at).bg(accent).into_any_element(),
-                Mark::Selected { at } => at_rect(div(), *at)
-                    .rounded(px(6.))
-                    .border_2()
-                    .border_color(accent)
-                    .shadow(vec![gpui::BoxShadow {
-                        color: accent.alpha(0.45),
-                        offset: gpui::point(px(0.), px(0.)),
-                        blur_radius: px(14.),
-                        spread_radius: px(1.),
-                        inset: false,
-                    }])
-                    .into_any_element(),
+                // The ring always; the wash and its glow only while they
+                // last, so a selection lands loud and then reads quietly.
+                Mark::Selected { at } => {
+                    let glow = self
+                        .selected_at
+                        .map_or(0.0, |t| selection_glow(t.elapsed()));
+                    let ring = at_rect(div(), *at)
+                        .rounded(px(6.))
+                        .border_2()
+                        .border_color(accent);
+                    if glow > 0.0 {
+                        ring.bg(accent.alpha(0.12 * glow))
+                            .shadow(vec![gpui::BoxShadow {
+                                color: accent.alpha(0.45 * glow),
+                                offset: gpui::point(px(0.), px(0.)),
+                                blur_radius: px(14.),
+                                spread_radius: px(1.),
+                                inset: false,
+                            }])
+                            .into_any_element()
+                    } else {
+                        ring.into_any_element()
+                    }
+                }
                 Mark::Button {
                     at, count, open, ..
                 } => {
@@ -2744,6 +2779,29 @@ mod tests {
             has_concur: None,
             line: None,
         }
+    }
+
+    /// A new selection shows in full for a second, fades over the next, and
+    /// is plain ring from then on.
+    #[test]
+    fn a_selection_glows_for_a_second_then_fades_over_a_second() {
+        let ms = std::time::Duration::from_millis;
+        assert_eq!(selection_glow(ms(0)), 1.0);
+        assert_eq!(
+            selection_glow(ms(1000)),
+            1.0,
+            "full for the whole first second"
+        );
+        assert!(
+            (selection_glow(ms(1500)) - 0.5).abs() < 1e-3,
+            "half way through the fade"
+        );
+        assert_eq!(selection_glow(ms(2000)), 0.0, "gone at two seconds");
+        assert_eq!(
+            selection_glow(ms(60_000)),
+            0.0,
+            "and stays gone; the ring is what is left"
+        );
     }
 
     /// Tab walks from the selection while it is on screen. Once the reader

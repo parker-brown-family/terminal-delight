@@ -69,6 +69,9 @@ sections from there down are what the 0.4.0 candidates already carried.
 - **Tab starts from the screen.** Once you have scrolled away from the
   selection, Tab picks the first section on screen and Shift+Tab the last,
   rather than carrying on from where you were pages ago.
+- **A selection lands loud and then reads quietly.** The section Tab or ]
+  selects is highlighted in full for a second, fades over the next, and keeps
+  its border.
 - **The note box names the element by its title only**, not by its id.
 - **Alt+O asks before it leaves the window.** When the newest artifact is a
   web address or a file TD cannot draw, a small card names it: Enter opens it
