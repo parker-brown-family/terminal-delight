@@ -39636,10 +39636,12 @@ mod tests {
             "the sheet let typing through to the shell:\n{screen}"
         );
 
-        // The control: with the sheet shut, the same letters reach cat.
+        // The control: with the sheet shut, the same letters reach cat. Up to
+        // ten seconds for the echo: a loaded CI runner missed two (run
+        // 41690913559) on a tree whose own push run passed.
         cx.simulate_keystrokes("z q");
         let mut seen = false;
-        for _ in 0..200 {
+        for _ in 0..1000 {
             draw(cx);
             if pane.read_with(cx, |v, _| v.fixture_screen_text().contains("zq")) {
                 seen = true;
