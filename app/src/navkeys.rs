@@ -299,41 +299,64 @@ pub fn row_digit(key: &str) -> Option<usize> {
     }
 }
 
+/// Which artifact rail is up, if any.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum RailUp {
+    None,
+    /// The focused pane's own artifacts.
+    Pane,
+    /// Every pane's, the window's rail.
+    All,
+}
+
 /// What Alt+O does, given what is on screen.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum ArtifactStep {
-    /// The artifact rail is up: the chord that raised it puts it away.
+    /// The window's rail is up: the chord that climbed to it puts it away.
     CloseRail,
-    /// Open what the focused pane handed over last.
+    /// Open what the focused pane handed over last: a page or Markdown file
+    /// in the reading frame, anything else behind a question first.
     OpenNewest,
-    /// Raise the artifact rail, its cards numbered 1–9, newest first.
+    /// Raise the focused pane's own artifacts, numbered, newest first.
+    OpenPaneRail,
+    /// Raise the window's rail: every pane's artifacts.
     OpenRail,
     /// Nothing has been handed over anywhere in the window: say so.
     SayNone,
 }
 
-/// Alt+O's rule. Parker, 2026-11-02: *"alt+o opens current -> alt + o while
-/// ANY artifact is open opens the ARTIFACTS spine - numbers get allocated to
-/// select 1-9 most recent is 1"*.
+/// Alt+O's ladder, one rung per press, and every rung about the FOCUSED pane
+/// until the last. Parker, 2026-11-03: *"alt+o should still default to opening
+/// the MOST RECENT ARTIFACT FOR THE PANE! but we just go stratight to the
+/// GLOBAL artifactets"*, then the ladder:
 ///
-/// A focused pane that handed nothing over raises the rail rather than
-/// opening something from another pane on a guess.
+/// 1. Alt+O opens the focused pane's newest artifact — or the question that
+///    asks before it leaves for the browser or the desktop.
+/// 2. Alt+O with that open (the page, or the question) raises *that pane's*
+///    artifacts — *"not the Global Spine. My goodness, not the Global Spine."*
+/// 3. Alt+O with the pane's artifacts up raises the window's.
+/// 4. Alt+O with the window's up puts it away.
+///
+/// What other panes have open never decides a rung. It used to: "any document
+/// open anywhere" sent the first press straight to the window's rail, because
+/// in a working window some pane always has one open.
+///
+/// A pane that has handed nothing over skips the rungs it has nothing for,
+/// rather than opening an empty list.
 pub fn artifact_step(
-    rail_up: bool,
-    any_open: bool,
-    focused_has: bool,
+    rail: RailUp,
+    pane_showing: bool,
+    pane_has: bool,
     window_has: bool,
 ) -> ArtifactStep {
-    if rail_up {
-        ArtifactStep::CloseRail
-    } else if any_open {
-        ArtifactStep::OpenRail
-    } else if focused_has {
-        ArtifactStep::OpenNewest
-    } else if window_has {
-        ArtifactStep::OpenRail
-    } else {
-        ArtifactStep::SayNone
+    use ArtifactStep::*;
+    match rail {
+        RailUp::All => CloseRail,
+        RailUp::Pane => OpenRail,
+        RailUp::None if pane_has && pane_showing => OpenPaneRail,
+        RailUp::None if pane_has => OpenNewest,
+        RailUp::None if window_has => OpenRail,
+        RailUp::None => SayNone,
     }
 }
 
@@ -640,27 +663,35 @@ mod tests {
     }
 
     #[test]
-    fn alt_o_follows_parkers_rule() {
+    fn alt_o_climbs_parkers_ladder_from_the_focused_pane() {
         use ArtifactStep::*;
-        // rail up, document open, focused pane has one, window has one
-        assert_eq!(artifact_step(true, true, true, true), CloseRail);
-        assert_eq!(artifact_step(true, false, false, false), CloseRail);
+        use RailUp as R;
+        // rail up, focused pane showing its page or question, pane has, window has
         assert_eq!(
-            artifact_step(false, true, true, true),
-            OpenRail,
-            "a document open: the numbered rail"
-        );
-        assert_eq!(
-            artifact_step(false, false, true, true),
+            artifact_step(R::None, false, true, true),
             OpenNewest,
-            "nothing open: this pane's newest"
+            "1: the pane's newest"
         );
         assert_eq!(
-            artifact_step(false, false, false, true),
-            OpenRail,
-            "this pane has none: choose from the rail"
+            artifact_step(R::None, true, true, true),
+            OpenPaneRail,
+            "2: the pane's artifacts"
         );
-        assert_eq!(artifact_step(false, false, false, false), SayNone);
+        assert_eq!(
+            artifact_step(R::Pane, true, true, true),
+            OpenRail,
+            "3: the window's"
+        );
+        assert_eq!(artifact_step(R::Pane, false, true, true), OpenRail);
+        assert_eq!(
+            artifact_step(R::All, true, true, true),
+            CloseRail,
+            "4: away"
+        );
+        // A pane with nothing of its own skips to the window's, or says so.
+        assert_eq!(artifact_step(R::None, false, false, true), OpenRail);
+        assert_eq!(artifact_step(R::None, true, false, true), OpenRail);
+        assert_eq!(artifact_step(R::None, false, false, false), SayNone);
     }
 
     #[test]

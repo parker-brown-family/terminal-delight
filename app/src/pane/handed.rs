@@ -324,9 +324,21 @@ impl TerminalView {
     /// ZIPs over to a browser which I do not love"*. The chip and a click on
     /// a name stay as they are: a press on a link already says where to go.
     pub(crate) fn ask_newest_handover(&mut self, cx: &mut Context<Self>) {
-        let Some(h) = self.handovers.newest().cloned() else {
-            return;
-        };
+        if let Some(h) = self.handovers.newest().cloned() {
+            self.ask_handover(&h, cx);
+        }
+    }
+
+    /// One handover, by its key, on Alt+O's terms: from the pane's own row of
+    /// artifacts, where Enter or its number picks one.
+    pub(crate) fn ask_handover_by_key(&mut self, key: &str, cx: &mut Context<Self>) {
+        if let Some(h) = self.handovers.get(key).cloned() {
+            self.ask_handover(&h, cx);
+        }
+    }
+
+    fn ask_handover(&mut self, h: &Handover, cx: &mut Context<Self>) {
+        let h = h.clone();
         let outside = match h.path() {
             Some(path) => path.exists() && crate::docopen::drawable_document(&path).is_none(),
             None => true,
@@ -335,6 +347,7 @@ impl TerminalView {
             self.open_handover(&h, cx);
             return;
         }
+        self.put_ask_away(cx);
         self.ask_outside = Some(AskOutside {
             href: h
                 .path()
@@ -347,8 +360,8 @@ impl TerminalView {
         cx.notify();
     }
 
-    /// Whether Alt+O's question is up: a second Alt+O raises the artifact
-    /// rail, as it does over an open document.
+    /// Whether Alt+O's question is up: a second Alt+O raises this pane's
+    /// artifacts, as it does over an open document.
     pub(crate) fn asks_outside(&self) -> bool {
         self.ask_outside.is_some()
     }
