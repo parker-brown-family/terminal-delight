@@ -12,7 +12,7 @@
 <p class="lede">The agent wall shows every pane in the window as a card. Click the agent counter in the top right of the window, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd>. Click a card and you're in that pane.</p>
 <p>Each card names the agent, the directory it's in, the model and effort it's running, such as <code>OPUS 5.5 · MAX</code>, and what it's doing right now. Cards are grouped the way your tabs are, and the chips across the top narrow them by group, by program and by state, so twelve agents can come down to the two that are blocked.</p>
 <p>A Claude agent's card also carries three bars, read from its own transcript: how full its context is, how worn it is, and how much of what it's holding is still about the task. When those add up to <b>STOP</b> or <b>HAND OFF</b>, the card turns up a red <code>CALL</code> chip and a <code>⚠</code>, because those two need a person to decide.</p>
-<p class="in-dev">The counter opens the <a href="/threshing-floor">Threshing Floor</a> instead, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the wall's only door.</p>
+<p>The counter opens the <a href="/threshing-floor">Threshing Floor</a> instead, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the wall's only door.</p>
 <p class="invite">Story explains the three bars. Technical has how each is computed.</p>
 </section>
 
@@ -32,7 +32,7 @@
 </ul>
 <p>The counter is a robot followed by six cells: <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle and <code>?</code> unknown. A cell lights when its count isn't zero, and only blocked and error get a filled background, because those two need you.<sup><a href="#s3">3</a></sup></p>
 <p><kbd>Esc</kbd> or a click outside the panel closes it. If something is open on top of the wall, such as the usage card or the <a href="/graveyard">graveyard</a>, the first <kbd>Esc</kbd> closes that and the second closes the wall. Clicking a card focuses that pane, switches to its tab and closes the wall.</p>
-<div class="in-dev">
+<div>
 <p>The agent counter opens the <a href="/threshing-floor">Threshing Floor</a>, and so does <code>THRESHING FLOOR</code> in the <code>…</code> menu. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>A</kbd> is the only way to the wall, and the F1 help no longer lists it.<sup><a href="#s4">4</a></sup></p>
 <p>The counter has eight cells: resting and asleep sit between idle and unknown, for agents that have been <a href="/rest">put to rest</a>. Hovering it shows <a href="/rest#technical-memory">how much memory</a> awake, resting and sleeping panes hold.</p>
 </div>
@@ -59,7 +59,7 @@
   </tbody>
 </table>
 <p>Each chip carries its count. The state chips count only the agents the group and program chips leave in view, and they're the wall's only state tally.<sup><a href="#s1">1</a></sup> State comes from the agent's own status line on screen. Blocked and error need you. Unknown means the screen matched no rule, and it's counted apart from idle rather than guessed into it.</p>
-<p class="in-dev">The state row gains <code>☾ RESTING</code> and <code>z ASLEEP</code>, between idle and unknown.<sup><a href="#s4">4</a></sup></p>
+<p>The state row gains <code>☾ RESTING</code> and <code>z ASLEEP</code>, between idle and unknown.<sup><a href="#s4">4</a></sup></p>
 
 <h3>A card</h3>
 <dl class="defs">
@@ -109,7 +109,7 @@
   <li>A pane draws bars only when Terminal Delight is sure which conversation it's in: the agent said so, or its process started with it, or it's the only one in that directory. A pane matched by a weaker guess shows its latest lines instead.</li>
   <li>Codex panes have no bars yet.</li>
 </ul>
-<p class="in-dev">The same reading also runs once a minute while the wall is closed, so each pane's header can lead with its agent's model and effort. The wall keeps its ten seconds.<sup><a href="#s4">4</a></sup></p>
+<p>The same reading also runs once a minute while the wall is closed, so each pane's header can lead with its agent's model and effort. The wall keeps its ten seconds.<sup><a href="#s4">4</a></sup></p>
 
 <h3>What would prove this wrong</h3>
 <p>If a card ever draws bars from a conversation other than the one in its pane, the binding rule above has failed. If an unmeasured session ever draws a short or empty <code>CTX WINDOW</code> instead of the grey track, the unknown has been read as zero. The wall watches panes and never writes to a terminal, as its own footer says: <code>watches agent panes · never writes to a PTY</code>.</p>
@@ -119,6 +119,6 @@
   <li id="s1">The wall, its doors, header, controls and cards: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; its labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
   <li id="s2">The bars, the call and <code>NO READING</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/vitals.rs">vitals.rs</a>, ported from <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-vitals.mjs">td-agent-vitals.mjs</a>; the bar and call labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
   <li id="s3">Agent states and which ones need you: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hud.rs">hud.rs</a>.</li>
-  <li id="s4">0.5.0: the counter as the Threshing Floor's door, the resting and asleep states and the once-a-minute reading: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/hud.rs">hud.rs</a> on dev/0.5.0.</li>
+  <li id="s4">0.5.0: the counter as the Threshing Floor's door, the resting and asleep states and the once-a-minute reading: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hud.rs">hud.rs</a>.</li>
   <li id="s5">Model names: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/model_catalog.rs">model_catalog.rs</a>.</li>
 </ol>

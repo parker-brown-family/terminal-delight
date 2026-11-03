@@ -12,7 +12,7 @@
 <p class="lede">A tab holds up to four panes, tiled. Every pane is a real shell with its own header, and every divider can be dragged.</p>
 <p><kbd>Alt</kbd>+<kbd>V</kbd> splits the pane you're in side by side; <kbd>Alt</kbd>+<kbd>H</kbd> splits it top and bottom. The new pane opens in the same directory. <kbd>Alt</kbd> and an arrow key moves between panes. Drag a pane by its title to move it: onto another pane, onto a tab, or out of the window into a window of its own.</p>
 <p>Closing doesn't end anything straight away. <kbd>Alt</kbd>+<kbd>W</kbd> closes a pane and <kbd>Ctrl</kbd>+<kbd>W</kbd> a tab, and either one goes to the bay at the foot of the left bar with its shells still running. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the last tab is the one close that quits.</p>
-<p class="in-dev">On 0.5.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the document floating over a pane, and closing the tab moves to <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd>.</p>
+<p>On 0.5.0, <kbd>Ctrl</kbd>+<kbd>W</kbd> closes the document floating over a pane, and closing the tab moves to <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd>.</p>
 <p>To make text bigger, press <kbd>Ctrl</kbd>+<kbd>=</kbd> or <kbd>Ctrl</kbd>+<kbd>-</kbd> in a pane, or hold <kbd>Ctrl</kbd> and turn the wheel over exactly what you want sized: a pane's text, its header, or the window's chrome.</p>
 <p class="invite">Technical covers the header, closing, sizing, the tab strip, the top bar and the footer.</p>
 </section>
@@ -37,7 +37,7 @@
 <p>The split buttons do the same. They sit in the window's bottom-right corner, each a small square with the half filled where the new pane will open: the side-by-side one at the foot of the right-hand column, the stacking one at the right end of the bottom edge. Hover says <code>split →</code> or <code>split ↓</code>.</p>
 <p>A tab takes <b>four panes</b> at most; a fifth split is refused. Layouts saved before that limit can still hold up to eight. A pane dragged onto a full tab, through the tab strip or onto its task in the <a href="/left-bar#technical-filing">left bar</a>, is refused and the layout stays exactly as it was; the task row shows red while you hover. Rearranging panes inside their own full tab is always allowed.</p>
 <p>Drag a divider to resize; it stops at 15 % and 85 %. There is no key for resizing a pane. Drag a pane by its header title: onto another pane, it splits that pane on the side you drop nearest; onto the outer edge of a region, it re-frames the whole region; onto a tab in the strip, it joins that tab; past the edge of the window, it opens a new window with a fresh shell in the same directory, resuming the same Claude or Codex session. A running shell can't move between processes, so the new window starts its own. Tearing a pane off needs more than one pane in the window.</p>
-<p class="in-dev">In the Clean design on 0.5.0, under the TERMINIMALIST skin or another skin with text controls and no boundaries, panes side by side meet on one shared hairline instead of a dark gutter, and dragging the hairline still resizes them. The CRT designs and the other skins keep the gutter.<sup><a href="#s6">6</a></sup></p>
+<p>In the Clean design on 0.5.0, under the TERMINIMALIST skin or another skin with text controls and no boundaries, panes side by side meet on one shared hairline instead of a dark gutter, and dragging the hairline still resizes them. The CRT designs and the other skins keep the gutter.<sup><a href="#s6">6</a></sup></p>
 
 <h3>Closing and bringing back</h3>
 <p>A closed pane or tab is held, not ended. Its shell keeps running in the bay at the foot of the <a href="/left-bar#technical-the-bay">left bar</a> for an hour, or four hours if it had two or more panes. The bay holds ten things.<sup><a href="#s2">2</a></sup></p>
@@ -50,7 +50,7 @@
     <tr><td>The last tab</td><td>Asks, then ends its shells and quits: <code>“notes” is the last tab — closing it ends its shell and quits. This can’t be undone.</code></td></tr>
   </tbody>
 </table>
-<div class="in-dev">
+<div>
 <p>On 0.5.0 the chords split by size. <kbd>Ctrl</kbd>+<kbd>W</kbd> puts away the document box floating over the pane, one box per press, as its <code>✕</code> and <kbd>Esc</kbd> do; with no box open it reaches the shell or agent as delete-word again. <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> closes the tab and still asks first.<sup><a href="#s6">6</a></sup></p>
 </div>
 <p><kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> reopens the newest thing in the bay, and pressing it again walks further back. A reopened pane says where it landed: <code>back where it was</code>, <code>back in its tab, in a new seat</code> or <code>back as its own tab</code>. When a shell exits by itself, its pane is removed, and the app quits when the last pane anywhere is gone.</p>
@@ -67,7 +67,7 @@
   <li><code>×</code> closes the pane. The face switch and <code>×</code> never fold into the <code>⋯</code> menu.</li>
 </ul>
 <p>The header shows no grid size and no bare numbers: anything it counts says what it counts. A pane marked off-limits to agents from its right-click menu wears <code>OFF-LIMITS</code> (see <a href="/mcp">MCP server</a>).</p>
-<div class="in-dev">
+<div>
 <p>On 0.5.0 an agent pane's header leads with the model and effort its transcript names, such as <code>OPUS 5.5 MAX · label</code>, instead of <code>CLAUDE</code>; until the transcript names a model, the program's name stands in, and an effort it never named is left off. The header learns a <code>/model</code> switch within a minute. A pane nobody has named shows its pane number where it used to say <code>shell</code>, on the header and everywhere else that names a pane. <a href="/ui-config">UI CONFIG</a> can put each header control away.<sup><a href="#s6">6</a></sup></p>
 </div>
 
@@ -76,7 +76,7 @@
 
 <h3>Editing what you type</h3>
 <p>Select part of the line you are typing, with <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>←</kbd> <kbd>→</kbd> or the mouse, and <kbd>Backspace</kbd> or <kbd>Delete</kbd> removes all of it; <kbd>Ctrl</kbd>+<kbd>X</kbd> cuts it. A selection in scrollback, or in a full-screen program, is left alone.</p>
-<div class="in-dev">
+<div>
 <p>On 0.5.0 a selection can be erased even when your input wraps onto several rows or holds line breaks, and three more chords edit it: <kbd>Shift</kbd>+<kbd>Backspace</kbd> deletes the previous word, <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Backspace</kbd> the whole current line, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Alt</kbd>+<kbd>Backspace</kbd> everything you have typed. Full-screen editors keep their own keys. The workbench composer takes the same chords, with undo, and the F1 help lists them.<sup><a href="#s6">6</a></sup></p>
 </div>
 
@@ -114,7 +114,7 @@
   </tbody>
 </table>
 <p>A tab shows <code>📌</code> for pinned notes, then up to four agent badges and <code>+N</code>, then <code>×</code>. The active tab is drawn larger, lifted and underlined.</p>
-<p class="in-dev">On 0.5.0 a new window opens in Clean, which shows the tab strip and keeps the left bar shut. The project chip opens a switcher listing every top-level project and group; see <a href="/left-bar#technical-in-0-5-0">Left bar</a>.</p>
+<p>On 0.5.0 a new window opens in Clean, which shows the tab strip and keeps the left bar shut. The project chip opens a switcher listing every top-level project and group; see <a href="/left-bar#technical-in-0-5-0">Left bar</a>.</p>
 
 <h3>The top bar</h3>
 <p>From the left: the app's mark and the <a href="/git-signal">Git signal</a>, then the tab strip when the left bar is shut, then the <b>agent counter</b> at the right end. Drag the bar to move the window.<sup><a href="#s1">1</a></sup></p>
@@ -122,7 +122,7 @@
   <dt>Git signal</dt><dd>One line covering every project in the window, such as <code>Git · No new findings</code>. Click it, or press <kbd>Alt</kbd>+<kbd>G</kbd>, for the inspector.</dd>
   <dt>agent counter</dt><dd><code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> finished, <code>○</code> idle, <code>?</code> unknown, each with a count. Its border turns amber when an agent needs you. Click it for the <a href="/agent-wall">agent wall</a>.</dd>
 </dl>
-<div class="in-dev">
+<div>
 <p>On 0.5.0 the counter opens the <a href="/threshing-floor">Threshing Floor</a> instead. When the top bar holds nothing (the mark, the Git signal and the counter all hidden by Clean's UI set, the tabs in the left bar and no window buttons) it folds to a hairline, so the panes sit as far below the frame as from the sides.<sup><a href="#s6">6</a></sup></p>
 </div>
 
@@ -145,5 +145,5 @@
   <li id="s3">The header, its controls and the handover chip: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/handed.rs">pane/handed.rs</a>; strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
   <li id="s4">Documents: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a>.</li>
   <li id="s5">The size chords: <code>size_chord</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a> and <code>size_key</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; the ranges: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a>.</li>
-  <li id="s6">0.5.0: <kbd>Ctrl</kbd>+<kbd>W</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/keylayer.rs">keylayer.rs</a>; the model-led header and numbered title (<code>header_lead</code>, <code>shown_title</code>) and the deletion chords in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane.rs">pane.rs</a>; the shared hairline, the folding top bar and the counter in <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a>.</li>
+  <li id="s6">0.5.0: <kbd>Ctrl</kbd>+<kbd>W</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>W</kbd> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/keylayer.rs">keylayer.rs</a>; the model-led header and numbered title (<code>header_lead</code>, <code>shown_title</code>) and the deletion chords in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; the shared hairline, the folding top bar and the counter in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
 </ol>

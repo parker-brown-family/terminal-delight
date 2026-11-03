@@ -36,7 +36,7 @@
 
 <h3>The pill</h3>
 <p>One number per lane, in the lane's colour: amber for access, red for decision, orange for failure, green for review. A lane with nothing in it draws no number, and with nothing waiting at all the pill shows a dim <code>0</code>. <code>?</code> appears when some panes couldn't be read, and <code>●</code> when something is unseen. Click it to open the queue. <code>TD_SPINE=0</code> hides it, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>N</kbd> then does nothing.</p>
-<p class="in-dev">The pill is the <code>spine</code> piece in <a href="/ui-config">UI CONFIG</a>, and the Clean set keeps it.<sup><a href="#s2">2</a></sup></p>
+<p>The pill is the <code>spine</code> piece in <a href="/ui-config">UI CONFIG</a>, and the Clean set keeps it.<sup><a href="#s2">2</a></sup></p>
 
 <h3>The queue</h3>
 <p><code>NEEDS ME · &lt;n&gt;</code>, sorted by your level for the project, then lane (access, decision, failure, review), then oldest first, then pane. The order holds still while the queue is open; anything new joins at the bottom.</p>
@@ -68,7 +68,7 @@
   </tbody>
 </table>
 <p>Yes changes the setting at once, the way your own control would; No leaves it as it is. Either way the agent is told in one line in its own terminal, signed with the session's tag. A new ask from the same pane replaces the one waiting. The whole exchange is on the <a href="/mcp#technical-an-agent-asks-a-person-answers">MCP page</a>.</p>
-<div class="in-dev">
+<div>
 <p>Each ask is coloured by how serious it is, in the theme's own colours, and the glyph and its name lead the row, as in <code>✓ CLEAR · Mark “build” off-limits to agents</code>.<sup><a href="#s2">2</a></sup></p>
 <table>
   <thead><tr><th>Seriousness</th><th>Colour</th><th>Asks</th></tr></thead>
@@ -100,7 +100,7 @@
 <pre><code>system = true    # desktop notifications
 marquee = false  # a chasing-bulb banner across the top of the window</code></pre>
 <p>With <code>system</code> off, nothing reaches the desktop and no transcript is read. With both off, the badge and the ping remain.</p>
-<p class="in-dev">The <code>🔔</code> is the <code>notifications</code> piece in <a href="/ui-config">UI CONFIG</a>. The Clean set folds it, with the other corner glyphs, into <code>CONFIG</code>.<sup><a href="#s2">2</a></sup></p>
+<p>The <code>🔔</code> is the <code>notifications</code> piece in <a href="/ui-config">UI CONFIG</a>. The Clean set folds it, with the other corner glyphs, into <code>CONFIG</code>.<sup><a href="#s2">2</a></sup></p>
 
 <h3>What would prove this wrong</h3>
 <p>If a tab blinks <b>HEY</b> for a pane that has no <code>DECISION</code> row in the queue, the one-value rule has failed, since both read the same state. If anything other than the rail's buttons or <kbd>y</kbd> and <kbd>n</kbd> ever answers an access ask, the rule that only a person answers has failed.</p>
@@ -108,5 +108,5 @@ marquee = false  # a chasing-bulb banner across the top of the window</code></pr
 
 <ol data-sources>
   <li id="s1">Badges, the pill, the queue's rows and keys, and answering an ask: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>agent_badge</code>, <code>rail_kind</code>, <code>render_spine_pill</code>, <code>rail_panel</code>, <code>rail_key</code>); lanes, order, levels and the tray: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/attention.rs">attention.rs</a>; the five asks and the answer line: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/access.rs">access.rs</a>; <code>request_access</code> and <code>declare_deliverable</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>; detection: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a>; escalation: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surface.rs">surface.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/emphasis.rs">emphasis.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchdraw.rs">benchdraw.rs</a>; the ping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/bell.rs">bell.rs</a>; notifications: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/notify.rs">notify.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/notifpref.rs">notifpref.rs</a>; strings: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>.</li>
-  <li id="s2">0.5.0: how serious an ask is, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor.rs">threshing_floor.rs</a> (<code>risk</code>); its colour and the bypass picker, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/main.rs">main.rs</a> (<code>rail_risk_slot</code>, <code>rail_ink</code>); the extra asks and one ask at a time, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/access.rs">access.rs</a>; the <code>spine</code> and <code>notifications</code> pieces and the Clean set, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
+  <li id="s2">0.5.0: how serious an ask is, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/threshing_floor.rs">threshing_floor.rs</a> (<code>risk</code>); its colour and the bypass picker, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>rail_risk_slot</code>, <code>rail_ink</code>); the extra asks and one ask at a time, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/access.rs">access.rs</a>; the <code>spine</code> and <code>notifications</code> pieces and the Clean set, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
 </ol>

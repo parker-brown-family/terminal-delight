@@ -110,7 +110,7 @@
   <dt>command line</dt><dd><code>terminal-delight surface [file]</code>, reading stdin with no file, from inside a pane. It takes one document, or every <code>```td</code> and <code>```tdsp</code> block in the input, writes each to the pane's folder named by its id (or by the time, which then becomes its id), and prints each path. It doesn't check the document: one the window can't read lands as <code>unclassified</code>. Exit 0 if it wrote something, 2 if the input held no JSON or no file could be written, 3 outside a pane.<sup><a href="#s2">2</a></sup></dd>
   <dt>transcript</dt><dd>A <code>```td</code> or <code>```tdsp</code> block in the agent's own reply. The window reads the last 256 KiB of a Claude Code transcript, when it's sure which transcript is the pane's; a Codex transcript yields nothing this way. The same reader turns the newest <code>Deliverable:</code> line into an artifact. Use a fence only when nothing else is available: it puts raw JSON in front of the person reading the reply.<sup><a href="#s4">4</a></sup></dd>
 </dl>
-<div class="in-dev">
+<div>
 <p><code>present_surface</code> aimed at another agent's pane needs a <a href="/threshing-floor">Threshing Floor</a> line reaching that pane at <code>read</code> or higher, and the pane must take writes. Otherwise it's refused with <code>pane 4123 takes no writes from here — it is read-only to you; only a person, or the agent in that pane, may write it</code>. An agent's own pane always takes its surfaces. The file is saved only once the window has accepted the surface, and the exposure and writes refusals point to the Threshing Floor instead of the MCP CONTROL panel.<sup><a href="#s10">10</a></sup></p>
 </div>
 
@@ -192,6 +192,6 @@
   <li id="s7">The one-second sweep and the ten-minute prune: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>.</li>
   <li id="s8">The agent channel: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/channel.rs">channel.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/td-agent-hooks">td-agent-hooks</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-agent-channel.md">td-agent-channel.md</a>.</li>
   <li id="s9">The spec: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/docs/spec/td-surface-protocol.md">td-surface-protocol.md</a>.</li>
-  <li id="s10">The 0.5.0 write gate: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/mcp.rs">mcp.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor.rs">threshing_floor.rs</a> on dev/0.5.0.</li>
+  <li id="s10">The 0.5.0 write gate: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/threshing_floor.rs">threshing_floor.rs</a>.</li>
   <li id="s11">What <b>open</b> draws itself: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docopen.rs">docopen.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/doc.rs">pane/doc.rs</a>.</li>
 </ol>

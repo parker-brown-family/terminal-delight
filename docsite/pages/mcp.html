@@ -11,7 +11,7 @@
 <section data-register="brief">
 <p class="lede">Terminal Delight is an MCP server. An agent running in one of its panes can ask about the rest of the window: which panes exist and what each is running, what they printed, and what tool another agent is calling now. It can also leave a sticky note, name what it made, put work on its workbench and open a document.</p>
 <p>It starts locked down. Nothing is readable until you turn the server on, on the <a href="/agent-wall">agent wall</a>: click the agent counter at the top right. Even then only agent panes are visible unless you choose <code>all panes</code>. Writing is a second switch, and no tool can type into a terminal.</p>
-<p class="in-dev">The switches move to the <a href="/threshing-floor">Threshing Floor</a>, which the counter opens instead. There you draw lines between agents, and along a line one agent can ask another a question or hand it work.</p>
+<p>The switches move to the <a href="/threshing-floor">Threshing Floor</a>, which the counter opens instead. There you draw lines between agents, and along a line one agent can ask another a question or hand it work.</p>
 <p>To connect an agent, register the relay as a stdio MCP server:</p>
 <pre class="cmd"><code>claude mcp add --scope user terminal-delight -- "$HOME/.local/bin/terminal-delight" mcp</code></pre>
 <p>The relay finds the window it runs in by itself, and every answer names the window it came from.</p>
@@ -49,7 +49,7 @@
 </table>
 <p>The switches are saved with the session, under <code>[mcp]</code> in <code>~/.config/terminal-delight/sessions/&lt;session&gt;.toml</code>. <code>TD_MCP</code> starts the in-process transport and leaves the server off; <code>TD_MCP_WRITE</code> turns writes on, and only alongside <code>TD_MCP</code>. From a shell, <code>terminal-delight ctl mcp on|off</code>, <code>mcp writes on|off</code> and <code>mcp expose agents|all</code> change the switches, and <code>ctl mcp status</code> reads them.</p>
 <p>The agent running inside an off-limits pane can still write to its own pane: its note, its deliverable and its bench. It can't read the notes on a document beside it or open one, because both tools first check that its own pane is visible. Only a person marks or clears a pane: no <code>ctl</code> or MCP verb reaches it. An agent can propose a change with <code>request_access</code>.</p>
-<div class="in-dev">
+<div>
 <p>The switches move into the Threshing Floor: the agent counter, or <code>THRESHING FLOOR</code> in the <code>…</code> menu. They read <code>server</code>, <code>agents only</code> or <code>all panes</code>, <code>events</code> and <code>writes</code>. The right-click menu holds three positions, the current one marked: <code>Let agents see this pane</code>, <code>Read-only to agents</code> and <code>Off-limits to agents</code>. A read-only pane wears <code>READ-ONLY</code>: agents may see it, read it and, along a line, ask it, and nothing from another pane writes to it. The agent inside a read-only or off-limits pane keeps its own-pane writes, its document notes and <code>open_document</code>. Before honouring an own-pane write, the window checks which process is on the other end of the socket, so a caller can't claim another pane's.<sup><a href="#s3">3</a></sup></p>
 <p>The control socket refuses all six policy changes, in either direction, unless that window was launched with <code>TD_MCP_SCRIPTED=1</code>. The refusal begins <code>err mcp writes on: nothing changed. Global MCP policy is a person's choice in the Threshing Floor (the agent counter, top right).</code> <code>ctl mcp status</code> still answers.</p>
 </div>
@@ -76,22 +76,22 @@
     <tr><td><code>coordination_project</code></td><td>on</td><td><code>project_id</code>, <code>checkout_id</code>, <code>view</code>, <code>limit</code>, <code>cursor</code></td></tr>
     <tr><td><code>coordination_cluster</code></td><td>on</td><td><code>project_id</code>, <code>cluster_id</code>, <code>limit</code>, <code>cursor</code></td></tr>
     <tr><td><code>coordination_changes</code></td><td>on</td><td><code>epoch</code>, <code>since_version</code></td></tr>
-    <tr><td><code>ask_agent</code> <span class="dev-tag">0.5.0 dev</span></td><td>on, a line</td><td><code>pid</code>, <code>question</code> (4,000 characters), <code>copy</code></td><td>Ask another agent along a line that reaches <code>ask</code>.</td></tr>
-    <tr><td><code>ask_answer</code> <span class="dev-tag">0.5.0 dev</span></td><td>on</td><td><code>ask_id</code></td><td>How a copy you asked for is getting on, and its answer.</td></tr>
-    <tr><td><code>prompt_agent</code> <span class="dev-tag">0.5.0 dev</span></td><td>on, a prompt line</td><td><code>pid</code>, <code>prompt</code> (32,000 characters), <code>key</code></td><td>Give another agent work as its next turn. Returns a <code>prompt_id</code> at once.</td></tr>
-    <tr><td><code>prompt_status</code> <span class="dev-tag">0.5.0 dev</span></td><td>on</td><td><code>prompt_id</code>, <code>wait_seconds</code> (up to 6)</td><td>How a prompt is getting on, and the worker's last message once it finishes.</td></tr>
-    <tr><td><code>floor_position</code> <span class="dev-tag">0.5.0 dev</span></td><td>on</td><td>none</td><td>Your seat, org and role on the Threshing Floor, the panes you reach and how far, and the panes that reach you.</td></tr>
+    <tr><td><code>ask_agent</code></td><td>on, a line</td><td><code>pid</code>, <code>question</code> (4,000 characters), <code>copy</code></td><td>Ask another agent along a line that reaches <code>ask</code>.</td></tr>
+    <tr><td><code>ask_answer</code></td><td>on</td><td><code>ask_id</code></td><td>How a copy you asked for is getting on, and its answer.</td></tr>
+    <tr><td><code>prompt_agent</code></td><td>on, a prompt line</td><td><code>pid</code>, <code>prompt</code> (32,000 characters), <code>key</code></td><td>Give another agent work as its next turn. Returns a <code>prompt_id</code> at once.</td></tr>
+    <tr><td><code>prompt_status</code></td><td>on</td><td><code>prompt_id</code>, <code>wait_seconds</code> (up to 6)</td><td>How a prompt is getting on, and the worker's last message once it finishes.</td></tr>
+    <tr><td><code>floor_position</code></td><td>on</td><td>none</td><td>Your seat, org and role on the Threshing Floor, the panes you reach and how far, and the panes that reach you.</td></tr>
   </tbody>
 </table>
 <p><code>leave_note</code>, <code>declare_deliverable</code> and <code>open_document</code> take an optional <code>pid</code>, and leaving it out means your own pane; <code>pane_events</code> and <code>present_surface</code> need one, and <code>get_pane_config</code> with no targets reads every pane. Only the relay says who is calling, so elsewhere you get <code>no `pid`, and this connection did not say who is calling — pass a pid from list_panes</code>. A write to a pane the policy hides is refused: <code>pane 4121 is not exposed under the current policy</code>.<sup><a href="#s1">1</a></sup></p>
-<div class="in-dev">
+<div>
 <p>Five more tools make twenty-two. <code>list_panes</code> replaces <code>exposed</code> with <code>reach</code>, how far you reach each pane (<code>seen</code>, <code>read</code>, <code>ask</code> or <code>prompt</code>), and adds <code>hidden</code>, a count of the panes you can't see. A note gains <code>by</code>, <code>person</code> or <code>agent</code>, when the window knows who wrote it. <code>request_access</code> gains <code>ask_line</code>. Fourteen read-only tools carry <code>annotations.readOnlyHint</code>; in 0.4.0 only the four coordination reads do. A write to a hidden pane and one to a missing pane get the same answer, <code>no pane with pid 4121</code>.<sup><a href="#s3">3</a></sup></p>
 </div>
 
 <h3>Appearance</h3>
 <p><code>get_pane_config</code> and <code>set_pane_config</code> use 0 to 100 percent for <code>brightness</code>, <code>contrast</code>, <code>colour</code>, <code>text</code>, <code>background</code>, <code>gamma</code>, <code>menu_bar</code>, <code>text_size</code>, <code>bench_size</code>, <code>warp</code>, <code>crawl_angle</code>, <code>crawl_depth</code> and <code>phosphor</code> (the glow of lit borders: 25 is the house look, 0 none), plus <code>crawl</code> and <code>crt</code> as true or false. With the CRT off the screen is flat, and <code>warp</code> keeps its value but draws nothing. A pane update may also carry <code>logo</code>, an absolute path to a png, jpg, jpeg, svg or webp image for the pane's card on the agent wall; an empty string clears it.<sup><a href="#s1">1</a></sup></p>
 <p>An update names only what changes, and out-of-range values clamp. A misspelled channel is an error. The values are absolute, so "20 % lower" is yours to compute from a read. On a pane, only the channels you set become its own; <code>outer</code> changes every pane that follows the window.</p>
-<p class="in-dev">The dials gain <code>field_colour</code>, <code>image_glow</code>, <code>inactive_image_glow</code>, <code>inactive_text</code>, <code>inactive_brightness</code> and <code>inactive_blur</code>, in percent, and four linger times in milliseconds: <code>cursor_linger_ms</code> and <code>inactive_cursor_linger_ms</code> from 0 to 220, <code>off_cursor_linger_ms</code> and <code>inactive_off_cursor_linger_ms</code> from 0 to 650. The older <code>afterglow_ms</code>, 0 to 1,200, still works and resets the four.<sup><a href="#s3">3</a></sup></p>
+<p>The dials gain <code>field_colour</code>, <code>image_glow</code>, <code>inactive_image_glow</code>, <code>inactive_text</code>, <code>inactive_brightness</code> and <code>inactive_blur</code>, in percent, and four linger times in milliseconds: <code>cursor_linger_ms</code> and <code>inactive_cursor_linger_ms</code> from 0 to 220, <code>off_cursor_linger_ms</code> and <code>inactive_off_cursor_linger_ms</code> from 0 to 650. The older <code>afterglow_ms</code>, 0 to 1,200, still works and resets the four.<sup><a href="#s3">3</a></sup></p>
 
 <h3 id="technical-an-agent-asks-a-person-answers">Asking for access<a class="hash" href="#technical-an-agent-asks-a-person-answers" aria-label="Link to this section">#</a></h3>
 <p><code>request_access</code> puts an agent's ask on the <a href="/attention">attention rail</a>, as a row in its first lane, <code>access</code>: what it wants in plain words, its reason, and two buttons, <code>Yes  y</code> and <code>No  n</code>. With the queue open, <kbd>y</kbd> and <kbd>n</kbd> answer the row under the cursor. Yes changes the setting the way your own control would, and saves it; No changes nothing. Either way the agent gets one line in its own terminal, signed with the session's tag and typed when its pane is on screen: <code>[workbench:&lt;tag&gt;] request_access open_pane 4412: yes, pane 4412 is open to agents</code>. The setting does not wait for the line.<sup><a href="#s5">5</a></sup></p>
@@ -103,28 +103,28 @@
     <tr><td><code>writes_on</code></td><td>Turns writes on.</td></tr>
     <tr><td><code>expose_shells</code></td><td>Shows plain shells as well as agent panes.</td></tr>
     <tr><td><code>events_on</code></td><td>Shows other agents' tool calls.</td></tr>
-    <tr><td><code>ask_line</code> + <code>pid</code> <span class="dev-tag">0.5.0 dev</span></td><td>A bypass line from the asker's seat to that pane, for 1, 3 or 10 uses, 3 unless you change it on the card. Both panes must be seated.</td></tr>
+    <tr><td><code>ask_line</code> + <code>pid</code></td><td>A bypass line from the asker's seat to that pane, for 1, 3 or 10 uses, 3 unless you change it on the card. Both panes must be seated.</td></tr>
   </tbody>
 </table>
 <p>A pane's ask waits until you answer it or the pane closes, and a new ask from the same pane replaces it. An ask for what is already so is refused before it reaches you, and so is an <code>open_pane</code> for a pane that isn't there. Asking needs the server on and a pane to call from, and works with writes off, since writes are one of the things an agent may ask for. Appearance needs no ask.</p>
 <p>Only the rail's buttons and keys answer an ask. No MCP tool and no <code>ctl</code> verb can. An agent with a shell still runs as you, and could edit the session file directly.</p>
-<div class="in-dev">
+<div>
 <p>The row is coloured by how serious the ask is: <code>✓</code> clear, <code>◇</code> caution, <code>▲</code> warning, <code>!</code> alert. A second ask from the same pane is refused while the first waits: <code>one ask at a time: your earlier ask is still on the person's rail</code>. An <code>open_pane</code> ask is accepted whether or not the pane exists, so asking can't reveal a hidden pane, and Yes applies only to the pane that was there when the ask arrived.<sup><a href="#s3">3</a></sup></p>
 </div>
 
 <h3>The Threshing Floor</h3>
-<div class="in-dev">
+<div>
 <p>The <a href="/threshing-floor">Threshing Floor</a> says which agent may reach which pane, as an org chart you draw. You give agent panes seats and draw lines between them, and a line's rung is how far its sender reaches: <code>see</code> it in <code>list_panes</code>, <code>read</code> it with <code>grep</code>, <code>pane_events</code> and <code>get_pane_config</code>, <code>ask</code> it, or <code>prompt</code> it. A pane nobody seated keeps the window's switches and is never asked or prompted. A seated pane is hidden from every agent except along a line from that agent's seat. Read-only caps a line at <code>ask</code>, and off-limits beats every line. Only a person draws, changes or erases a line. <code>floor_position</code> answers <code>seated</code>, <code>org</code>, <code>role</code> (<code>orchestrator</code>, <code>manager</code>, <code>worker</code> or <code>alone</code>), <code>lines_out</code> and <code>lines_in</code>, each line as <code>{pid, pane, tab, agent, rung, listed}</code>.<sup><a href="#s3">3</a></sup></p>
 </div>
 
 <h3>Asking another agent</h3>
-<div class="in-dev">
+<div>
 <p><code>ask_agent</code> needs a line from your seat that reaches <code>ask</code>, or a bypass you granted. Without <code>copy</code> it answers at once from what the window can show, and nothing reaches the other agent: <code>seat</code> (<code>title</code>, <code>project</code>, <code>role</code>, <code>state</code>, <code>model</code>, <code>size</code>), <code>summary</code> (<code>brief</code>, <code>layman</code>), <code>note</code>, <code>recent_tools</code> (its last ten tool calls), <code>ask_id</code> and <code>via</code>.<sup><a href="#s3">3</a></sup></p>
 <p>With <code>copy: true</code> the window forks the agent's own conversation into a copy that can only read, asks it once and stops it. The answer comes back as <code>ask_id</code>, <code>reads</code> (tokens per model call, <code>null</code> when unknown), <code>press_limit</code> and a <code>stage</code>: <code>awaiting_press</code>, <code>running</code>, <code>answered</code> (with <code>answer</code>, <code>tokens_read</code>, <code>cost_usd</code>), <code>declined</code>, <code>refused</code> (with <code>refusal</code>) or <code>failed</code> (with <code>why</code>). By default every copy waits for your Yes on the asker's rail row. Read it later with <code>ask_answer</code> and the <code>ask_id</code>; only the pane that asked can. A refusal names its reason, as in <code>ask refused (no_line): …</code>.</p>
 </div>
 
 <h3>Giving another agent work</h3>
-<div class="in-dev">
+<div>
 <p><code>prompt_agent</code> needs a line from your seat drawn at <code>prompt</code>; an ask line, a bypass, a read-only pane and an off-limits pane are refused by name. It types your words into the other agent's own conversation as its next turn, once that agent has shown its idle prompt for five seconds. It waits up to ten minutes for a working agent, wakes a resting one, and never types into a pane showing a permission prompt or a dialog, or one its person typed in during the last minute. A header line names the sender. This is the one tool that leads to bytes in a terminal.<sup><a href="#s3">3</a></sup></p>
 <p>It returns at once with <code>prompt_id</code>, <code>pid</code>, <code>age_ms</code>, <code>key</code> when you gave one, and a <code>stage</code>: <code>waiting</code> (with <code>worker</code>, what it is doing), <code>typing</code>, <code>delivered</code>, <code>working</code> (with <code>worker</code>), <code>finished</code> (with <code>reply</code>, the worker's last message, or <code>null</code> and <code>reply_unknown</code> saying why), <code>failed</code> (with <code>why</code>) or <code>expired</code>. <code>prompt_status</code> reads the same, for the pane that sent it, and <code>wait_seconds</code> holds the answer up to six seconds for the prompt to end. A <code>key</code> of up to 64 characters names one assignment: sending it again reports the first attempt and never types a second turn.</p>
 </div>
@@ -134,11 +134,11 @@
 
 <h3>Untrusted terminal data</h3>
 <p>An answer that quotes other panes opens with <code>UNTRUSTED TERMINAL DATA.</code> and names each quoted field under <code>structuredContent.untrusted_terminal_data</code>. Those answers are <code>list_panes</code>, <code>grep</code>, <code>pane_events</code>, the four <code>coordination_*</code> reads and <code>engineering_state</code>; a pushed event names its quoted fields in <code>data.untrusted_terminal_data</code>. A line a program printed, a title it set or a command another agent ran can be worded as an instruction, and the label tells the reading agent it isn't one. Terminal Delight's own answers carry no label, and neither do a person's <code>document_notes</code>.<sup><a href="#s1">1</a></sup></p>
-<p class="in-dev"><code>ask_agent</code>, <code>ask_answer</code> and <code>prompt_status</code> carry the label too, since each quotes another agent.</p>
+<p><code>ask_agent</code>, <code>ask_answer</code> and <code>prompt_status</code> carry the label too, since each quotes another agent.</p>
 
 <h3>Pushed notifications</h3>
 <p>Over the in-process transport, after <code>initialize</code> and with the server and events on, the server pushes <code>notifications/message</code> about once a second, with <code>data.event</code> set to <code>agent_appeared</code>, <code>agent_vanished</code> or <code>tool_call</code>. It never replays history: a pane seen for the first time is announced, and only tool calls after that are pushed. <code>logging/setLevel</code> to <code>warning</code> or above silences it. The relay carries no pushes.<sup><a href="#s2">2</a></sup></p>
-<p class="in-dev">A pane seated in the Threshing Floor is never pushed, because the feed goes to every connection and can't tell who is listening.</p>
+<p>A pane seated in the Threshing Floor is never pushed, because the feed goes to every connection and can't tell who is listening.</p>
 
 <h3>Errors</h3>
 <table>
@@ -154,13 +154,13 @@
 
 <h3>What would prove this wrong</h3>
 <p>Any tool call that puts bytes into a pane's terminal breaks the server's first rule. So does any answer that describes another window's panes without saying which window it came from, and any answer that quotes another pane without the label.</p>
-<p class="in-dev"><code>prompt_agent</code> is the one exception to the first rule, and only along a line a person drew at <code>prompt</code>. Any ask or prompt that travels with no line breaks the Threshing Floor, and so does any copy that writes, reaches a tool server or the network.</p>
+<p><code>prompt_agent</code> is the one exception to the first rule, and only along a line a person drew at <code>prompt</code>. Any ask or prompt that travels with no line breaks the Threshing Floor, and so does any copy that writes, reaches a tool server or the network.</p>
 </section>
 
 <ol data-sources>
   <li id="s1">The server, its tools, the policy and the labels: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
   <li id="s2">The transports and the push feed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp_transport.rs">mcp_transport.rs</a>; the relay and <code>ctl mcp</code>: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a>.</li>
-  <li id="s3">0.5.0: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/mcp.rs">mcp.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/threshing_floor.rs">threshing_floor.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/prompt.rs">prompt.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/ctl.rs">ctl.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/access.rs">access.rs</a>.</li>
+  <li id="s3">0.5.0: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/threshing_floor.rs">threshing_floor.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/prompt.rs">prompt.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/ctl.rs">ctl.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/access.rs">access.rs</a>.</li>
   <li id="s4">The agent wall's switches and the right-click mark: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane.rs">pane.rs</a> and the strings in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang.rs">lang.rs</a>.</li>
   <li id="s5">Asks and their answers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/access.rs">access.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/attention.rs">attention.rs</a>.</li>
 </ol>

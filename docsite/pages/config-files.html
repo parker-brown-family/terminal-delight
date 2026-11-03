@@ -41,13 +41,13 @@
     <tr><td><code>sessions/&lt;key&gt;.lock</code>, <code>.host.lock</code>, <code>.hostspawn.lock</code></td><td>Which window and which session host hold the session.</td><td>a window, or a session host, starting</td><td></td></tr>
     <tr><td><code>state.toml</code></td><td>The single session file older builds wrote.</td><td>older builds; moved into <code>sessions/</code> on upgrade</td><td></td></tr>
     <tr><td><code>hotkey-terminal-key.*</code></td><td>The GNOME <kbd>Ctrl</kbd>+<kbd>Alt</kbd>+<kbd>T</kbd> shortcut's undo record.</td><td><code>scripts/install-hotkey.sh</code></td><td>by that script</td></tr>
-    <tr><td><code>agents.toml</code> <span class="dev-tag">0.5.0 dev</span></td><td>When idle agents <a href="/rest">rest and sleep</a>. Unset fields mean the defaults: rest after 10 minutes, sleep after 120 minutes of rest.</td><td>CONFIG › Agents</td><td>when that page opens</td></tr>
-    <tr><td><code>ui/*.toml</code> <span class="dev-tag">0.5.0 dev</span></td><td>Your own <a href="/ui-config">UI sets</a>.</td><td>you</td><td>when a window opens, and by <code>terminal-delight ui --list</code></td></tr>
-    <tr><td><code>new-window.toml</code> <span class="dev-tag">0.5.0 dev</span></td><td>The look a brand-new window starts in: theme, skin and UI set. With no file, new windows open in Clean.</td><td>UI CONFIG; going back to Clean deletes it</td><td>when a new session is made</td></tr>
-    <tr><td><code>protected</code> <span class="dev-tag">0.5.0 dev</span></td><td>The marker that makes this machine refuse to <a href="/uninstall">uninstall</a>.</td><td><code>terminal-delight admin protect</code></td><td>by ADMIN and the removal worker</td></tr>
+    <tr><td><code>agents.toml</code></td><td>When idle agents <a href="/rest">rest and sleep</a>. Unset fields mean the defaults: rest after 10 minutes, sleep after 120 minutes of rest.</td><td>CONFIG › Agents</td><td>when that page opens</td></tr>
+    <tr><td><code>ui/*.toml</code></td><td>Your own <a href="/ui-config">UI sets</a>.</td><td>you</td><td>when a window opens, and by <code>terminal-delight ui --list</code></td></tr>
+    <tr><td><code>new-window.toml</code></td><td>The look a brand-new window starts in: theme, skin and UI set. With no file, new windows open in Clean.</td><td>UI CONFIG; going back to Clean deletes it</td><td>when a new session is made</td></tr>
+    <tr><td><code>protected</code></td><td>The marker that makes this machine refuse to <a href="/uninstall">uninstall</a>.</td><td><code>terminal-delight admin protect</code></td><td>by ADMIN and the removal worker</td></tr>
   </tbody>
 </table>
-<p>On 0.4.0 the first <code>theme.toml</code> is a copy of the built-in <code>hacker</code> theme; on 0.5.0 it is a copy of Clean.<span class="dev-tag">0.5.0 dev</span><sup><a href="#s1">1</a></sup></p>
+<p>On 0.4.0 the first <code>theme.toml</code> is a copy of the built-in <code>hacker</code> theme; on 0.5.0 it is a copy of Clean.<sup><a href="#s1">1</a></sup></p>
 
 <h3>~/.local/state/terminal-delight/</h3>
 <table>
@@ -66,16 +66,16 @@
     <tr><td><code>crashes/</code></td><td>One record per crash.</td><td>a crash</td></tr>
     <tr><td><code>bug-reports/&lt;time&gt;/report.md</code></td><td>A <a href="/bug-report">bug report</a>, on this machine only.</td><td>step 1 of the 🐞 panel</td></tr>
     <tr><td><code>agent-ledger/</code></td><td>Which conversation each agent process is in. This one is always under <code>~/.local/state</code>, whatever <code>$XDG_STATE_HOME</code> says.</td><td>by the recovery hook; the app only reads it</td></tr>
-    <tr><td><code>conversations/artifact-revisions/</code> <span class="dev-tag">0.5.0 dev</span></td><td>A copy of each local file an agent handed over as an <a href="/artifacts">artifact</a>, up to 16 MiB each, owner-only.</td><td>each hand-over</td></tr>
-    <tr><td><code>conversations/unbound/</code>, <code>conversations/artifact-archive.html</code> <span class="dev-tag">0.5.0 dev</span></td><td>Records for panes not yet tied to a conversation, and the searchable archive page.</td><td>as records arrive; the page when the archive opens</td></tr>
-    <tr><td><code>threshing-floor/&lt;session&gt;/asks.jsonl</code>, <code>prompt-keys.jsonl</code> <span class="dev-tag">0.5.0 dev</span></td><td>Every ask on the <a href="/threshing-floor">Threshing Floor</a> by stage, recording a question's length and hash and never its words; and receipts that stop a prompt being delivered twice.</td><td>each ask and each keyed prompt</td></tr>
-    <tr><td><code>rest-&lt;session&gt;.toml</code> <span class="dev-tag">0.5.0 dev</span></td><td>Which agents are asleep, and which panes are pinned awake.</td><td>when an agent rests, sleeps or wakes</td></tr>
-    <tr><td><code>wake/&lt;conversation&gt;.sh</code> <span class="dev-tag">0.5.0 dev</span></td><td>The exact line that wakes a sleeping agent, owner-only.</td><td>when an agent falls asleep</td></tr>
-    <tr><td><code>receipts/&lt;component&gt;.receipt</code>, <code>backups/</code> <span class="dev-tag">0.5.0 dev</span></td><td>What each source installer put on disk, with hashes, and copies of shared files it edited.</td><td>by the installers in <code>scripts/</code></td></tr>
+    <tr><td><code>conversations/artifact-revisions/</code></td><td>A copy of each local file an agent handed over as an <a href="/artifacts">artifact</a>, up to 16 MiB each, owner-only.</td><td>each hand-over</td></tr>
+    <tr><td><code>conversations/unbound/</code>, <code>conversations/artifact-archive.html</code></td><td>Records for panes not yet tied to a conversation, and the searchable archive page.</td><td>as records arrive; the page when the archive opens</td></tr>
+    <tr><td><code>threshing-floor/&lt;session&gt;/asks.jsonl</code>, <code>prompt-keys.jsonl</code></td><td>Every ask on the <a href="/threshing-floor">Threshing Floor</a> by stage, recording a question's length and hash and never its words; and receipts that stop a prompt being delivered twice.</td><td>each ask and each keyed prompt</td></tr>
+    <tr><td><code>rest-&lt;session&gt;.toml</code></td><td>Which agents are asleep, and which panes are pinned awake.</td><td>when an agent rests, sleeps or wakes</td></tr>
+    <tr><td><code>wake/&lt;conversation&gt;.sh</code></td><td>The exact line that wakes a sleeping agent, owner-only.</td><td>when an agent falls asleep</td></tr>
+    <tr><td><code>receipts/&lt;component&gt;.receipt</code>, <code>backups/</code></td><td>What each source installer put on disk, with hashes, and copies of shared files it edited.</td><td>by the installers in <code>scripts/</code></td></tr>
   </tbody>
 </table>
-<p>A notes file written by 0.5.0 uses a newer format, which 0.4.0 opens read-only. 0.5.0 still reads the asks a build before the Threshing Floor wrote under <code>warroom/</code>, and writes nothing there.<span class="dev-tag">0.5.0 dev</span></p>
-<p class="in-dev">An uninstall writes its receipt, journal and copies of edited files to <code>~/.local/state/terminal-delight-removal/&lt;time&gt;/</code>, beside the state folder and outside everything it removes.</p>
+<p>A notes file written by 0.5.0 uses a newer format, which 0.4.0 opens read-only. 0.5.0 still reads the asks a build before the Threshing Floor wrote under <code>warroom/</code>, and writes nothing there.</p>
+<p>An uninstall writes its receipt, journal and copies of edited files to <code>~/.local/state/terminal-delight-removal/&lt;time&gt;/</code>, beside the state folder and outside everything it removes.</p>
 
 <h3>~/.cache/terminal-delight/ and ~/.local/share/</h3>
 <table>
@@ -83,7 +83,7 @@
   <tbody>
     <tr><td><code>~/.cache/terminal-delight/pages/</code></td><td>Rendered HTML documents, up to 256 MiB, oldest removed first.</td></tr>
     <tr><td><code>~/.cache/terminal-delight/agent-usage/</code></td><td>The usage collector scripts, unpacked from the binary and run with <code>python3</code>.</td></tr>
-    <tr><td><code>~/.cache/terminal-delight/admin/</code> <span class="dev-tag">0.5.0 dev</span></td><td>Uninstall plans and the agent handoff, written for review.</td></tr>
+    <tr><td><code>~/.cache/terminal-delight/admin/</code></td><td>Uninstall plans and the agent handoff, written for review.</td></tr>
     <tr><td><code>~/.local/share/terminal-delight/skills/decision-brief/</code></td><td>The kit agents use to write <a href="/briefs">decision briefs</a>. Rewritten, only where it differs, before each agent launch.</td></tr>
     <tr><td><code>~/.local/share/terminal-delight/keys.html</code></td><td>The key sheet, from <code>scripts/install-keys-hotkey.sh</code>.</td></tr>
     <tr><td><code>~/.local/share/terminal-delight/demo-logos/</code></td><td>Pictures for demo windows. Read only, and only in a demo.</td></tr>
@@ -98,9 +98,9 @@
     <tr><td><code>terminal-delight/ctl-&lt;pid&gt;.sock</code></td><td>Each window's control socket, used by <a href="/ctl">ctl</a> and the MCP relay.</td></tr>
     <tr><td><code>terminal-delight/session-&lt;key&gt;.sock</code>, <code>.window</code>, <code>.tag</code></td><td>Each session host's socket, the pid of the window attached to it, and the session's <code>TD_TAG</code>.</td></tr>
     <tr><td><code>terminal-delight/chromium-&lt;pid&gt;-&lt;n&gt;/</code></td><td>A profile for the headless browser that draws HTML documents. Removed after use.</td></tr>
-    <tr><td><code>terminal-delight/restricted/&lt;id&gt;/</code> <span class="dev-tag">0.5.0 dev</span></td><td>One per <a href="/restricted">Restricted</a> run, deleted when it ends.</td></tr>
+    <tr><td><code>terminal-delight/restricted/&lt;id&gt;/</code></td><td>One per <a href="/restricted">Restricted</a> run, deleted when it ends.</td></tr>
     <tr><td><code>terminal-delight-*.png</code>, <code>.svg</code>, <code>-ping.mp3</code></td><td>Built-in pictures and the finish bell, written out when first needed.</td></tr>
-    <tr><td><code>terminal-delight-assets.manifest</code> <span class="dev-tag">0.5.0 dev</span></td><td>A hash for each of those files, so an uninstall removes only what Terminal Delight wrote.</td></tr>
+    <tr><td><code>terminal-delight-assets.manifest</code></td><td>A hash for each of those files, so an uninstall removes only what Terminal Delight wrote.</td></tr>
   </tbody>
 </table>
 <p>The runtime directory is emptied when you log out.</p>
@@ -112,7 +112,7 @@
   <li>A decision brief's own HTML file is rewritten in place when you save notes into it, after a copy goes to <code>brief-backups/</code>.</li>
   <li>Sharing a demo of a layout writes a snapshot to <code>$TMPDIR/td-demo-&lt;pid&gt;-&lt;time&gt;.toml</code>, owner-only. Nothing deletes it.</li>
   <li>A picture a program sends through a temporary file is read and then deleted, as the Kitty graphics protocol asks.</li>
-  <li class="in-dev">Resting an agent freezes its pane's cgroup and asks the kernel to push its memory out, through that cgroup's own files under <code>/sys/fs/cgroup</code>.</li>
+  <li>Resting an agent freezes its pane's cgroup and asks the kernel to push its memory out, through that cgroup's own files under <code>/sys/fs/cgroup</code>.</li>
 </ul>
 <p>It reads, and never writes: agent transcripts under <code>~/.claude/projects/</code> and <code>~/.codex/sessions/</code>; Omarchy's themes, its <code>hidden-themes</code> list and its usage records; and on 0.5.0, Claude Code's <code>~/.claude/sessions/</code>.<sup><a href="#s2">2</a></sup></p>
 
@@ -124,6 +124,6 @@
 </section>
 
 <ol data-sources>
-  <li id="s1">The folders: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; atomic, owner-only writes: <code>write_atomic</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; each settings file's reader beside it: theme.rs, skin.rs, docview/pref.rs, toolprop.rs, launcher.rs, launchpref.rs, notifpref.rs, dirlogo.rs, fav.rs, briefhook.rs, plugins.rs, slot.rs, and <code>rotate_state_backup</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>. 0.5.0: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentcfg.rs">agentcfg.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uninstall/guard.rs">uninstall/guard.rs</a>.</li>
-  <li id="s2">Records and the rest: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surfacefeed.rs">surfacefeed.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/handover.rs">handover.rs</a>, docview/md_notes.rs, docview/notes.rs, docview/cache.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>, coordination/attention.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefkit.rs">briefkit.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hostproto.rs">hostproto.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/art.rs">art.rs</a>. 0.5.0: artifact_archive.rs, askrecord.rs, prompt.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/agentrest_io.rs">agentrest_io.rs</a>, panegroup.rs, restricted.rs, uninstall.rs.</li>
+  <li id="s1">The folders: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a>; atomic, owner-only writes: <code>write_atomic</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; each settings file's reader beside it: theme.rs, skin.rs, docview/pref.rs, toolprop.rs, launcher.rs, launchpref.rs, notifpref.rs, dirlogo.rs, fav.rs, briefhook.rs, plugins.rs, slot.rs, and <code>rotate_state_backup</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>. 0.5.0: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/agentcfg.rs">agentcfg.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uninstall/guard.rs">uninstall/guard.rs</a>.</li>
+  <li id="s2">Records and the rest: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/surfacefeed.rs">surfacefeed.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/handover.rs">handover.rs</a>, docview/md_notes.rs, docview/notes.rs, docview/cache.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/usage.rs">usage.rs</a>, coordination/attention.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/defaultterm.rs">defaultterm.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/briefkit.rs">briefkit.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/hostproto.rs">hostproto.rs</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/art.rs">art.rs</a>. 0.5.0: artifact_archive.rs, askrecord.rs, prompt.rs, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/agentrest_io.rs">agentrest_io.rs</a>, panegroup.rs, restricted.rs, uninstall.rs.</li>
 </ol>

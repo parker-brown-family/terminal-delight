@@ -11,7 +11,7 @@
 <section data-register="brief">
 <p class="lede">When an agent finishes something you are meant to open, such as a report, a page or a pull request, Terminal Delight records it as a handover. The agent's pane header names the newest one. Click the name and it opens in a floating square over the pane; click <code>▼</code> beside it, or press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>M</kbd>, for everything that agent has handed over, newest first.</p>
 <p>An agent hands something over in one of three ways: it calls the MCP tool <code>declare_deliverable</code>, it puts an <code>artifact</code> card on its <a href="/workbench">workbench</a>, or it prints a line that starts <code>Deliverable:</code> followed by a link. However many times it names the same file, the list holds it once.</p>
-<p class="in-dev">A 📜 in the bottom-right corner opens the artifact rail: one card per agent that has handed something over, newest first. An agent can no longer replace a document you have open; what it tried to open waits on the rail. The rail's <b>Archive</b> opens a searchable page of every handover with a saved copy of each file.</p>
+<p>A 📜 in the bottom-right corner opens the artifact rail: one card per agent that has handed something over, newest first. An agent can no longer replace a document you have open; what it tried to open waits on the rail. The rail's <b>Archive</b> opens a searchable page of every handover with a saved copy of each file.</p>
 <p class="invite">Technical has what counts as a handover, where the list is kept, and the 0.5.0 rail and archive.</p>
 </section>
 
@@ -70,8 +70,8 @@
 </table>
 <p>Success reads <code>declared — "&lt;label&gt;" is on pane &lt;pid&gt;'s row in the rail</code>. A relative path is refused with <code>… is relative. It would be resolved against the TERMINAL's working directory rather than yours, so give an absolute path or a full URL.</code>, and a label over 48 characters with <code>label is N characters; keep it under 48 …</code>.<sup><a href="#s7">7</a></sup></p>
 
-<h3>The artifact rail <span class="dev-tag">0.5.0 dev</span></h3>
-<div class="in-dev">
+<h3>The artifact rail</h3>
+<div>
 <p>A 📜 sits in the bottom-right corner, first of the glyphs there. Clicking it opens the artifact rail above the corner, headed <code>📜 ARTIFACTS</code> and the number of cards, with an <code>Archive</code> button. With nothing handed over it says <code>Nothing handed over in this window yet.</code><sup><a href="#s8">8</a></sup></p>
 <p>Each pane in the window whose agent has handed something over gets one card, newest handover first. The card names the project and the pane's left-bar tab (and the pane, when two cards share a tab), shows the agent's state as a glyph, <code>▶</code> working, <code>‖</code> blocked, <code>✕</code> error, <code>✓</code> done, <code>○</code> idle, <code>☾</code> resting, <code>z</code> asleep or <code>?</code> unknown, and is edged in that state's colour. Its row shows the newest handover's label and kind, a green dot until it is opened, and <code>+N earlier</code> when there are more. A card goes when its pane closes. While the rail is open the order holds still, and only a pane new to the rail goes on top.</p>
 <table class="keys">
@@ -86,15 +86,15 @@
 <p>📜 is one of the corner glyphs <a href="/ui-config">UI CONFIG</a> can hide. Hidden, it folds into the <code>CONFIG ▾</code> menu, whose <code>📜 Artifacts</code> row opens the same rail; that row is in the menu either way. The Clean design hides both the 📜 and the header chip, so in Clean the rail is under CONFIG and the list is the <code>▤ artifacts</code> row in each pane's <code>⋯</code> menu.<sup><a href="#s9">9</a></sup></p>
 </div>
 
-<h3>When a document is already open <span class="dev-tag">0.5.0 dev</span></h3>
-<div class="in-dev">
+<h3>When a document is already open</h3>
+<div>
 <p>In 0.4.0 an agent's <code>open_document</code> replaces whatever the floating square over its pane is showing, or is refused when the square holds notes you have not saved. In 0.5.0 an agent never replaces a square you have open. When one is up, the file is not opened; it becomes the pane's newest handover, the 📜 lifts once and keeps a green dot until you open the rail, and the agent is told:</p>
 <pre><code>held pane &lt;n&gt; — a square is already open over your pane, so this was not opened over it. It is kept as your handover: the person sees it on the artifact rail (📜) and opens it from there. Do not open it again.</code></pre>
 <p>Over MCP that is a success, with <code>"held": true</code>. Two cases are not held: the same file already showing (<code>it already shows this file</code>), and a video or sound, which plays as a clip above the square. Whatever you do yourself still replaces the square: the header chip, the rail, a click, or <code>ctl doc here</code>. A square holding notes you have not saved is kept even then.<sup><a href="#s10">10</a></sup></p>
 </div>
 
-<h3>The archive <span class="dev-tag">0.5.0 dev</span></h3>
-<div class="in-dev">
+<h3>The archive</h3>
+<div>
 <p><code>Archive</code> on the rail writes a page, <code>$XDG_STATE_HOME/terminal-delight/conversations/artifact-archive.html</code>, and opens it in your default browser. It is built from every conversation record, including conversations whose panes have closed, and is headed <code>Artifact archive</code>, with a search box, <code>Find a title, path or conversation</code>, that filters by label, target and conversation. There is one entry per file, per revision, per conversation, newest first:</p>
 <ul>
   <li><code>Open current target</code> links the file or URL as it is now, with <code>Current file exists; bytes may have changed.</code>, <code>Current file unavailable.</code> or <code>Remote link; availability not checked.</code></li>
@@ -104,8 +104,8 @@
 <p>A record the archive could not read is listed under <code>Some records could not be read. This archive is incomplete.</code>, and captures still in progress add <code>Some revision captures are still pending. Reopen the archive to refresh.</code> The page is in English in every language setting.<sup><a href="#s11">11</a></sup></p>
 </div>
 
-<h3>Saved copies <span class="dev-tag">0.5.0 dev</span></h3>
-<div class="in-dev">
+<h3>Saved copies</h3>
+<div>
 <p>Each new handover of a local file saves one copy of its bytes, named by their SHA-256, in <code>$XDG_STATE_HOME/terminal-delight/conversations/artifact-revisions/</code>, readable only by you. Identical bytes share one copy. A copy is made only of a regular file of at most 16 MiB; a web link, a file that is itself a symlink, a special file, or a file that changes while it is read stays a link, and the archive says why. Pictures and other files a page links to are not copied. Nothing deletes saved copies automatically, so they stay until you remove them.<sup><a href="#s12">12</a></sup></p>
 <p>When an agent declares the same file again, with <code>declare_deliverable</code> or a held <code>open_document</code>, the file's current bytes are saved as a new revision of the same handover. The list and the rail keep one row for it, and the archive shows each revision. Copies are made in the background, up to 128 waiting at once, and the time a copy was made is recorded apart from the time of the handover, since the bytes saved are the ones on disk when the copy runs. Reopening a conversation does not make new copies of old handovers. A handover made before the pane knew its conversation is kept in a separate record, and the archive joins it to its conversation once that is known.</p>
 </div>
@@ -122,9 +122,9 @@
 <li id="s5">The list's words: the <code>handover_</code> rows in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/parts.rs">lang/parts.rs</a>.</li>
 <li id="s6">Where it is kept: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/handover.rs">handover.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/benchstore.rs">benchstore.rs</a>; the 256 held before binding: <code>HELD_CAP</code> in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/bench.rs">pane/bench.rs</a>.</li>
 <li id="s7"><code>declare_deliverable</code>, its arguments and answers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
-<li id="s8">The rail: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/artifact_rail.rs">artifact_rail.rs</a>; its words: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/lang/chrome.rs">lang/chrome.rs</a>; on dev/0.5.0.</li>
-<li id="s9">The corner glyphs and the CONFIG row: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/uiconfig.rs">uiconfig.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/ui/clean.toml">ui/clean.toml</a>, on dev/0.5.0.</li>
-<li id="s10">The held answer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane/doc.rs">pane/doc.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/mcp.rs">mcp.rs</a>, on dev/0.5.0.</li>
-<li id="s11">The archive page: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/artifact_archive.rs">artifact_archive.rs</a>, on dev/0.5.0.</li>
-<li id="s12">Captures, the 16 MiB limit and the queue of 128: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/artifact_archive.rs">artifact_archive.rs</a>; repeat declarations: <a href="https://github.com/parker-brown-family/terminal-delight/blob/dev/0.5.0/app/src/pane/handed.rs">pane/handed.rs</a>; on dev/0.5.0.</li>
+<li id="s8">The rail: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/artifact_rail.rs">artifact_rail.rs</a>; its words: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/lang/chrome.rs">lang/chrome.rs</a>; on dev/0.5.0.</li>
+<li id="s9">The corner glyphs and the CONFIG row: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/ui/clean.toml">ui/clean.toml</a>.</li>
+<li id="s10">The held answer: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/doc.rs">pane/doc.rs</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/mcp.rs">mcp.rs</a>.</li>
+<li id="s11">The archive page: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/artifact_archive.rs">artifact_archive.rs</a>.</li>
+<li id="s12">Captures, the 16 MiB limit and the queue of 128: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/artifact_archive.rs">artifact_archive.rs</a>; repeat declarations: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/pane/handed.rs">pane/handed.rs</a>; on dev/0.5.0.</li>
 </ol>
