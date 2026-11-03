@@ -143,8 +143,7 @@ None of this is in a published build yet:
 
 Stable releases, and previews of the next one, are on the
 [releases page](https://github.com/parker-brown-family/terminal-delight/releases).
-`main` carries 0.4.0, whose candidate (0.4.0-rc.3) is published there marked
-*Pre-release*; 0.3.0 is the latest stable. What changed, release by release, is
+0.5.0 is the latest stable. What changed, release by release, is
 in [CHANGELOG.md](CHANGELOG.md), and the plain-language notes are in
 [docs/release-notes/](docs/release-notes/).
 
