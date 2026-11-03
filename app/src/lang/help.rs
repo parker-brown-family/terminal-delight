@@ -142,6 +142,9 @@ pub struct Help {
     pub(crate) fk_bug: &'static str,
     pub(crate) fd_bug: &'static str,
     pub(crate) fd_omarchy: &'static str,
+    /// FEATURES › CRT: the cursor and erased text lingering as afterglow.
+    pub(crate) fk_burn: &'static str,
+    pub(crate) fd_burn: &'static str,
 }
 
 pub const EN: Help = Help {
@@ -238,6 +241,8 @@ pub const EN: Help = Help {
     fk_bug: "Bug report",
     fd_bug: "Never carries what is on your screen",
     fd_omarchy: "Can be the terminal Super+Return opens",
+    fk_burn: "Phosphor burn",
+    fd_burn: "Your cursor and the text you erase can linger, like a 1984 screen · Ctrl+Shift+G",
 };
 
 pub const ES: Help = Help {
@@ -334,6 +339,8 @@ pub const ES: Help = Help {
     fk_bug: "Informe de fallo",
     fd_bug: "Nunca lleva lo que hay en tu pantalla",
     fd_omarchy: "Puede ser la terminal que abre Super+Return",
+    fk_burn: "Quemado de fósforo",
+    fd_burn: "El cursor y el texto que borras pueden persistir, como en una pantalla de 1984 · Ctrl+Shift+G",
 };
 
 pub const DE: Help = Help {
@@ -430,6 +437,8 @@ pub const DE: Help = Help {
     fk_bug: "Fehlerbericht",
     fd_bug: "Enthält nie, was auf deinem Bildschirm steht",
     fd_omarchy: "Kann das Terminal sein, das Super+Return öffnet",
+    fk_burn: "Phosphor-Nachleuchten",
+    fd_burn: "Cursor und gelöschter Text können nachleuchten wie auf einem Bildschirm von 1984 · Strg+Shift+G",
 };
 
 pub const FR: Help = Help {
@@ -526,6 +535,8 @@ pub const FR: Help = Help {
     fk_bug: "Rapport de bug",
     fd_bug: "Ne contient jamais ce qui est à l’écran",
     fd_omarchy: "Peut être le terminal qu’ouvre Super+Return",
+    fk_burn: "Rémanence du phosphore",
+    fd_burn: "Le curseur et le texte effacé peuvent persister, comme sur un écran de 1984 · Ctrl+Shift+G",
 };
 
 pub const RU: Help = Help {
@@ -622,6 +633,8 @@ pub const RU: Help = Help {
     fk_bug: "Отчёт об ошибке",
     fd_bug: "Никогда не содержит того, что на экране",
     fd_omarchy: "Может быть терминалом, который открывает Super+Return",
+    fk_burn: "Выгорание люминофора",
+    fd_burn: "Курсор и стёртый текст могут оставлять след, как на экране 1984 года · Ctrl+Shift+G",
 };
 
 pub const ZH: Help = Help {
@@ -718,6 +731,8 @@ pub const ZH: Help = Help {
     fk_bug: "错误报告",
     fd_bug: "绝不携带你屏幕上的内容",
     fd_omarchy: "可以成为 Super+Return 打开的终端",
+    fk_burn: "荧光余辉",
+    fd_burn: "光标和擦除的文字可以留下余辉，就像 1984 年的屏幕 · Ctrl+Shift+G",
 };
 
 pub const JA: Help = Help {
@@ -814,6 +829,8 @@ pub const JA: Help = Help {
     fk_bug: "バグ報告",
     fd_bug: "画面の内容は決して含めない",
     fd_omarchy: "Super+Return で開く端末にできる",
+    fk_burn: "蛍光体の残光",
+    fd_burn: "カーソルと消した文字が 1984 年の画面のように残ることがある · Ctrl+Shift+G",
 };
 
 pub const KO: Help = Help {
@@ -910,6 +927,8 @@ pub const KO: Help = Help {
     fk_bug: "버그 신고",
     fd_bug: "화면에 있는 내용은 절대 담지 않음",
     fd_omarchy: "Super+Return 이 여는 터미널이 될 수 있음",
+    fk_burn: "인광 잔상",
+    fd_burn: "커서와 지운 글자가 1984년 화면처럼 남아 있을 수 있음 · Ctrl+Shift+G",
 };
 
 pub const HI: Help = Help {
@@ -1006,4 +1025,6 @@ pub const HI: Help = Help {
     fk_bug: "बग रिपोर्ट",
     fd_bug: "आपकी स्क्रीन पर जो है, वह कभी साथ नहीं जाता",
     fd_omarchy: "Super+Return से खुलने वाला टर्मिनल बन सकता है",
+    fk_burn: "फ़ॉस्फ़र की चमक",
+    fd_burn: "आपका कर्सर और मिटाया गया टेक्स्ट 1984 की स्क्रीन की तरह ठहर सकता है · Ctrl+Shift+G",
 };

@@ -280,6 +280,7 @@ pub fn features(s: &Strings) -> Vec<Section> {
                 row(s.kf_warp, s.f_warp),
                 row(s.kf_scan, s.f_scan),
                 row(s.kf_crawl, s.f_crawl),
+                row(h.fk_burn, h.fd_burn),
             ],
         ),
         feature(
@@ -518,6 +519,17 @@ mod tests {
         let got = filter(&sheet(), "marks");
         assert!(got.iter().any(|s| s.feature), "the feature tour answered");
         assert!(got.iter().any(|s| !s.feature), "the shortcuts answered");
+    }
+
+    /// Parker, 2026-11-03: *"crt --> phosphor burn - your cursor and on
+    /// screen text can linger like they did on the 1984 machines"*. The
+    /// linger gauges existed; nothing on the sheet said so.
+    #[test]
+    fn phosphor_burn_is_found_by_either_word() {
+        for q in ["phosphor", "burn", "linger", "crt"] {
+            let got = filter(&sheet(), q);
+            assert!(keys(&got).contains(&"Phosphor burn".to_string()), "{q}");
+        }
     }
 
     #[test]
