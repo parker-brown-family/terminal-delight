@@ -22138,6 +22138,17 @@ impl Workspace {
                     self.set_scale(theme::GradeKey::Scale.nudged(cur, notches), cx);
                 }
                 keylayer::Size::Pane(notches) if self.focus_read.is_some() => {
+                    // A document in the frame has its own zoom, the one plain
+                    // + and - step; the reader's belongs to a terminal.
+                    if let Some(view) = self.focus_lent(cx) {
+                        let step = if notches > 0. {
+                            docview::ZoomStep::In
+                        } else {
+                            docview::ZoomStep::Out
+                        };
+                        view.update(cx, |v, cx| v.zoom(step, cx));
+                        return;
+                    }
                     let next = Self::focus_zoom_step(self.focus_zoom, notches);
                     if (next - self.focus_zoom).abs() > f32::EPSILON {
                         self.focus_zoom = next;
@@ -39340,6 +39351,73 @@ mod tests {
         assert!(restored.theme == saved.theme);
         let legacy: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
         assert!(legacy.skin.is_none());
+    }
+
+    /// Ctrl+= and Ctrl+- zoom the document in the reading frame, as plain + and
+    /// - do, and leave the terminal reader's own zoom alone. Parker, 2026-11-03.
+    #[gpui::test]
+    fn ctrl_equals_and_minus_zoom_the_document_being_read(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        let dir = std::env::temp_dir().join(format!("td-frame-zoom-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("plan.md");
+        std::fs::write(&doc, "# Plan\n\nA paragraph to read.\n").unwrap();
+        let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+
+        cx.update(|w, cx| w.focus(&pane.focus_handle(cx), cx));
+        pane.update(cx, |v, cx| v.open_to_read(target, None, cx))
+            .unwrap();
+        draw(cx);
+        draw(cx);
+        let zoom = |cx: &mut gpui::VisualTestContext| {
+            let view = pane.read_with(cx, |v, cx| v.reading_view(cx).expect("being read"));
+            view.read_with(cx, |v, _| v.zoom_now())
+        };
+        let frame = |cx: &mut gpui::VisualTestContext| ws.read_with(cx, |ws, _| ws.focus_zoom);
+        let (before, reader) = (zoom(cx), frame(cx));
+        assert!(before.is_some(), "a Markdown document has a zoom to step");
+
+        cx.simulate_keystrokes("ctrl-=");
+        draw(cx);
+        let bigger = zoom(cx);
+        assert_ne!(bigger, before, "Ctrl+= zooms the document in");
+        assert_eq!(frame(cx), reader, "and leaves the reader's zoom alone");
+
+        cx.simulate_keystrokes("ctrl--");
+        draw(cx);
+        assert_eq!(zoom(cx), before, "Ctrl+- steps it back");
+        assert_eq!(frame(cx), reader);
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Issue 1293: Alt+arrows move focus while a document is read, and the
