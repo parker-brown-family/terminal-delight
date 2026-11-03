@@ -4894,9 +4894,17 @@ fn scroll_mode_moves_the_view_with_letters_and_q_leaves_it(cx: &mut TestAppConte
     pane.keys("j");
     assert_eq!(offset(&mut pane), 1);
     pane.keys("[");
-    assert_eq!(offset(&mut pane), -errors[1] as usize, "[ steps to the nearer error");
+    assert_eq!(
+        offset(&mut pane),
+        -errors[1] as usize,
+        "[ steps to the nearer error"
+    );
     pane.keys("[");
-    assert_eq!(offset(&mut pane), -errors[0] as usize, "and on to the older one");
+    assert_eq!(
+        offset(&mut pane),
+        -errors[0] as usize,
+        "and on to the older one"
+    );
     pane.keys("shift-g");
     assert_eq!(offset(&mut pane), 0, "G is the live bottom");
     pane.keys("g");
