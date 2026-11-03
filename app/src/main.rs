@@ -39581,6 +39581,26 @@ mod tests {
             cx.run_until_parked();
         };
         cx.update(|w, cx| ws.update(cx, |ws, cx| ws.focus_active(w, cx)));
+        // Wait until `text` has echoed, which proves the terminal takes typing.
+        let echoed = |cx: &mut gpui::VisualTestContext, text: &str| {
+            for _ in 0..1000 {
+                draw(cx);
+                if pane.read_with(cx, |v, _| v.fixture_screen_text().contains(text)) {
+                    return true;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            false
+        };
+        // A terminal refuses typing for its first 150ms (`terminal_key`), so
+        // letters typed over the sheet before then could never have leaked,
+        // whatever the sheet did. Prove the terminal takes typing first.
+        std::thread::sleep(std::time::Duration::from_millis(200));
+        cx.simulate_keystrokes("a b");
+        assert!(
+            echoed(cx, "ab"),
+            "the terminal takes typing before the sheet opens"
+        );
         ws.update(cx, |ws, cx| {
             ws.help_open = true;
             cx.notify();
@@ -39636,20 +39656,25 @@ mod tests {
             "the sheet let typing through to the shell:\n{screen}"
         );
 
-        // The control: with the sheet shut, the same letters reach cat. Up to
-        // ten seconds for the echo: a loaded CI runner missed two (run
-        // 41690913559) on a tree whose own push run passed.
+        // The control: with the sheet shut, the same letters reach cat.
         cx.simulate_keystrokes("z q");
-        let mut seen = false;
-        for _ in 0..1000 {
-            draw(cx);
-            if pane.read_with(cx, |v, _| v.fixture_screen_text().contains("zq")) {
-                seen = true;
-                break;
-            }
-            std::thread::sleep(std::time::Duration::from_millis(10));
-        }
-        assert!(seen, "typing reaches cat once the sheet is shut");
+        assert!(
+            echoed(cx, "zq"),
+            "typing reaches cat once the sheet is shut"
+        );
+        // Input is ordered: once the control's echo is on screen, anything the
+        // sheet had let through earlier would be there too. Read only before
+        // this point, a slow echo made the check above pass vacuously.
+        let screen = pane.read_with(cx, |v, _| v.fixture_screen_text());
+        assert_eq!(
+            screen.matches("zq").count(),
+            1,
+            "the sheet let typing through:\n{screen}"
+        );
+        assert!(
+            !screen.contains("mark"),
+            "the sheet let typing through:\n{screen}"
+        );
     }
 
     /// One keystroke reaches a tab: Alt+N by place in the spine's order and
