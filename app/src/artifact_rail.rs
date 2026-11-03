@@ -44,6 +44,21 @@ const BUMP_LIFT: f32 = 4.;
 /// The rail's width, in points before scale.
 const RAIL_W: f32 = 360.;
 
+/// The rail's width on screen: its design width at the window's scale, so the
+/// columns grow with the text they hold, and never wider than the window
+/// leaves beside the right-hand column. Parker, 2026-11-03, on a rail drawn at
+/// a fixed 360 points under scaled-up text: *"CUTS OFF the artifact list"*,
+/// the card names broken into one-syllable columns.
+pub(crate) fn rail_width(scale: f32, win_w: Option<f32>) -> f32 {
+    let want = RAIL_W * scale;
+    match win_w {
+        Some(w) => want
+            .min(w - (30. * scale + 12.) - 12.)
+            .max(RAIL_W.min(want) * 0.6),
+        None => want,
+    }
+}
+
 /// The dot's ink: green, the house colour for something ready to read. Not the
 /// bug report's orange, which means something failed.
 fn ready_ink() -> Hsla {
@@ -351,6 +366,7 @@ impl Workspace {
                             .flex_none()
                             .text_size(sk.text_px(9.5))
                             .text_color(sk.ink.ink_dim)
+                            .whitespace_nowrap()
                             .child(place.to_uppercase()),
                     )
                 })
@@ -360,6 +376,8 @@ impl Workspace {
                         .overflow_hidden()
                         .font_weight(gpui::FontWeight::SEMIBOLD)
                         .text_color(sk.ink.ink)
+                        .whitespace_nowrap()
+                        .text_ellipsis()
                         .child(c.task.clone()),
                 )
                 .when_some(c.who.clone(), |d, who| {
@@ -368,6 +386,8 @@ impl Workspace {
                             .min_w_0()
                             .overflow_hidden()
                             .text_color(sk.ink.ink_dim)
+                            .whitespace_nowrap()
+                            .text_ellipsis()
                             .child(who),
                     )
                 })
@@ -491,7 +511,7 @@ impl Workspace {
             );
 
         let panel = over_the_footer(div().id("art-rail").absolute(), scale)
-            .w(px(RAIL_W))
+            .w(px(rail_width(scale, self.last_win.map(|(_, _, w, _)| w))))
             .max_h(px(self.tray_max_h(self.tray_band().0)))
             .overflow_x_hidden()
             .overflow_y_scroll()
@@ -590,6 +610,19 @@ mod tests {
         assert_eq!(cards[0].who.as_deref(), Some("pane 1"));
         assert_eq!(cards[1].who.as_deref(), Some("pane 2"));
         assert_eq!(cards[2].who, None);
+    }
+
+    /// The rail grows with the scale its text is drawn at, and never runs off
+    /// the window: at 1.5× a 360-point rail would crush its card names into
+    /// columns, and on a narrow window it would run past the edge.
+    #[test]
+    fn the_rail_grows_with_the_scale_and_fits_the_window() {
+        assert_eq!(rail_width(1.0, None), 360.);
+        assert_eq!(rail_width(1.5, None), 540.);
+        assert_eq!(rail_width(1.5, Some(2000.)), 540.);
+        let narrow = rail_width(1.5, Some(600.));
+        assert!(narrow <= 600. - (30. * 1.5 + 12.) - 12., "{narrow}");
+        assert!(narrow > 200., "still a usable rail: {narrow}");
     }
 
     /// The bump rises and comes back down to where the glyph sits.
