@@ -312,6 +312,10 @@ mod tests {
                 crt: Some(true),
                 ..Default::default()
             },
+            "clean" => LookDials {
+                crt: Some(false),
+                ..Default::default()
+            },
             _ => LookDials::default(),
         };
         own.over(&house)

@@ -2779,7 +2779,7 @@ fn a_program_asking_a_colour_is_told_the_one_the_pane_draws(cx: &mut TestAppCont
         let own = v.resolved_theme(cx);
         let window = crate::theme::theme(cx);
         (
-            super::rgb8(super::graded(own.bg, &own.grade, super::Channel::Bg)),
+            super::rgb8(super::terminal_background(&own)),
             super::rgb8(super::graded(window.bg, &window.grade, super::Channel::Bg)),
         )
     });

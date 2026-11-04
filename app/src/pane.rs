@@ -19264,3 +19264,72 @@ mod harness;
 mod housekeeping_tests;
 #[cfg(test)]
 mod rest_tests;
+
+#[cfg(test)]
+mod default_legibility {
+    use super::*;
+
+    fn luminance(c: gpui::Hsla) -> f32 {
+        let c = gpui::Rgba::from(c);
+        let linear = |v: f32| {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    }
+
+    fn contrast(a: gpui::Hsla, b: gpui::Hsla) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// Default text on the house dials clears 4.5:1 in every design, on every
+    /// skin, in the design's own colours and under every palette, measured
+    /// with the painter's own grade and field. The dials are shared by all of
+    /// them, so a dial that suits one palette can bury another: a brightness of
+    /// 0.135 left Tokyo Night at 1.5:1. Parker, 2026-11-04: *"Default for all
+    /// designs and skins settings should be sane"*.
+    #[gpui::test]
+    fn the_house_dials_read_in_every_design_skin_and_palette(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.update(|cx| {
+            crate::theme::init_embedded(cx, crate::theme::house_outer());
+            crate::skin::init_embedded(cx);
+            crate::palette::init(cx);
+            let mut palettes: Vec<Option<String>> = vec![None];
+            palettes.extend(crate::palette::all(cx).iter().map(|p| Some(p.id.clone())));
+            let skins: Vec<String> = crate::skin::all_skins(cx)
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect();
+            assert!(palettes.len() > 20 && skins.len() >= 6, "the sweep ran dry");
+            for design in crate::theme::builtin_ids() {
+                for skin in &skins {
+                    crate::skin::select(cx, skin).unwrap();
+                    for palette in &palettes {
+                        let choice = crate::theme::ThemeChoice {
+                            id: design.to_string(),
+                            palette: palette.clone(),
+                            follow_omarchy: None,
+                            ..crate::theme::house_outer()
+                        };
+                        let th = crate::theme::resolve(cx, &choice);
+                        let sk = crate::skin::for_theme(cx, &th, 1.0);
+                        let screen = sk.terminal_theme((*th).clone());
+                        let text = graded(screen.text, &screen.grade, Channel::Text);
+                        let reads = contrast(text, terminal_background(&screen));
+                        assert!(
+                            reads >= 4.5,
+                            "{design} on {skin} under {palette:?}: text is {reads:.2}:1"
+                        );
+                    }
+                }
+            }
+        });
+    }
+}

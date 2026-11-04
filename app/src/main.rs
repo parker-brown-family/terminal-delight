@@ -40483,13 +40483,13 @@ mod tests {
         let ws = window.root(cx).unwrap();
         cx.update(|cx| {
             ws.update(cx, |ws, cx| {
-                // Never picked: Clean draws its own trim, and leaving Clean
+                // Never picked: Deco draws its own trim, and leaving Deco
                 // keeps it.
-                assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
-                assert_eq!(skin::active_id(cx), "clean");
+                assert_eq!(theme::outer_choice(cx).id, theme::DECO);
+                assert_eq!(skin::active_id(cx), "deco");
                 ws.switch_outer_design("hacker".into(), cx);
                 assert_eq!(theme::outer_choice(cx).id, "hacker");
-                assert_eq!(skin::active_id(cx), "clean", "a followed skin is held");
+                assert_eq!(skin::active_id(cx), "deco", "a followed skin is held");
 
                 // Picked: Chalk under Deco, then Hacker, then Intrusive.
                 ws.switch_outer_design("deco".into(), cx);
@@ -40513,7 +40513,7 @@ mod tests {
             });
             // DESKTOP puts the house design back; the skin stays.
             paint::apply_outer(cx, &paint::Pick::Default);
-            assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+            assert_eq!(theme::outer_choice(cx).id, theme::DECO);
             assert_eq!(skin::active_id(cx), "chalk", "after DESKTOP");
         });
     }
@@ -46130,13 +46130,12 @@ mod tests {
 
     /// Unknown is not hidden. A file that never had the field gets the default;
     /// a file that says `false` is a person's decision and is obeyed.
-    /// A brand-new window wears Clean and the Clean UI set, unless a new-window
-    /// template was saved, in which case it wears exactly that. Parker: new
-    /// window settings are "CUSTOMIZABLE, but at a default -- CLEAN".
+    /// A brand-new window wears Deco, unless a new-window template was saved,
+    /// in which case it wears exactly that.
     #[test]
-    fn a_new_window_is_clean_unless_a_template_was_saved() {
+    fn a_new_window_is_deco_unless_a_template_was_saved() {
         let plain = fresh_state(None);
-        assert_eq!(settled_outer(&plain).id, theme::CLEAN, "Clean by default");
+        assert_eq!(settled_outer(&plain).id, theme::DECO, "Deco by default");
         assert!(plain.ui.is_none() && plain.skin.is_none());
 
         let mut hacker = theme::house_outer();
@@ -49152,11 +49151,11 @@ id = "hacker"
     }
 
     #[test]
-    fn a_fresh_install_boots_flat_with_the_crt_dials_it_keeps() {
+    fn a_fresh_install_boots_on_the_tube_with_the_dials_it_ships() {
         // No state file at all: `load_state` hands `build` the default.
         let outer = settled_outer(&StateFile::default());
         let house = theme::house_outer();
-        assert!(!outer.grade.crt, "flat");
+        assert!(outer.grade.crt, "on the tube");
         assert_eq!(
             outer.palette.as_deref(),
             Some(palette::TERMINAL_DELIGHT),
