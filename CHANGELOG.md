@@ -7,6 +7,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Install
+
+- **One line installs it.** `curl -fsSL
+  https://terminal-delight.brownfamilysports.com/install.sh | sh` puts the
+  stable AppImage at `~/.local/bin/terminal-delight` with its launcher entry
+  and icons. It refuses a download that doesn't match the release's checksum,
+  and it leaves an install that is already there alone.
+
 ## [0.5.0] — 2026-11-03
 
 0.5.0 is the first stable release since 0.3.0. 0.4.0 stopped at its third
