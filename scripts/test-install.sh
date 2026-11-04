@@ -166,6 +166,8 @@ ok "an existing entry stays theirs, and an earlier receipt survives"
 home=$scratch/piped
 mkdir -p "$home"
 status=0
+# A real pipe, not a redirect: sh reads a pipe differently, and that's the case.
+# shellcheck disable=SC2002
 out=$(cat "$repo/install.sh" | env -i HOME="$home" PATH="$stubs:$tools" TD_RELEASE_URL="file://$good" sh 2>&1) || status=$?
 [[ $status == 0 && -x $home/.local/bin/terminal-delight ]] || fail "piped into sh: not installed"
 ok "piped into sh, it installs"
