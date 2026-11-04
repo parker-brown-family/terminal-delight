@@ -316,6 +316,11 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Keys, prompts, gauges and notes
 
+- **GAUGES has a FLOATING DOCUMENT section.** Brightness, contrast, see-through and
+  glow for the floating document, per pane, saved with the layout and open to
+  agents as `doc_brightness`, `doc_contrast`, `doc_clear` and `doc_glow`. Brightness
+  and contrast work the same on a page, a picture, a PDF or Markdown, and follow the
+  document into the reading frame. Until it is moved, glow follows the phosphor gauge.
 - **One key reaches a tab.** Any tab can be pinned to Alt+Shift+<letter>; the
   pin is saved on the tab, so it survives reordering, filing, a restart and a
   reattach. The spine's row menu and the tab config menu show the pin, take a

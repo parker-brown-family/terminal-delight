@@ -46,6 +46,10 @@
 #                             lane: the tube's own picture softened inside its
 #                             rect, flat or bent (set_crt_rects_tubes_blur).
 #                             TD blurs an inactive pane's terminal with it.
+#   0013-doc-grade          — brightness and contrast gains on a list of rects
+#                             of their own (set_doc_grades): the floating
+#                             document's gauges, on whatever drew it, and live
+#                             while the glass is flattened under GAUGES.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -65,9 +69,10 @@ patch_image_glow="$repo_root/docs/patches/0009-image-glow.patch"
 patch_glow_taps="$repo_root/docs/patches/0010-image-glow-taps.patch"
 patch_cutout="$repo_root/docs/patches/0011-desktop-cutout.patch"
 patch_tube_blur="$repo_root/docs/patches/0012-tube-blur.patch"
+patch_doc_grade="$repo_root/docs/patches/0013-doc-grade.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -158,3 +163,6 @@ apply_patch "$patch_cutout" "desktop-cutout" \
 
 apply_patch "$patch_tube_blur" "tube-blur" \
     'grep -qF "td-tube-blur" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_doc_grade" "doc-grade" \
+    'grep -qF "td-doc-grade" crates/gpui_wgpu/src/crt_pass.wgsl'
