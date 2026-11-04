@@ -90,7 +90,10 @@ rpc() { # rpc <tool> <arguments-json>
 
 config() { # config <json>: patch the window's outer grade
   local r
-  r=$(rpc set_pane_config "$(jq -nc --argjson c "$1" '{updates:[{target:"outer",config:$c}]}')")
+  for _ in 1 2 3 4 5 6; do
+    r=$(rpc set_pane_config "$(jq -nc --argjson c "$1" '{updates:[{target:"outer",config:$c}]}')")
+    case "$r" in 'err busy'*) sleep 1 ;; *) break ;; esac
+  done
   case "$r" in
     '{'*) [ "$(jq -r '.result.isError // false' <<< "$r")" = true ] && bad "set_pane_config $1: $r" ;;
     *) bad "set_pane_config $1 answered: $r" ;;
