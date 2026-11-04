@@ -1,0 +1,189 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+index 6a46f66..90d2ae1 100644
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -16,13 +16,17 @@
+ // gated, so the blur cost is paid only while you're reading.
+ 
+ struct CrtParams {
+-    k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, _pad
++    k: vec4<f32>,                  // global k1, k2 (gate only), rect_count, doc_count
+     rects: array<vec4<f32>, 32>,    // x, y, w, h (physical px)
+     glare: array<vec4<f32>, 32>,    // strength, k1, k2, bezel 0xRRGGBB (per-rect curvature)
+     focus_rect: vec4<f32>,         // x, y, w, h (physical px) — the sharp panel
+     focus_params: vec4<f32>,       // blur_radius_px, feather_px, tint, corner_radius_px
+     crawl: array<vec4<f32>, 32>,    // enabled, top width, depth, bezel strength
+     image_glow: array<vec4<f32>, 32>, // strength, blur radius px (td-tube-blur), reserved
++    // td-doc-grade: a floating document's rect and its gains. Its own list, not
++    // a tube's lanes: a document is graded whether or not any tube is registered.
++    doc_rects: array<vec4<f32>, 32>,  // x, y, w, h (physical px)
++    doc_grade: array<vec4<f32>, 32>,  // brightness gain, contrast gain, reserved
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -117,6 +121,22 @@ fn image_bloom(base: vec3<f32>, p: vec2<f32>, r: vec4<f32>, strength: f32) -> ve
+     return base + halo * strength * 1.8 * (vec3<f32>(1.0) - base);
+ }
+ 
++// td-doc-grade: `col` as seen at source pixel `p`, graded by the last document
++// rect holding it. The order is the cell grade's, contrast about the mid-grey
++// and then brightness. `p` is in source space, so on a bent tube a document is
++// graded where it was laid out rather than where the glass shows it.
++fn doc_graded(col: vec3<f32>, p: vec2<f32>) -> vec3<f32> {
++    for (var i = u32(crt.k.w); i > 0u; i = i - 1u) {
++        let r = crt.doc_rects[i - 1u];
++        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
++            let g = crt.doc_grade[i - 1u];
++            return clamp(((col - vec3<f32>(0.5)) * g.y + vec3<f32>(0.5)) * g.x,
++                vec3<f32>(0.0), vec3<f32>(1.0));
++        }
++    }
++    return col;
++}
++
+ @fragment
+ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+     let dims = vec2<f32>(textureDimensions(screen_tex));
+@@ -142,7 +162,7 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+                 if (blur > 0.5) {
+                     base = tube_blur(p, r, blur);
+                 }
+-                return vec4<f32>(image_bloom(base, p, r, crt.image_glow[i].x), original.a);
++                return vec4<f32>(doc_graded(image_bloom(base, p, r, crt.image_glow[i].x), p), original.a);
+             }
+             var local = (p - r.xy) / r.zw;
+             // ---- crawl perspective pre-map (Star-Wars text recede) ----
+@@ -251,7 +271,7 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+             if (blur > 0.5) {
+                 col = tube_blur(g * dims, r, blur);
+             }
+-            let lit_col = image_bloom(col, g * dims, r, crt.image_glow[i].x);
++            let lit_col = doc_graded(image_bloom(col, g * dims, r, crt.image_glow[i].x), g * dims);
+             let falloff = mix(0.86, 1.0, smoothstep(0.5, 0.12, r2));
+             let glare_strength = crt.glare[i].x;
+             let glare_offset = (local - vec2<f32>(0.18, 0.10)) / vec2<f32>(0.34, 0.18);
+@@ -275,7 +295,7 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+         let m = panel_mask(p, crt.focus_rect, crt.focus_params.w, crt.focus_params.y);
+         if (m > 0.999) {
+             // inside the panel: pristine, skip the blur taps entirely
+-            return vec4<f32>(sharp.rgb, 1.0);
++            return vec4<f32>(doc_graded(sharp.rgb, p), 1.0);
+         }
+         // Golden-angle (Vogel) disk blur with a per-pixel dither rotation. The
+         // spiral spreads samples evenly; rotating per pixel trades banding for
+@@ -305,9 +325,9 @@ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+         frost = mix(frost, vec3<f32>(0.80, 0.85, 0.93), 0.06 * tint);
+         frost = frost * (1.0 - 0.10 * tint);
+         // composite: sharp inside the panel, frosted outside, feathered across.
+-        return vec4<f32>(mix(frost, sharp.rgb, m), 1.0);
++        return vec4<f32>(mix(frost, doc_graded(sharp.rgb, p), m), 1.0);
+     }
+ 
+     let col = textureSampleLevel(screen_tex, screen_samp, in.uv, 0.0);
+-    return vec4<f32>(col.rgb, col.a);
++    return vec4<f32>(doc_graded(col.rgb, p), col.a);
+ }
+diff --git a/crates/gpui_wgpu/src/gpui_wgpu.rs b/crates/gpui_wgpu/src/gpui_wgpu.rs
+index 43f1ddc..5890e33 100644
+--- a/crates/gpui_wgpu/src/gpui_wgpu.rs
++++ b/crates/gpui_wgpu/src/gpui_wgpu.rs
+@@ -17,3 +17,4 @@ pub use wgpu_renderer::{GpuContext, WgpuRenderer, WgpuSurfaceConfig};
+ pub use wgpu_renderer::set_crt_rects_tubes_bezel;
+ pub use wgpu_renderer::set_crt_rects_tubes_glow;
+ pub use wgpu_renderer::set_crt_rects_tubes_blur;
++pub use wgpu_renderer::set_doc_grades;
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+index dc31c88..844b2f1 100644
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -256,6 +256,33 @@ fn crt_rects() -> ([[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32], [[f32; 4]; 32
+     (rects, glare, crawl, image_glow, guard.len().min(32) as u32, max_k)
+ }
+ 
++// ---- terminal-delight floating document grade ----
++// A document's rect (physical px) and its brightness and contrast gains around
++// 1.0. Beside the tubes rather than in them: the app flattens the glass while an
++// overlay is up, and a document's grade has to stay on the screen through that.
++static DOC_GRADES: std::sync::Mutex<Vec<([f32; 4], f32, f32)>> =
++    std::sync::Mutex::new(Vec::new());
++
++/// Grade these rects this frame, the last on top where they overlap. Empty
++/// leaves the pass to the tubes; any entry keeps it live on a flat screen.
++pub fn set_doc_grades(grades: &[([f32; 4], f32, f32)]) {
++    let mut guard = DOC_GRADES.lock().unwrap();
++    guard.clear();
++    guard.extend(grades.iter().take(32).copied());
++}
++
++/// Returns (rects, gains [brightness, contrast, _, _], count).
++fn doc_grades() -> ([[f32; 4]; 32], [[f32; 4]; 32], u32) {
++    let guard = DOC_GRADES.lock().unwrap();
++    let mut rects = [[0.0f32; 4]; 32];
++    let mut gains = [[0.0f32; 4]; 32];
++    for (i, (r, b, c)) in guard.iter().take(32).enumerate() {
++        rects[i] = *r;
++        gains[i] = [*b, *c, 0.0, 0.0];
++    }
++    (rects, gains, guard.len().min(32) as u32)
++}
++
+ // ---- terminal-delight FOCUS frosted-glass backdrop ----
+ // While the 👓 reading modal is up, the panel rect (physical px) stays sharp and
+ // everything outside it is blurred by the same CRT post-pass. Stored as
+@@ -377,8 +404,9 @@ impl CrtPass {
+         let params_buffer = device.create_buffer(&wgpu::BufferDescriptor {
+             label: Some("crt_pass_params"),
+             // k(16) + rects(32*16) + glare(32*16) + focus_rect(16) + focus_params(16)
+-            // + crawl(32*16) + image_glow(32*16) = 2096 bytes (32 tubes; matches WGSL)
+-            size: 16 + 32 * 16 + 32 * 16 + 32 + 32 * 16 + 32 * 16,
++            // + crawl(32*16) + image_glow(32*16) + doc_rects(32*16) + doc_grade(32*16)
++            // = 3120 bytes (32 tubes; matches WGSL)
++            size: 16 + 32 * 16 + 32 * 16 + 32 + 32 * 16 + 32 * 16 + 32 * 16 + 32 * 16,
+             usage: wgpu::BufferUsages::UNIFORM | wgpu::BufferUsages::COPY_DST,
+             mapped_at_creation: false,
+         });
+@@ -1538,9 +1566,11 @@ impl WgpuRenderer {
+         let (crt_rect_arr, crt_glare_arr, crt_crawl_arr, crt_glow_arr, crt_rect_count, crt_max_rect_k) =
+             crt_rects();
+         let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
++        let (doc_rect_arr, doc_grade_arr, doc_count) = doc_grades();
+         let crt_active = (crt_rect_count > 0
+             && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005))
+-            || fb_active;
++            || fb_active
++            || doc_count > 0;
+         let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
+             if self.crt.is_none() {
+                 let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
+@@ -1749,12 +1779,14 @@ impl WgpuRenderer {
+                 if let Some(crt) = self.crt.as_ref() {
+                     let resources = self.resources();
+                     // k(4) + rects(128) + glare(128) + focus_rect(4) + focus_params(4)
+-                    // + crawl(128) + image_glow(128) = 524 floats (32 tubes).
+-                    // Both arrays follow focus; existing offsets stay unchanged.
+-                    let mut params = [0.0f32; 4 + 128 + 128 + 8 + 128 + 128];
++                    // + crawl(128) + image_glow(128) + doc_rects(128) + doc_grade(128)
++                    // = 780 floats (32 tubes). Each array follows the last, so
++                    // existing offsets stay unchanged.
++                    let mut params = [0.0f32; 4 + 128 + 128 + 8 + 128 + 128 + 128 + 128];
+                     params[0] = crt_k1;
+                     params[1] = crt_k2;
+                     params[2] = crt_rect_count as f32;
++                    params[3] = doc_count as f32;
+                     for (i, r) in crt_rect_arr.iter().enumerate() {
+                         params[4 + i * 4..4 + i * 4 + 4].copy_from_slice(r);
+                     }
+@@ -1775,6 +1807,13 @@ impl WgpuRenderer {
+                     for (i, glow) in crt_glow_arr.iter().enumerate() {
+                         params[396 + i * 4..396 + i * 4 + 4].copy_from_slice(glow);
+                     }
++                    // td-doc-grade: after image_glow, at 524 and 652.
++                    for (i, r) in doc_rect_arr.iter().enumerate() {
++                        params[524 + i * 4..524 + i * 4 + 4].copy_from_slice(r);
++                    }
++                    for (i, g) in doc_grade_arr.iter().enumerate() {
++                        params[652 + i * 4..652 + i * 4 + 4].copy_from_slice(g);
++                    }
+                     resources.queue.write_buffer(
+                         &crt.params_buffer,
+                         0,

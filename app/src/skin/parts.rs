@@ -1,7 +1,7 @@
 //! Stateless native controls. Input handlers remain with their owners.
 use crate::{
-    darken, skin, sticky, theme, white, TRAY_BTN_H, TRAY_BTN_W, TRAY_MODE_BTN_H, TRAY_MODE_BTN_W,
-    TRAY_NOTE_BTN_W, TRAY_NOTE_CAPTION,
+    darken, skin, sticky, theme, white, TRAY_BTN_H, TRAY_BTN_W, TRAY_GAP, TRAY_MODE_BTN_H,
+    TRAY_MODE_BTN_W, TRAY_NOTE_BTN_W, TRAY_NOTE_CAPTION,
 };
 use gpui::prelude::FluentBuilder;
 use gpui::*;
@@ -89,6 +89,27 @@ pub(crate) fn theme_icon_btn(
     label: &str,
     active: bool,
 ) -> gpui::Div {
+    theme_icon_btn_wide(th, sk, icon, label, active, 1)
+}
+
+/// The width of a picker card `cells` wide: it covers the gap it spans as well
+/// as the cells, so it lines up with the single cards in the rows around it.
+fn icon_card_w(sk: &skin::Skin, cells: u8) -> f32 {
+    let cell = if sk.is_paper() { 56. } else { TRAY_BTN_W };
+    let n = f32::from(cells);
+    n * cell + (n - 1.) * TRAY_GAP
+}
+
+/// [`theme_icon_btn`] for a caption one card cannot hold, spanning `cells` of
+/// the picker's grid. A text skin's choices already fill their row.
+pub(crate) fn theme_icon_btn_wide(
+    th: &theme::Theme,
+    sk: &skin::Skin,
+    icon: &str,
+    label: &str,
+    active: bool,
+    cells: u8,
+) -> gpui::Div {
     if sk.text_controls() {
         return sk.choice(
             div()
@@ -117,7 +138,7 @@ pub(crate) fn theme_icon_btn(
                 .child(label.to_string()),
         );
     let b = div()
-        .w(px(if sk.is_paper() { 56. } else { TRAY_BTN_W }))
+        .w(px(icon_card_w(sk, cells)))
         .h(px(if sk.is_paper() { 54. } else { TRAY_BTN_H }))
         .flex()
         .items_center()

@@ -1907,7 +1907,8 @@ fn grid_pad(w: f32, h: f32, k1: f32, k2: f32) -> (f32, f32) {
 
 /// The real xterm 16-colour palette. Cells always derive from these *true*
 /// colours; the active [`ColorMode`] decides how they're finally painted (see
-/// [`shape`]). The theme's own `ansi` array is reserved for chrome.
+/// [`shape`]). The theme's own `ansi` array is reserved for chrome, except in a
+/// window following Omarchy: see [`program_colour`].
 const XTERM: [u32; 16] = [
     0x000000, 0xcd0000, 0x00cd00, 0xcdcd00, 0x0000ee, 0xcd00cd, 0x00cdcd, 0xe5e5e5, 0x7f7f7f,
     0xff0000, 0x00ff00, 0xffff00, 0x5c5cff, 0xff00ff, 0x00ffff, 0xffffff,
@@ -1995,6 +1996,26 @@ fn idx_color(i: u8) -> Hsla {
     rgb(r << 16 | g << 8 | b).into()
 }
 
+/// The colour a program means by palette index `i`, before [`shape`]. In the ANSI
+/// colour mode a window following Omarchy answers its first sixteen from the
+/// desktop theme, as the desktop's other terminals do. Monochrome and on-theme
+/// reshape xterm's table themselves, so they are left on it.
+///
+/// Bright black is the exception. Omarchy maps it to the theme's `muted`, a shade
+/// for chrome that sits 1.1:1 off matte-black's ground once graded, and it is what
+/// agents and shells write their secondary text in. It stands 60% of the way from
+/// the ground to the text instead, so it reads on any theme, dark or light.
+fn program_colour(i: u8, th: &Theme) -> Hsla {
+    if i >= 16 || !th.program_ansi || th.color_mode != crate::theme::ColorMode::Default {
+        return idx_color(i);
+    }
+    if i == 8 {
+        let l = th.bg.l + (th.text.l - th.bg.l) * 0.6;
+        return Hsla { l, ..th.text };
+    }
+    th.ansi[i as usize]
+}
+
 fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
     match color {
         AnsiColor::Named(named) => match named {
@@ -2010,7 +2031,7 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
             n => {
                 let i = n as usize;
                 if i < 16 {
-                    shape(rgb(XTERM[i]).into(), th)
+                    shape(program_colour(i as u8, th), th)
                 } else {
                     default
                 }
@@ -2020,7 +2041,7 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
             rgb((c.r as u32) << 16 | (c.g as u32) << 8 | c.b as u32).into(),
             th,
         ),
-        AnsiColor::Indexed(i) => shape(idx_color(i), th),
+        AnsiColor::Indexed(i) => shape(program_colour(i, th), th),
     }
 }
 
@@ -2041,7 +2062,7 @@ fn ansi_to_hsla(color: AnsiColor, th: &Theme, default: Hsla) -> Hsla {
 fn asked_colour(index: usize, th: &Theme) -> Option<Hsla> {
     let g = &th.grade;
     Some(match index {
-        i if i < 256 => graded(shape(idx_color(i as u8), th), g, Channel::Text),
+        i if i < 256 => graded(shape(program_colour(i as u8, th), th), g, Channel::Text),
         i if i == NamedColor::Foreground as usize => graded(th.text, g, Channel::Text),
         i if i == NamedColor::Background as usize => terminal_background(th),
         i if i == NamedColor::Cursor as usize => graded(th.cursor, g, Channel::Text),
@@ -18681,6 +18702,49 @@ mod tests {
     }
 
     #[test]
+    fn a_window_following_omarchy_paints_programs_in_the_desktop_theme() {
+        use crate::theme::ColorMode;
+        let mut th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
+        th.color_mode = ColorMode::Default;
+        let amber: Hsla = rgb(0xe68e0d).into();
+        th.ansi[4] = amber;
+        let named = AnsiColor::Named(NamedColor::Blue);
+        let indexed = AnsiColor::Indexed(4);
+
+        let xterm: Hsla = rgb(0x0000ee).into();
+        assert_eq!(ansi_to_hsla(named, &th, th.text), xterm, "not following");
+
+        th.program_ansi = true;
+        assert_eq!(ansi_to_hsla(named, &th, th.text), amber);
+        assert_eq!(ansi_to_hsla(indexed, &th, th.text), amber);
+        let answer = graded(amber, &th.grade, Channel::Text);
+        assert_eq!(asked_colour(4, &th), Some(answer), "OSC 4 tells the truth");
+        assert_eq!(
+            ansi_to_hsla(AnsiColor::Indexed(17), &th, th.text),
+            idx_color(17),
+            "only the sixteen are the theme's"
+        );
+
+        th.bg.l = 0.07;
+        th.text.l = 0.75;
+        th.ansi[8] = th.bg;
+        let secondary = ansi_to_hsla(AnsiColor::Indexed(8), &th, th.text);
+        assert!((secondary.l - 0.478).abs() < 1e-3, "{secondary:?} reads");
+        (th.bg.l, th.text.l) = (0.94, 0.35);
+        let secondary = ansi_to_hsla(AnsiColor::Indexed(8), &th, th.text);
+        assert!((secondary.l - 0.586).abs() < 1e-3, "{secondary:?} on light");
+
+        for mode in [ColorMode::Monochrome, ColorMode::OnTheme] {
+            th.color_mode = mode;
+            assert_eq!(
+                ansi_to_hsla(named, &th, th.text),
+                shape(xterm, &th),
+                "{mode:?} reshapes xterm's table"
+            );
+        }
+    }
+
+    #[test]
     fn shape_three_modes_and_grey_guard() {
         use crate::theme::ColorMode;
         let mut th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).unwrap();
@@ -19264,3 +19328,72 @@ mod harness;
 mod housekeeping_tests;
 #[cfg(test)]
 mod rest_tests;
+
+#[cfg(test)]
+mod default_legibility {
+    use super::*;
+
+    fn luminance(c: gpui::Hsla) -> f32 {
+        let c = gpui::Rgba::from(c);
+        let linear = |v: f32| {
+            if v <= 0.03928 {
+                v / 12.92
+            } else {
+                ((v + 0.055) / 1.055).powf(2.4)
+            }
+        };
+        0.2126 * linear(c.r) + 0.7152 * linear(c.g) + 0.0722 * linear(c.b)
+    }
+
+    fn contrast(a: gpui::Hsla, b: gpui::Hsla) -> f32 {
+        let (a, b) = (luminance(a), luminance(b));
+        (a.max(b) + 0.05) / (a.min(b) + 0.05)
+    }
+
+    /// Default text on the house dials clears 4.5:1 in every design, on every
+    /// skin, in the design's own colours and under every palette, measured
+    /// with the painter's own grade and field. The dials are shared by all of
+    /// them, so a dial that suits one palette can bury another: a brightness of
+    /// 0.135 left Tokyo Night at 1.5:1. Parker, 2026-11-04: *"Default for all
+    /// designs and skins settings should be sane"*.
+    #[gpui::test]
+    fn the_house_dials_read_in_every_design_skin_and_palette(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.update(|cx| {
+            crate::theme::init_embedded(cx, crate::theme::house_outer());
+            crate::skin::init_embedded(cx);
+            crate::palette::init(cx);
+            let mut palettes: Vec<Option<String>> = vec![None];
+            palettes.extend(crate::palette::all(cx).iter().map(|p| Some(p.id.clone())));
+            let skins: Vec<String> = crate::skin::all_skins(cx)
+                .into_iter()
+                .map(|(id, _, _)| id)
+                .collect();
+            assert!(palettes.len() > 20 && skins.len() >= 6, "the sweep ran dry");
+            for design in crate::theme::builtin_ids() {
+                for skin in &skins {
+                    crate::skin::select(cx, skin).unwrap();
+                    for palette in &palettes {
+                        let choice = crate::theme::ThemeChoice {
+                            id: design.to_string(),
+                            palette: palette.clone(),
+                            follow_omarchy: None,
+                            ..crate::theme::house_outer()
+                        };
+                        let th = crate::theme::resolve(cx, &choice);
+                        let sk = crate::skin::for_theme(cx, &th, 1.0);
+                        let screen = sk.terminal_theme((*th).clone());
+                        let text = graded(screen.text, &screen.grade, Channel::Text);
+                        let reads = contrast(text, terminal_background(&screen));
+                        assert!(
+                            reads >= 4.5,
+                            "{design} on {skin} under {palette:?}: text is {reads:.2}:1"
+                        );
+                    }
+                }
+            }
+        });
+    }
+}

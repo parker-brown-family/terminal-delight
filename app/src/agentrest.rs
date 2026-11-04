@@ -38,7 +38,7 @@ impl Default for Thresholds {
     fn default() -> Self {
         Self {
             rest_after: Duration::from_secs(10 * 60),
-            sleep_after_rest: Duration::from_secs(2 * 60 * 60),
+            sleep_after_rest: Duration::from_secs(60 * 60),
         }
     }
 }
@@ -1053,8 +1053,10 @@ pub fn shell_quote(word: &str) -> String {
 // The threshold slider: smooth to slide, large targets to click.
 
 /// A threshold a click lands on, and the span of values whose click lands on
-/// it. Parker's, for sleep: 20 min (13–29), 45 (30–59), 90 (60–120), 4 h
-/// (121 min–8 h), 24 h (above 8 h).
+/// it. Parker's, for sleep: 20 min (13–29), 45 (30–52), 1 h (53–74), 90
+/// (75–120), 4 h (121 min–8 h), 24 h (above 8 h). The 1 h stop came later, for
+/// the one label that carries a unit (see [`tick_label`]); 45 and 90 gave up
+/// the minutes either side of it, split at the middle of the track between them.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub struct Detent {
     pub minutes: u32,
@@ -1072,11 +1074,16 @@ pub const SLEEP_DETENTS: &[Detent] = &[
     Detent {
         minutes: 45,
         from: 30,
-        to: 59,
+        to: 52,
+    },
+    Detent {
+        minutes: 60,
+        from: 53,
+        to: 74,
     },
     Detent {
         minutes: 90,
-        from: 60,
+        from: 75,
         to: 120,
     },
     Detent {
@@ -1120,32 +1127,58 @@ pub const REST_DETENTS: &[Detent] = &[
     },
 ];
 
-/// The span a slider covers, in minutes, on a logarithmic track so that the
-/// short end, where a minute matters, gets the room.
+/// The span a slider covers, in minutes. Its stops stand evenly along the
+/// track, with the minutes logarithmic between each pair, so the short end
+/// keeps the room and no two labels can land on each other. On one logarithm
+/// from end to end, 45 and 1 h sat fourteen pixels apart.
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub struct Scale {
-    pub min: f64,
-    pub max: f64,
+    /// Both ends of the track and every detent between them, in order.
+    pub knots: &'static [f64],
 }
 pub const SLEEP_SCALE: Scale = Scale {
-    min: 13.0,
-    max: 2880.0,
+    knots: &[13.0, 20.0, 45.0, 60.0, 90.0, 240.0, 1440.0, 2880.0],
 };
 pub const REST_SCALE: Scale = Scale {
-    min: 2.0,
-    max: 120.0,
+    knots: &[2.0, 5.0, 10.0, 20.0, 30.0, 60.0, 120.0],
 };
 
 impl Scale {
+    fn segments(&self) -> f64 {
+        (self.knots.len() - 1) as f64
+    }
     /// Minutes at a position along the track, `0.0..=1.0`.
     pub fn minutes_at(&self, pos: f64) -> f64 {
-        let pos = pos.clamp(0.0, 1.0);
-        (self.min.ln() + pos * (self.max.ln() - self.min.ln())).exp()
+        let at = pos.clamp(0.0, 1.0) * self.segments();
+        let i = (at.floor() as usize).min(self.knots.len() - 2);
+        let (lo, hi) = (self.knots[i].ln(), self.knots[i + 1].ln());
+        (lo + (at - i as f64) * (hi - lo)).exp()
     }
     /// Where `minutes` sits along the track.
     pub fn position_of(&self, minutes: f64) -> f64 {
-        let m = minutes.clamp(self.min, self.max);
-        (m.ln() - self.min.ln()) / (self.max.ln() - self.min.ln())
+        let last = self.knots.len() - 2;
+        let m = minutes.clamp(self.knots[0], self.knots[last + 1]);
+        let i = self.knots[..=last]
+            .iter()
+            .rposition(|k| *k <= m)
+            .unwrap_or(0);
+        let (lo, hi) = (self.knots[i].ln(), self.knots[i + 1].ln());
+        (i as f64 + (m.ln() - lo) / (hi - lo)) / self.segments()
+    }
+}
+
+/// What a stop says under the track. Only one hour carries a unit: everything
+/// left of it is minutes and everything right of it is hours, and that one
+/// word is enough to tell the two apart. Parker, 2026-11-04: *"at one hour we
+/// put the units, to the left of hours we do not put units"*. Half an hour is
+/// `½` rather than a decimal, which would need a comma in half the languages.
+pub fn tick_label(minutes: u32, hour_unit: &str) -> String {
+    match (minutes / 60, minutes % 60) {
+        (0, m) => m.to_string(),
+        (1, 0) => format!("1 {hour_unit}"),
+        (h, 30) => format!("{h}\u{bd}"),
+        (h, 0) => h.to_string(),
+        (h, m) => format!("{h}:{m:02}"),
     }
 }
 
@@ -1652,10 +1685,10 @@ mod tests {
         let wake = Ok(s(&["claude", "--resume", SID]));
         let l = idle_claude();
         assert_eq!(
-            may_sleep(&l, Duration::from_secs(3600), &t, &wake),
+            may_sleep(&l, Duration::from_secs(1800), &t, &wake),
             Err(Refusal::NotRestedLongEnough)
         );
-        assert_eq!(may_sleep(&l, Duration::from_secs(7200), &t, &wake), Ok(()));
+        assert_eq!(may_sleep(&l, Duration::from_secs(3600), &t, &wake), Ok(()));
         let mut busy = l.clone();
         busy.cpu_share = Some(0.5);
         assert_eq!(
@@ -1838,8 +1871,10 @@ mod tests {
             (13.0, 20),
             (29.0, 20),
             (30.0, 45),
-            (59.0, 45),
-            (60.0, 90),
+            (52.0, 45),
+            (53.0, 60),
+            (74.0, 60),
+            (75.0, 90),
             (120.0, 90),
             (121.0, 240),
             (480.0, 240),
@@ -1866,5 +1901,73 @@ mod tests {
             assert!((SLEEP_SCALE.minutes_at(SLEEP_SCALE.position_of(m)) - m).abs() < 1e-6);
         }
         assert_eq!(drag(&REST_SCALE, REST_SCALE.position_of(10.0)), 10);
+    }
+
+    /// Every stop a click can land on stands on a knot, so the even spacing
+    /// the labels rely on holds for all of them, and a click on a stop's own
+    /// position lands on that stop.
+    #[test]
+    fn every_stop_stands_evenly_on_its_track() {
+        for (scale, detents) in [(SLEEP_SCALE, SLEEP_DETENTS), (REST_SCALE, REST_DETENTS)] {
+            let at: Vec<f64> = detents
+                .iter()
+                .map(|d| scale.position_of(f64::from(d.minutes)))
+                .collect();
+            let step = 1.0 / scale.segments();
+            for pair in at.windows(2) {
+                assert!((pair[1] - pair[0] - step).abs() < 1e-9, "{at:?}");
+            }
+            for (d, pos) in detents.iter().zip(&at) {
+                assert_eq!(click(detents, scale.minutes_at(*pos)), d.minutes);
+            }
+        }
+    }
+
+    /// The widest stop label in any language still clears its neighbour on
+    /// the 250-pixel track at the largest tick type any skin draws, which is
+    /// TERMINIMALIST's monospace: 0.6 em for Latin, a full em for anything else,
+    /// and nothing for a Devanagari sign, which sits on the letter before it.
+    #[test]
+    fn stop_labels_cannot_touch_at_any_language_width() {
+        const TRACK: f64 = 250.0;
+        const TYPE: f64 = 11.0;
+        for lang in crate::lang::Lang::ALL {
+            let unit = lang.strings().ui.ag_unit_h;
+            for (scale, detents) in [(SLEEP_SCALE, SLEEP_DETENTS), (REST_SCALE, REST_DETENTS)] {
+                let wide = |m: u32| {
+                    let em = |c: char| match c {
+                        '\u{900}'..='\u{903}' | '\u{93e}'..='\u{94d}' => 0.0,
+                        c if c.is_ascii() => 0.6,
+                        _ => 1.0,
+                    };
+                    tick_label(m, unit).chars().map(em).sum::<f64>() * TYPE
+                };
+                for pair in detents.windows(2) {
+                    let (a, b) = (pair[0].minutes, pair[1].minutes);
+                    let apart =
+                        (scale.position_of(f64::from(b)) - scale.position_of(f64::from(a))) * TRACK;
+                    assert!(
+                        apart >= (wide(a) + wide(b)) / 2.0,
+                        "{lang:?}: {a} and {b} are {apart:.0}px apart"
+                    );
+                }
+            }
+        }
+    }
+
+    /// One unit on the whole row, and it is the hour's.
+    #[test]
+    fn only_one_hour_carries_a_unit() {
+        let row = |detents: &[Detent]| {
+            detents
+                .iter()
+                .map(|d| tick_label(d.minutes, "h"))
+                .collect::<Vec<_>>()
+        };
+        assert_eq!(row(REST_DETENTS), ["5", "10", "20", "30", "1 h"]);
+        assert_eq!(
+            row(SLEEP_DETENTS),
+            ["20", "45", "1 h", "1\u{bd}", "4", "24"]
+        );
     }
 }

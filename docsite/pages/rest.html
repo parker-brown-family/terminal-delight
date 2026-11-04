@@ -1,16 +1,16 @@
 <script type="application/json" data-page>
 {
   "title": "Resting agents",
-  "description": "An agent pane nobody has touched for ten minutes rests: its processes are frozen and their memory pushed out, and a look or a key brings it back in a fifth of a second. After two hours of rest it sleeps: the agent is ended, its conversation kept, and a key starts it again.",
-  "updated": "2026-11-01",
-  "trueOf": "dev/0.5.0 at d9aa472d",
+  "description": "An agent pane nobody has touched for ten minutes rests: its processes are frozen and their memory pushed out, and a look or a key brings it back in a fifth of a second. After an hour of rest it sleeps: the agent is ended, its conversation kept, and a key starts it again.",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "Idle agents frozen, then ended and resumed"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">An agent you haven't touched for ten minutes rests. Terminal Delight freezes its processes and pushes their memory out. Look at the pane or press a key and it carries on where it was, in about a fifth of a second.</p>
-<p>After two hours of rest, the agent goes to sleep. It is ended and its conversation is kept, and the pane shows a card that says <code>Press any key to wake</code>. A key or a click starts it again with the command line it was started with plus the conversation to resume, in a fresh pane in the same place. It comes back without its background jobs or the permissions you granted that session. A Codex agent sleeps only when it runs its own server.</p>
+<p>After an hour of rest, the agent goes to sleep. It is ended and its conversation is kept, and the pane shows a card that says <code>Press any key to wake</code>. A key or a click starts it again with the command line it was started with plus the conversation to resume, in a fresh pane in the same place. It comes back without its background jobs or the permissions you granted that session. A Codex agent sleeps only when it runs its own server.</p>
 <p>An agent that is working, printing, running a command, or that Terminal Delight can't read is left alone. The times and switches are on the <b>Agents</b> page in CONFIG. Hover the agent counter at the top right to see how much memory awake, resting and sleeping agents hold.</p>
 <p class="invite">Technical has the rules, the files, the settings and how a resting agent looks from outside.</p>
 </section>
@@ -21,7 +21,7 @@
   <thead><tr><th></th><th>Resting</th><th>Asleep</th></tr></thead>
   <tbody>
     <tr><td>What happens</td><td>The pane's processes are frozen and their memory pushed out. They are still running, paused.</td><td>The agent is ended with <code>SIGTERM</code>. The pane's shell stays; the conversation stays on disk.</td></tr>
-    <tr><td>After</td><td>10 minutes untouched and quiet</td><td>2 hours of rest, or <code>Sleep now</code></td></tr>
+    <tr><td>After</td><td>10 minutes untouched and quiet</td><td>1 hour of rest, or <code>Sleep now</code></td></tr>
     <tr><td>Who</td><td>Claude Code and Codex panes</td><td>Claude Code; Codex only when it runs its own server</td></tr>
     <tr><td>Pane header</td><td><code>RESTING · 14m</code>, with a moon</td><td><code>ASLEEP</code>, with a zzz, and a card over the pane</td></tr>
     <tr><td>Wakes on</td><td>focusing the pane, or anything written to it</td><td>a key that would type, or a click on the card</td></tr>

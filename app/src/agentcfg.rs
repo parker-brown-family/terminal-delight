@@ -14,7 +14,7 @@ use std::time::Duration;
 
 /// The shipped answers, used only where a field is unset.
 pub const REST_AFTER_MIN: u32 = 10;
-pub const SLEEP_AFTER_REST_MIN: u32 = 120;
+pub const SLEEP_AFTER_REST_MIN: u32 = 60;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(default)]

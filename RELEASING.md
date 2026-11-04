@@ -6,11 +6,9 @@ downloading it, and when.
 
 ## Current release context
 
-0.4.0 is wrapping. The next development release is **0.5.0: agent-to-agent
-communication hardening**, on `dev/0.5.0`. Read the [release plan](docs/plans/release-0.5.0/00-status.md)
-and the live [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/2)
-before assigning new work. The plan records the November 20 target, candidate
-hold and qualification requirements.
+0.5.0 is released. The next release is **0.5.1**, on `dev/0.5.1`, and new work
+targets that branch with the 0.5.1 [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/3).
+`dev/0.5.0` is closed to new work; everything that landed on it was merged forward.
 
 A PR’s **milestone** records its intended release. Its **base branch** records
 where it will merge. **Area labels** describe the work; `area:agent-comms`
@@ -58,7 +56,7 @@ work going in for manual testing and cut the next RC after each wave."* Every
 change waiting on a 37-minute CI run against the newest branch head had made
 eight small changes take about five hours to land, one after another.
 
-- **Landing does not wait for CI.** `dev/0.5.0` has no required checks, no
+- **Landing does not wait for CI.** `dev/0.5.1` has no required checks, no
   up-to-date rule and no required review; it still refuses force-pushes and
   deletion. Land with a merge commit once your own gates pass: for anything
   under `app/`, `cargo fmt --check`, `cargo clippy --locked -- -D warnings` and

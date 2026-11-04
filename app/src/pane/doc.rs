@@ -144,6 +144,30 @@ fn float_zone(
     .inset_0()
 }
 
+/// Hands a floating document's body to the renderer's grade for this frame,
+/// `grade` being [`crate::theme::Grade::doc_grade`]'s gains. Measured as the pane
+/// measures its tube, so the rect is the one the document was laid out in.
+fn doc_grade_zone((brightness, contrast): (f32, f32)) -> impl IntoElement {
+    canvas(
+        move |bounds, window, _cx| {
+            let sf = window.scale_factor();
+            crate::warp::register_doc_grade(
+                [
+                    f32::from(bounds.origin.x) * sf,
+                    f32::from(bounds.origin.y) * sf,
+                    f32::from(bounds.size.width) * sf,
+                    f32::from(bounds.size.height) * sf,
+                ],
+                brightness,
+                contrast,
+            );
+        },
+        |_, _, _, _| {},
+    )
+    .absolute()
+    .inset_0()
+}
+
 impl TerminalView {
     /// The document under the pointer, if it is one TD can draw: the path or
     /// `file://` link there, decoded, checked on disk. A web link is never a
@@ -382,6 +406,17 @@ impl TerminalView {
             .map(|n| n.to_string_lossy().into_owned())
             .unwrap_or_default();
         let zoom = view.zoom_now();
+        let clear = th.grade.doc_clear_at_edge();
+        // A clear picture is one layer over the terminal. Markdown paints no
+        // ground of its own, so without a veil its letters collide with the ones
+        // behind it.
+        let ground = if clear == 0.0 {
+            1.0
+        } else if view.target().kind == crate::docopen::DocKind::Markdown {
+            1.0 - clear
+        } else {
+            0.0
+        };
         let zones = self.float_zones.clone();
         // The zone a part of a live square records; a covered square records
         // none of its own.
@@ -409,6 +444,8 @@ impl TerminalView {
             .border_color(acc.alpha(0.4))
             .text_size(px(11.))
             .text_color(acc)
+            // The controls stay readable however clear the document goes.
+            .when(clear > 0.0, |d| d.bg(th.bg))
             // First, so every control recorded after it is found over it.
             .children(zone(FloatHit::Strip))
             .child(
@@ -453,11 +490,22 @@ impl TerminalView {
             .h(px(r.h))
             .flex()
             .flex_col()
-            .bg(th.bg)
+            .bg(th.bg.alpha(ground))
             .border_2()
             .border_color(th.accent)
             .rounded(sk.rad_raw(6.))
-            .shadow(crate::float_shadows(th.accent, th.grade.phosphor))
+            .shadow(
+                crate::float_shadows(th.accent, th.grade.doc_glow_at_edge())
+                    .into_iter()
+                    .map(|mut shadow| {
+                        // A shadow fills the box it is cast from as well as the
+                        // ground round it, so the ring and the lift would stand
+                        // between a clear document and the terminal behind it.
+                        shadow.color.a *= (1.0 - clear).powi(4);
+                        shadow
+                    })
+                    .collect(),
+            )
             .overflow_hidden()
             .map(|d| sk.chrome(sk.finish(d)))
             .child(strip)
@@ -467,8 +515,19 @@ impl TerminalView {
                     .flex_1()
                     .min_h(px(0.))
                     .children(zone(FloatHit::Body))
+                    .when(clear > 0.0, |d| d.opacity(1.0 - clear))
+                    .children(
+                        th.grade
+                            .doc_grade()
+                            .filter(|_| !self.lends(&float.view))
+                            .map(doc_grade_zone),
+                    )
                     .child(if self.lends(&float.view) {
                         being_read(th.text)
+                    } else if clear > 0.0 {
+                        // A cached view replays what it painted at the opacity
+                        // it painted with, so a dragged dial would not move it.
+                        gpui::AnyView::from(float.view.clone()).into_any_element()
                     } else {
                         gpui::AnyView::from(float.view.clone())
                             .cached(gpui::StyleRefinement::default().size_full())
@@ -894,6 +953,42 @@ impl TerminalView {
     }
 
     /// Whether a floating square is open on this pane.
+    /// The grade the FOCUS reader draws `view` with, when `view` is this pane's
+    /// square. Its body is not painted here while it is lent, so the reader
+    /// measures the rect instead.
+    pub(crate) fn lent_grade_zone(
+        &self,
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        cx: &App,
+    ) -> Option<impl IntoElement> {
+        self.lent_square(view)
+            .then(|| self.resolved_theme(cx).grade.doc_grade())
+            .flatten()
+            .map(doc_grade_zone)
+    }
+
+    /// The halo the FOCUS reader wears round `view`, when `view` is this pane's
+    /// square: its own dial travels with it. `None` leaves the frame's.
+    pub(crate) fn lent_glow(
+        &self,
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        cx: &App,
+    ) -> Option<f32> {
+        self.lent_square(view)
+            .then(|| self.resolved_theme(cx).grade.doc_glow_at_edge())
+    }
+
+    /// Whether `view` is this pane's square, or the one under its clip.
+    fn lent_square(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
+        self.float.as_ref().is_some_and(|float| {
+            float.view == *view
+                || float
+                    .below
+                    .as_ref()
+                    .is_some_and(|below| below.view == *view)
+        })
+    }
+
     pub(crate) fn has_float(&self) -> bool {
         self.float.is_some()
     }

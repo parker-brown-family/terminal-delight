@@ -108,7 +108,9 @@ mod uninstall;
 mod update;
 mod update_view;
 mod wirecheck;
-use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
+use skin::parts::{
+    color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
+};
 mod slot;
 mod sticky;
 mod surface;
@@ -9140,6 +9142,10 @@ impl Workspace {
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
             inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
+            doc_brightness: g.doc_brightness.map(|v| K::DocBrightness.to_percent(v)),
+            doc_contrast: g.doc_contrast.map(|v| K::DocContrast.to_percent(v)),
+            doc_clear: g.doc_clear.map(|v| K::DocClear.to_percent(v)),
+            doc_glow: g.doc_glow.map(|v| K::DocGlow.to_percent(v)),
             afterglow_ms: g.afterglow_ms,
             cursor_linger_ms: g.cursor_linger_ms,
             off_cursor_linger_ms: g.off_cursor_linger_ms,
@@ -9221,6 +9227,18 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_blur {
             set!(K::InactiveBlur, p);
+        }
+        if let Some(p) = patch.doc_brightness {
+            set!(K::DocBrightness, p);
+        }
+        if let Some(p) = patch.doc_contrast {
+            set!(K::DocContrast, p);
+        }
+        if let Some(p) = patch.doc_clear {
+            set!(K::DocClear, p);
+        }
+        if let Some(p) = patch.doc_glow {
+            set!(K::DocGlow, p);
         }
         if let Some(ms) = patch.afterglow_ms {
             g.set(K::AfterglowMs, ms);
@@ -12103,6 +12121,7 @@ impl Workspace {
         div()
             .absolute()
             .inset_0()
+            .on_children_prepainted(keep_panels_from_doc_grade)
             .occlude()
             .bg(th.bg.alpha(0.70))
             .flex()
@@ -17129,6 +17148,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -17803,6 +17823,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18080,6 +18101,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18263,6 +18285,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18348,8 +18371,8 @@ impl Workspace {
                 row.child(
                     div()
                         .absolute()
-                        .left(px(x * 250. - 10.))
-                        .w(px(20.))
+                        .left(px(x * 250. - 20.))
+                        .w(px(40.))
                         .flex()
                         .justify_center()
                         .text_size(sk.text_px(7.5))
@@ -18358,7 +18381,10 @@ impl Workspace {
                         } else {
                             th.text.alpha(0.45)
                         })
-                        .child(SharedString::from(self.agents_minutes_label(d.minutes))),
+                        .child(SharedString::from(agentrest::tick_label(
+                            d.minutes,
+                            self.lang.strings().ui.ag_unit_h,
+                        ))),
                 )
             });
         div()
@@ -18676,6 +18702,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18877,6 +18904,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19324,6 +19352,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19711,6 +19740,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19876,6 +19906,10 @@ impl Workspace {
     ) -> gpui::Div {
         let wh = self.last_win.map_or(800., |(_, _, _, h)| h);
         self.over_the_glass(glass, |ws, _window, cx| ws.close_focus_read(cx), cx)
+            // The frame shows the document it holds, and a document lent to it
+            // is graded there: keeping the frame out would undo that. One
+            // listener per element, so this one replaces the builder's.
+            .on_children_prepainted(|_, _, _| {})
             .flex()
             .items_start()
             .justify_center()
@@ -20122,6 +20156,9 @@ impl Workspace {
             .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
             .child(div().text_color(text.alpha(0.6)).child(keys));
         let store = self.focus_body_bounds.clone();
+        // The square came up here to be read, and it keeps its grade in the
+        // frame; the Document face is not the square and has no such dials.
+        let grade_zone = pane.read(cx).lent_grade_zone(&view, cx);
         let body = div()
             .flex_1()
             .min_h_0()
@@ -20140,6 +20177,7 @@ impl Workspace {
                         .absolute()
                         .inset_0(),
                     )
+                    .children(grade_zone)
                     .child(view)
                     .children(self.focus_clip_box(clip.as_ref(), accent, bg, phosphor, cx)),
             )
@@ -23745,6 +23783,8 @@ impl Workspace {
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
+                        | theme::GradeKey::DocClear
+                        | theme::GradeKey::DocGlow
                         | theme::GradeKey::FieldColour
                         | theme::GradeKey::Glare
                         | theme::GradeKey::ImageGlow
@@ -29575,6 +29615,7 @@ impl Workspace {
             .absolute()
             .inset_0()
             .occlude()
+            .on_children_prepainted(keep_panels_from_doc_grade)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -29781,6 +29822,15 @@ impl Workspace {
 fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
     warp::flatten();
     div()
+        .relative()
+        .child(
+            canvas(
+                |bounds, window, _cx| keep_from_doc_grade(bounds, window),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        )
         .flex()
         .flex_col()
         .px(px(9. * s))
@@ -29791,6 +29841,34 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
         .bg(sk.region_face(darken(th.surface, 0.45)))
         .shadow(float_shadows(th.accent, th.grade.phosphor))
         .map(|d| sk.finish(d))
+}
+
+/// Keep `bounds` out of the floating document's grade: the grade is a pixel
+/// post-process, so a menu standing over the square would dim with the page, and
+/// GAUGES would take the way back with it.
+fn keep_from_doc_grade(bounds: Bounds<Pixels>, window: &Window) {
+    let sf = window.scale_factor();
+    warp::keep_from_doc_grade([
+        f32::from(bounds.origin.x) * sf,
+        f32::from(bounds.origin.y) * sf,
+        f32::from(bounds.size.width) * sf,
+        f32::from(bounds.size.height) * sf,
+    ]);
+}
+
+/// For a full-window click-catcher: the panels in it are what stands over the
+/// document, and the catcher itself draws nothing.
+fn keep_panels_from_doc_grade(panels: Vec<Bounds<Pixels>>, window: &mut Window, _cx: &mut App) {
+    for panel in panels {
+        keep_from_doc_grade(panel, window);
+    }
+}
+
+/// Whether a child of the window's root stands over the stage rather than being
+/// it: the stage and a scrim both fill most of the window, and a scrim keeps its
+/// own panel out ([`Workspace::over_the_glass`]).
+fn stands_over_the_stage(child: (f32, f32), window: (f32, f32)) -> bool {
+    child.0 * child.1 < 0.6 * window.0 * window.1
 }
 
 /// The hover over one of the bottom slot's allowance rows: the provider, then
@@ -31072,7 +31150,7 @@ impl Workspace {
         })
     }
 
-    /// Back to Clean for new windows: the template goes.
+    /// Back to the house look for new windows: the template goes.
     fn clear_new_window(&mut self, cx: &mut Context<Self>) {
         match uiconfig::NewWindow::clear() {
             Ok(()) => self.new_window_saved = false,
@@ -31464,11 +31542,17 @@ impl Render for Workspace {
         // the easter eggs can be photographed open as well as shut.
         if let Ok(demo) = std::env::var("TD_OSD_DEMO") {
             if self.osd_menu.is_none() {
-                self.open_osd(MenuScope::Outer, None);
+                // `over` stands the tray three quarters across and 150 down, over
+                // the floating document, wherever the window landed.
+                let over = demo.split(',').any(|s| s == "over").then(|| {
+                    let view = window.viewport_size();
+                    point(px(f32::from(view.width) * 0.75), px(150.))
+                });
+                self.open_osd(MenuScope::Outer, over);
                 self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
                 self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
                 if demo.split(',').any(|s| s == "open") {
-                    self.osd_groups = vec![true; 4];
+                    self.osd_groups = vec![true; 5];
                 }
                 cx.notify();
             }
@@ -32860,8 +32944,12 @@ impl Render for Workspace {
                     other => other,
                 };
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, &sk, &icon, caption, lit)
+                    theme_icon_btn_wide(&th, &sk, &icon, caption, lit, skin::picker_cells(&id))
                         .id(SharedString::from(format!("skin-btn-{id}")))
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("skin-btn-{id}")
+                        })
                         .map(|b| {
                             palette_help(
                                 b,
@@ -33765,7 +33853,7 @@ impl Render for Workspace {
                             cx,
                         ))
                 };
-                // NEW WINDOWS: Clean, unless this window was saved as the look.
+                // NEW WINDOWS: Deco, unless this window was saved as the look.
                 let new_windows = div()
                     .flex()
                     .flex_col()
@@ -33782,7 +33870,7 @@ impl Render for Workspace {
                                 if self.new_window_saved {
                                     t.ui.ui_saved
                                 } else {
-                                    t.thm_clean
+                                    t.ui.pal_thm_deco
                                 },
                             ))
                             .child(
@@ -33798,8 +33886,8 @@ impl Render for Workspace {
                             )
                             .when(self.new_window_saved, |d| {
                                 d.child(
-                                    Self::bezel_btn_s(&sk, t.thm_clean, false, 0.85)
-                                        .id("ui-nw-clean")
+                                    Self::bezel_btn_s(&sk, t.ui.pal_thm_deco, false, 0.85)
+                                        .id("ui-nw-house")
                                         .on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -33979,6 +34067,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -34034,6 +34123,19 @@ impl Render for Workspace {
                         ),
                         (G::Gamma, t.g_gamma, grade.gamma),
                         (G::Phosphor, t.g_phosphor, grade.phosphor),
+                    ],
+                ),
+                (
+                    t.g_doc_hdr,
+                    vec![
+                        (
+                            G::DocBrightness,
+                            t.g_brightness,
+                            grade.doc_brightness_at_edge(),
+                        ),
+                        (G::DocContrast, t.g_contrast, grade.doc_contrast_at_edge()),
+                        (G::DocClear, t.g_see_through, grade.doc_clear_at_edge()),
+                        (G::DocGlow, t.g_glow, grade.doc_glow_at_edge()),
                     ],
                 ),
                 (
@@ -34166,7 +34268,7 @@ impl Render for Workspace {
                     .child(format!("{} {}", fold_mark(open), name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
-            const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance
+            const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
             let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
@@ -34477,6 +34579,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -36200,6 +36303,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(th.bg.alpha(if preview { 0.52 } else { 0.70 }))
                 .on_mouse_down(
@@ -36768,6 +36872,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(th.bg.alpha(0.70))
                 .on_mouse_down(
@@ -36865,6 +36970,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .bg(hsla(0., 0., 0., 0.62))
                     .flex()
                     .items_center()
@@ -36944,6 +37050,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .bg(hsla(0., 0., 0., 0.62))
                     .flex()
                     .items_center()
@@ -37048,6 +37155,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 // occlude, or the pane's warped CRT layer paints over the panel
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.18))
@@ -37375,6 +37483,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 // occlude, or the pane's warped CRT layer paints over the panel
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.18))
@@ -38140,6 +38249,7 @@ impl Render for Workspace {
                     div()
                         .absolute()
                         .inset_0()
+                        .on_children_prepainted(keep_panels_from_doc_grade)
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38299,6 +38409,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38371,15 +38482,13 @@ impl Render for Workspace {
             (Some(pane), Some(_)) => pane.update(cx, |v, cx| v.reader_clip(cx)),
             _ => None,
         };
+        let lent_glow = match (&focus_pane, &focus_doc) {
+            (Some(pane), Some(view)) => pane.read(cx).lent_glow(view, cx),
+            _ => None,
+        }
+        .unwrap_or(th.grade.phosphor);
         let focus_overlay = if let (Some(pane), Some(view)) = (&focus_pane, focus_doc) {
-            Some(self.focus_document_overlay(
-                pane,
-                view,
-                focus_clip,
-                focus_ramp,
-                th.grade.phosphor,
-                cx,
-            ))
+            Some(self.focus_document_overlay(pane, view, focus_clip, focus_ramp, lent_glow, cx))
         } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             // An agent pane whose transcript the sweep bound for certain reads
@@ -39189,6 +39298,16 @@ impl Render for Workspace {
                     // An unboxed skin draws no frame round the window at all,
                     // and asks the compositor to drop its own border too
                     // (`desktop_glass::init`): the tile is borderless outside.
+                    .on_children_prepainted(|children, window, _cx| {
+                        let view = window.viewport_size();
+                        let view = (f32::from(view.width), f32::from(view.height));
+                        for child in children {
+                            let size = (f32::from(child.size.width), f32::from(child.size.height));
+                            if stands_over_the_stage(size, view) {
+                                keep_from_doc_grade(child, window);
+                            }
+                        }
+                    })
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -40364,13 +40483,13 @@ mod tests {
         let ws = window.root(cx).unwrap();
         cx.update(|cx| {
             ws.update(cx, |ws, cx| {
-                // Never picked: Clean draws its own trim, and leaving Clean
+                // Never picked: Deco draws its own trim, and leaving Deco
                 // keeps it.
-                assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
-                assert_eq!(skin::active_id(cx), "clean");
+                assert_eq!(theme::outer_choice(cx).id, theme::DECO);
+                assert_eq!(skin::active_id(cx), "deco");
                 ws.switch_outer_design("hacker".into(), cx);
                 assert_eq!(theme::outer_choice(cx).id, "hacker");
-                assert_eq!(skin::active_id(cx), "clean", "a followed skin is held");
+                assert_eq!(skin::active_id(cx), "deco", "a followed skin is held");
 
                 // Picked: Chalk under Deco, then Hacker, then Intrusive.
                 ws.switch_outer_design("deco".into(), cx);
@@ -40394,7 +40513,7 @@ mod tests {
             });
             // DESKTOP puts the house design back; the skin stays.
             paint::apply_outer(cx, &paint::Pick::Default);
-            assert_eq!(theme::outer_choice(cx).id, theme::CLEAN);
+            assert_eq!(theme::outer_choice(cx).id, theme::DECO);
             assert_eq!(skin::active_id(cx), "chalk", "after DESKTOP");
         });
     }
@@ -42579,6 +42698,18 @@ mod tests {
             code[at..end].contains("warp::flatten();"),
             "over_the_glass draws a scrim without flattening the glass under it"
         );
+    }
+
+    /// GAUGES, a menu or the rail stands over the stage and is kept out of the
+    /// floating document's grade. The stage and a scrim fill most of the window,
+    /// and keeping either out would switch the grade off altogether.
+    #[test]
+    fn only_what_stands_over_the_stage_is_kept_from_the_document_grade() {
+        let window = (1600., 1000.);
+        assert!(stands_over_the_stage((320., 900.), window), "the tray");
+        assert!(stands_over_the_stage((1600., 40.), window), "a bezel");
+        assert!(!stands_over_the_stage((1560., 900.), window), "the stage");
+        assert!(!stands_over_the_stage((1600., 1000.), window), "a scrim");
     }
 
     /// A hover card over the glass flattens it too, or the build fails.
@@ -45999,13 +46130,12 @@ mod tests {
 
     /// Unknown is not hidden. A file that never had the field gets the default;
     /// a file that says `false` is a person's decision and is obeyed.
-    /// A brand-new window wears Clean and the Clean UI set, unless a new-window
-    /// template was saved, in which case it wears exactly that. Parker: new
-    /// window settings are "CUSTOMIZABLE, but at a default -- CLEAN".
+    /// A brand-new window wears Deco, unless a new-window template was saved,
+    /// in which case it wears exactly that.
     #[test]
-    fn a_new_window_is_clean_unless_a_template_was_saved() {
+    fn a_new_window_is_deco_unless_a_template_was_saved() {
         let plain = fresh_state(None);
-        assert_eq!(settled_outer(&plain).id, theme::CLEAN, "Clean by default");
+        assert_eq!(settled_outer(&plain).id, theme::DECO, "Deco by default");
         assert!(plain.ui.is_none() && plain.skin.is_none());
 
         let mut hacker = theme::house_outer();
@@ -49021,11 +49151,11 @@ id = "hacker"
     }
 
     #[test]
-    fn a_fresh_install_boots_flat_with_the_crt_dials_it_keeps() {
+    fn a_fresh_install_boots_on_the_tube_with_the_dials_it_ships() {
         // No state file at all: `load_state` hands `build` the default.
         let outer = settled_outer(&StateFile::default());
         let house = theme::house_outer();
-        assert!(!outer.grade.crt, "flat");
+        assert!(outer.grade.crt, "on the tube");
         assert_eq!(
             outer.palette.as_deref(),
             Some(palette::TERMINAL_DELIGHT),
@@ -49544,6 +49674,57 @@ node = "Leaf"
             3,
             "a fourth paper does not fit that row — give it a second one"
         );
+    }
+
+    /// TERMINIMALIST's name overran its card onto the card beside it. The
+    /// picker gives it two cells of the grid, gap included, in every skin that
+    /// draws cards.
+    #[gpui::test]
+    fn the_terminimalist_card_is_two_cells_wide(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1400.), px(1000.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |p, _| p.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |ws, cx| {
+            ws.theme_menu = Some(MenuScope::Outer);
+            ws.fold_open = Some("skin");
+            cx.notify();
+        });
+        for (id, cell) in [("default", 46.), ("chalk", 56.)] {
+            cx.update(|w, cx| {
+                skin::select(cx, id).unwrap();
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+            let card = |cx: &mut gpui::VisualTestContext, id: &'static str| {
+                cx.debug_bounds(id)
+                    .unwrap_or_else(|| panic!("{id} not drawn"))
+            };
+            let single = card(cx, "skin-btn-clean").size.width;
+            let wide = card(cx, "skin-btn-terminimalist").size.width;
+            assert_eq!(single, px(cell), "{id}: a single card");
+            assert_eq!(wide, px(2. * cell + TRAY_GAP), "{id}: the double card");
+        }
     }
 
     #[test]

@@ -21,8 +21,9 @@
 //! The socket file is NOT unlinked on exit — there is no hook that runs on
 //! every exit path, so pretending otherwise would just be a lie that works in
 //! demos. Instead the server unlinks any stale file before binding its own
-//! pid's path, and the client treats a connection failure as "stale: sweep it
-//! and move on".
+//! pid's path, and the client treats a refused connection as "stale: sweep it
+//! and move on". Any other failure is a window that is alive and behind, and its
+//! socket stays ([`unanswered`]).
 //!
 //! **`mcp rpc` is the exception to "never blocks".** The MCP handler needs a
 //! round-trip onto the gpui main thread, so that one verb is served on its own
@@ -1612,6 +1613,21 @@ fn settle_paint_toggle(up: &[bool]) -> &'static str {
 /// The `terminal-delight ctl …` entry point. Returns the process exit code:
 /// 0 when at least one terminal answered, 2 when nothing matched (with a hint
 /// on stderr), 1 on a usage error.
+/// What a socket that gave no answer means, and whether its file goes.
+///
+/// Only a refusal says nobody is listening. A window behind on its work fails a
+/// connect with `EAGAIN`, when its backlog is full, or times out mid-reply, and
+/// its socket is the only way anything can reach it: deleting that cuts a live
+/// window off until it restarts (#796).
+fn unanswered(path: &Path, e: &std::io::Error) -> String {
+    if e.kind() == std::io::ErrorKind::ConnectionRefused {
+        let _ = std::fs::remove_file(path);
+        format!("err unreachable ({e}) — swept stale socket")
+    } else {
+        format!("err busy ({e}) — the window did not answer, and its socket is kept")
+    }
+}
+
 pub fn run_cli(args: &[String]) -> i32 {
     let (line, scope) = match parse_cli(args) {
         Ok(v) => v,
@@ -1734,12 +1750,7 @@ pub fn run_cli(args: &[String]) -> i32 {
                 // from a build older than the ctl surface.
                 println!("{pid}\terr no control socket (older build — reopen this terminal)");
             }
-            Err(e) => {
-                // Present but unconnectable = stale leftovers; sweep so the
-                // next discovery is clean.
-                let _ = std::fs::remove_file(path);
-                println!("{pid}\terr unreachable ({e}) — swept stale socket");
-            }
+            Err(e) => println!("{pid}\t{}", unanswered(path, &e)),
         }
     }
     if ok > 0 {
@@ -3619,6 +3630,47 @@ mod tests {
         drop(UnixListener::bind(&sock).unwrap()); // file survives the listener
         assert!(sock.exists());
         assert!(send(&sock, "ping").is_err());
+    }
+
+    /// A file nobody listens on is refused, and goes, so discovery stays clean.
+    ///
+    /// The errors are handed over rather than earned: a dropped listener is not
+    /// dead while another test's fork still holds its descriptor, so a real
+    /// refusal is a race against every pane the suite is spawning.
+    #[test]
+    fn a_refused_socket_is_swept() {
+        let dir = tmp("refused");
+        let sock = dir.join("ctl-5.sock");
+        std::fs::write(&sock, b"").unwrap();
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        assert!(unanswered(&sock, &refused).contains("swept"));
+        assert!(!sock.exists());
+    }
+
+    /// `EAGAIN` from connect is a full backlog: somebody is listening, and behind.
+    /// That is the error that cut a live window off (#796).
+    #[test]
+    fn a_full_backlog_is_busy_and_keeps_the_socket() {
+        let dir = tmp("backlog");
+        let sock = dir.join("ctl-7.sock");
+        std::fs::write(&sock, b"").unwrap();
+        let full = std::io::Error::from_raw_os_error(11);
+        assert!(unanswered(&sock, &full).contains("busy"));
+        assert!(sock.exists(), "a full backlog keeps the socket");
+    }
+
+    /// A window that took the connection and is slow to reply is alive. Its
+    /// socket is all that reaches it, so an answer it has not given yet never
+    /// costs it that.
+    #[test]
+    fn a_window_too_busy_to_answer_keeps_its_socket() {
+        let dir = tmp("busy");
+        let sock = dir.join("ctl-6.sock");
+        let _listening = UnixListener::bind(&sock).unwrap();
+        let e = send_within(&sock, "ping", Duration::from_millis(30)).unwrap_err();
+        assert_ne!(e.kind(), std::io::ErrorKind::ConnectionRefused);
+        assert!(unanswered(&sock, &e).contains("busy"));
+        assert!(sock.exists(), "a slow window keeps its socket");
     }
 
     /// A stand-in window that answers `whoami` with whatever we hand it.

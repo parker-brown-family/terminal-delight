@@ -113,12 +113,12 @@ not orchestrate them. Each item below links to its page in the docs.
 SUPER+ALT+T lists every one of its keys, and Super+C and Super+V copy and paste
 in a pane. See [Omarchy](https://docs.terminal-delight.brownfamilysports.com/omarchy).
 
-## In development: 0.5.0
+## New in 0.5
 
-The next release is developed on the
-[`dev/0.5.0`](https://github.com/parker-brown-family/terminal-delight/tree/dev/0.5.0)
-branch. Its candidate is planned for 13 November 2026 and stable for 20 November.
-None of this is in a published build yet:
+Development happens on the
+[`dev/0.5.1`](https://github.com/parker-brown-family/terminal-delight/tree/dev/0.5.1)
+branch. A new window opens in the Deco design on the tube and wears your Omarchy
+theme, programs included. The 0.5 releases also brought:
 
 - **[The Threshing Floor](https://docs.terminal-delight.brownfamilysports.com/threshing-floor)**
   decides which agents may reach each other. Seat agents on an org chart and draw
@@ -129,8 +129,7 @@ None of this is in a published build yet:
   ended with its conversation kept. A key in the pane wakes it.
 - **[UI CONFIG](https://docs.terminal-delight.brownfamilysports.com/ui-config)**
   hides any piece of chrome. A new Clean design turns the tube and every light off,
-  first launch opens in it, and the TERMINIMALIST skin squares everything off in
-  your Omarchy theme.
+  and the TERMINIMALIST skin squares everything off in your Omarchy theme.
 - **[The artifact rail](https://docs.terminal-delight.brownfamilysports.com/artifacts)**
   keeps each agent's handovers within reach, with a searchable archive for ones
   whose pane has closed.
@@ -143,7 +142,7 @@ None of this is in a published build yet:
 
 Stable releases, and previews of the next one, are on the
 [releases page](https://github.com/parker-brown-family/terminal-delight/releases).
-0.5.0 is the latest stable. What changed, release by release, is
+0.5.1 is the latest stable. What changed, release by release, is
 in [CHANGELOG.md](CHANGELOG.md), and the plain-language notes are in
 [docs/release-notes/](docs/release-notes/).
 
@@ -201,8 +200,8 @@ to fit (part of 0.4.0's idle graphics-memory cut), and the glass rim. The ninth,
 removes the GPL crates the Zed graph would otherwise link (see [License](#license)).
 `scripts/prepare-gpui.sh` sets the checkout up as a sibling `zed-upstream/`
 directory and applies them all; CI does the same, and `docs/patches/PINLOG.md`
-records each pin. The 0.5.0 branch adds four more (image glow, its taps, the
-desktop cutout and the tube blur), so re-run the script after switching branches.
+records each pin. 0.5 adds five more (image glow, its taps, the desktop
+cutout, the tube blur and the document grade), so re-run the script after switching branches.
 The crates.io gpui release still ships the older blade renderer with known
 NVIDIA/X11 issues.
 
@@ -224,7 +223,7 @@ running app picks it up in about 300 ms. Five designs ship in
 [`app/themes/`](app/themes/): **hacker** (phosphor green), **tactical-overdrive**
 (cyan), **quiet-command** (light, effects off), **deco** (quiet brass) and
 **intrusive** (the CRT turned all the way up). Copy one over your config file to
-start from it, or pick one in the painter. On the 0.5.0 branch the set is Clean,
+start from it, or pick one in the painter. Since 0.5.0 the set is Clean,
 deco, hacker and intrusive.
 
 ![Four of the built-in designs side by side](assets/showcase-themes.png)
@@ -328,7 +327,7 @@ docsite/         the documentation site (pages, build, deploy)
 index.html, src/ the original browser design prototype, kept as design reference
 ```
 
-The 0.5.0 branch adds, among others, `threshing_floor.rs` and its view,
+0.5 added, among others, `threshing_floor.rs` and its view,
 `askrecord.rs`, `agentrest.rs`, `looks.rs`, `uiconfig.rs`, `artifact_rail.rs`,
 `restricted.rs` and `uninstall.rs`.
 
@@ -374,8 +373,8 @@ your scrollback, typed input, titles, directories, commands or a screenshot. See
 The open work for 1.0 is on the
 [1.0 milestone](https://github.com/parker-brown-family/terminal-delight/milestone/1):
 a Flatpak alongside the AppImage, a 20-pane stress proof, and a same-box
-keystroke-latency comparison against Alacritty, among others. The 0.5.0 work is on
-[its own milestone](https://github.com/parker-brown-family/terminal-delight/milestone/2).
+keystroke-latency comparison against Alacritty, among others. The 0.5.1 work is on
+[its own milestone](https://github.com/parker-brown-family/terminal-delight/milestone/3).
 The original gated build plan, and the risk gates that shaped the first release,
 are in [docs/PLAN.md](docs/PLAN.md).
 

@@ -509,3 +509,21 @@ fn hud_uses_one_short_qualification_line_and_keeps_the_explanation_for_inspectio
         )
         .is_err());
 }
+
+#[test]
+fn the_chip_counts_findings_and_a_gap_is_not_one() {
+    let mut plain_folder = project(vec![]);
+    plain_folder.unlocated = vec![actor("shell", None, true)];
+    let mut store = Store::new("test");
+    store.update(plain_folder);
+    assert_eq!(store.attention_summary(), "Git · No new findings");
+
+    let mut partial = live("a", &[(b"a.rs", Source::Unstaged)]);
+    partial.footprint.sources.remove(&Source::Committed);
+    let mut store = Store::new("test");
+    store.update(project(vec![partial]));
+    assert_eq!(
+        store.attention_summary(),
+        "Git · No new findings · scan incomplete"
+    );
+}

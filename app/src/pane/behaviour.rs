@@ -1172,6 +1172,64 @@ fn pane_with_history_and_a_document(cx: &mut TestAppContext, tag: &str) -> (Pane
     (pane, dir)
 }
 
+/// A dressed square asks for its body to be graded, and nothing else about it:
+/// the strip keeps its colours, and a square at neutral asks for nothing, so an
+/// undressed one never turns the post-process pass on. Dragged back to the
+/// middle is neutral too. The same dial reaches a square lent to the FOCUS frame,
+/// which is where a person's own Alt+click reads it.
+///
+/// Parker, 2026-11-03: *"we need sliders for the glow pane."*
+#[gpui::test]
+fn a_dressed_square_asks_for_its_body_to_be_graded(cx: &mut TestAppContext) {
+    use crate::theme::{GradeKey, GradePins};
+    // The pane holds the warp registry for as long as it lives (`take_the_turn`).
+    let (mut pane, _dir) = pane_with_history_and_a_document(cx, "doc-grade");
+    let view = pane.float_view().expect("a square");
+    let dial = |pane: &mut Pane, key: GradeKey, at: f32| {
+        pane.view.update(pane.cx, |v, cx| {
+            let mut grade = v.resolved_theme(cx).grade;
+            grade.set(key, at);
+            v.appearance.pin_grade(grade, GradePins::only(key.into()));
+        });
+    };
+    let lent_zone = |pane: &mut Pane, view: &gpui::Entity<crate::docview::DocumentView>| {
+        pane.view
+            .read_with(pane.cx, |v, cx| v.lent_grade_zone(view, cx).is_some())
+    };
+
+    crate::warp::begin_frame();
+    pane.redraw();
+    assert_eq!(
+        crate::warp::doc_grades(),
+        vec![],
+        "neutral asks for nothing"
+    );
+    assert!(!lent_zone(&mut pane, &view), "nor does it in the frame");
+
+    dial(&mut pane, GradeKey::DocBrightness, 0.25);
+    dial(&mut pane, GradeKey::DocContrast, 0.75);
+    crate::warp::begin_frame();
+    pane.redraw();
+    let body = pane.float_zone(FloatHit::Body).expect("the square's body");
+    let graded = crate::warp::doc_grades();
+    assert_eq!(graded.len(), 1, "one square, one grade: {graded:?}");
+    let ([x, y, w, h], brightness, contrast) = graded[0];
+    let sf = pane.cx.update(|window, _| window.scale_factor());
+    assert_eq!(
+        (x / sf, y / sf, w / sf, h / sf),
+        body,
+        "the grade covers the document and leaves the strip alone"
+    );
+    assert_eq!((brightness, contrast), (0.5, 1.5));
+    assert!(lent_zone(&mut pane, &view), "the frame keeps the dial");
+
+    dial(&mut pane, GradeKey::DocBrightness, 0.5);
+    dial(&mut pane, GradeKey::DocContrast, 0.5);
+    crate::warp::begin_frame();
+    pane.redraw();
+    assert_eq!(crate::warp::doc_grades(), vec![], "the middle is neutral");
+}
+
 /// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
 /// it; ctrl+↑ and ctrl+shift+↑ go back. The square stays open through all of
 /// it: a key the square claims and its document declines closes the square,
@@ -2721,7 +2779,7 @@ fn a_program_asking_a_colour_is_told_the_one_the_pane_draws(cx: &mut TestAppCont
         let own = v.resolved_theme(cx);
         let window = crate::theme::theme(cx);
         (
-            super::rgb8(super::graded(own.bg, &own.grade, super::Channel::Bg)),
+            super::rgb8(super::terminal_background(&own)),
             super::rgb8(super::graded(window.bg, &window.grade, super::Channel::Bg)),
         )
     });

@@ -2,8 +2,8 @@
 {
   "title": "Themes",
   "description": "Terminal Delight takes its colours from your Omarchy themes: the painter (Ctrl+Shift+D on a pane, 🎨 for the window) shows one tile per theme Omarchy offers, and INHERIT follows the desktop's theme as it changes. The DESIGN row sets the finish: CRT texture, glow and font. A fresh install opens flat in the Terminal Delight palette.",
-  "updated": "2026-11-01",
-  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "Colours from Omarchy, a design for the finish"
 }
 </script>
@@ -12,8 +12,7 @@
 <p class="lede">Terminal Delight takes its colours from your desktop. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>D</kbd> on a pane, or click <code>🎨</code> at the bottom right for the whole window, and the painter opens in three areas: <b>Theme</b>, <b>Style</b> and <b>Rules</b>.</p>
 <p>THEME shows one tile for every theme Omarchy's own picker shows, drawn in that theme's colours. Click one and the pane or the window wears it. Switch on <code>INHERIT</code> under Rules instead, and the window follows whatever theme the desktop is wearing, repainting when you change it there.</p>
 <p>Style holds the <code>DESIGN</code> row, which sets the finish rather than the hue: how much <a href="/crt">CRT</a> texture and glow, and which font. Five designs are built in, from the light <code>quiet</code> to the loud <code>intrusive</code>. The sixth, <code>custom</code>, is your own <code>theme.toml</code>, reloaded as you save it.</p>
-<p>A fresh install opens flat, in the Terminal Delight palette, with the CRT off.</p>
-<p>A first launch opens in the Clean design instead, with no tube and no light anywhere. Design and <a href="/skins">skin</a> move independently, and each design remembers how you tuned it.</p>
+<p>A first launch opens in the Deco design and the Deco skin, on the tube, with INHERIT on. Design and <a href="/skins">skin</a> move independently, and each design remembers how you tuned it.</p>
 <p class="invite">Technical has the painter area by area, the designs, the paint overlay and the theme file.</p>
 </section>
 
@@ -67,12 +66,12 @@
 <p>A design that asks for a skin brings it only while you haven't picked one from the <code>SKIN</code> row; see <a href="/skins">Skins</a>. Two designs are gone in 0.4.0: a pane saved on Field opens on Tactical, keeping its palette and gauges, and one saved on Gamba opens on <code>custom</code>.<sup><a href="#s1">1</a></sup></p>
 <div>
 <p>The DESIGN row is <code>clean</code> <code>○</code>, <code>deco</code>, <code>hacker</code> and <code>intrusive</code>. Clean replaced Quiet, and Tactical is retired: a saved Quiet opens as Clean, a saved Tactical as Hacker. <code>custom</code> is no longer offered, though <code>theme.toml</code> still loads and a window already wearing it still shows its tile.<sup><a href="#s4">4</a></sup></p>
-<p>Every design except Clean asks for the <code>ops</code> skin and the Standard <a href="/ui-config">UI set</a>; Clean asks for the <code>clean</code> skin and the Clean set. Picking a design, resetting one or painting the desktop never changes the skin: a window that never picked one keeps the skin it was drawing. A right-click on a design offers <code>Reset … to as designed</code> and <code>Undo</code>.</p>
+<p>Deco asks for the <code>deco</code> skin, Hacker and Intrusive for <code>ops</code>, and all three for the Standard <a href="/ui-config">UI set</a>; Clean asks for the <code>clean</code> skin and the Clean set. Picking a design, resetting one or painting the desktop never changes the skin: a window that never picked one keeps the skin it was drawing. A right-click on a design offers <code>Reset … to as designed</code> and <code>Undo</code>.</p>
 </div>
 
 <h3>A fresh window</h3>
-<p>A new install's window wears <code>custom</code> under the Terminal Delight palette, with the CRT off, <code>theme</code> program colour, <code>agentic</code> syntax and <code>contrast</code> sticky notes. Its gauges open at brightness −24, contrast +25, colour +50, menu bar 85% and text size 74%. Your <code>theme.toml</code> starts as a copy of <code>hacker</code>, so switching the CRT on gives that design's tube. An install upgraded from an earlier version keeps its look and its tube. Every new pane follows the window.<sup><a href="#s1">1</a></sup></p>
-<p>A new window opens in Clean, with <code>ansi</code> program colour, <code>mark</code> syntax and INHERIT on. UI CONFIG's <code>use this window</code> makes the window you're in the template for new ones instead.<sup><a href="#s4">4</a></sup></p>
+<p>Your <code>theme.toml</code> starts as a copy of <code>hacker</code>. An install upgraded from an earlier version keeps its look and its tube. Every new pane follows the window.<sup><a href="#s1">1</a></sup></p>
+<p>A new window opens in Deco, on the tube, with <code>ansi</code> program colour, <code>mark</code> syntax and INHERIT on. While a window follows Omarchy, its <code>ansi</code> colours are the desktop theme's sixteen, so a program reads as it does in the desktop's other terminals. One colour departs from the theme: bright black, which many themes set close to the background, sits 60% of the way from the background to the text, so a program's secondary text stays readable through the tube. UI CONFIG's <code>use this window</code> makes the window you're in the template for new ones instead.<sup><a href="#s4">4</a></sup></p>
 
 <div>
 <h3>Looks that remember</h3>
