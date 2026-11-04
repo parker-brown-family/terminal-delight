@@ -20,6 +20,9 @@ const SEAT_W: f32 = 264.;
 const SEAT_H: f32 = 184.;
 const COL_GAP: f32 = 30.;
 const ROW_GAP: f32 = 56.;
+/// What a two-way line adds to the gap it crosses, so both labels and both
+/// arrowheads have room.
+const TWO_WAY_GAP: f32 = 28.;
 const PAD: f32 = 14.;
 
 /// A view over the chart, never a change to its seats or permissions. Bounds
@@ -108,7 +111,8 @@ struct PaneFacts {
 /// A wire the canvas is ready to stroke: its polyline, whether it bypasses a
 /// copy's press limit (drawn dashed amber), and whether its target is off-limits
 /// (drawn faint and dashed, granting nothing).
-type WireStroke = (Vec<(f32, f32)>, bool, bool);
+type Polyline = Vec<(f32, f32)>;
+type WireStroke = (Polyline, bool, bool);
 
 /// Someone related to the shown org from beyond its border: a seat in another
 /// org by a line to a member, or another org by a whole-org line. Drawn in the
@@ -138,6 +142,9 @@ struct Wire {
     /// chip is inked by, so the clearance reads at a glance.
     rung: Option<threshing_floor::Rung>,
     label_at: (f32, f32),
+    /// Which side of a two-way line this direction's label sits on, as a unit
+    /// step. A one-way line's label sits on the line, at zero.
+    beside: (f32, f32),
     label: String,
 }
 
@@ -767,16 +774,36 @@ impl Workspace {
         let placed = threshing_floor::layout(&keys, &self.chart);
         // Room above the first row for the border's name.
         let top = pad + 18. * s;
+        let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0);
+        let row_of = |seat| placed.iter().find(|p| p.seat == seat).map(|p| p.row);
+        let two_way_rows: Vec<(usize, usize)> = self
+            .chart
+            .saved()
+            .iter()
+            .filter(|l| self.chart.line(l.to, l.from).is_some())
+            .filter_map(|l| Some((row_of(l.from)?, row_of(l.to)?)))
+            .collect();
+        let row_room = two_way_row_room(rows, &two_way_rows, TWO_WAY_GAP * s);
+        // Rows open one gap at a time; columns sit on a shared pitch, so a
+        // two-way line along a row opens them all.
+        let cg = cg
+            + if two_way_rows.iter().any(|(a, b)| a == b) {
+                TWO_WAY_GAP * s
+            } else {
+                0.
+            };
         let at = |seat: threshing_floor::SeatId| -> Option<(f32, f32)> {
-            placed
-                .iter()
-                .find(|p| p.seat == seat)
-                .map(|p| (pad + p.col * (sw + cg), top + p.row as f32 * (sh + rg)))
+            placed.iter().find(|p| p.seat == seat).map(|p| {
+                (
+                    pad + p.col * (sw + cg),
+                    top + p.row as f32 * (sh + rg) + row_room[p.row],
+                )
+            })
         };
         let cols = placed.iter().map(|p| p.col + 1.).fold(0., f32::max);
-        let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0);
+        let all_room = row_room.last().copied().unwrap_or(0.);
         let chart_w = (pad * 2. + cols * (sw + cg) - cg).max(420. * s);
-        let mut chart_h = (top + pad + rows as f32 * (sh + rg) - rg).max(sh + top + pad);
+        let mut chart_h = (top + pad + rows as f32 * (sh + rg) - rg + all_room).max(sh + top + pad);
         let mut chart_w = chart_w;
 
         // ---- the border, and who stands outside it ----
@@ -849,7 +876,8 @@ impl Workspace {
             let x0 = pad * 0.4;
             let y0 = pad * 0.4;
             let x1 = (pad + cols * (sw + cg) - cg + pad * 0.6).max(x0 + sw + pad);
-            let y1 = (top + rows as f32 * (sh + rg) - rg + pad * 0.6).max(top + sh * 0.5);
+            let y1 =
+                (top + rows as f32 * (sh + rg) - rg + all_room + pad * 0.6).max(top + sh * 0.5);
             (x0, y0, x1, y1)
         });
         let (ow, oh, og) = (sw * 0.95, 64. * s, 14. * s);
@@ -887,14 +915,23 @@ impl Workspace {
                     ),
                     (None, _) => lang::fill(ui.floor_rel_wire, &[("rung", ui.floor_unknown)]),
                 };
-                let (points, label_at) = wire_route((fx, fy), (tx, ty), sw, sh, cg, rg);
+                let two_way = self.chart.line(l.to, l.from).is_some();
+                let route = line_route((fx, fy), (tx, ty), two_way, sw, sh, cg, rg);
+                // Two labels on one line cannot both point right, so each says
+                // which way its own half runs.
+                let label = if two_way {
+                    label.replace('\u{2192}', arrival_arrow(&route.points))
+                } else {
+                    label
+                };
                 Some(Wire {
                     from: l.from,
                     to: l.to,
-                    points,
+                    points: route.points,
                     bypass: l.is_bypass(),
                     rung: l.rung.known(),
-                    label_at,
+                    label_at: route.label_at,
+                    beside: route.beside,
                     label,
                 })
             })
@@ -1533,7 +1570,8 @@ impl Workspace {
             };
             // Sized to its words, and kept inside the chart's own edges.
             let lw = (w.label.chars().count() as f32 * 6.4 + 16.) * s;
-            let lx = (w.label_at.0 - lw / 2.).clamp(2., (chart_w - lw - 2.).max(2.));
+            let lx = (w.label_at.0 - lw / 2. + w.beside.0 * (lw / 2. + 3. * s))
+                .clamp(2., (chart_w - lw - 2.).max(2.));
             chart = chart.child(
                 div()
                     .id(SharedString::from(format!(
@@ -1543,10 +1581,15 @@ impl Workspace {
                     .debug_selector(move || format!("floor-line-{}-{}", from.0, to.0))
                     .absolute()
                     .left(px(lx))
-                    .top(px(w.label_at.1 - 9. * s))
+                    .top(px(w.label_at.1 - 9. * s + w.beside.1 * 12. * s))
                     .w(px(lw))
                     .flex()
-                    .justify_center()
+                    // Beside a line the label leans in towards it.
+                    .map(|d| match w.beside.0 {
+                        x if x > 0. => d.justify_start(),
+                        x if x < 0. => d.justify_end(),
+                        _ => d.justify_center(),
+                    })
                     .child(
                         div()
                             .px(px(6. * s))
@@ -5392,8 +5435,9 @@ impl Workspace {
                 continue;
             };
             if org_of_seat(line.from) == org_of_seat(line.to) {
-                let (pts, _) = wire_route(a, b, sw, sh, cg, rg);
-                paths.push((pts, line.is_bypass(), false));
+                let two_way = self.chart.line(line.to, line.from).is_some();
+                let route = line_route(a, b, two_way, sw, sh, cg, rg);
+                paths.push((route.points, line.is_bypass(), false));
             }
         }
         // A whole-org line to one of its own seats has no cross-org pair.
@@ -6944,6 +6988,105 @@ fn wire_route(
         let (y0, y1) = (fy + sh / 2., ty + sh / 2.);
         (vec![(x0, y0), (x1, y1)], ((x0 + x1) / 2., (y0 + y1) / 2.))
     }
+}
+
+/// One direction of a line, as the chart draws it.
+struct LineRoute {
+    points: Vec<(f32, f32)>,
+    label_at: (f32, f32),
+    beside: (f32, f32),
+}
+
+/// The route one direction of a line takes. Both directions of a two-way line
+/// share one route, whichever way it was drawn first, and each strokes only
+/// the half from the middle to the seat it reaches. Together they read as a
+/// single line with an arrowhead at each end, and each half keeps its own ink,
+/// so a bypass or a walled-off direction still shows as one. Parker,
+/// 2026-11-04: *"a single line with two arrows"*. Routed separately, the line
+/// back up left the lower card's side and crossed the line down.
+fn line_route(
+    from: (f32, f32),
+    to: (f32, f32),
+    two_way: bool,
+    sw: f32,
+    sh: f32,
+    cg: f32,
+    rg: f32,
+) -> LineRoute {
+    if !two_way {
+        let (points, label_at) = wire_route(from, to, sw, sh, cg, rg);
+        return LineRoute {
+            points,
+            label_at,
+            beside: (0., 0.),
+        };
+    }
+    let forward = (from.1, from.0) < (to.1, to.0);
+    let (a, b) = if forward { (from, to) } else { (to, from) };
+    let (route, label_at) = wire_route(a, b, sw, sh, cg, rg);
+    let side = if forward { 1. } else { -1. };
+    let vertical = route.iter().all(|p| (p.0 - route[0].0).abs() < 0.01);
+    let (to_a, to_b) = halves(&route);
+    LineRoute {
+        points: if forward { to_b } else { to_a },
+        label_at,
+        // Beside a vertical line, or above and below any other.
+        beside: if vertical { (side, 0.) } else { (0., side) },
+    }
+}
+
+/// A route cut at half its length, as two polylines that both leave the middle:
+/// one to the route's start, one to its end.
+fn halves(route: &[(f32, f32)]) -> (Polyline, Polyline) {
+    let length = |p: &[(f32, f32)]| ((p[1].0 - p[0].0).powi(2) + (p[1].1 - p[0].1).powi(2)).sqrt();
+    let mut left = route.windows(2).map(length).sum::<f32>() / 2.;
+    for (i, pair) in route.windows(2).enumerate() {
+        let len = length(pair);
+        if len >= left && len > 0. {
+            let t = left / len;
+            let middle = (
+                pair[0].0 + (pair[1].0 - pair[0].0) * t,
+                pair[0].1 + (pair[1].1 - pair[0].1) * t,
+            );
+            let mut to_start = vec![middle];
+            to_start.extend(route[..=i].iter().rev());
+            let mut to_end = vec![middle];
+            to_end.extend(&route[i + 1..]);
+            return (to_start, to_end);
+        }
+        left -= len;
+    }
+    (route.to_vec(), route.to_vec())
+}
+
+/// The arrow for the way a line arrives at its seat.
+fn arrival_arrow(points: &[(f32, f32)]) -> &'static str {
+    let Some(pair) = points.windows(2).rev().find(|p| p[0] != p[1]) else {
+        return "\u{2192}";
+    };
+    let (dx, dy) = (pair[1].0 - pair[0].0, pair[1].1 - pair[0].1);
+    match (dx.abs() >= dy.abs(), dx > 0., dy > 0.) {
+        (true, true, _) => "\u{2192}",
+        (true, false, _) => "\u{2190}",
+        (false, _, true) => "\u{2193}",
+        (false, _, false) => "\u{2191}",
+    }
+}
+
+/// How far each row sits below where it would without two-way lines: `gap` for
+/// every row boundary one crosses, added up as the rows go down.
+fn two_way_row_room(rows: usize, two_way: &[(usize, usize)], gap: f32) -> Vec<f32> {
+    let mut room = 0.;
+    (0..rows.max(1))
+        .map(|row| {
+            let crossed = row > 0
+                && two_way
+                    .iter()
+                    .any(|(a, b)| (*a).min(*b) < row && row <= (*a).max(*b));
+            room += if crossed { gap } else { 0. };
+            room
+        })
+        .collect()
 }
 
 /// An orthogonal route between two boxes `(x, y, w, h)` that may sit anywhere
@@ -11036,6 +11179,117 @@ mod tests {
             PAD + col as f32 * (SEAT_W + COL_GAP),
             PAD + row as f32 * (SEAT_H + ROW_GAP),
         )
+    }
+
+    /// The reported picture: one seat above another, a line each way. Both
+    /// directions lie on one vertical line, meet at its middle, and end at the
+    /// seat they reach, whichever was drawn first.
+    #[test]
+    fn a_two_way_line_is_one_line_with_an_arrow_at_each_end() {
+        let (upper, lower) = (seat_xy(0, 0), seat_xy(0, 1));
+        let route = |from, to| line_route(from, to, true, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+        let (down, up) = (route(upper, lower), route(lower, upper));
+        let x = upper.0 + SEAT_W / 2.;
+        for p in down.points.iter().chain(&up.points) {
+            assert!((p.0 - x).abs() < 0.01, "off the one line: {p:?}");
+        }
+        assert_eq!(down.points[0], up.points[0], "the halves meet");
+        assert_eq!(*down.points.last().unwrap(), (x, lower.1));
+        assert_eq!(*up.points.last().unwrap(), (x, upper.1 + SEAT_H));
+        assert_eq!(arrival_arrow(&down.points), "\u{2193}");
+        assert_eq!(arrival_arrow(&up.points), "\u{2191}");
+        assert_eq!(down.beside, (1., 0.));
+        assert_eq!(up.beside, (-1., 0.), "the labels stand either side");
+    }
+
+    /// Seats in different columns and along a row take the same shared route,
+    /// with the labels above and below the stretch they sit on.
+    #[test]
+    fn a_two_way_line_shares_one_route_wherever_its_seats_stand() {
+        for (a, b) in [
+            (seat_xy(0, 0), seat_xy(2, 1)),
+            (seat_xy(0, 0), seat_xy(1, 0)),
+            (seat_xy(1, 0), seat_xy(0, 3)),
+        ] {
+            let route = |from, to| line_route(from, to, true, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+            let (there, back) = (route(a, b), route(b, a));
+            assert_eq!(there.points[0], back.points[0], "{a:?} {b:?}");
+            assert_eq!(there.label_at, back.label_at);
+            assert_eq!(there.beside.1, -back.beside.1);
+            assert_ne!(there.beside.1, 0., "above and below");
+            let length = |p: &[(f32, f32)]| {
+                p.windows(2)
+                    .map(|s| (s[1].0 - s[0].0).abs() + (s[1].1 - s[0].1).abs())
+                    .sum::<f32>()
+            };
+            assert!((length(&there.points) - length(&back.points)).abs() < 0.01);
+        }
+    }
+
+    /// A one-way line keeps its own route and its label on the line.
+    #[test]
+    fn a_one_way_line_is_routed_as_it_always_was() {
+        let (a, b) = (seat_xy(1, 1), seat_xy(0, 0));
+        let route = line_route(a, b, false, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+        let (points, label_at) = wire_route(a, b, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+        assert_eq!(route.points, points);
+        assert_eq!(route.label_at, label_at);
+        assert_eq!(route.beside, (0., 0.));
+    }
+
+    /// Room opens at each boundary a two-way line crosses, and only there.
+    #[test]
+    fn two_way_room_opens_only_the_gaps_it_crosses() {
+        assert_eq!(two_way_row_room(4, &[], 10.), [0., 0., 0., 0.]);
+        assert_eq!(two_way_row_room(4, &[(1, 2)], 10.), [0., 0., 10., 10.]);
+        assert_eq!(two_way_row_room(4, &[(3, 1)], 10.), [0., 0., 10., 20.]);
+        assert_eq!(two_way_row_room(2, &[(0, 0)], 10.), [0., 0.]);
+        assert_eq!(two_way_row_room(0, &[], 10.), [0.]);
+    }
+
+    /// Drawn: the lower seat moves down for a two-way line, the two labels do
+    /// not touch, and each one still opens its own direction.
+    #[gpui::test]
+    fn each_direction_of_a_two_way_line_keeps_its_own_label(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let draw = |ws: &gpui::Entity<Workspace>, cx: &mut gpui::VisualTestContext, a, b| {
+            ws.update(cx, |ws, cx| {
+                ws.chart.draw(
+                    threshing_floor::SeatId(a),
+                    threshing_floor::SeatId(b),
+                    threshing_floor::Rung::Prompt,
+                );
+                cx.notify();
+            });
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(&ws, cx, 100, 101);
+        let one_way = bounds(cx, "floor-seat-101").origin.y - bounds(cx, "floor-seat-100").origin.y;
+        draw(&ws, cx, 101, 100);
+        let two_way = bounds(cx, "floor-seat-101").origin.y - bounds(cx, "floor-seat-100").origin.y;
+        assert!(two_way > one_way, "{two_way:?} against {one_way:?}");
+        let (there, back) = (
+            bounds(cx, "floor-line-100-101"),
+            bounds(cx, "floor-line-101-100"),
+        );
+        assert!(
+            back.right() <= there.origin.x,
+            "the labels stand apart: {back:?} {there:?}"
+        );
+        click(cx, "floor-line-101-100");
+        ws.read_with(cx, |ws, _| {
+            let editing = ws.floor_relation.as_ref().and_then(|e| e.editing);
+            assert_eq!(
+                editing,
+                Some((threshing_floor::SeatId(101), threshing_floor::SeatId(100)))
+            );
+        });
     }
 
     #[test]
