@@ -27,10 +27,26 @@ fetch() {
   curl -fL --retry 3 --proto '=https,file' --proto-redir '=https' "$@"
 }
 
-place() {
-  [ ! -e "$2" ] && [ ! -L "$2" ] || return 0
-  install -Dm644 "$1" "$2"
-  printf 'file\t%s\t%s\n' "$(sha256sum "$2" | cut -d ' ' -f 1)" "$2" >>"$stage"
+absent() {
+  [ ! -e "$1" ] && [ ! -L "$1" ]
+}
+
+# `claim` records a file in the receipt, `put` makes it appear. Both skip a file
+# already at the destination, which stays someone else's.
+claim() {
+  absent "$2" || return 0
+  line=$(printf 'file\t%s\t%s' "$(sha256sum "$1" | cut -d ' ' -f 1)" "$2")
+  grep -qxF "$line" "$stage" || printf '%s\n' "$line" >>"$stage"
+}
+
+# In one step, under a name nothing else holds: an interrupted copy can't leave
+# a half-written file at the destination, or overwrite anything beside it.
+put() { # <mode> <source> <destination>
+  absent "$3" || return 0
+  mkdir -p "$(dirname "$3")"
+  part=$(mktemp "$(dirname "$3")/.td-install.XXXXXX")
+  install -m "$1" "$2" "$part"
+  mv -f "$part" "$3"
 }
 
 # Everything that acts is in main, called on the last line: piped into sh, a
@@ -38,7 +54,7 @@ place() {
 main() {
   [ "$(id -u)" -ne 0 ] || die "run this as your desktop user, without sudo."
   [ "$(uname -m)" = x86_64 ] || die "the AppImage is built for x86_64 only."
-  for tool in curl sha256sum install; do
+  for tool in curl grep install sha256sum; do
     command -v "$tool" >/dev/null || die "this needs $tool."
   done
 
@@ -55,7 +71,8 @@ main() {
   # Staged in the cache rather than /tmp, which can be mounted noexec.
   mkdir -p "$cache"
   work=$(mktemp -d "$cache/td-install.XXXXXX")
-  trap 'rm -rf "${work:?}"' EXIT
+  part=$work/none
+  trap 'rm -rf "${work:?}"; rm -f "${part:?}"' EXIT
   trap 'exit 130' INT TERM
 
   # A release with no checksum is refused, the same rule the app's updater keeps.
@@ -81,15 +98,16 @@ main() {
   ) >/dev/null ||
     die "the launcher entry could not be read out of the AppImage."
 
-  # The receipt is how the uninstaller knows these files are ours. Anything
-  # already at a destination stays, and stays out of the receipt.
+  # The receipt is how the uninstaller knows these files are ours, so it is
+  # published before they appear: an interrupted run can't leave one unclaimed.
   receipt=$receipts/desktop.receipt
   [ ! -L "$receipt" ] || die "$receipt is a symlink."
   (
     umask 077
     mkdir -p "$receipts"
   )
-  stage=$work/receipt
+  stage=$(mktemp "$receipts/.desktop.XXXXXX")
+  part=$stage
   if [ -f "$receipt" ]; then
     cat "$receipt" >"$stage"
   else
@@ -97,17 +115,22 @@ main() {
   fi
 
   from=$work/squashfs-root/usr/share
-  place "$from/applications/terminal-delight.desktop" "$data/applications/terminal-delight.desktop"
-  for icon in scalable/apps/terminal-delight.svg 256x256/apps/terminal-delight.png; do
-    place "$from/icons/hicolor/$icon" "$data/icons/hicolor/$icon"
+  entry=applications/terminal-delight.desktop
+  icons="scalable/apps/terminal-delight.svg 256x256/apps/terminal-delight.png"
+  claim "$from/$entry" "$data/$entry"
+  for icon in $icons; do
+    claim "$from/icons/hicolor/$icon" "$data/icons/hicolor/$icon"
   done
   mv -f "$stage" "$receipt"
 
-  # The program goes in last, in one step: until this line an interrupted run
-  # leaves nothing that looks installed, so running this again finishes the job.
-  mkdir -p "$bin"
-  install -m755 "$image" "$target.part"
-  mv -f "$target.part" "$target"
+  put 644 "$from/$entry" "$data/$entry"
+  for icon in $icons; do
+    put 644 "$from/icons/hicolor/$icon" "$data/icons/hicolor/$icon"
+  done
+
+  # The program goes in last: until this line an interrupted run leaves nothing
+  # that looks installed, so running this again finishes the job.
+  put 755 "$image" "$target"
 
   if command -v update-desktop-database >/dev/null; then
     update-desktop-database "$data/applications" 2>/dev/null || :

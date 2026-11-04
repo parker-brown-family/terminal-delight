@@ -43,7 +43,7 @@ mkdir -p "$stubs"
 # cannot answer for the scratch home.
 tools=$scratch/tools
 mkdir -p "$tools"
-for tool in cat chmod curl cut id install mkdir mktemp mv rm sh sha256sum uname; do
+for tool in cat chmod curl cut dirname grep id install mkdir mktemp mv rm sh sha256sum uname; do
   ln -s "$(command -v "$tool")" "$tools/$tool"
 done
 
@@ -166,7 +166,7 @@ ok "an existing entry stays theirs, and an earlier receipt survives"
 home=$scratch/piped
 mkdir -p "$home"
 status=0
-out=$(env -i HOME="$home" PATH="$stubs:$tools" TD_RELEASE_URL="file://$good" sh <"$repo/install.sh" 2>&1) || status=$?
+out=$(cat "$repo/install.sh" | env -i HOME="$home" PATH="$stubs:$tools" TD_RELEASE_URL="file://$good" sh 2>&1) || status=$?
 [[ $status == 0 && -x $home/.local/bin/terminal-delight ]] || fail "piped into sh: not installed"
 ok "piped into sh, it installs"
 
@@ -182,12 +182,46 @@ for percent in 10 30 50 70 90 99; do
 done
 ok "a download cut off partway runs nothing"
 
-home=$scratch/resumed
+home=$scratch/beside
+mkdir -p "$home/.local/bin"
+echo 'theirs' >"$home/.local/bin/terminal-delight.part"
 run "$home" "$good"
-rm "${home:?}/.local/bin/terminal-delight"
-run "$home" "$good"
-[[ $status == 0 && -x $home/.local/bin/terminal-delight ]] || fail "run after an interruption did not finish"
-[[ $(grep -c 'terminal-delight.svg' "$home/.local/state/terminal-delight/receipts/desktop.receipt") == 1 ]] || fail "receipt line doubled"
-ok "running again after an interruption finishes the job"
+[[ $status == 0 ]] || fail "install beside a .part file failed"
+[[ $(cat "$home/.local/bin/terminal-delight.part") == theirs ]] || fail "a file beside the program was overwritten"
+ok "a file beside the program is left alone"
+
+# A run that dies at each copy, then a run that finishes the job. `install`
+# fails when handed the file named in the stub, as a full disk would.
+real_install=$(command -v install)
+copy=0
+for victim in terminal-delight.desktop terminal-delight.svg terminal-delight.png "$asset"; do
+  copy=$((copy + 1))
+  # Numbered, because a home named after the victim would fail every copy.
+  home=$scratch/died-$copy
+  stubs=$scratch/stubs-$copy
+  mkdir -p "$stubs"
+  cat >"$stubs/install" <<STUB
+#!/bin/sh
+case "\$*" in *$victim*) exit 1 ;; esac
+exec $real_install "\$@"
+STUB
+  chmod +x "$stubs/install"
+  run "$home" "$good"
+  stubs=$keep
+  [[ $status != 0 ]] || fail "$victim: the failing copy went unnoticed"
+  [[ ! -e $home/.local/bin/terminal-delight ]] || fail "$victim: the program is there after a failed run"
+  placed=$(find "$home/.local/share" -name 'terminal-delight.*' 2>/dev/null | wc -l)
+  [[ $placed == $((copy > 3 ? 3 : copy - 1)) ]] || fail "$victim: died after $placed copies, not at this one"
+  [[ -z $(ls -A "$home/.cache") ]] || fail "$victim: staging left behind"
+  [[ -z $(find "$home" -name '.td-install.*') ]] || fail "$victim: a partial copy left behind"
+  run "$home" "$good"
+  [[ $status == 0 && -x $home/.local/bin/terminal-delight ]] || fail "$victim: the second run did not finish"
+  receipt=$home/.local/state/terminal-delight/receipts/desktop.receipt
+  for f in applications/terminal-delight.desktop icons/hicolor/scalable/apps/terminal-delight.svg icons/hicolor/256x256/apps/terminal-delight.png; do
+    [[ -f $home/.local/share/$f ]] || fail "$victim: $f missing after the second run"
+    [[ $(grep -cF "$home/.local/share/$f" "$receipt") == 1 ]] || fail "$victim: $f not recorded exactly once"
+  done
+  ok "dying at $victim, then running again, finishes with everything claimed once"
+done
 
 echo "$passed passed"
