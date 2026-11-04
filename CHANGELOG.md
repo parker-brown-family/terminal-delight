@@ -13,7 +13,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   https://terminal-delight.brownfamilysports.com/install.sh | sh` puts the
   stable AppImage at `~/.local/bin/terminal-delight` with its launcher entry
   and icons. It refuses a download that doesn't match the release's checksum,
-  and it leaves an install that is already there alone.
+  and it leaves an install that is already there alone. A build older than 0.5.0
+  has no updater, so it is told how to get past that. (#1332)
 
 ### A new window
 
@@ -26,6 +27,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   sixteen colours programs use from the theme, so `ls` folders read as they do
   in the desktop's other terminals instead of xterm's dark blue.
 - **Agents sleep after an hour of rest,** down from two.
+- **UI CONFIG's NEW WINDOWS row says deco,** which is what a new window opens in.
 - **A window in a plain folder is not a finding.** The Git chip says *No new
   findings* until a repository is in view.
 
@@ -44,6 +46,31 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   its own settings.
 - **The rest and sleep sliders no longer overlap.** Their stops stand evenly
   along the track and only *1 h* carries a unit. Sleep gains a 1 h stop.
+
+### Documents and control
+
+- **GAUGES has a FLOATING DOCUMENT section.** Brightness, contrast, see-through and
+  glow for the floating document, per pane, saved with the layout and open to
+  agents as `doc_brightness`, `doc_contrast`, `doc_clear` and `doc_glow`. Brightness
+  and contrast work the same on a page, a picture, a PDF or Markdown, and follow the
+  document into the reading frame. Until it is moved, glow follows the phosphor gauge.
+  Menus, trays and hover cards standing over a dimmed document keep their own
+  light. As see-through rises, the document's halo and shadow fade with it, because
+  they would otherwise sit between it and the terminal.
+- **`ctl` no longer deletes the socket of a window that is only busy.** A window too
+  behind to answer used to lose its control socket, and with it every way to reach
+  it until it restarted. Only a refused connection counts as stale now. (#796)
+
+### Upgrading from 0.5.0
+
+- **A window that follows Omarchy changes colour.** Programs in it take the
+  theme's sixteen colours from the first start on 0.5.1. Bright black is the one
+  departure: it sits 60% of the way from the background to the text, because
+  several themes put it too close to the background to read through the tube.
+  A window with a palette you picked yourself is unchanged.
+- **Your look stays.** The Deco defaults are for new windows only. A window you
+  already have keeps its design, skin and dials.
+- **Agents sleep sooner** unless you moved the sleep slider yourself.
 
 ## [0.5.0] — 2026-11-03
 
@@ -333,17 +360,6 @@ sections from there down are what the 0.4.0 candidates already carried.
 
 ### Keys, prompts, gauges and notes
 
-- **GAUGES has a FLOATING DOCUMENT section.** Brightness, contrast, see-through and
-  glow for the floating document, per pane, saved with the layout and open to
-  agents as `doc_brightness`, `doc_contrast`, `doc_clear` and `doc_glow`. Brightness
-  and contrast work the same on a page, a picture, a PDF or Markdown, and follow the
-  document into the reading frame. Until it is moved, glow follows the phosphor gauge.
-  Menus, trays and hover cards standing over a dimmed document keep their own
-  light. As see-through rises, the document's halo and shadow fade with it, because
-  they would otherwise sit between it and the terminal.
-- **`ctl` no longer deletes the socket of a window that is only busy.** A window too
-  behind to answer used to lose its control socket, and with it every way to reach
-  it until it restarted. Only a refused connection counts as stale now. (#796)
 - **One key reaches a tab.** Any tab can be pinned to Alt+Shift+<letter>; the
   pin is saved on the tab, so it survives reordering, filing, a restart and a
   reattach. The spine's row menu and the tab config menu show the pin, take a

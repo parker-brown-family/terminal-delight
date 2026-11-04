@@ -31150,7 +31150,7 @@ impl Workspace {
         })
     }
 
-    /// Back to Clean for new windows: the template goes.
+    /// Back to the house look for new windows: the template goes.
     fn clear_new_window(&mut self, cx: &mut Context<Self>) {
         match uiconfig::NewWindow::clear() {
             Ok(()) => self.new_window_saved = false,
@@ -33853,7 +33853,7 @@ impl Render for Workspace {
                             cx,
                         ))
                 };
-                // NEW WINDOWS: Clean, unless this window was saved as the look.
+                // NEW WINDOWS: Deco, unless this window was saved as the look.
                 let new_windows = div()
                     .flex()
                     .flex_col()
@@ -33870,7 +33870,7 @@ impl Render for Workspace {
                                 if self.new_window_saved {
                                     t.ui.ui_saved
                                 } else {
-                                    t.thm_clean
+                                    t.ui.pal_thm_deco
                                 },
                             ))
                             .child(
@@ -33886,8 +33886,8 @@ impl Render for Workspace {
                             )
                             .when(self.new_window_saved, |d| {
                                 d.child(
-                                    Self::bezel_btn_s(&sk, t.thm_clean, false, 0.85)
-                                        .id("ui-nw-clean")
+                                    Self::bezel_btn_s(&sk, t.ui.pal_thm_deco, false, 0.85)
+                                        .id("ui-nw-house")
                                         .on_mouse_down(
                                             MouseButton::Left,
                                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {

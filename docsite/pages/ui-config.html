@@ -2,14 +2,14 @@
 {
   "title": "UI CONFIG",
   "description": "UI CONFIG, in the window's painter, hides any piece of Terminal Delight's chrome: the corner's glyphs, the top bar's mark, notice and counter, the left bar, each pane's header controls. Hidden menu glyphs fold into a CONFIG dropdown. New windows open in the Clean design, which turns the tube and every light off and asks for the Clean UI set.",
-  "updated": "2026-11-01",
-  "trueOf": "dev/0.5.0 at d9aa472d",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "Hide any chrome, and the Clean design"
 }
 </script>
 
 <section data-register="brief">
-<p class="lede">A new window opens in the Clean design: flat glass, letters with no glow, nearly square corners, tabs across the top, and very little chrome. Everything Clean puts away is still one click from the <code>CONFIG ▾</code> button in the bottom-right corner.</p>
+<p class="lede">The Clean design is the quiet way to run Terminal Delight: flat glass, letters with no glow, nearly square corners, tabs across the top, and very little chrome. Everything Clean puts away is still one click from the <code>CONFIG ▾</code> button in the bottom-right corner. A new window opens in Deco instead, with the Standard set of chrome.</p>
 <p>What a window shows is yours to choose. Click <code>🎨</code>, or <code>CONFIG ▾</code> then <code>UI CONFIG…</code>, and the painter's fourth area lists every piece of chrome as a switch. <code>OUTER</code> covers the frame around the panes: the corner's glyphs, the app mark, the Git notice, the agent counter, the left bar. <code>PANES</code> is one set of switches for every pane's header at once. Hide a corner glyph and <code>CONFIG ▾</code> takes the corner, listing what the glyphs opened.</p>
 <p>Three sets come built in, <code>all</code>, <code>clean</code> and <code>standard</code>, and a design only asks for one: any switch you flip yourself wins. Each design remembers the switches you set while wearing it, and <code>use this window</code> makes the window you're in the starting point for new ones.</p>
 <p class="invite">Technical has every switch, the three sets, the CONFIG menu and the Clean design.</p>
@@ -17,7 +17,7 @@
 
 <section data-register="technical" data-headline="UI CONFIG">
 <h3>The Clean design</h3>
-<p>Clean is the first tile of the <a href="/themes">DESIGN</a> row, <code>○ clean</code>, and what a new window wears. Every <a href="/crt#technical-effects">effect</a> in its file is zero, and while it is worn the tube and the light are held off whatever the GAUGES dials say: the curve, the rolling band, the glare, letter glow, the linger fades and the halos on lit borders. The dials keep their values for the next design you pick. It replaced Quiet, and a window saved on Quiet opens as Clean.<sup><a href="#s1">1</a></sup></p>
+<p>Clean is the first tile of the <a href="/themes">DESIGN</a> row, <code>○ clean</code>. Every <a href="/crt#technical-effects">effect</a> in its file is zero, and while it is worn the tube and the light are held off whatever the GAUGES dials say: the curve, the rolling band, the glare, letter glow, the linger fades and the halos on lit borders. The dials keep their values for the next design you pick. It replaced Quiet, and a window saved on Quiet opens as Clean.<sup><a href="#s1">1</a></sup></p>
 <p>Clean asks for the <code>clean</code> <a href="/skins">skin</a>, nearly square (corners of 2 and 3 pixels, never more than 3) and flat with no glow, and for the Clean UI set below. Both are asks: a skin you picked, or a switch you flipped, outranks them. Its own colours show only where no theme is painted; they are the Terminal Delight palette's. With an open-furniture skin such as TERMINIMALIST, side-by-side panes meet on one shared hairline instead of a dark gutter, and dragging the rule still resizes them.</p>
 
 <h3>Where it is</h3>
@@ -93,7 +93,7 @@ terminal-delight ui --check ~/.config/terminal-delight/ui/mine.toml</code></pre>
 <p>A skin's ask is never saved as your choice, so moving from TERMINIMALIST to another skin puts the design's own set back.</p>
 
 <h3>New windows</h3>
-<p>The <code>NEW WINDOWS</code> row says what a new window will start as: <code>clean</code>, or <code>this look</code> once you've saved one. <code>use this window</code> saves the window you're in (its design and palette, its skin if you picked one, and its UI CONFIG choice) to <code>~/.config/terminal-delight/new-window.toml</code>. A <code>clean</code> button then appears beside it; it deletes the file, and new windows open Clean again. A file that won't parse is reported and ignored.<sup><a href="#s2">2</a></sup></p>
+<p>The <code>NEW WINDOWS</code> row says what a new window will start as: <code>deco</code>, or <code>this look</code> once you've saved one. <code>use this window</code> saves the window you're in (its design and palette, its skin if you picked one, and its UI CONFIG choice) to <code>~/.config/terminal-delight/new-window.toml</code>. A <code>deco</code> button then appears beside it; it deletes the file, and new windows open in Deco again. A file that won't parse is reported and ignored.<sup><a href="#s2">2</a></sup></p>
 
 <h3>What would prove this wrong</h3>
 <p>Turn every switch off and pick <code>clean</code>. If anything UI CONFIG put away can then not be reached from <code>CONFIG ▾</code>, a pane's <code>⋯</code> or UI CONFIG itself, a switch has removed a feature where it should only have hidden it.</p>

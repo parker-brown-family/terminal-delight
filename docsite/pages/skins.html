@@ -2,8 +2,8 @@
 {
   "title": "Skins",
   "description": "A skin sets the shape and material of Terminal Delight's chrome: corners, edges, how the selection is marked, the interface fonts, paper or plain. Five are built in (default, deco, console, chalk and ops), and your own skin.toml appears as custom and reloads as you save it. Any skin works with any theme.",
-  "updated": "2026-11-01",
-  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "The shape of the chrome around the panes"
 }
 </script>
@@ -51,7 +51,7 @@
   <li><code>default</code>.</li>
 </ol>
 <p>The <code>SKIN</code> row lights whichever skin is drawing, chosen or not. Picking one there is a choice, so a design you pick afterwards no longer changes the skin. Nothing is written on first run. An unknown name is refused with the list of known ones: <code>err no skin "…" — have: …</code>. <code>ctl skin status</code> says what is drawing and what is available.<sup><a href="#s1">1</a></sup></p>
-<p>Picking a design never moves the skin, whether or not you ever chose one: a window keeps the skin it was drawing. A design file that names no skin asks for <code>ops</code>, so every design but Clean starts on OPS.<sup><a href="#s3">3</a></sup></p>
+<p>Picking a design never moves the skin, whether or not you ever chose one: a window keeps the skin it was drawing. A design file that names no skin asks for <code>ops</code>, so Hacker and Intrusive start on OPS, while Deco asks for <code>deco</code> and Clean for <code>clean</code>.<sup><a href="#s3">3</a></sup></p>
 
 <h3>Your own skin</h3>
 <p>Print a built-in skin to start from, edit it, and save it where the window looks:</p>

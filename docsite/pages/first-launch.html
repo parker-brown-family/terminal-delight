@@ -1,16 +1,16 @@
 <script type="application/json" data-page>
 {
   "title": "First launch",
-  "description": "What happens the first time you run Terminal Delight: one window, one terminal, flat glass in Terminal Delight's own colours, and a background session host that keeps your shells alive when the window closes. Which session opens, what is written to disk, the first keys to try, and what comes back next time.",
-  "updated": "2026-11-01",
-  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "description": "What happens the first time you run Terminal Delight: one window, one terminal on the CRT tube in your desktop's colours, and a background session host that keeps your shells alive when the window closes. Which session opens, what is written to disk, the first keys to try, and what comes back next time.",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "What you see, and the first keys to try"
 }
 </script>
 
 <section data-register="brief">
 <p class="lede">Run <code>terminal-delight</code> and one window opens with one terminal in it. Behind the window, a small background process called the session host starts and takes charge of your shells, so closing the window, or losing it to a crash, doesn't end them.</p>
-<p>A new install opens flat, in Terminal Delight's own colours, with the tube switched off. Each pane wears Terminal Delight's mark in its header. The <a href="/left-bar">left bar</a> down the left side holds your session as a tree of projects, groups and tasks. In the top right, the agent counter tallies your agents by state, and a click opens the <a href="/agent-wall">agent wall</a>. The window's own controls sit at the bottom right.</p>
+<p>A new install opens in the Deco design and the Deco skin, on the tube. On Omarchy it wears your desktop theme and follows it; elsewhere it wears the Terminal Delight palette. Each pane wears Terminal Delight's mark in its header. The <a href="/left-bar">left bar</a> down the left side holds your session as a tree of projects, groups and tasks. In the top right, the agent counter tallies your agents by state, and a click opens the <a href="/agent-wall">agent wall</a>. The window's own controls sit at the bottom right.</p>
 <p>A few things to try first:</p>
 <table class="keys">
   <tbody>
@@ -23,8 +23,8 @@
   </tbody>
 </table>
 <p>Typing <code>claude</code> or <code>codex</code> at a prompt works too: Terminal Delight notices the agent. Close the window and open it again, and your tabs, splits, directories and agents come back where they were.</p>
-<p>0.5.0 opens a new window in the Clean design, with tabs across the top instead of the left bar and fewer controls on show. See <a href="/ui-config">UI CONFIG</a>.</p>
-<p class="invite">Technical has which session a window opens, what is written to disk and when, and what 0.5.0's first window looks like.</p>
+<p>The Clean design is one click away if you would rather have no tube and fewer controls on show. See <a href="/ui-config">UI CONFIG</a>.</p>
+<p class="invite">Technical has which session a window opens, what is written to disk and when, and what the first window looks like.</p>
 </section>
 
 <section data-register="technical" data-headline="Starting up">
@@ -48,7 +48,7 @@
 </ul>
 
 <h3>The first look</h3>
-<p>A new install opens flat: the Terminal Delight palette, which ships inside the app, with the tube switched off and contrast raised to make up for the glow a flat screen doesn't have. Every pane follows the window's look until you dress one. The tube is a switch in the collapsed <code>CRT</code> section at the foot of <code>GAUGES</code> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> for a pane, ⛭ at the bottom right for the window), and switching it on brings the warp and the roll already set. An install that ran an earlier version keeps the tube it had.<sup><a href="#s2">2</a></sup></p>
+<p>A new install opens on the tube, with the warp and the roll already set. Every pane follows the window's look until you dress one. The tube is a switch in the collapsed <code>CRT</code> section at the foot of <code>GAUGES</code> (<kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> for a pane, ⛭ at the bottom right for the window). An install that ran an earlier version keeps the tube it had.<sup><a href="#s2">2</a></sup></p>
 <p>Each pane's header shows Terminal Delight's mark, because the first start maps <code>/</code>, the folder every other folder sits under, to it. <a href="/themes">Themes</a> and <a href="/crt">CRT</a> say how to change any of it.</p>
 
 <h3>What is written, and when</h3>
@@ -73,10 +73,10 @@
 <h3>Closing</h3>
 <p>Closing a tab sends it to the bay at the foot of the left bar, still running, and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>Z</kbd> brings it back. Closing the <em>last</em> tab asks first, then ends its shells and quits. A session host with no window attached and nothing printed for twelve hours saves and stops.<sup><a href="#s1">1</a></sup></p>
 
-<h3>The first window in 0.5.0</h3>
+<h3>The first window</h3>
 <div>
-<p>A new window wears the Clean design: no tube and no glow on the letters, corners that are nearly square, and the Terminal Delight palette with INHERIT on, so it follows your Omarchy theme. Clean also asks for its own set of chrome. Tabs run across the top instead of the left bar, and the ◀/▶ handle brings the bar back. The app mark, the Git notice and the agent counter are hidden; the attention pill at the top right stays. The bottom-right glyphs, among them the graveyard and the 📜 artifact rail, fold into a <code>CONFIG</code> menu, and each pane's header comes down to its title, its state and its <code>⋯</code>, with the handover chip and the rest folded in there.<sup><a href="#s4">4</a></sup></p>
-<p>Every one of those is a switch in <a href="/ui-config">UI CONFIG</a>, and a switch you flip there beats Clean. The default for new windows can be changed too. A session saved by an earlier version opens the way it was saved.</p>
+<p>A new window wears the Deco design and the Deco skin on the tube, with the Terminal Delight palette and INHERIT on, so it follows your Omarchy theme, and the cursor leaves a phosphor trail. Programs take their sixteen colours from that theme too, so <code>ls</code> reads as it does in the desktop's other terminals. It uses the Standard set of chrome: the left bar, the app mark, the Git notice and the agent counter are all on show.<sup><a href="#s4">4</a></sup></p>
+<p>Every one of those is a switch in <a href="/ui-config">UI CONFIG</a> or GAUGES, and a switch you flip there beats the design. The default for new windows can be changed too. A session saved by an earlier version opens the way it was saved.</p>
 </div>
 
 <h3>On the desktop</h3>
@@ -90,5 +90,5 @@
   <li id="s1">Session choice: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/instance.rs">instance.rs</a> (<code>resolve_session</code>, and the hosted order below it); the window, the quick window, saving and the safety nets: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; what a pane remembers: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/session.rs">session.rs</a>; the host's idle stop: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/host.rs">host.rs</a>.</li>
   <li id="s2">The first look and the theme seed: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>, <code>init</code>); the mark: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/dirlogo.rs">dirlogo.rs</a> (<code>seed_if_absent</code>).</li>
   <li id="s3">Logs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/diag.rs">diag.rs</a>; the page cache: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/cache.rs">docview/cache.rs</a>.</li>
-  <li id="s4">0.5.0's first window: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>), the Clean set <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/ui/clean.toml">app/ui/clean.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
+  <li id="s4">The first window: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/theme.rs">theme.rs</a> (<code>house_outer</code>), <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/themes/deco.toml">app/themes/deco.toml</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/uiconfig.rs">uiconfig.rs</a>.</li>
 </ol>

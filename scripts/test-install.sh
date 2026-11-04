@@ -91,6 +91,8 @@ ok "a fresh install places the program, the entry, the icons and their receipt"
 before=$(tree "$home")
 run "$home" "$good"
 [[ $status == 0 && $out == *"already installed"* ]] || fail "second run did not say so"
+[[ $out == *"older than 0.5.0 has no updater: move $home/.local/bin/terminal-delight aside"* ]] ||
+  fail "a build with no updater was not told the way forward"
 [[ $(tree "$home") == "$before" ]] || fail "second run changed something"
 ok "a second run changes nothing"
 
