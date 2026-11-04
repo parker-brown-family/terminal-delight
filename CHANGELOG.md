@@ -26,6 +26,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   sixteen colours programs use from the theme, so `ls` folders read as they do
   in the desktop's other terminals instead of xterm's dark blue.
 - **Agents sleep after an hour of rest,** down from two.
+- **A window in a plain folder is not a finding.** The Git chip says *No new
+  findings* until a repository is in view.
 
 ### Threshing Floor and CONFIG
 

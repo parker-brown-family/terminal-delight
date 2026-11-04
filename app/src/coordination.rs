@@ -1246,7 +1246,11 @@ impl Store {
             .snapshot
             .projects
             .iter()
-            .filter(|p| p.meanings.iter().any(|f| f.attention.novel()))
+            .filter(|p| {
+                p.meanings
+                    .iter()
+                    .any(|f| f.attention.novel() && f.kind != meaning::Kind::ObservationGap)
+            })
             .count();
         let conflicts = self
             .snapshot
@@ -1254,10 +1258,14 @@ impl Store {
             .iter()
             .filter(|p| p.meanings.iter().any(|f| f.kind.conflict()))
             .count();
+        // A gap is not a finding, and a project in plain folders has nothing to
+        // scan: `unlocated` holds panes outside any repository as well as panes
+        // still attaching, so only a repository in view can be half read.
         let incomplete = self.snapshot.projects.iter().any(|p| {
-            p.meanings
-                .iter()
-                .any(|f| f.kind == meaning::Kind::ObservationGap)
+            !p.contexts.is_empty()
+                && p.meanings
+                    .iter()
+                    .any(|f| f.kind == meaning::Kind::ObservationGap)
         });
         let tail = if new > 0 {
             l.count(&t.hud_new, new)
