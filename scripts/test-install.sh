@@ -163,6 +163,25 @@ grep -qF '/earlier/file' "$receipt" || fail "earlier receipt lost"
 grep -qF 'terminal-delight.svg' "$receipt" || fail "new icon not recorded"
 ok "an existing entry stays theirs, and an earlier receipt survives"
 
+home=$scratch/piped
+mkdir -p "$home"
+status=0
+out=$(env -i HOME="$home" PATH="$stubs:$tools" TD_RELEASE_URL="file://$good" sh <"$repo/install.sh" 2>&1) || status=$?
+[[ $status == 0 && -x $home/.local/bin/terminal-delight ]] || fail "piped into sh: not installed"
+ok "piped into sh, it installs"
+
+size=$(wc -c <"$repo/install.sh")
+for percent in 10 30 50 70 90 99; do
+  home=$scratch/cut-$percent
+  mkdir -p "$home"
+  status=0
+  out=$(head -c $((size * percent / 100)) "$repo/install.sh" |
+    env -i HOME="$home" PATH="$stubs:$tools" TD_RELEASE_URL="file://$good" sh 2>&1) || status=$?
+  nothing_installed "$home" "cut at $percent%"
+  [[ -z $(ls -A "$home") ]] || fail "cut at $percent%: wrote into the home"
+done
+ok "a download cut off partway runs nothing"
+
 home=$scratch/resumed
 run "$home" "$good"
 rm "${home:?}/.local/bin/terminal-delight"
