@@ -407,6 +407,16 @@ impl TerminalView {
             .unwrap_or_default();
         let zoom = view.zoom_now();
         let clear = th.grade.doc_clear_at_edge();
+        // A clear picture is one layer over the terminal. Markdown paints no
+        // ground of its own, so without a veil its letters collide with the ones
+        // behind it.
+        let ground = if clear == 0.0 {
+            1.0
+        } else if view.target().kind == crate::docopen::DocKind::Markdown {
+            1.0 - clear
+        } else {
+            0.0
+        };
         let zones = self.float_zones.clone();
         // The zone a part of a live square records; a covered square records
         // none of its own.
@@ -480,11 +490,22 @@ impl TerminalView {
             .h(px(r.h))
             .flex()
             .flex_col()
-            .bg(th.bg.alpha(1.0 - clear))
+            .bg(th.bg.alpha(ground))
             .border_2()
             .border_color(th.accent)
             .rounded(sk.rad_raw(6.))
-            .shadow(crate::float_shadows(th.accent, th.grade.doc_glow_at_edge()))
+            .shadow(
+                crate::float_shadows(th.accent, th.grade.doc_glow_at_edge())
+                    .into_iter()
+                    .map(|mut shadow| {
+                        // A shadow fills the box it is cast from as well as the
+                        // ground round it, so the ring and the lift would stand
+                        // between a clear document and the terminal behind it.
+                        shadow.color.a *= (1.0 - clear).powi(4);
+                        shadow
+                    })
+                    .collect(),
+            )
             .overflow_hidden()
             .map(|d| sk.chrome(sk.finish(d)))
             .child(strip)
@@ -940,16 +961,32 @@ impl TerminalView {
         view: &gpui::Entity<crate::docview::DocumentView>,
         cx: &App,
     ) -> Option<impl IntoElement> {
-        let float = self.float.as_ref()?;
-        let square = float.view == *view
-            || float
-                .below
-                .as_ref()
-                .is_some_and(|below| below.view == *view);
-        square
+        self.lent_square(view)
             .then(|| self.resolved_theme(cx).grade.doc_grade())
             .flatten()
             .map(doc_grade_zone)
+    }
+
+    /// The halo the FOCUS reader wears round `view`, when `view` is this pane's
+    /// square: its own dial travels with it. `None` leaves the frame's.
+    pub(crate) fn lent_glow(
+        &self,
+        view: &gpui::Entity<crate::docview::DocumentView>,
+        cx: &App,
+    ) -> Option<f32> {
+        self.lent_square(view)
+            .then(|| self.resolved_theme(cx).grade.doc_glow_at_edge())
+    }
+
+    /// Whether `view` is this pane's square, or the one under its clip.
+    fn lent_square(&self, view: &gpui::Entity<crate::docview::DocumentView>) -> bool {
+        self.float.as_ref().is_some_and(|float| {
+            float.view == *view
+                || float
+                    .below
+                    .as_ref()
+                    .is_some_and(|below| below.view == *view)
+        })
     }
 
     pub(crate) fn has_float(&self) -> bool {

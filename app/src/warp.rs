@@ -45,6 +45,7 @@ pub const MAX_TUBES: usize = 32;
 
 static RECTS: Mutex<Vec<Tube>> = Mutex::new(Vec::new());
 static DOC_GRADES: Mutex<Vec<DocGrade>> = Mutex::new(Vec::new());
+static DOC_KEPT: Mutex<Vec<[f32; 4]>> = Mutex::new(Vec::new());
 static SUPPRESSED: AtomicBool = AtomicBool::new(false);
 /// Set by [`flatten`] from inside an overlay's own builder; cleared by
 /// [`begin_frame`]. The second flag exists so that flatness can be a property
@@ -86,9 +87,9 @@ pub fn begin_frame() {
     let mut rects = RECTS.lock().unwrap();
     rects.clear();
     push(&rects);
-    let mut grades = DOC_GRADES.lock().unwrap();
-    grades.clear();
-    push_doc_grades(&grades);
+    DOC_GRADES.lock().unwrap().clear();
+    DOC_KEPT.lock().unwrap().clear();
+    push_doc_grades();
     // The FOCUS backdrop blur is re-armed each frame by the panel's canvas while
     // the reading modal is open; clear it here so it switches off the moment the
     // modal closes (no canvas → no re-arm → blur gone next frame).
@@ -180,30 +181,46 @@ pub fn register_tube(
 /// its slider. Later rects win where two overlap, which is a clip over its
 /// square.
 pub fn register_doc_grade(rect: [f32; 4], brightness: f32, contrast: f32) {
-    let mut grades = DOC_GRADES.lock().unwrap();
-    if grades.len() < MAX_TUBES {
-        grades.push((rect, brightness, contrast));
-    }
-    push_doc_grades(&grades);
+    DOC_GRADES
+        .lock()
+        .unwrap()
+        .push((rect, brightness, contrast));
+    push_doc_grades();
 }
 
 /// Keep `rect` (physical px) out of this frame's document grades: something drawn
 /// over a document, which a pixel post-process would otherwise grade with it.
 /// GAUGES stands over the square it dials, and dimming the slider along with the
-/// page takes away the way back. Later rects win, so this is a neutral one; with
-/// nothing graded it adds nothing, and the pass stays off.
+/// page takes away the way back.
+///
+/// A list of its own, so the order two elements prepaint in cannot matter: gpui
+/// tells a parent its children's bounds BEFORE they prepaint, which is before any
+/// square inside them has registered.
 pub fn keep_from_doc_grade(rect: [f32; 4]) {
-    let mut grades = DOC_GRADES.lock().unwrap();
-    if !grades.is_empty() && grades.len() < MAX_TUBES {
-        grades.push((rect, 1.0, 1.0));
-    }
-    push_doc_grades(&grades);
+    DOC_KEPT.lock().unwrap().push(rect);
+    push_doc_grades();
 }
 
-#[allow(unused_variables)]
-fn push_doc_grades(grades: &[DocGrade]) {
+/// What the renderer grades this frame: every document, then a neutral rect for
+/// each thing kept out, because the last rect holding a pixel wins. With nothing
+/// graded it is empty whatever was kept, so the pass stays off.
+fn composed_doc_grades() -> Vec<DocGrade> {
+    let grades = DOC_GRADES.lock().unwrap();
+    if grades.is_empty() {
+        return Vec::new();
+    }
+    let kept = DOC_KEPT.lock().unwrap();
+    grades
+        .iter()
+        .copied()
+        .chain(kept.iter().map(|rect| (*rect, 1.0, 1.0)))
+        .take(MAX_TUBES)
+        .collect()
+}
+
+fn push_doc_grades() {
     #[cfg(target_os = "linux")]
-    gpui_wgpu::set_doc_grades(grades);
+    gpui_wgpu::set_doc_grades(&composed_doc_grades());
 }
 
 /// Is the barrel pass flattened for this frame?
@@ -249,7 +266,7 @@ fn push(rects: &[Tube]) {
 /// What the renderer was last told to grade.
 #[cfg(test)]
 pub(crate) fn doc_grades() -> Vec<DocGrade> {
-    DOC_GRADES.lock().unwrap().clone()
+    composed_doc_grades()
 }
 
 #[cfg(test)]
@@ -321,18 +338,19 @@ mod tests {
     fn what_stands_over_a_document_is_kept_from_its_grade() {
         let _serial = WARP_SERIAL.lock().unwrap_or_else(|e| e.into_inner());
         begin_frame();
+        // Kept first, as a parent's listener runs before its children prepaint.
         let tray = [50., 50., 10., 10.];
         keep_from_doc_grade(tray);
         assert_eq!(doc_grades(), vec![], "nothing graded keeps the pass off");
         let square = [0., 0., 100., 100.];
         register_doc_grade(square, 0.5, 1.0);
-        keep_from_doc_grade(tray);
         assert_eq!(
             doc_grades(),
             vec![(square, 0.5, 1.0), (tray, 1.0, 1.0)],
             "neutral, and last, because the last rect holding a pixel wins"
         );
         begin_frame();
+        assert_eq!(doc_grades(), vec![], "and gone with the frame");
     }
 
     #[test]

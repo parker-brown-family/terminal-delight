@@ -324,6 +324,12 @@ sections from there down are what the 0.4.0 candidates already carried.
   agents as `doc_brightness`, `doc_contrast`, `doc_clear` and `doc_glow`. Brightness
   and contrast work the same on a page, a picture, a PDF or Markdown, and follow the
   document into the reading frame. Until it is moved, glow follows the phosphor gauge.
+  Menus, trays and hover cards standing over a dimmed document keep their own
+  light. As see-through rises, the document's halo and shadow fade with it, because
+  they would otherwise sit between it and the terminal.
+- **`ctl` no longer deletes the socket of a window that is only busy.** A window too
+  behind to answer used to lose its control socket, and with it every way to reach
+  it until it restarted. Only a refused connection counts as stale now. (#796)
 - **One key reaches a tab.** Any tab can be pinned to Alt+Shift+<letter>; the
   pin is saved on the tab, so it survives reordering, filing, a restart and a
   reattach. The spine's row menu and the tab config menu show the pin, take a

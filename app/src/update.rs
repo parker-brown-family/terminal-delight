@@ -906,7 +906,7 @@ fn newest_dev_branch() -> Option<String> {
 }
 
 pub(crate) fn source_build_lines(branch: Option<&str>, sha: Option<&str>) -> String {
-    let branch = branch.unwrap_or("dev/0.5.0");
+    let branch = branch.unwrap_or("dev/0.5.1");
     let mut s = format!("git clone -b {branch} https://github.com/{REPO}\ncd terminal-delight");
     if let Some(sha) = sha {
         s.push_str(&format!(" && git checkout {sha}"));
