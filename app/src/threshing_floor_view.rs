@@ -2375,13 +2375,18 @@ impl Workspace {
     }
 
     fn threshing_floor_view_controls(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> gpui::Div {
+        let ui = self.lang.strings().ui;
         let mut controls = div().flex().items_center().gap_1().flex_none();
-        for (id, glyph, delta) in [("floor-zoom-out", "−", -60.), ("floor-zoom-in", "+", 60.)] {
+        for (id, glyph, word, delta) in [
+            ("floor-zoom-out", "−", ui.floor_zoom_out, -60.),
+            ("floor-zoom-in", "+", ui.floor_zoom_in, 60.),
+        ] {
             controls = controls.child(with_tip(
-                Self::bezel_btn(sk, glyph, false)
+                Self::bezel_btn(sk, sk.control(glyph, word), false)
                     .id(id)
                     .debug_selector(move || id.to_string())
-                    .w(px(26.))
+                    // A glyph sits in a square; a word takes the width it needs.
+                    .when(!sk.text_controls(), |d| d.w(px(26.)))
                     .text_center()
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                     .on_click(cx.listener(move |ws, _, _, cx| {
@@ -10176,6 +10181,41 @@ mod tests {
             (f32::from(actual.y - expected.y)).abs() < 1.5,
             "{actual:?} != {expected:?}"
         );
+    }
+
+    /// A skin that draws words gets buttons as wide as the words: at the
+    /// glyph's 26 pixels "remove" and "add" ran together over the percentage.
+    #[gpui::test]
+    fn the_zoom_buttons_hold_their_words_in_a_text_skin(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        for map in [false, true] {
+            let square = bounds(cx, "floor-zoom-out").size.width;
+            assert_eq!(square, px(26.), "an icon skin keeps its square");
+            cx.update(|w, cx| {
+                skin::select(cx, "terminimalist").unwrap();
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            let out = bounds(cx, "floor-zoom-out");
+            let zoom_in = bounds(cx, "floor-zoom-in");
+            let reset = bounds(cx, "floor-view-reset");
+            assert!(out.size.width > square, "{out:?}");
+            assert!(zoom_in.size.width > square, "{zoom_in:?}");
+            assert!(out.right() <= zoom_in.origin.x, "{out:?} {zoom_in:?}");
+            assert!(zoom_in.right() <= reset.origin.x, "{zoom_in:?} {reset:?}");
+            cx.update(|w, cx| {
+                skin::select(cx, "default").unwrap();
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            if !map {
+                click(cx, "floor-system-map-toggle");
+            }
+        }
+        assert!(ws.read_with(cx, |ws, _| ws.floor_map.is_some()));
     }
 
     #[test]
