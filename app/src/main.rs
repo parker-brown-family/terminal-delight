@@ -9140,6 +9140,10 @@ impl Workspace {
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
             inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
+            doc_brightness: g.doc_brightness.map(|v| K::DocBrightness.to_percent(v)),
+            doc_contrast: g.doc_contrast.map(|v| K::DocContrast.to_percent(v)),
+            doc_clear: g.doc_clear.map(|v| K::DocClear.to_percent(v)),
+            doc_glow: g.doc_glow.map(|v| K::DocGlow.to_percent(v)),
             afterglow_ms: g.afterglow_ms,
             cursor_linger_ms: g.cursor_linger_ms,
             off_cursor_linger_ms: g.off_cursor_linger_ms,
@@ -9221,6 +9225,18 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_blur {
             set!(K::InactiveBlur, p);
+        }
+        if let Some(p) = patch.doc_brightness {
+            set!(K::DocBrightness, p);
+        }
+        if let Some(p) = patch.doc_contrast {
+            set!(K::DocContrast, p);
+        }
+        if let Some(p) = patch.doc_clear {
+            set!(K::DocClear, p);
+        }
+        if let Some(p) = patch.doc_glow {
+            set!(K::DocGlow, p);
         }
         if let Some(ms) = patch.afterglow_ms {
             g.set(K::AfterglowMs, ms);
@@ -20122,6 +20138,9 @@ impl Workspace {
             .children(zoom.map(|z| div().text_color(text.alpha(0.6)).child(z)))
             .child(div().text_color(text.alpha(0.6)).child(keys));
         let store = self.focus_body_bounds.clone();
+        // The square came up here to be read, and it keeps its grade in the
+        // frame; the Document face is not the square and has no such dials.
+        let grade_zone = pane.read(cx).lent_grade_zone(&view, cx);
         let body = div()
             .flex_1()
             .min_h_0()
@@ -20140,6 +20159,7 @@ impl Workspace {
                         .absolute()
                         .inset_0(),
                     )
+                    .children(grade_zone)
                     .child(view)
                     .children(self.focus_clip_box(clip.as_ref(), accent, bg, phosphor, cx)),
             )
@@ -23745,6 +23765,8 @@ impl Workspace {
                         | theme::GradeKey::TextSize
                         | theme::GradeKey::BenchSize
                         | theme::GradeKey::Phosphor
+                        | theme::GradeKey::DocClear
+                        | theme::GradeKey::DocGlow
                         | theme::GradeKey::FieldColour
                         | theme::GradeKey::Glare
                         | theme::GradeKey::ImageGlow
@@ -31468,7 +31490,7 @@ impl Render for Workspace {
                 self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
                 self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
                 if demo.split(',').any(|s| s == "open") {
-                    self.osd_groups = vec![true; 4];
+                    self.osd_groups = vec![true; 5];
                 }
                 cx.notify();
             }
@@ -34037,6 +34059,19 @@ impl Render for Workspace {
                     ],
                 ),
                 (
+                    t.g_doc_hdr,
+                    vec![
+                        (
+                            G::DocBrightness,
+                            t.g_brightness,
+                            grade.doc_brightness_at_edge(),
+                        ),
+                        (G::DocContrast, t.g_contrast, grade.doc_contrast_at_edge()),
+                        (G::DocClear, t.g_see_through, grade.doc_clear_at_edge()),
+                        (G::DocGlow, t.g_glow, grade.doc_glow_at_edge()),
+                    ],
+                ),
+                (
                     t.g_active_hdr,
                     vec![
                         // First, as INACTIVE TERMINALS leads with its own.
@@ -34166,8 +34201,23 @@ impl Render for Workspace {
                     .child(format!("{} {}", fold_mark(open), name))
             };
             let panel_w: f32 = sk.fit(300., 320.);
-            const PANEL_H_EST: f32 = 700.; // grouped sliders, hints, reset and inheritance
-            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
+            const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
+            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w)).child(
+                canvas(
+                    |bounds, window, _cx| {
+                        let sf = window.scale_factor();
+                        warp::keep_from_doc_grade([
+                            f32::from(bounds.origin.x) * sf,
+                            f32::from(bounds.origin.y) * sf,
+                            f32::from(bounds.size.width) * sf,
+                            f32::from(bounds.size.height) * sf,
+                        ]);
+                    },
+                    |_, _, _, _| {},
+                )
+                .absolute()
+                .inset_0(),
+            );
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
