@@ -478,6 +478,20 @@ pub enum GradeKey {
     /// [`phosphor`] — but it rides the grade group, so a pane's own frame and
     /// header can glow by its own amount while the chrome follows outer.
     Phosphor,
+    /// The floating document's brightness, `0..1` with `0.5` as it was drawn.
+    /// Not a cell grade: the renderer's CRT pass applies it to the document's
+    /// rectangle ([`crate::warp::register_doc_grade`]), so a page Chromium
+    /// painted and a photograph take it the same way Markdown does.
+    DocBrightness,
+    /// The floating document's contrast, the same scale and the same pass as
+    /// [`GradeKey::DocBrightness`].
+    DocContrast,
+    /// How much of the terminal shows through the floating document, `0` for
+    /// none up to [`DOC_CLEAR_MAX`].
+    DocClear,
+    /// The halo round the floating document, on the phosphor gauge's scale.
+    /// Unset, it follows [`GradeKey::Phosphor`], as it did before it had a dial.
+    DocGlow,
 }
 
 impl GradeKey {
@@ -508,7 +522,8 @@ impl GradeKey {
             ),
             GradeKey::CrawlAngle => (CRAWL_ANGLE_MIN, CRAWL_ANGLE_MAX, CRAWL_ANGLE_DEFAULT),
             GradeKey::CrawlDepth => (CRAWL_DEPTH_MIN, CRAWL_DEPTH_MAX, CRAWL_DEPTH_DEFAULT),
-            GradeKey::Phosphor => (0.0, PHOSPHOR_MAX, 1.0),
+            GradeKey::Phosphor | GradeKey::DocGlow => (0.0, PHOSPHOR_MAX, 1.0),
+            GradeKey::DocClear => (0.0, DOC_CLEAR_MAX, 0.0),
             _ => (0.0, 1.0, 0.5),
         }
     }
@@ -704,6 +719,19 @@ pub struct Grade {
     /// written before this dial existed has no key and fills from
     /// [`Grade::default`], which is `1.0` — exactly the glow it was drawn with.
     pub phosphor: f32,
+    /// The floating document's brightness, 0..1. None draws it as it was drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_brightness: Option<f32>,
+    /// The floating document's contrast, 0..1. None draws it as it was drawn.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_contrast: Option<f32>,
+    /// How much terminal shows through the floating document. None is solid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_clear: Option<f32>,
+    /// The floating document's own halo gain. None is not zero: it follows
+    /// [`Grade::phosphor`] with every other lit border.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub doc_glow: Option<f32>,
 }
 
 /// Resolved drawing timings. Stored settings remain optional in [`Grade`].
@@ -817,6 +845,10 @@ pub enum GradeChannel {
     Tracking,
     Crt,
     Phosphor,
+    DocBrightness,
+    DocContrast,
+    DocClear,
+    DocGlow,
 }
 
 impl GradeChannel {
@@ -825,9 +857,10 @@ impl GradeChannel {
     /// travels as channel NAMES, never as the bitmask, so the discriminants are
     /// an in-memory detail and a new dial can sit beside its sibling.
     ///
-    /// Thirty-two is the most the bitmask holds — [`GradePins`] is a `u32`,
-    /// widened from `u16` when glare became the seventeenth channel.
-    pub const ALL: [GradeChannel; 30] = [
+    /// Sixty-four is the most the bitmask holds — [`GradePins`] is a `u64`,
+    /// widened from `u32` when the floating document's dials took it past
+    /// thirty-two.
+    pub const ALL: [GradeChannel; 34] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -858,6 +891,10 @@ impl GradeChannel {
         Self::Tracking,
         Self::Crt,
         Self::Phosphor,
+        Self::DocBrightness,
+        Self::DocContrast,
+        Self::DocClear,
+        Self::DocGlow,
     ];
 
     /// The wire name. STABLE — it is written into state files, so renaming one
@@ -895,6 +932,10 @@ impl GradeChannel {
             Self::Tracking => "tracking",
             Self::Crt => "crt",
             Self::Phosphor => "phosphor",
+            Self::DocBrightness => "doc_brightness",
+            Self::DocContrast => "doc_contrast",
+            Self::DocClear => "doc_clear",
+            Self::DocGlow => "doc_glow",
         }
     }
 
@@ -905,8 +946,8 @@ impl GradeChannel {
         Self::ALL.into_iter().find(|c| c.name() == name)
     }
 
-    const fn bit(self) -> u32 {
-        1 << (self as u32)
+    const fn bit(self) -> u64 {
+        1 << (self as u64)
     }
 
     /// True when `a` and `b` carry the same value for this channel.
@@ -954,6 +995,26 @@ impl GradeChannel {
                 _ => false,
             },
             Self::InactiveBrightness => match (a.inactive_brightness, b.inactive_brightness) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::DocBrightness => match (a.doc_brightness, b.doc_brightness) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::DocContrast => match (a.doc_contrast, b.doc_contrast) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::DocClear => match (a.doc_clear, b.doc_clear) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::DocGlow => match (a.doc_glow, b.doc_glow) {
                 (None, None) => true,
                 (Some(x), Some(y)) => close(x, y),
                 _ => false,
@@ -1056,6 +1117,10 @@ impl GradeChannel {
             Self::CursorTrail => dst.cursor_trail = src.cursor_trail,
             Self::Crt => dst.crt = src.crt,
             Self::Phosphor => dst.phosphor = src.phosphor,
+            Self::DocBrightness => dst.doc_brightness = src.doc_brightness,
+            Self::DocContrast => dst.doc_contrast = src.doc_contrast,
+            Self::DocClear => dst.doc_clear = src.doc_clear,
+            Self::DocGlow => dst.doc_glow = src.doc_glow,
         }
     }
 }
@@ -1090,6 +1155,10 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
             GradeKey::Phosphor => Self::Phosphor,
+            GradeKey::DocBrightness => Self::DocBrightness,
+            GradeKey::DocContrast => Self::DocContrast,
+            GradeKey::DocClear => Self::DocClear,
+            GradeKey::DocGlow => Self::DocGlow,
         }
     }
 }
@@ -1103,7 +1172,7 @@ impl From<GradeKey> for GradeChannel {
 /// fresh pane, a split, a restored layout all start empty and therefore track
 /// the outer scope live, so changing outer moves every pane nobody has dressed.
 #[derive(Clone, Copy, PartialEq, Eq, Default, Debug)]
-pub struct GradePins(u32);
+pub struct GradePins(u64);
 
 impl GradePins {
     /// Own nothing — follow outer for every channel. A fresh pane's state.
@@ -1252,6 +1321,10 @@ impl Default for Grade {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            doc_brightness: None,
+            doc_contrast: None,
+            doc_clear: None,
+            doc_glow: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -1280,7 +1353,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 21] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 25] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -1305,6 +1378,10 @@ impl Grade {
             GradeKey::InactiveOffCursorLingerMs,
             "inactive off-cursor linger",
         ),
+        (GradeKey::DocBrightness, "document brightness"),
+        (GradeKey::DocContrast, "document contrast"),
+        (GradeKey::DocClear, "document see-through"),
+        (GradeKey::DocGlow, "document glow"),
     ];
 
     /// This grade with its MAIN gauges ([`Self::CHANNELS`]) back at neutral and
@@ -1333,6 +1410,10 @@ impl Grade {
             active_brightness: n.active_brightness,
             inactive_brightness: n.inactive_brightness,
             inactive_blur: n.inactive_blur,
+            doc_brightness: n.doc_brightness,
+            doc_contrast: n.doc_contrast,
+            doc_clear: n.doc_clear,
+            doc_glow: n.doc_glow,
             afterglow_ms: n.afterglow_ms,
             cursor_linger_ms: n.cursor_linger_ms,
             off_cursor_linger_ms: n.off_cursor_linger_ms,
@@ -1369,6 +1450,10 @@ impl Grade {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            doc_brightness: None,
+            doc_contrast: None,
+            doc_clear: None,
+            doc_glow: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -1460,6 +1545,10 @@ impl Grade {
             && self.inactive_brightness == d.inactive_brightness
             && self.active_brightness == d.active_brightness
             && self.inactive_blur == d.inactive_blur
+            && self.doc_brightness == d.doc_brightness
+            && self.doc_contrast == d.doc_contrast
+            && self.doc_clear == d.doc_clear
+            && self.doc_glow == d.doc_glow
             && self.afterglow_ms == d.afterglow_ms
             && self.cursor_linger_ms == d.cursor_linger_ms
             && self.off_cursor_linger_ms == d.off_cursor_linger_ms
@@ -1526,6 +1615,51 @@ impl Grade {
             .filter(|v| v.is_finite())
             .unwrap_or(INACTIVE_BRIGHTNESS)
             .clamp(0.0, 1.0)
+    }
+
+    /// The floating document's brightness gauge, 0..1 with 0.5 as drawn.
+    pub fn doc_brightness_at_edge(&self) -> f32 {
+        self.doc_brightness
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0)
+    }
+
+    /// The floating document's contrast gauge, 0..1 with 0.5 as drawn.
+    pub fn doc_contrast_at_edge(&self) -> f32 {
+        self.doc_contrast
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.5)
+            .clamp(0.0, 1.0)
+    }
+
+    /// How much terminal shows through the floating document.
+    pub fn doc_clear_at_edge(&self) -> f32 {
+        self.doc_clear
+            .filter(|v| v.is_finite())
+            .unwrap_or(0.0)
+            .clamp(0.0, DOC_CLEAR_MAX)
+    }
+
+    /// The gain on the floating document's halo: its own dial, else the
+    /// phosphor gauge every lit border follows.
+    pub fn doc_glow_at_edge(&self) -> f32 {
+        self.doc_glow
+            .filter(|v| v.is_finite())
+            .unwrap_or(self.phosphor)
+            .clamp(0.0, PHOSPHOR_MAX)
+    }
+
+    /// What the renderer multiplies the floating document by, as
+    /// `(brightness, contrast)` gains around `1.0`, the same `÷0.5` the cell
+    /// grade spans. `None` at neutral, so an undressed document never turns the
+    /// post-process pass on.
+    pub fn doc_grade(&self) -> Option<(f32, f32)> {
+        let gain = (
+            (self.doc_brightness_at_edge() / 0.5).max(DOC_GAIN_MIN),
+            (self.doc_contrast_at_edge() / 0.5).max(DOC_GAIN_MIN),
+        );
+        ((gain.0 - 1.0).abs() > 0.001 || (gain.1 - 1.0).abs() > 0.001).then_some(gain)
     }
 
     /// How soft an inactive pane's terminal is, 0..1.
@@ -1620,6 +1754,10 @@ impl Grade {
             GradeKey::InactiveBrightness => return self.inactive_brightness,
             GradeKey::ActiveBrightness => return self.active_brightness,
             GradeKey::InactiveBlur => return self.inactive_blur,
+            GradeKey::DocBrightness => return self.doc_brightness,
+            GradeKey::DocContrast => return self.doc_contrast,
+            GradeKey::DocClear => return self.doc_clear,
+            GradeKey::DocGlow => return self.doc_glow,
             GradeKey::InactiveImageGlow => return self.inactive_image_glow,
             GradeKey::CrawlAngle => self.crawl_angle,
             GradeKey::CrawlDepth => self.crawl_depth,
@@ -1670,6 +1808,26 @@ impl Grade {
             GradeKey::InactiveBlur => {
                 if v.is_finite() {
                     self.inactive_blur = Some(v);
+                }
+            }
+            GradeKey::DocBrightness => {
+                if v.is_finite() {
+                    self.doc_brightness = Some(v);
+                }
+            }
+            GradeKey::DocContrast => {
+                if v.is_finite() {
+                    self.doc_contrast = Some(v);
+                }
+            }
+            GradeKey::DocClear => {
+                if v.is_finite() {
+                    self.doc_clear = Some(v);
+                }
+            }
+            GradeKey::DocGlow => {
+                if v.is_finite() {
+                    self.doc_glow = Some(v);
                 }
             }
             GradeKey::AfterglowMs => {
@@ -1871,6 +2029,10 @@ pub fn house_outer() -> ThemeChoice {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            doc_brightness: None,
+            doc_contrast: None,
+            doc_clear: None,
+            doc_glow: None,
             afterglow_ms: None,
             cursor_linger_ms: None,
             off_cursor_linger_ms: None,
@@ -3228,8 +3390,9 @@ pub fn design_stock(cx: &App, id: &str) -> crate::looks::LookDials {
 /// What Clean holds off while it is worn: the whole tube, as the CRT switch
 /// would, and every light — the glow on the letters (focused and not), the
 /// afterglow of erased text, the bloom on cards and the window's frame
-/// (`glow`), the halo on lit borders (the phosphor gauge), and the cursor's
-/// afterimage, which is the same phosphor light as the text's.
+/// (`glow`), the halo on lit borders (the phosphor gauge) and round the floating
+/// document (its own dial), and the cursor's afterimage, which is the same
+/// phosphor light as the text's.
 ///
 /// Applied to the RESOLVED theme only. The GAUGES tray reads the scope's own
 /// grade, which keeps the person's values, and says Clean is holding them.
@@ -3238,6 +3401,7 @@ pub fn hold_clean(th: &mut Theme) {
     flatten_tube(th);
     th.glow = 0.0;
     th.grade.phosphor = 0.0;
+    th.grade.doc_glow = Some(0.0);
     th.grade.image_glow = Some(0.0);
     th.grade.inactive_image_glow = Some(0.0);
     th.grade.afterglow_ms = Some(0.0);
@@ -3320,6 +3484,16 @@ pub const HOUSE_CONTRAST: f32 = 0.71;
 /// `[intensity, speed, size]`, Parker's dials on 2026-09-25.
 pub const HOUSE_ROLL: [f32; 3] = [0.52, 0.815, 0.207];
 pub const WARP_MAX: f32 = 1.5;
+
+/// The top of the floating document's see-through dial. Past this the document
+/// is a smudge over the terminal, and a person looking for it has no way to tell
+/// it is open.
+pub const DOC_CLEAR_MAX: f32 = 0.9;
+
+/// The least the floating document's grade multiplies by, for the same reason:
+/// the bottom of the dial is dim, and a square that has gone black is one nobody
+/// can read to find out why.
+pub const DOC_GAIN_MIN: f32 = 0.1;
 
 /// The top of the phosphor gauge. `1.0` is the house look every lit border was
 /// drawn with before the gauge existed, and the range runs to four times that:
@@ -4067,6 +4241,7 @@ mod tests {
             lit.grade.crt = true;
             lit.grade.image_glow = Some(0.6);
             lit.grade.phosphor = 2.5;
+            lit.grade.doc_glow = Some(3.0);
             lit.grade.cursor_linger_ms = Some(200.0);
             lit.grade.cursor_trail = Some(CursorTrail::first());
             let held = resolve(cx, &lit);
@@ -4084,6 +4259,11 @@ mod tests {
                 assert_eq!((linger.cursor_ms, linger.off_cursor_ms), (0.0, 0.0));
             }
             assert_eq!(held.grade.phosphor, 0.0, "no halo on lit borders");
+            assert_eq!(
+                held.grade.doc_glow_at_edge(),
+                0.0,
+                "nor round the floating document, on its own dial or not"
+            );
             assert_eq!(held.glow, 0.0, "no bloom on cards or the frame");
             assert_eq!(
                 held.grade.cursor_trail, None,
@@ -4884,6 +5064,10 @@ mod tests {
             crt: false,
             // and the house glow, so the walk needs another.
             phosphor: 2.5,
+            doc_brightness: Some(0.3),
+            doc_contrast: Some(0.7),
+            doc_clear: Some(0.4),
+            doc_glow: Some(2.0),
         };
         for c in GradeChannel::ALL {
             assert_eq!(
@@ -5579,7 +5763,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 30);
+        assert_eq!(GradeChannel::ALL.len(), 34);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -5629,7 +5813,11 @@ warp = 1.5
                     | GradeKey::CursorLingerMs
                     | GradeKey::OffCursorLingerMs
                     | GradeKey::InactiveCursorLingerMs
-                    | GradeKey::InactiveOffCursorLingerMs => {
+                    | GradeKey::InactiveOffCursorLingerMs
+                    | GradeKey::DocBrightness
+                    | GradeKey::DocContrast
+                    | GradeKey::DocClear
+                    | GradeKey::DocGlow => {
                         assert!(g.get(k).is_none(), "{k:?} remains undeclared");
                     }
                     _ => assert!(g.get(k).is_some(), "{k:?} has a position"),
@@ -6015,6 +6203,10 @@ warp = 1.5
             GradeKey::CrawlAngle,
             GradeKey::CrawlDepth,
             GradeKey::Phosphor,
+            GradeKey::DocBrightness,
+            GradeKey::DocContrast,
+            GradeKey::DocClear,
+            GradeKey::DocGlow,
         ];
         for k in keys {
             let (min, max, _) = k.range();
@@ -6446,6 +6638,66 @@ size = 9.0
             phosphor(PHOSPHOR_MAX, halo),
             "past the top is the top"
         );
+    }
+
+    /// A saved grade has none of the floating document's keys, and that has to
+    /// read as the document it drew: as bright, as solid, and lit by the phosphor
+    /// it was saved with. Reading its glow as the dial's own neutral would dim
+    /// the square of anyone whose phosphor is off the house value.
+    #[test]
+    fn a_grade_from_before_the_document_gauges_draws_the_document_it_drew() {
+        let old: Grade = toml::from_str("brightness = 0.7\nphosphor = 2.5").unwrap();
+        assert_eq!(old.doc_grade(), None, "no pass for an undressed document");
+        assert_eq!(old.doc_clear_at_edge(), 0.0);
+        assert_eq!(old.doc_glow_at_edge(), 2.5, "follows the border gauge");
+        for k in [
+            GradeKey::DocBrightness,
+            GradeKey::DocContrast,
+            GradeKey::DocClear,
+            GradeKey::DocGlow,
+        ] {
+            assert_eq!(old.get(k), None, "{k:?} stays unset, not neutral");
+        }
+        let saved = toml::to_string(&old).unwrap();
+        assert!(!saved.contains("doc_"), "and an unset dial writes no key");
+    }
+
+    /// Unset follows; set is its own, and zero is a set value that means none.
+    #[test]
+    fn the_document_glow_leaves_the_border_gauge_only_when_it_is_moved() {
+        let mut g = Grade::neutral();
+        g.phosphor = 3.0;
+        assert_eq!(g.doc_glow_at_edge(), 3.0);
+        g.set(GradeKey::DocGlow, 0.0);
+        assert_eq!(g.doc_glow_at_edge(), 0.0, "none is not unset");
+        let back: Grade = toml::from_str(&toml::to_string(&g).unwrap()).unwrap();
+        assert_eq!(back.doc_glow, Some(0.0), "and it survives a save");
+        assert_eq!(g.reset_gauges().doc_glow, None, "reset follows again");
+    }
+
+    #[test]
+    fn the_document_grade_spans_the_cell_grades_range_and_is_off_at_neutral() {
+        let mut g = Grade::neutral();
+        assert_eq!(g.doc_grade(), None);
+        g.set(GradeKey::DocBrightness, 0.5);
+        g.set(GradeKey::DocContrast, 0.5);
+        assert_eq!(g.doc_grade(), None, "dragged back to the middle is off");
+        g.set(GradeKey::DocBrightness, 1.0);
+        assert_eq!(g.doc_grade(), Some((2.0, 1.0)));
+        g.set(GradeKey::DocBrightness, 0.5);
+        g.set(GradeKey::DocContrast, 0.25);
+        assert_eq!(g.doc_grade(), Some((1.0, 0.5)));
+        g.set(GradeKey::DocBrightness, 0.0);
+        g.set(GradeKey::DocContrast, 0.0);
+        assert_eq!(
+            g.doc_grade(),
+            Some((DOC_GAIN_MIN, DOC_GAIN_MIN)),
+            "the bottom of the dial is dim, not black"
+        );
+        g.set(GradeKey::DocClear, 5.0);
+        assert_eq!(g.doc_clear_at_edge(), DOC_CLEAR_MAX, "always findable");
+        g.doc_clear = Some(f32::NAN);
+        assert_eq!(g.doc_clear_at_edge(), 0.0, "a bad file draws solid");
     }
 
     /// A grade saved before the gauge existed has no `phosphor` key, and must

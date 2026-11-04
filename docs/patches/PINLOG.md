@@ -80,3 +80,11 @@ bump has to rebase them:
   one. Applies after 0009-0011. It does not apply to a checkout rustfmt has
   reflowed (the lab's) or to one missing 0009-0011 (`~/Work/zed-upstream` on
   this date, which already refuses 0009).
+- 2026-11-04, on `abbe85a`: `0013-doc-grade` — the floating document's
+  brightness and contrast. `set_doc_grades` takes rects and gains on a list of
+  its own, because the app flattens the tubes while an overlay is up and GAUGES
+  is one. `doc_graded` in `fs_crt` runs at every exit with the sample's source
+  pixel, so a document on a bent tube is graded where it was laid out. Two arrays
+  follow `image_glow` and the count rides the spare `k.w`, so existing offsets
+  are unchanged. An empty list leaves the pass as it was. Applies after 0012,
+  and to the lab's reflowed checkout.
