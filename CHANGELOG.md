@@ -25,6 +25,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   *zoom in*, where *remove* and *add* had run together over the percentage.
 - **TERMINIMALIST's card is double wide** in the skin picker, so its name stays
   on it.
+- **A two-way relationship is one line with an arrow at each end.** The two
+  cards get more room, and each direction keeps its own label, still opening
+  its own settings.
 - **The rest and sleep sliders no longer overlap.** Their stops stand evenly
   along the track and only *1 h* carries a unit. Sleep gains a 1 h stop.
 
