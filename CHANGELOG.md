@@ -15,6 +15,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   and icons. It refuses a download that doesn't match the release's checksum,
   and it leaves an install that is already there alone.
 
+### Threshing Floor and CONFIG
+
+- **An org can be deleted from where you can see it.** A red **Delete org**
+  stands in the Floor's header in every skin. A press takes the open org; drag
+  any org onto it, from its tab or off the System Map, to take that one. The
+  confirmation still states the count first.
+- **Zoom says zoom.** In TERMINIMALIST the chart's buttons read *zoom out* and
+  *zoom in*, where *remove* and *add* had run together over the percentage.
+- **TERMINIMALIST's card is double wide** in the skin picker, so its name stays
+  on it.
+- **The rest and sleep sliders no longer overlap.** Their stops stand evenly
+  along the track and only *1 h* carries a unit. Sleep gains a 1 h stop.
+
 ## [0.5.0] — 2026-11-03
 
 0.5.0 is the first stable release since 0.3.0. 0.4.0 stopped at its third
