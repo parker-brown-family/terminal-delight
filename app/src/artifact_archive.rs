@@ -225,7 +225,15 @@ fn drain() -> bool {
     };
     let (tx, rx) = mpsc::channel();
     sender.try_send(Job::Drain(tx)).is_ok()
-        && rx.recv_timeout(std::time::Duration::from_secs(2)).is_ok()
+        && rx
+            // A test shares the machine with every other test and whatever else
+            // is building: two seconds failed at a load of 35, with nothing wrong.
+            .recv_timeout(std::time::Duration::from_secs(if cfg!(test) {
+                30
+            } else {
+                2
+            }))
+            .is_ok()
 }
 
 /// Before a conversation is known, preserve only the artifact surface in an
