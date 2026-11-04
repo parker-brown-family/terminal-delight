@@ -3633,14 +3633,30 @@ mod tests {
     }
 
     /// A file nobody listens on is refused, and goes, so discovery stays clean.
+    ///
+    /// The errors are handed over rather than earned: a dropped listener is not
+    /// dead while another test's fork still holds its descriptor, so a real
+    /// refusal is a race against every pane the suite is spawning.
     #[test]
     fn a_refused_socket_is_swept() {
         let dir = tmp("refused");
         let sock = dir.join("ctl-5.sock");
-        drop(UnixListener::bind(&sock).unwrap());
-        let e = send(&sock, "ping").unwrap_err();
-        assert!(unanswered(&sock, &e).contains("swept"));
+        std::fs::write(&sock, b"").unwrap();
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        assert!(unanswered(&sock, &refused).contains("swept"));
         assert!(!sock.exists());
+    }
+
+    /// `EAGAIN` from connect is a full backlog: somebody is listening, and behind.
+    /// That is the error that cut a live window off (#796).
+    #[test]
+    fn a_full_backlog_is_busy_and_keeps_the_socket() {
+        let dir = tmp("backlog");
+        let sock = dir.join("ctl-7.sock");
+        std::fs::write(&sock, b"").unwrap();
+        let full = std::io::Error::from_raw_os_error(11);
+        assert!(unanswered(&sock, &full).contains("busy"));
+        assert!(sock.exists(), "a full backlog keeps the socket");
     }
 
     /// A window that took the connection and is slow to reply is alive. Its
