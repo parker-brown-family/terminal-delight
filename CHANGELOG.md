@@ -23,6 +23,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **Default text reads everywhere.** It clears 4.5:1 in every design and skin
   and under every palette, and a test now holds that.
 - **Agents sleep after an hour of rest,** down from two.
+- **A window in a plain folder is not a finding.** The Git chip says *No new
+  findings* until a repository is in view.
 
 ### Threshing Floor and CONFIG
 
