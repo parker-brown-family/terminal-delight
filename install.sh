@@ -65,6 +65,7 @@ main() {
   if [ -n "$existing" ]; then
     echo "Terminal Delight is already installed at $existing. Nothing was changed."
     echo "It updates from inside the app: CONFIG > UPDATES."
+    echo "A build older than 0.5.0 has no updater: move $existing aside and run this again."
     exit 0
   fi
 

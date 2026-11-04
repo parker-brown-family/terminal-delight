@@ -2,8 +2,8 @@
 {
   "title": "Omarchy",
   "description": "On Omarchy, Terminal Delight can be the terminal Super+Return opens: scripts/install-desktop.sh, then terminal-delight default-terminal on, and off puts the old one back. Every Omarchy theme is in its pickers and INHERIT follows the desktop's. Super+Alt+T lists every key, Super+Alt+P paints, and one hyprland.lua line makes Super+C and Super+V copy and paste.",
-  "updated": "2026-11-01",
-  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
+  "updated": "2026-11-04",
+  "trueOf": "release v0.5.1",
   "summary": "Default terminal, themes, and the desktop keys"
 }
 </script>
@@ -39,7 +39,7 @@ terminal-delight default-terminal on</code></pre>
 <h3>Themes</h3>
 <p>The painter, from 🎨 at the bottom right, shows one tile per Omarchy theme, drawn in that theme's colours. The list is the one Omarchy's own picker shows, hidden themes left out, and it is re-read twice a second, so a theme you install, remove, edit or hide appears in the painter within a second. A theme that ships only an <code>alacritty.toml</code> loads too. On a machine without Omarchy, the stock Omarchy themes come from a copy Terminal Delight carries. The paint overlay's shelves are <code>FAVOURITES</code> and <code>OMARCHY THEMES</code>.<sup><a href="#s4">4</a></sup></p>
 <p><code>INHERIT</code>, under <code>RULES</code> in the window's painter, follows Omarchy's selected theme. Every 300 ms it reads <code>~/.local/state/omarchy/current/theme/colors.toml</code> (<code>~/.config/omarchy/current/</code> on older installs), and when the desktop theme changes it repaints the window and every pane that follows the window. Painting a theme or picking a colour by hand turns it off, and turning it off brings back the colours you had set. If the file goes missing or can't be read, the window keeps the last colours it read and the switch says <code>INHERIT · unavailable</code>. A pane's own painter has no INHERIT; a pane follows the window or wears its own theme. <a href="/themes">Themes</a> has the rest.</p>
-<p>A new window has INHERIT on. The TERMINIMALIST skin draws flat, square chrome in the selected Omarchy palette; see <a href="/skins">Skins</a>.</p>
+<p>A new window has INHERIT on, and while it follows Omarchy, programs take their sixteen colours from the theme as well. The TERMINIMALIST skin draws flat, square chrome in the selected Omarchy palette; see <a href="/skins">Skins</a>.</p>
 
 <h3>The key sheet: Super+Alt+T</h3>
 <pre class="cmd"><code>bash scripts/install-keys-hotkey.sh</code></pre>
