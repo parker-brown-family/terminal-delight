@@ -18348,8 +18348,8 @@ impl Workspace {
                 row.child(
                     div()
                         .absolute()
-                        .left(px(x * 250. - 10.))
-                        .w(px(20.))
+                        .left(px(x * 250. - 20.))
+                        .w(px(40.))
                         .flex()
                         .justify_center()
                         .text_size(sk.text_px(7.5))
@@ -18358,7 +18358,10 @@ impl Workspace {
                         } else {
                             th.text.alpha(0.45)
                         })
-                        .child(SharedString::from(self.agents_minutes_label(d.minutes))),
+                        .child(SharedString::from(agentrest::tick_label(
+                            d.minutes,
+                            self.lang.strings().ui.ag_unit_h,
+                        ))),
                 )
             });
         div()
