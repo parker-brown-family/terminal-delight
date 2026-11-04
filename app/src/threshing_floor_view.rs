@@ -2957,6 +2957,19 @@ impl Workspace {
         seat_lines + self.chart.org_lines_touching(org)
     }
 
+    /// Hold an org's delete until the person confirms the count. The name editor
+    /// steps aside so the two never stack.
+    fn threshing_floor_ask_delete_org(
+        &mut self,
+        org: threshing_floor::OrgId,
+        cx: &mut Context<Self>,
+    ) {
+        self.floor_delete_org = Some(org);
+        self.floor_org_edit = None;
+        self.floor_settings = false;
+        cx.notify();
+    }
+
     /// Delete an org once the person has confirmed the count. Its members become
     /// loose — un-orged but still seated, so the panes stay available — while
     /// every relationship touching a member and every org line naming the org
@@ -3168,46 +3181,24 @@ impl Workspace {
                     .gap_2()
                     .child(label(&org.to_uppercase()))
                     .child(
-                        div()
-                            .flex()
-                            .flex_row()
-                            .gap_2()
-                            .child(with_tip(
-                                Self::bezel_btn(sk, ui.floor_org_rename, false)
-                                    .id("floor-org-rename")
-                                    .debug_selector(|| "floor-org-rename".to_string())
-                                    .on_click(cx.listener(move |ws, _, w, cx| {
-                                        cx.stop_propagation();
-                                        let name = ws
-                                            .floor_orgs
-                                            .get(id)
-                                            .and_then(|o| o.name.as_deref())
-                                            .unwrap_or("");
-                                        ws.floor_org_edit =
-                                            Some((Some(id), EditBuffer::seeded(name)));
-                                        ws.floor_settings = false;
-                                        w.focus(&ws.focus_handle, cx);
-                                        cx.notify();
-                                    })),
-                                vec![lang::fill(ui.floor_tip_rename, &[("org", &org)])],
-                            ))
-                            .child(div().flex_1())
-                            .child(with_tip(
-                                Self::bezel_btn(sk, ui.floor_org_delete, false)
-                                    .id("floor-org-delete")
-                                    .debug_selector(|| "floor-org-delete".to_string())
-                                    .on_click(cx.listener(move |ws, _, _, cx| {
-                                        cx.stop_propagation();
-                                        // Hold the delete until the person confirms the
-                                        // count; the name editor steps aside so the two
-                                        // never stack.
-                                        ws.floor_delete_org = Some(id);
-                                        ws.floor_org_edit = None;
-                                        ws.floor_settings = false;
-                                        cx.notify();
-                                    })),
-                                vec![lang::fill(ui.floor_tip_delete, &[("org", &org)])],
-                            )),
+                        div().flex().flex_row().gap_2().child(with_tip(
+                            Self::bezel_btn(sk, ui.floor_org_rename, false)
+                                .id("floor-org-rename")
+                                .debug_selector(|| "floor-org-rename".to_string())
+                                .on_click(cx.listener(move |ws, _, w, cx| {
+                                    cx.stop_propagation();
+                                    let name = ws
+                                        .floor_orgs
+                                        .get(id)
+                                        .and_then(|o| o.name.as_deref())
+                                        .unwrap_or("");
+                                    ws.floor_org_edit = Some((Some(id), EditBuffer::seeded(name)));
+                                    ws.floor_settings = false;
+                                    w.focus(&ws.focus_handle, cx);
+                                    cx.notify();
+                                })),
+                            vec![lang::fill(ui.floor_tip_rename, &[("org", &org)])],
+                        )),
                     ),
             );
         }
@@ -3330,9 +3321,64 @@ impl Workspace {
                 .flex_none()
                 .bg(th.text.alpha(0.22))
         };
-        // The five access switches and the open org's Rename and Delete are
-        // settings, not views: they fold into one tray behind a cog at the
-        // right end, drawn the way the GAUGES tray is.
+        // Deleting an org is a door in plain sight, in the colour of what it
+        // does. Parker, 2026-11-04: *"much, much, much more clear how to delete
+        // an organization, even dragging them over to a remove organization
+        // area or showing a button"*. It is both: a press takes the open org,
+        // and any org dragged onto it, from a tab or off the map, is taken
+        // instead. Either way the red confirm below still states the count. On
+        // the map no org is open, so there a press has nothing to aim at and
+        // the door says how it is used.
+        let open_org = self.floor_org.filter(|_| self.floor_map.is_none());
+        let org_in_hand =
+            cx.has_active_drag() && self.floor_drag.is_none() && self.floor_tether.is_none();
+        let red = th.ansi[1];
+        let delete_door = (!self.floor_orgs.saved().is_empty()).then(|| {
+            let (word, tip) = match open_org {
+                Some(id) if !org_in_hand => (
+                    ui.floor_org_delete,
+                    lang::fill(
+                        ui.floor_tip_delete,
+                        &[("org", &self.threshing_floor_org_label(id))],
+                    ),
+                ),
+                _ => (
+                    ui.floor_org_delete_drop,
+                    ui.floor_org_delete_drop.to_string(),
+                ),
+            };
+            with_tip(
+                Self::bezel_btn(sk, word, false)
+                    .id("floor-org-delete")
+                    .debug_selector(|| "floor-org-delete".to_string())
+                    .flex_none()
+                    .text_color(red)
+                    .border_color(red.alpha(0.6))
+                    .when(org_in_hand, |d| {
+                        d.bg(red.alpha(0.14)).shadow(drop_glow(red, false))
+                    })
+                    .drag_over::<OrgDrag>(move |s, _, _, _| {
+                        s.border_color(red)
+                            .bg(red.alpha(0.24))
+                            .shadow(drop_glow(red, true))
+                    })
+                    .on_drop(cx.listener(|ws, d: &OrgDrag, _, cx| {
+                        if !d.cancelled.get() {
+                            ws.threshing_floor_ask_delete_org(d.org, cx);
+                        }
+                    }))
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        if let Some(id) = open_org {
+                            ws.threshing_floor_ask_delete_org(id, cx);
+                        }
+                    })),
+                vec![tip],
+            )
+        });
+        // The five access switches and the open org's Rename are settings, not
+        // views: they fold into one tray behind a cog at the right end, drawn
+        // the way the GAUGES tray is.
         let unlined = self.ask_numbers.as_ref().map_or(0, |n| n.unlined_answered);
         let cog = with_tip(
             Self::bezel_btn(sk, "\u{2699}", self.floor_settings)
@@ -3400,6 +3446,7 @@ impl Workspace {
                 .child(rule())
                 .child(div().when(dragging, |d| d.opacity(0.3)).child(new_btn))
                 .child(div().flex_1().min_w(px(8.)))
+                .children(delete_door)
                 .child(settings),
         );
         if let Some(id) = self.floor_delete_org {
@@ -7689,6 +7736,60 @@ mod tests {
         });
     }
 
+    /// The delete door is in the header without opening anything: a press
+    /// takes the open org, and a drag brings any other org to it. The confirm
+    /// always names the org the door was given, and nothing goes before it.
+    #[gpui::test]
+    fn the_delete_door_is_in_plain_sight_and_takes_a_dropped_org(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let (open, other) = ws.read_with(cx, |ws, _| {
+            let open = ws.floor_org.unwrap();
+            let other = ws.floor_orgs.saved().iter().find(|o| o.id != open);
+            (open, other.unwrap().id)
+        });
+        // A press takes the org whose chart is open.
+        click(cx, "floor-org-delete");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.floor_delete_org), Some(open));
+        click(cx, "floor-org-delete-cancel");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.floor_delete_org), None);
+        // A tab dragged onto it takes that org, not the open one.
+        drag(cx, &format!("floor-org-{}", other.0), "floor-org-delete");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.floor_delete_org), Some(other));
+        assert!(
+            ws.read_with(cx, |ws, _| ws.floor_orgs.get(other).is_some()),
+            "the drop only asks: the org stands until the confirm"
+        );
+        click(cx, "floor-org-delete-cancel");
+        // On the map a press has no org to aim at.
+        click(cx, "floor-system-map-toggle");
+        click(cx, "floor-org-delete");
+        assert_eq!(ws.read_with(cx, |ws, _| ws.floor_delete_org), None);
+        // An org's region dragged off the map onto it takes that org, leaves
+        // no move in flight, and stays where it stood.
+        let at = ws.read_with(cx, |ws, _| ws.floor_orgs.get(open).unwrap().map_at);
+        drag(cx, &format!("floor-map-org-{}", open.0), "floor-org-delete");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(ws.floor_delete_org, Some(open));
+            assert!(ws.floor_map.as_ref().unwrap().drag.is_none());
+            assert_eq!(ws.floor_orgs.get(open).unwrap().map_at, at);
+        });
+        click(cx, "floor-org-delete-go");
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.floor_orgs.get(open).is_none());
+            assert!(ws.floor_map.is_some(), "the map stays open");
+        });
+        // With no org left, there is nothing to delete and no door.
+        ws.update(cx, |ws, cx| ws.threshing_floor_delete_org(other, cx));
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        assert!(cx.debug_bounds("floor-org-delete").is_none());
+    }
+
     #[gpui::test]
     fn the_system_map_draws_a_whole_org_line_that_reaches_every_member(
         cx: &mut gpui::TestAppContext,
@@ -8896,12 +8997,13 @@ mod tests {
             search.origin.y > header.bottom(),
             "the search left the header"
         );
-        // The switches, Rename and Delete wait behind the cog.
-        for id in [
-            "floor-access-controls",
-            "floor-org-rename",
-            "floor-org-delete",
-        ] {
+        // The switches and Rename wait behind the cog; Delete does not.
+        let door = bounds(cx, "floor-org-delete");
+        assert!(
+            new.right() < door.origin.x && door.right() < cog.origin.x,
+            "Delete stands in the header, between New org and the cog"
+        );
+        for id in ["floor-access-controls", "floor-org-rename"] {
             assert!(
                 cx.debug_bounds(id).is_none(),
                 "{id} shows before the cog opens"
@@ -8914,7 +9016,6 @@ mod tests {
             "war-btn-enable",
             "war-btn-images",
             "floor-org-rename",
-            "floor-org-delete",
         ] {
             let b = bounds(cx, id);
             assert!(tray.contains(&b.center()), "{id} is not inside the tray");
