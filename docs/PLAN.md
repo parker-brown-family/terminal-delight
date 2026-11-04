@@ -33,7 +33,7 @@ lists the milestone where it starts being enforced.
 ```
 terminal-delight (single Rust process, MIT)
 ├─ GPUI ─ GPU-rendered chrome + tiling + panes (one render model)
-├─ pane ─ alacritty_terminal (VT/ANSI, grid, scrollback) ─ PTY ─ bash
+├─ pane ─ rio-vt (VT/ANSI, grid, scrollback) ─ PTY ─ bash
 ├─ theme ─ hot-reloaded data files (palette/font/effect dials) — DAY ONE
 └─ visuals ─ CRT-lite first (primitives); true post-process shader = research branch
 ```
@@ -51,8 +51,9 @@ terminal-delight (single Rust process, MIT)
   `gpui_platform` w/ `x11`,`wayland`,`font-kit` features. Optimus laptop caveat: keep
   `ZED_DEVICE_ID` / forced-X11 workarounds handy; "wgpu fixes our box" is unproven until
   G0a runs — which is exactly what G0a is for.
-- **Emulation: `alacritty_terminal`** (Apache-2.0 ✅) — Term/Grid/event_loop/tty modules;
-  the hard core we must not hand-roll.
+- **Emulation: `rio-vt`** (MIT ✅), since the core swap of 2026-09-25 (`docs/plans/core-swap-rio/`).
+  The Emulation, PTY and license notes below record the original `alacritty_terminal` decision;
+  TD now owns its read loop and PTY in `app/src/vt/`, and `alacritty_terminal` is test-only.
 - **PTY seam: DECIDED (R2 resolved) — Option A: `alacritty_terminal::tty` + `EventLoop`.**
   The crate ships the full I/O runtime: `tty::new()` spawns the shell; `EventLoop` owns the
   reader thread + VTE parser pump + writer, auto-routes `Event::PtyWrite` query responses back

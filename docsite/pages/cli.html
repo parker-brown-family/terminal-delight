@@ -45,7 +45,7 @@
     <tr><td><code>agent-usage [update|list|where] [--only &lt;id&gt;]</code></td><td>Run the usage collectors (<code>claude</code>, <code>codex</code>, <code>fireworks</code>, <code>grok</code>) and write one record per subscription. <code>list</code> names the collectors; <code>where</code> prints the folders records are read from. See <a href="/usage">Usage and vitals</a>.</td><td>0; 1 only if every collector failed; 2 usage</td></tr>
     <tr><td><code>agent-vitals &lt;transcript.jsonl&gt;… [--parts] [--keys]</code></td><td>The three attention bars for transcripts, as JSON. <code>--parts</code> adds the fatigue components; <code>--keys</code> prints each tool call's key instead.</td><td>0; 2 with no transcript</td></tr>
     <tr><td><code>serve --session &lt;key&gt;</code></td><td>Run the <a href="/sessions">session host</a> for a session. Windows start this themselves.</td><td>1 can't make its socket folder; 2 usage</td></tr>
-    <tr><td><code>--version</code>, <code>-V</code></td><td><code>terminal-delight &lt;version&gt; (terminal core: rio-vt 0.5.28)</code>. A build made with the <code>core-alacritty</code> feature names <code>alacritty_terminal 0.26</code> instead.</td><td>0</td></tr>
+    <tr><td><code>--version</code>, <code>-V</code></td><td><code>terminal-delight &lt;version&gt; (terminal core: rio-vt 0.5.28)</code>. A test build made with the <code>core-alacritty</code> feature names <code>alacritty_terminal 0.26</code> instead.</td><td>0</td></tr>
     <tr><td><code>--help</code>, <code>-h</code></td><td>The usage text.</td><td>0</td></tr>
   </tbody>
 </table>

@@ -3206,8 +3206,8 @@ fn a_picture_pasted_into_a_note_on_a_brief_leaves_the_brief_untouched(cx: &mut T
 /// which is the one thing that makes a picture go: the texture is dropped and
 /// the core forgets the image, so coming back shows only the text.
 ///
-/// rio-vt only: alacritty drops the picture in its parser, so on the fallback
-/// there is nothing to show.
+/// rio-vt only: alacritty drops the picture in its parser, so on the reference
+/// core there is nothing to show.
 #[cfg(not(feature = "core-alacritty"))]
 #[gpui::test]
 fn a_picture_a_program_draws_is_shown_and_then_forgotten_when_hidden(cx: &mut TestAppContext) {

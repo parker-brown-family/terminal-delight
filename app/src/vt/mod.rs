@@ -5,11 +5,11 @@
 //! it, the application reads [`Term`] in TD's own vocabulary ([`types`]); below
 //! it, one of two adapters translates a real core into that vocabulary:
 //!
-//! - **rio-vt** (`rio.rs`), the default since 2026-09-25 — faster to parse,
-//!   lighter to hold, and it keeps the pictures programs draw.
+//! - **rio-vt** (`rio.rs`), the only core TD ships, since 2026-09-25 — faster
+//!   to parse, lighter to hold, and it keeps the pictures programs draw.
 //! - **alacritty_terminal** (`alacritty.rs`), compiled only with
-//!   `--features core-alacritty`, kept as a fallback until rio-vt has held in
-//!   daily use and as the oracle the test suite checks rio-vt against.
+//!   `--features core-alacritty`, a test-only reference that Terminal Lab and
+//!   the test suite compare rio-vt against.
 //!
 //! Around the core, TD owns the rest of a terminal: the read loop
 //! ([`pump`]), the pseudoterminal ([`pty`]), the socket a replica reads

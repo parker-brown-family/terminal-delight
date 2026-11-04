@@ -153,7 +153,8 @@ before encoding. Until the core swap (2026-09-25) it was alacritty's
 
 **core / vt boundary** — The terminal emulator core turns a program's bytes
 into a grid of cells. TD's is **rio-vt**, the core of the Rio terminal;
-`alacritty_terminal` is a fallback built with `--features core-alacritty`.
+it is the only core TD ships. `alacritty_terminal` survives as a test-only
+reference for Terminal Lab, built with `--features core-alacritty`.
 Everything TD reads about a terminal goes through `app/src/vt/`, in TD's own
 types with alacritty 0.26's numbering frozen (the divergence hash is built
 from those numbers). Decided in `docs/plans/core-swap-rio/02-architecture.md`.

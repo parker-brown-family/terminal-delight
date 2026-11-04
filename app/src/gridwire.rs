@@ -798,7 +798,7 @@ mod roundtrip {
     ];
 
     /// Where rio-vt parts from a host built before the swap, on purpose, with
-    /// the old host's hash. The fallback core still matches it; rio-vt does
+    /// the old host's hash. The reference core still matches it; rio-vt does
     /// not, for a reason each can name:
     ///
     /// - a Kitty picture, which the old host drops in its parser and rio-vt
@@ -988,7 +988,7 @@ mod roundtrip {
     /// statement buy the same thing here, and the seed is printed on failure,
     /// which is the part that actually matters for a fix.
     ///
-    /// **Runs on rio-vt; ignored on the alacritty fallback, where it fails on
+    /// **Runs on rio-vt; ignored on the alacritty reference core, where it fails on
     /// a real defect rather than a flaky one.** It found four in the sitting it
     /// was written, all fixed and each pinned as its own named fixture beside
     /// this one; the fifth is a `BOLD` flag reaching a trailing blank the
@@ -1151,7 +1151,7 @@ mod roundtrip {
     ///
     /// On rio-vt the premise itself fails: its erase never leaves half a wide
     /// character behind, so the grid this test is about cannot occur there.
-    /// It stays, ignored, for the alacritty fallback.
+    /// It stays, ignored, for the alacritty reference core.
     #[test]
     #[ignore = "known gap on alacritty: a torn wide character cannot be reprinted; rio-vt never tears one"]
     fn a_wide_char_whose_spacer_was_erased_cannot_be_reprinted() {

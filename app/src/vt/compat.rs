@@ -16,7 +16,7 @@
 //! that was on back on — what alacritty was left with. Every byte passes
 //! through as it came, when it came; the correction follows the run. Once no
 //! session host from before the swap is running this has nothing left to do,
-//! and it goes with the alacritty fallback (issue 826).
+//! and it goes with the alacritty reference core (issue 826).
 
 const ESC: u8 = 0x1b;
 
