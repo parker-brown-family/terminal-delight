@@ -1,11 +1,10 @@
-//! The fallback core: alacritty_terminal 0.26 behind TD's boundary.
+//! The reference core: alacritty_terminal 0.26 behind TD's boundary.
 //!
-//! Compiled only with `--features core-alacritty`. It is kept for two reasons,
-//! and both have a date on them. It is the oracle: the whole test suite runs
-//! on it as well as on rio-vt, and a test that passes here and fails there is
-//! a difference between the cores, found. And it is a way back: if rio-vt
-//! misbehaves in daily use, a build on the old core is one flag away rather
-//! than one revert away. Once rio-vt has held, a follow-up deletes this file.
+//! Compiled only with `--features core-alacritty`, and in no shipped build.
+//! rio-vt has held in daily use, so this is no longer a way back. It stays as
+//! the oracle: Terminal Lab and the whole test suite run on it as well as on
+//! rio-vt, and a test that passes here and fails there is a difference between
+//! the cores, found. Issue 826 tracks deleting this file.
 //!
 //! Translation is nearly free, because `vt`'s numbering *is* alacritty's:
 //! flags and modes cross by their bits, and named colours by their index.

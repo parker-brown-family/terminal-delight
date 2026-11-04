@@ -933,7 +933,7 @@ mod tests {
     /// A UTF-8 character split across reads, completed by a read that holds
     /// more text after it. The lab found alacritty's parser losing that text
     /// (vte 0.15.0, alacritty/vte#159: fixed on vte master, in no release).
-    /// rio-vt keeps it. On the fallback core this pins the loss, so the day a
+    /// rio-vt keeps it. On the reference core this pins the loss, so the day a
     /// vte release fixes it this fails and says what to delete.
     #[test]
     fn a_character_split_across_reads_keeps_the_one_after_it() {

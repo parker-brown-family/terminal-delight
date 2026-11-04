@@ -4,8 +4,8 @@ terminal-delight's own source is MIT, and so are its distributed binaries. Its
 direct UI dependencies — `gpui`, `gpui_wgpu`, `gpui_platform` and `gpui_linux` —
 are Apache-2.0. Its terminal emulator core, `rio-vt` (the core of the Rio
 terminal, <https://github.com/raphamorim/rio>), is MIT; `alacritty_terminal`,
-Apache-2.0, is compiled in only with `--features core-alacritty`, the fallback
-core. Every transitive
+Apache-2.0, is compiled in only with `--features core-alacritty`, a test-only
+reference that is not in any shipped build. Every transitive
 dependency is used under a permissive license (MIT / Apache-2.0 / BSD-class /
 Zlib / ISC / MPL-2.0 / Unicode / CC0). Rust dependency licenses are checked in CI
 with `cargo deny check` against the allowlist in `app/deny.toml`, with **no GPL

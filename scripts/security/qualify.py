@@ -22,9 +22,9 @@ checks = [
     ("clean-application", ["cargo", "clean", "-p", "terminal-delight"]),
     ("format", ["cargo", "fmt", "--all", "--", "--check"]),
     ("clippy", ["cargo", "clippy", "--locked", "--bins", "--", "-D", "warnings"]),
-    ("clippy-fallback", ["cargo", "clippy", "--locked", "--bins", "--features", "core-alacritty", "--", "-D", "warnings"]),
+    ("clippy-reference", ["cargo", "clippy", "--locked", "--bins", "--features", "core-alacritty", "--", "-D", "warnings"]),
     ("default", ["cargo", "test", "--locked", "--", "--test-threads=2"]),
-    ("fallback", ["cargo", "test", "--locked", "--features", "core-alacritty", "--", "--test-threads=2"]),
+    ("reference", ["cargo", "test", "--locked", "--features", "core-alacritty", "--", "--test-threads=2"]),
     ("os", ["cargo", "test", "--locked", "--test", "restricted", "--", "--ignored", "--test-threads=1"]),
     ("release", ["cargo", "build", "--release", "--locked"]),
 ]

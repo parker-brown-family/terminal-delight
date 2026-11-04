@@ -95,11 +95,11 @@ jobs:
       - name: Clippy
         run: cargo clippy --locked -- -D warnings
 
-      # The alacritty fallback core is the way back if rio-vt misbehaves, and
-      # the oracle the suite is checked against. A fallback nobody builds is
-      # one that no longer compiles on the day it is needed (issue 826 removes
-      # it, and these steps with it).
-      - name: Clippy, fallback core
+      # rio-vt is the only core TD ships. alacritty_terminal stays as the
+      # test-only reference Terminal Lab compares rio-vt against, and a
+      # reference nobody builds stops compiling (issue 826 tracks removing it,
+      # and these steps with it).
+      - name: Clippy, reference core
         run: cargo clippy --locked --features core-alacritty -- -D warnings
 
       # The HTML engine's tests drive a real Chromium, and the runner's AppArmor
@@ -120,7 +120,7 @@ jobs:
       - name: Test
         run: cargo test --locked
 
-      - name: Test, fallback core
+      - name: Test, reference core
         run: cargo test --locked --features core-alacritty
 
       - name: Prove the Restricted OS boundary

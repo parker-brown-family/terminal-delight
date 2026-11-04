@@ -15,7 +15,7 @@
 //! [`CellSizeQuery`] watches the bytes on their way in instead, and the
 //! alacritty adapter (`vt/alacritty.rs`) answers from the cell size the core
 //! was given. rio-vt answers `16 t` itself, so the scanner is compiled only
-//! with the alacritty fallback; it goes when that does.
+//! with the alacritty reference core; it goes when that does.
 //!
 //! The price is ordering. The scanner sees a read before the parser does, so a
 //! program that writes another question and then `CSI 16 t` in one go is

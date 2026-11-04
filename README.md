@@ -300,8 +300,8 @@ main.rs          the window: tabs, the tiling tree, popups, pickers, the agent w
 pane.rs, pane/   one pane: grid rendering, input, selection, scrollback, links,
                  the pane header, the workbench face
 term.rs, vt/     a pane's terminal behind TD's own boundary: the rio-vt adapter,
-                 the read loop, the PTY, the replica socket, and the
-                 alacritty_terminal fallback (--features core-alacritty)
+                 the read loop, the PTY, the replica socket, and the test-only
+                 alacritty_terminal reference (--features core-alacritty)
 host.rs, hostctl.rs, hostproto.rs
                  the session host, the window's side of it, and the words between
 instance.rs, session.rs
