@@ -108,7 +108,9 @@ mod uninstall;
 mod update;
 mod update_view;
 mod wirecheck;
-use skin::parts::{color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn};
+use skin::parts::{
+    color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
+};
 mod slot;
 mod sticky;
 mod surface;
@@ -32860,8 +32862,12 @@ impl Render for Workspace {
                     other => other,
                 };
                 skin_row = skin_row.child(
-                    theme_icon_btn(&th, &sk, &icon, caption, lit)
+                    theme_icon_btn_wide(&th, &sk, &icon, caption, lit, skin::picker_cells(&id))
                         .id(SharedString::from(format!("skin-btn-{id}")))
+                        .debug_selector({
+                            let id = id.clone();
+                            move || format!("skin-btn-{id}")
+                        })
                         .map(|b| {
                             palette_help(
                                 b,
@@ -49544,6 +49550,57 @@ node = "Leaf"
             3,
             "a fourth paper does not fit that row — give it a second one"
         );
+    }
+
+    /// TERMINIMALIST's name overran its card onto the card beside it. The
+    /// picker gives it two cells of the grid, gap included, in every skin that
+    /// draws cards.
+    #[gpui::test]
+    fn the_terminimalist_card_is_two_cells_wide(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1400.), px(1000.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |p, _| p.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |ws, cx| {
+            ws.theme_menu = Some(MenuScope::Outer);
+            ws.fold_open = Some("skin");
+            cx.notify();
+        });
+        for (id, cell) in [("default", 46.), ("chalk", 56.)] {
+            cx.update(|w, cx| {
+                skin::select(cx, id).unwrap();
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+            let card = |cx: &mut gpui::VisualTestContext, id: &'static str| {
+                cx.debug_bounds(id)
+                    .unwrap_or_else(|| panic!("{id} not drawn"))
+            };
+            let single = card(cx, "skin-btn-clean").size.width;
+            let wide = card(cx, "skin-btn-terminimalist").size.width;
+            assert_eq!(single, px(cell), "{id}: a single card");
+            assert_eq!(wide, px(2. * cell + TRAY_GAP), "{id}: the double card");
+        }
     }
 
     #[test]

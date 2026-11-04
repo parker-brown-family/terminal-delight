@@ -2954,14 +2954,28 @@ pub fn spec(cx: &App) -> Arc<SkinSpec> {
         .unwrap_or_else(|| Arc::new(SkinSpec::default()))
 }
 
-/// The most buttons the SKIN picker can draw: every builtin, plus the `custom`
-/// slot, which the picker shows only while the user's skin file is drawing.
+/// The most cells the SKIN picker can fill: every builtin at its width, plus the
+/// `custom` slot, which the picker shows only while the user's skin file is drawing.
 ///
 /// The WORST case on purpose — the tray has to fit when that file exists, and a
 /// geometry test that assumed it did not would pass on this machine and fail on
 /// the one where somebody wrote a skin.
 pub fn picker_max_count() -> usize {
-    BUILTIN_SKINS.len() + 1
+    let builtins: usize = BUILTIN_SKINS
+        .iter()
+        .map(|(id, _)| usize::from(picker_cells(id)))
+        .sum();
+    builtins + 1
+}
+
+/// How many cells of the picker's grid a skin's card takes. TERMINIMALIST's
+/// name is the one that runs past a single card.
+pub fn picker_cells(id: &str) -> u8 {
+    if id == "terminimalist" {
+        2
+    } else {
+        1
+    }
 }
 
 /// Every skin that can be selected, as `(id, icon, whether it is active now)`.
