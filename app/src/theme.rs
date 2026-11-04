@@ -184,6 +184,10 @@ pub struct Theme {
     pub faint: Hsla,
     pub cursor: Hsla,
     pub ansi: [Hsla; 16],
+    /// Programs' sixteen colours come from `ansi`, not xterm's table. True while
+    /// a window follows Omarchy, so `ls` reads the way it does in the desktop's
+    /// other terminals; xterm's blue is 1.5:1 on a dark theme. See `pane::program_colour`.
+    pub program_ansi: bool,
     /// How program text colour is painted (default/monochrome/on-theme).
     pub color_mode: ColorMode,
     /// IDE-style token highlighting overlaid on default-foreground text. An
@@ -3351,6 +3355,7 @@ pub fn resolve(cx: &App, choice: &ThemeChoice) -> Arc<Theme> {
     if choice.invert {
         invert_theme_colours(&mut th);
     }
+    th.program_ansi = desktop;
     Arc::new(th)
 }
 
@@ -3916,6 +3921,7 @@ pub(crate) fn parse(source: &str) -> Result<Theme, String> {
         faint: c.faint,
         cursor: c.cursor,
         ansi: c.ansi,
+        program_ansi: false,
         color_mode: ColorMode::default(),
         syntax: false,
         syntax_scheme: SyntaxScheme::Code,

@@ -22,6 +22,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   you already have keeps its settings.
 - **Default text reads everywhere.** It clears 4.5:1 in every design and skin
   and under every palette, and a test now holds that.
+- **Programs wear your Omarchy theme.** A window following Omarchy paints the
+  sixteen colours programs use from the theme, so `ls` folders read as they do
+  in the desktop's other terminals instead of xterm's dark blue.
 - **Agents sleep after an hour of rest,** down from two.
 
 ### Threshing Floor and CONFIG
