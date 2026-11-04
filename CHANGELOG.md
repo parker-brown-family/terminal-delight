@@ -15,6 +15,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   and icons. It refuses a download that doesn't match the release's checksum,
   and it leaves an install that is already there alone.
 
+### A new window
+
+- **A new window opens in Deco, on the tube.** The Deco design and the Deco skin
+  together, following your Omarchy theme, with the cursor tracer on. A window
+  you already have keeps its settings.
+- **Default text reads everywhere.** It clears 4.5:1 in every design and skin
+  and under every palette, and a test now holds that.
+- **Agents sleep after an hour of rest,** down from two.
+
 ### Threshing Floor and CONFIG
 
 - **An org can be deleted from where you can see it.** A red **Delete org**

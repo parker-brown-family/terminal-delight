@@ -38,7 +38,7 @@ impl Default for Thresholds {
     fn default() -> Self {
         Self {
             rest_after: Duration::from_secs(10 * 60),
-            sleep_after_rest: Duration::from_secs(2 * 60 * 60),
+            sleep_after_rest: Duration::from_secs(60 * 60),
         }
     }
 }
@@ -1685,10 +1685,10 @@ mod tests {
         let wake = Ok(s(&["claude", "--resume", SID]));
         let l = idle_claude();
         assert_eq!(
-            may_sleep(&l, Duration::from_secs(3600), &t, &wake),
+            may_sleep(&l, Duration::from_secs(1800), &t, &wake),
             Err(Refusal::NotRestedLongEnough)
         );
-        assert_eq!(may_sleep(&l, Duration::from_secs(7200), &t, &wake), Ok(()));
+        assert_eq!(may_sleep(&l, Duration::from_secs(3600), &t, &wake), Ok(()));
         let mut busy = l.clone();
         busy.cpu_share = Some(0.5);
         assert_eq!(

@@ -407,8 +407,7 @@ pub fn pick_set(cx: &mut App, set: Option<String>) {
 // ---------------------------------------------------------------------------
 
 /// What a brand-new window starts as: a saved look, or nothing saved — the
-/// house look, which is Clean. Parker, 2026-10-21: new-window settings are
-/// *"CUSTOMIZABLE, but at a default -- CLEAN"*.
+/// house look, [`crate::theme::house_outer`].
 #[derive(Clone, Default, PartialEq, Serialize, Deserialize)]
 pub struct NewWindow {
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -424,8 +423,8 @@ impl NewWindow {
         crate::instance::config_dir().join("new-window.toml")
     }
 
-    /// The saved template, or `None` when there is none — new windows are
-    /// Clean. A file that will not parse is reported and treated as none.
+    /// The saved template, or `None` when there is none, and new windows take
+    /// the house look. A file that will not parse is reported and treated as none.
     pub fn load() -> Option<NewWindow> {
         let src = fs::read_to_string(Self::path()).ok()?;
         match toml::from_str(&src) {

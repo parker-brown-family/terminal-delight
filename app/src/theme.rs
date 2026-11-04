@@ -28,6 +28,8 @@ pub const DEFAULT_THEME_TOML: &str = include_str!("../themes/hacker.toml");
 /// no light, held so while it is worn (see [`hold_clean`]). It replaced Quiet.
 pub const CLEAN: &str = "clean";
 pub const CLEAN_THEME_TOML: &str = include_str!("../themes/clean.toml");
+/// The design a new window opens in.
+pub const DECO: &str = "deco";
 
 /// (id, embedded toml) for every built-in. The user file at
 /// ~/.config/terminal-delight/theme.toml stays hot-reloaded as id "custom".
@@ -1999,29 +2001,33 @@ impl Default for ThemeChoice {
 /// screen this was taken from, with no slider moved — once the window leaves
 /// Clean, which holds the tube off while it is worn.
 ///
-/// **A new window wears Clean** (Parker, 2026-10-21: new-window settings are
-/// "CUSTOMIZABLE, but at a default -- CLEAN"). A saved new-window template
-/// outranks this; see [`crate::uiconfig::NewWindow`].
+/// **A new window wears Deco, in the deco skin, on the tube, following Omarchy**
+/// (Parker, 2026-11-04: *"our default out of the box selection will be
+/// Deco-Deco just like we have right now"*). These are his dials that day but
+/// for brightness, which at his 0.135 left default text under 2.5:1 on most
+/// palettes; see `the_house_dials_read_in_every_design_skin_and_palette`. A
+/// saved new-window template outranks this; see [`crate::uiconfig::NewWindow`].
 pub fn house_outer() -> ThemeChoice {
     ThemeChoice {
-        id: CLEAN.into(),
+        id: DECO.into(),
         seed: None,
         color: ColorMode::Default, // ANSI, as selected in the shipping settings
         syntax: true,
         syntax_scheme: SyntaxScheme::Markdown,
         grade: Grade {
-            brightness: 0.13,
+            brightness: 0.30,
             contrast: HOUSE_CONTRAST,
-            colour: 0.70,
-            text: 0.88,
-            background: 0.27,
-            field_colour: None,
-            gamma: 0.92,
+            colour: 0.75,
+            text: 0.84,
+            background: 0.80,
+            field_colour: Some(1.0),
+            gamma: 0.26,
             scale: HOUSE_SCALE,
             text_size: HOUSE_TEXT_SIZE,
             bench_size: Some(0.76),
-            // Off on a fresh install; the two dials below are what it turns on.
-            crt: false,
+            // A new window opens on the tube. Parker, 2026-11-04: *"ship default
+            // with CRT ON"*.
+            crt: true,
             warp: WARP_MAX,
             image_glow: None,
             inactive_image_glow: None,
@@ -2040,7 +2046,12 @@ pub fn house_outer() -> ThemeChoice {
             inactive_off_cursor_linger_ms: None,
             glare: None, // the design's own glass
             tracking: Some(HOUSE_ROLL),
-            cursor_trail: None,
+            cursor_trail: Some(CursorTrail {
+                on: true,
+                ms: 495.,
+                intensity: 0.70,
+                style: CursorTrailStyle::Afterimage,
+            }),
             crawl: false,
             crawl_angle: CRAWL_ANGLE_DEFAULT,
             crawl_depth: CRAWL_DEPTH_DEFAULT,
@@ -2054,7 +2065,7 @@ pub fn house_outer() -> ThemeChoice {
         complement: None,
         human: None,
         invert: false,
-        note: NotePaper::Contrast,
+        note: NotePaper::Accent,
         follow_omarchy: Some(true),
     }
 }
@@ -3479,7 +3490,7 @@ pub const ACTIVE_BRIGHTNESS_MIN: f32 = 0.2;
 pub const HOUSE_SCALE: f32 = 1.0;
 pub const HOUSE_TEXT_SIZE: f32 = 1.07;
 /// A fresh window's contrast: +21, selected in both 2026-10-21 captures.
-pub const HOUSE_CONTRAST: f32 = 0.71;
+pub const HOUSE_CONTRAST: f32 = 0.52;
 /// The roll bar a fresh window keeps for when the CRT is switched on:
 /// `[intensity, speed, size]`, Parker's dials on 2026-09-25.
 pub const HOUSE_ROLL: [f32; 3] = [0.52, 0.815, 0.207];
@@ -4237,7 +4248,7 @@ mod tests {
             crate::palette::init_shipped(cx);
             init_embedded(cx, house_outer());
             let mut lit = house_outer();
-            assert_eq!(lit.id, CLEAN, "a new window wears Clean");
+            lit.id = CLEAN.into();
             lit.grade.crt = true;
             lit.grade.image_glow = Some(0.6);
             lit.grade.phosphor = 2.5;
@@ -4287,15 +4298,16 @@ mod tests {
         });
     }
 
-    /// The approved shipping settings apply to every design except Clean.
+    /// The approved shipping settings: Clean has its own, Deco its own skin, and
+    /// every other design Ops.
     #[test]
-    fn designs_ship_ops_and_standard_except_clean() {
+    fn designs_ship_their_skin_and_ui() {
         for (id, src) in BUILTIN_THEMES {
             let th = parse(src).unwrap();
-            let (skin, ui) = if *id == CLEAN {
-                ("clean", crate::uiconfig::CLEAN)
-            } else {
-                ("ops", crate::uiconfig::STANDARD)
+            let (skin, ui) = match *id {
+                CLEAN => ("clean", crate::uiconfig::CLEAN),
+                DECO => ("deco", crate::uiconfig::STANDARD),
+                _ => ("ops", crate::uiconfig::STANDARD),
             };
             assert_eq!(th.skin.as_deref(), Some(skin), "{id} skin");
             assert_eq!(th.ui.as_deref(), Some(ui), "{id} UI");
@@ -4331,13 +4343,13 @@ mod tests {
     }
 
     /// Every shipped design says what its tube is, so one nobody has touched
-    /// looks as designed whichever design was worn before it: Hacker and
-    /// Intrusive ship the CRT on, Clean and Deco ship it off.
+    /// looks as designed whichever design was worn before it: only Clean ships
+    /// the CRT off.
     #[test]
     fn every_design_declares_its_tube() {
         for (id, src) in BUILTIN_THEMES {
             let crt = parse(src).unwrap().look.crt;
-            let want = !matches!(*id, "clean" | "deco");
+            let want = *id != CLEAN;
             assert_eq!(crt, Some(want), "{id} must declare its tube in [look]");
         }
     }
@@ -5488,7 +5500,7 @@ mod tests {
 
     /// The signed picture readouts and sizes match Parker's approved captures.
     #[test]
-    fn a_fresh_install_opens_flat_in_the_terminal_delight_palette() {
+    fn a_fresh_install_opens_deco_on_the_tube_in_the_terminal_delight_palette() {
         // the tray's own arithmetic (see the grade row in main::render)
         let dial = |v: f32, neutral: f32| ((v - neutral) * 100.0).round() as i32;
         let (_, _, neutral) = GradeKey::Contrast.range();
@@ -5502,7 +5514,8 @@ mod tests {
             c.dynamic.is_plain() && c.seed.is_none(),
             "nothing layered on it"
         );
-        assert_eq!(c.id, CLEAN, "design: clean");
+        assert_eq!(c.id, DECO, "design: deco");
+        assert_eq!(c.note, NotePaper::Accent, "the note wears the accent");
         assert_eq!(c.follow_omarchy, Some(true), "inherit the desktop palette");
         assert_eq!(c.color, ColorMode::Default, "program colour: ANSI");
         assert!(
@@ -5510,14 +5523,24 @@ mod tests {
             "syntax: Markdown"
         );
         let g = c.grade;
-        assert!(!g.crt, "the CRT is off");
-        assert!(!g.crawl, "and so is the crawl");
-        assert_eq!(dial(g.contrast, neutral), 21);
-        assert_eq!(dial(g.brightness, neutral), -37, "the approved brightness");
-        assert_eq!(dial(g.colour, neutral), 20);
-        assert_eq!(dial(g.text, neutral), 38);
-        assert_eq!(dial(g.background, neutral), -23);
-        assert_eq!(dial(g.gamma, neutral), 42);
+        assert!(g.crt, "the CRT is on");
+        assert!(!g.crawl, "and the crawl is off");
+        assert_eq!(g.field_colour, Some(1.0), "the field wears the panel");
+        assert_eq!(
+            g.cursor_trail.map(|t| (t.on, t.style)),
+            Some((true, CursorTrailStyle::Afterimage)),
+            "the cursor leaves its tracer"
+        );
+        assert_eq!(dial(g.contrast, neutral), 2);
+        assert_eq!(
+            dial(g.brightness, neutral),
+            -20,
+            "the brightness that reads"
+        );
+        assert_eq!(dial(g.colour, neutral), 25);
+        assert_eq!(dial(g.text, neutral), 34);
+        assert_eq!(dial(g.background, neutral), 30);
+        assert_eq!(dial(g.gamma, neutral), -24);
         assert_eq!((g.scale * 100.0).round(), 100.0);
         assert_eq!((g.text_size * 100.0).round(), 107.0);
         assert_eq!((g.bench_gauge() * 100.0).round(), 76.0);
@@ -5526,16 +5549,13 @@ mod tests {
         assert_eq!(g.warp, WARP_MAX, "warp +150");
         assert_eq!(g.tracking, Some(HOUSE_ROLL), "the roll bar");
 
-        // A grade that differs from Grade::default is written out, and the
-        // `crt = false` has to be in it: a missing key reads as ON.
+        // A grade that differs from Grade::default is written out. An on switch
+        // stays unwritten, because a missing key reads as ON.
         assert!(!g.is_default(), "the fresh grade persists");
         let wire = toml::to_string(&g).unwrap();
-        assert!(
-            wire.contains("crt = false"),
-            "the off switch is written down:\n{wire}"
-        );
+        assert!(!wire.contains("crt"), "on is the unwritten state:\n{wire}");
         let back: Grade = toml::from_str(&wire).unwrap();
-        assert!(!back.crt, "and reloads off");
+        assert!(back.crt, "and reloads on");
     }
 
     /// This machine's `[theme.grade]`, verbatim from its session file on
@@ -5581,10 +5601,11 @@ warp = 1.5
             init_embedded(cx, house_outer());
             // The switch is Hacker's to obey: Clean holds the tube off whatever
             // it says (see `clean_holds_the_tube_and_the_light_off_and_keeps_the_dials`).
-            let off = ThemeChoice {
+            let mut off = ThemeChoice {
                 id: "hacker".into(),
                 ..house_outer()
             };
+            off.grade.crt = false;
             let flat = resolve(cx, &off);
             for (what, v) in [
                 ("warp", flat.warp),
@@ -5802,8 +5823,9 @@ warp = 1.5
         ] {
             for (k, _) in Grade::CHANNELS {
                 match k {
-                    GradeKey::FieldColour
-                    | GradeKey::ImageGlow
+                    // The house field wears the panel; see the fresh-install test.
+                    GradeKey::FieldColour => {}
+                    GradeKey::ImageGlow
                     | GradeKey::InactiveImageGlow
                     | GradeKey::InactiveText
                     | GradeKey::ActiveBrightness
@@ -6033,7 +6055,7 @@ warp = 1.5
             eff.grade.text_size, HOUSE_TEXT_SIZE,
             "and the grid font at 107%"
         );
-        assert!(!eff.grade.crt, "and flat, like the cabinet");
+        assert!(eff.grade.crt, "and on the tube, like the cabinet");
     }
 
     #[test]
