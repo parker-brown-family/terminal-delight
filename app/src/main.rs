@@ -12121,6 +12121,7 @@ impl Workspace {
         div()
             .absolute()
             .inset_0()
+            .on_children_prepainted(keep_panels_from_doc_grade)
             .occlude()
             .bg(th.bg.alpha(0.70))
             .flex()
@@ -17147,6 +17148,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -17821,6 +17823,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18098,6 +18101,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18281,6 +18285,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18697,6 +18702,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .bg(th.bg.alpha(0.70))
                 .flex()
                 .items_center()
@@ -18898,6 +18904,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19345,6 +19352,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19732,6 +19740,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.28))
                 .on_mouse_down(
@@ -19897,6 +19906,10 @@ impl Workspace {
     ) -> gpui::Div {
         let wh = self.last_win.map_or(800., |(_, _, _, h)| h);
         self.over_the_glass(glass, |ws, _window, cx| ws.close_focus_read(cx), cx)
+            // The frame shows the document it holds, and a document lent to it
+            // is graded there: keeping the frame out would undo that. One
+            // listener per element, so this one replaces the builder's.
+            .on_children_prepainted(|_, _, _| {})
             .flex()
             .items_start()
             .justify_center()
@@ -29602,6 +29615,7 @@ impl Workspace {
             .absolute()
             .inset_0()
             .occlude()
+            .on_children_prepainted(keep_panels_from_doc_grade)
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -29808,6 +29822,15 @@ impl Workspace {
 fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
     warp::flatten();
     div()
+        .relative()
+        .child(
+            canvas(
+                |bounds, window, _cx| keep_from_doc_grade(bounds, window),
+                |_, _, _, _| {},
+            )
+            .absolute()
+            .inset_0(),
+        )
         .flex()
         .flex_col()
         .px(px(9. * s))
@@ -29818,6 +29841,34 @@ fn over_the_glass_tip(th: &theme::Theme, sk: &skin::Skin, s: f32) -> gpui::Div {
         .bg(sk.region_face(darken(th.surface, 0.45)))
         .shadow(float_shadows(th.accent, th.grade.phosphor))
         .map(|d| sk.finish(d))
+}
+
+/// Keep `bounds` out of the floating document's grade: the grade is a pixel
+/// post-process, so a menu standing over the square would dim with the page, and
+/// GAUGES would take the way back with it.
+fn keep_from_doc_grade(bounds: Bounds<Pixels>, window: &Window) {
+    let sf = window.scale_factor();
+    warp::keep_from_doc_grade([
+        f32::from(bounds.origin.x) * sf,
+        f32::from(bounds.origin.y) * sf,
+        f32::from(bounds.size.width) * sf,
+        f32::from(bounds.size.height) * sf,
+    ]);
+}
+
+/// For a full-window click-catcher: the panels in it are what stands over the
+/// document, and the catcher itself draws nothing.
+fn keep_panels_from_doc_grade(panels: Vec<Bounds<Pixels>>, window: &mut Window, _cx: &mut App) {
+    for panel in panels {
+        keep_from_doc_grade(panel, window);
+    }
+}
+
+/// Whether a child of the window's root stands over the stage rather than being
+/// it: the stage and a scrim both fill most of the window, and a scrim keeps its
+/// own panel out ([`Workspace::over_the_glass`]).
+fn stands_over_the_stage(child: (f32, f32), window: (f32, f32)) -> bool {
+    child.0 * child.1 < 0.6 * window.0 * window.1
 }
 
 /// The hover over one of the bottom slot's allowance rows: the provider, then
@@ -31491,7 +31542,13 @@ impl Render for Workspace {
         // the easter eggs can be photographed open as well as shut.
         if let Ok(demo) = std::env::var("TD_OSD_DEMO") {
             if self.osd_menu.is_none() {
-                self.open_osd(MenuScope::Outer, None);
+                // `over` stands the tray three quarters across and 150 down, over
+                // the floating document, wherever the window landed.
+                let over = demo.split(',').any(|s| s == "over").then(|| {
+                    let view = window.viewport_size();
+                    point(px(f32::from(view.width) * 0.75), px(150.))
+                });
+                self.open_osd(MenuScope::Outer, over);
                 self.osd_eggs.crt = demo.split(',').any(|s| s == "crt");
                 self.osd_eggs.crawl = demo.split(',').any(|s| s == "crawl");
                 if demo.split(',').any(|s| s == "open") {
@@ -34010,6 +34067,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -34211,22 +34269,7 @@ impl Render for Workspace {
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
-            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w)).child(
-                canvas(
-                    |bounds, window, _cx| {
-                        let sf = window.scale_factor();
-                        warp::keep_from_doc_grade([
-                            f32::from(bounds.origin.x) * sf,
-                            f32::from(bounds.origin.y) * sf,
-                            f32::from(bounds.size.width) * sf,
-                            f32::from(bounds.size.height) * sf,
-                        ]);
-                    },
-                    |_, _, _, _| {},
-                )
-                .absolute()
-                .inset_0(),
-            );
+            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
@@ -34536,6 +34579,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -36259,6 +36303,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(th.bg.alpha(if preview { 0.52 } else { 0.70 }))
                 .on_mouse_down(
@@ -36827,6 +36872,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
                 .bg(th.bg.alpha(0.70))
                 .on_mouse_down(
@@ -36924,6 +36970,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .bg(hsla(0., 0., 0., 0.62))
                     .flex()
                     .items_center()
@@ -37003,6 +37050,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .bg(hsla(0., 0., 0., 0.62))
                     .flex()
                     .items_center()
@@ -37107,6 +37155,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 // occlude, or the pane's warped CRT layer paints over the panel
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.18))
@@ -37434,6 +37483,7 @@ impl Render for Workspace {
             div()
                 .absolute()
                 .inset_0()
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 // occlude, or the pane's warped CRT layer paints over the panel
                 .occlude()
                 .bg(hsla(0., 0., 0., 0.18))
@@ -38199,6 +38249,7 @@ impl Render for Workspace {
                     div()
                         .absolute()
                         .inset_0()
+                        .on_children_prepainted(keep_panels_from_doc_grade)
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38358,6 +38409,7 @@ impl Render for Workspace {
                 div()
                     .absolute()
                     .inset_0()
+                    .on_children_prepainted(keep_panels_from_doc_grade)
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38430,15 +38482,13 @@ impl Render for Workspace {
             (Some(pane), Some(_)) => pane.update(cx, |v, cx| v.reader_clip(cx)),
             _ => None,
         };
+        let lent_glow = match (&focus_pane, &focus_doc) {
+            (Some(pane), Some(view)) => pane.read(cx).lent_glow(view, cx),
+            _ => None,
+        }
+        .unwrap_or(th.grade.phosphor);
         let focus_overlay = if let (Some(pane), Some(view)) = (&focus_pane, focus_doc) {
-            Some(self.focus_document_overlay(
-                pane,
-                view,
-                focus_clip,
-                focus_ramp,
-                th.grade.phosphor,
-                cx,
-            ))
+            Some(self.focus_document_overlay(pane, view, focus_clip, focus_ramp, lent_glow, cx))
         } else if let Some(pane) = focus_pane {
             let snap = pane.update(cx, |v, cx| v.mirror_snapshot(cx));
             // An agent pane whose transcript the sweep bound for certain reads
@@ -39248,6 +39298,16 @@ impl Render for Workspace {
                     // An unboxed skin draws no frame round the window at all,
                     // and asks the compositor to drop its own border too
                     // (`desktop_glass::init`): the tile is borderless outside.
+                    .on_children_prepainted(|children, window, _cx| {
+                        let view = window.viewport_size();
+                        let view = (f32::from(view.width), f32::from(view.height));
+                        for child in children {
+                            let size = (f32::from(child.size.width), f32::from(child.size.height));
+                            if stands_over_the_stage(size, view) {
+                                keep_from_doc_grade(child, window);
+                            }
+                        }
+                    })
                     .child(bezel_top)
                     .child(stage)
                     .child(bezel_bottom)
@@ -42638,6 +42698,18 @@ mod tests {
             code[at..end].contains("warp::flatten();"),
             "over_the_glass draws a scrim without flattening the glass under it"
         );
+    }
+
+    /// GAUGES, a menu or the rail stands over the stage and is kept out of the
+    /// floating document's grade. The stage and a scrim fill most of the window,
+    /// and keeping either out would switch the grade off altogether.
+    #[test]
+    fn only_what_stands_over_the_stage_is_kept_from_the_document_grade() {
+        let window = (1600., 1000.);
+        assert!(stands_over_the_stage((320., 900.), window), "the tray");
+        assert!(stands_over_the_stage((1600., 40.), window), "a bezel");
+        assert!(!stands_over_the_stage((1560., 900.), window), "the stage");
+        assert!(!stands_over_the_stage((1600., 1000.), window), "a scrim");
     }
 
     /// A hover card over the glass flattens it too, or the build fails.

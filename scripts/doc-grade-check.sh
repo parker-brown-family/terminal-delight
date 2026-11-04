@@ -16,10 +16,12 @@
 #   7. Markdown, a page and a PDF             -> take the same grade
 #   8. the square lent to the reading frame   -> keeps its grade there
 #   9. closed and reopened with GAUGES up     -> the dial survived, and still works
-#                                                with the glass flattened
+#                                                with the glass flattened, and the
+#                                                tray over it takes no grade
 # In a design with light in it:
 #  10. the halo: unset, none, its own         -> follows phosphor until moved
 #  11. bent glass                             -> the grade survives the warp
+#  12. see-through over a wall of text        -> the text shows through
 #
 #   scripts/doc-grade-check.sh [--bin PATH] [--out DIR]
 #
@@ -131,8 +133,17 @@ share() { # share <shot> <r,g,b>: the fraction of the window that is that colour
     -colorspace Gray -format '%[fx:mean]' info:
 }
 
+spread() { # spread <shot>: how much the document's rectangle varies, 0 for flat
+  magick "$OUT/shots/$1.png" -crop "$(( R - L ))x$(( B - T ))+$L+$T" +repage -colorspace Gray \
+    -format '%[fx:standard_deviation]' info:
+}
+
 locate() { # locate <shot>: the one big lit block on a dark screen, into L T R B X Y
-  read -r L T R B < <(magick "$OUT/shots/$1.png" -colorspace Gray -threshold 25% \
+  # The left third is blacked out first: a lit design's left bar is as bright.
+  local size
+  size=$(magick identify -format '%w %h' "$OUT/shots/$1.png")
+  read -r L T R B < <(magick "$OUT/shots/$1.png" -colorspace Gray \
+    -fill black -draw "rectangle 0,0 $(( ${size% *} / 3 )),${size#* }" -threshold 25% \
     -morphology Open Square:12 -format '%@' info: |
     sed -E 's/^([0-9]+)x([0-9]+)\+([0-9]+)\+([0-9]+)$/\3 \4 \1 \2/' |
     awk '{print $1, $2, $1 + $3, $2 + $4}')
@@ -256,8 +267,9 @@ hyprctl dispatch "hl.dsp.send_shortcut({ mods = '', key = 'Escape', window = 'pi
 sleep 1
 
 hidden_close
-launcher "$OUT/launch-tray.sh" "TD_OSD_DEMO=open"
+launcher "$OUT/launch-tray.sh" "TD_OSD_DEMO=open,over"
 hidden_launch "$SESSION" "$WS" "$LOG" "sh $OUT/launch-tray.sh"
+serve
 ctl doc here "$OUT/docs/flat.png" >/dev/null
 sleep 3
 shot tray
@@ -269,6 +281,24 @@ if python3 -c 'import sys; sys.exit(0 if float(sys.argv[1]) > .03 and float(sys.
 else
   bad "9 reopened under GAUGES: $graded of the window graded, $plain not"
 fi
+# The tray stands over the square (TD_OSD_DEMO's `over`): its right edge at three
+# quarters of the window and its top 156 down. A spot in its padding, clear of
+# the halo it casts onto the page, which is the page's and is graded, must not
+# move when the dial does, and must really be over the document.
+config '{"doc_brightness":75}'; shot tray_lit
+config '{"doc_brightness":25}'
+locate tray_lit
+ww=$(hyprctl clients -j | jq -r --argjson p "$WIN" '.[] | select(.pid==$p) | .size[0]' | head -1)
+iw=$(magick identify -format '%w' "$OUT/shots/tray.png")
+TX=$(( (ww * 3 / 4 - 24) * iw / ww )); TY=$(( 196 * iw / ww ))
+beside=$(( TX + 100 ))
+dim=$(pixel tray "$beside" "$TY"); lit=$(pixel tray_lit "$beside" "$TY")
+if [ "$dim" != "$lit" ]; then
+  ok "9 the tray stands over the document at $TX,$TY: the page beside it went $dim to $lit"
+else
+  bad "9 the tray is not over the document: beside it reads $dim and $lit"
+fi
+near "9 and takes no grade from it" "$(pixel tray_lit "$TX" "$TY")" "$(pixel tray "$TX" "$TY")" 1
 hidden_close
 
 # A design with light in it, on a session of its own.
@@ -309,6 +339,26 @@ else
   bad "11 the glass did not bend: $plain"
 fi
 near "11 bent glass keeps the grade" "$dim" "$(half "$plain")" 5
+
+# A wall of text behind the square. Solid, the picture is one flat colour; clear,
+# the letters have to come through it.
+config '{"crt":false,"warp":0,"doc_brightness":50}'
+printf 'yes "the quick brown fox jumps over the lazy dog 0123456789 the quick brown fox" | head -300; exec cat\n' > "$OUT/wall.sh"
+ctl adopt --cwd "$OUT" --run "sh $OUT/wall.sh" >/dev/null
+sleep 2
+ctl doc here "$OUT/docs/flat.png" >/dev/null
+sleep 3
+shot wall_solid
+config '{"doc_clear":50}'; shot wall_clear
+solid=$(spread wall_solid); clear=$(spread wall_clear)
+ctl doc here "$OUT/docs/page.md" >/dev/null
+sleep 3
+shot wall_page
+if python3 -c 'import sys; sys.exit(0 if float(sys.argv[2]) - float(sys.argv[1]) > .01 else 1)' "$solid" "$clear"; then
+  ok "12 the text shows through: spread $solid solid, $clear clear"
+else
+  bad "12 see-through hides the text: spread $solid solid, $clear clear"
+fi
 
 echo
 if [ "$fail" -eq 0 ]; then echo "every step held; photographs in $OUT/shots"; else echo "FAILED; photographs in $OUT/shots"; fi
