@@ -227,9 +227,11 @@ jobs:
     steps:
       - uses: actions/checkout@v5
       - name: Lint the release scripts
-        run: shellcheck scripts/release-meta.sh scripts/test-release-meta.sh
+        run: shellcheck scripts/release-meta.sh scripts/test-release-meta.sh install.sh scripts/test-install.sh
       - name: Prove the release policy against fixtures
         run: bash scripts/test-release-meta.sh
+      - name: Prove the installer against a fake release
+        run: bash scripts/test-install.sh
 
   package:
     name: AppImage (artifact)

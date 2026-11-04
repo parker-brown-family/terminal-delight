@@ -33,6 +33,13 @@ chmod +x terminal-delight-x86_64.AppImage
 </div>
 
 <div class="pair">
+  <div class="term"><p>One line does all of that and adds the launcher entry and icons. It checks the download against the release's published checksum, and it leaves an install that is already there alone.</p></div>
+  <div class="bench">
+<pre class="cmd"><code>curl -fsSL https://terminal-delight.brownfamilysports.com/install.sh | sh</code></pre>
+  </div>
+</div>
+
+<div class="pair">
   <div class="term"><p>Nothing is installed system-wide. It runs from wherever you put it, uses your system's graphics driver like any other native app, and keeps its settings in <code>~/.config/terminal-delight/</code>.</p></div>
   <div class="bench"><dl class="facts"><span class="cap">Where it lives</span><dt>settings</dt><dd>~/.config/terminal-delight/</dd><dt>work</dt><dd>~/.local/state/terminal-delight/</dd><dt>the app</dt><dd>wherever you put the file</dd></dl></div>
 </div>
