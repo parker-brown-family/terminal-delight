@@ -28,6 +28,15 @@ fn main() {
     println!("cargo:rerun-if-env-changed=TD_BUILD_DATE");
     println!("cargo:rerun-if-env-changed=TD_BUILD_DIRTY");
 
+    // Cargo supplies the effective level, including profile/environment overrides.
+    // A release-looking filename and a clean commit do not prove optimization.
+    if let Ok(level) = std::env::var("OPT_LEVEL") {
+        println!("cargo:rustc-env=TD_BUILD_OPT_LEVEL={level}");
+    }
+    if let Ok(profile) = std::env::var("PROFILE") {
+        println!("cargo:rustc-env=TD_BUILD_PROFILE={profile}");
+    }
+
     let git = |args: &[&str]| -> Option<String> {
         let out = Command::new("git")
             .args(args)

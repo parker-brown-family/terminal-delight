@@ -1,0 +1,46 @@
+<!doctype html>
+<html lang="en"><head><title>Why Fresh Opens Still Wait</title><!-- briefing: {"id": "html-fresh-open", "purpose": "engineering", "derives_from": ["../../../../../td-html-build/terminal-delight/docs/plans/html-open-latency/built.html"], "calls": "cold.calls.json"} --><!--BRIEF:head-->
+<style>
+/* This brief's own figures and notes. The house look arrives through BRIEF:head. */
+svg{display:block;width:100%;height:auto}.small{font-size:13px;color:var(--dim)}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="last-time-strip" id="last-time" data-brief-anchor="last-time"><button class="last-time" type="button" data-dlg="d-last-time"><b>Last time</b> Your request moved the test to fresh documents</button></div>
+<dialog id="d-last-time"><div class="dlg-head"><h3>Last time</h3><button class="x" type="button" data-close aria-label="Close">✕</button></div><div class="dlg-body"><table><thead><tr><th>Where</th><th>You said</th><th>What came of it</th></tr></thead><tbody><tr><td><a href="../../../../../td-html-build/terminal-delight/docs/plans/html-open-latency/built.html#call-preparation-stays-bounded">call-preparation-stays-bounded</a></td><td>Concurred</td><td>Preparation stays bounded. No retained browser pages or extra memory cache were selected.</td></tr><tr><td>Outside the notes</td><td>“I was really hoping that a fresh open would be a lot faster!”</td><td>Every comparison below removes the render cache. New document paths are tested separately from reopening.</td></tr></tbody></table></div></dialog>
+<div class="eyebrow">Briefing · engineering · HTML</div><div class="opening" id="top" data-brief-anchor="top"><h1>Why Fresh Opens Still Wait</h1> <p class="lede">Opening a new HTML document in Terminal Delight still takes about a second. The live executable was unoptimized; correcting that helps without adding cache memory. The fourfold target remains open.</p></div><nav class="sections"></nav></div></header>
+<main class="wrap">
+<!-- The reader must be able to answer: how does this work, why was it shaped this way, and what establishes that it works?
+     Each section answers the question the one before it raised. Give every h2 and figure an id equal to its
+     data-brief-anchor. Rename these ids now; once anyone has commented, keep an id when its heading changes. -->
+<section class="pane"><h2 id="sec-build" data-brief-anchor="sec-build"><span class="n">01</span> The Live Build Was Slower</h2>
+<p>You wanted a document you have never opened to appear quickly. The previous cache work left that wait largely intact. This investigation also found that the live Terminal Delight executable was built without application optimization.</p>
+<p>On the same 1.4 MB brief, reading the file and checking its render cache took roughly 400 ms in the installed executable. An existing optimized release build took about 80 ms. The compiled instructions confirm that difference; a clean commit and a release-looking filename did not reveal it.</p>
+<p class="small"><a href="../../../../../td-html-cold/measurements/build-comparison.txt">Build comparison</a> · <a href="../../../../../td-html-cold/measurements/td-4a0a0054-compact-agents-evidence.json">Installed executable evidence</a></p>
+</section>
+<section class="pane"><h2 id="sec-result" data-brief-anchor="sec-result"><span class="n">02</span> Verify the Build We Install</h2>
+<p>I selected a verified optimized build for installation. The additional renderer experiments did not establish enough benefit to ship, so the renderer remains unchanged.</p>
+<figure id="fig-measured" data-brief-anchor="fig-measured"><span class="lbl">01 · The Same Brief, Render Cache Removed</span>
+<svg viewBox="0 0 760 275" role="img" aria-label="The installed build's median visible viewport took 1.35 seconds. The optimized release took 1.07 seconds. The goal is half a second.">
+<g font-size="17" class="ink"><text x="20" y="42">Installed build</text><text x="20" y="122">Optimized release</text></g>
+<rect class="box struct" x="20" y="55" width="538" height="35" rx="7"/><rect class="box ready" x="20" y="135" width="429" height="35" rx="7"/>
+<g font-size="23" class="ink"><text x="575" y="81">1.35 s</text><text x="465" y="161">1.07 s</text></g>
+<path d="M220 24 V195" class="wire mine" stroke-dasharray="5 5"/><text x="20" y="223" class="ink" font-size="16">Goal: 0.50 s · amber marks the target</text><text x="20" y="251" class="ink2" font-size="14">5 opens per build · 0 cache hits · medians, including one browser start</text>
+</svg><figcaption><b>Correcting the installed build helps; it does not deliver the requested fourfold improvement.</b> First opens including browser startup were 1.84 s and 1.23 s in these runs.</figcaption><p class="small">Measured in an isolated native window. Small sequential samples; system load varied. <a href="cold-measurements.json">Raw timings and method</a>.</p></figure>
+<p>Build information now reports the actual optimization level. The landing script refuses an unoptimized or unverified executable. The cache limits and browser lifetime stay unchanged.</p>
+<p class="small"><a href="../../../app/src/update.rs">Build information</a> · <a href="../../../scripts/land.sh">Installation guard</a></p>
+</section>
+<section class="pane"><h2 id="sec-limit" data-brief-anchor="sec-limit"><span class="n">03</span> The Larger Speedup Remains Open</h2>
+<p>The fourfold fresh-open target is still unmet. Browser startup and page rendering remain on the first-open path. The <a href="https://github.com/parker-brown-family/terminal-delight/issues/1372">fresh-opening performance issue</a> stays open.</p>
+<p>I rejected the GPU plus spare-page experiment: it added about 220 MiB of RAM plus 57 MiB of graphics memory, and its first native open took 2.2 seconds. That trade did not serve your request.</p>
+<p>The optimized release also opened five new file paths in 0.89 s median after its browser was running; its first open took 1.57 s. The first-image scheduling prototype measured 0.98 s on the same sequence. That did not establish an improvement.</p>
+<p id="validation">Formatting, Clippy and the full test suite passed: 3,376 tests passed, with 18 existing skips. Six installation-guard cases passed, including refusal of unoptimized, unknown, dirty and wrong-commit builds. The live window has not changed: the safe-swap guard found two closed shell panes still retained for Undo.</p>
+</section>
+<section class="pane"><h2 id="sec-calls" data-brief-anchor="sec-calls">Judgement calls</h2>
+<p>Nobody had decided these, so I did and kept working. Stamp the ones you agree with.</p>
+<div class="grill">
+<div class="ask call" id="call-install-a-verified-optimized-build" data-brief-anchor="call-install-a-verified-optimized-build" data-call="sha256:743c3d0b2fe15c259179bb7ba4e0ac77d61d73dcb92b7045ae4255072d7c7f68"><h3>Install a verified optimized build</h3><dl class="facts"><dt>Chose</dt><dd>Correct the installed build and retain the current renderer</dd><dt>Because</dt><dd>The live executable is unoptimized. Renderer experiments have not established the requested fresh-open gain at an acceptable resource cost.</dd></dl><p><a href="#sec-result">The reasoning</a></p><figure id="fig-call-install-a-verified-optimized-build-1" data-brief-anchor="fig-call-install-a-verified-optimized-build-1"><span class="lbl">Install a verified optimized build · file f8e2e9590d77</span><p><a href="../../../../measurements/td-4a0a0054-compact-agents-evidence.json">../../../../measurements/td-4a0a0054-compact-agents-evidence.json</a></p><figcaption><b>What I was looking at when I chose: Correct the installed build and retain the current renderer.</b> A concur covers this file, f8e2e9590d77, and no later one.</figcaption></figure><p class="rec"><b>Meanwhile:</b> carrying on as if you concur.</p></div>
+</div></section>
+
+<footer><p>Primary artifact: this brief. Evidence notes, feedback maps and source are supporting links.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>
