@@ -3048,6 +3048,8 @@ pub struct TerminalView {
     /// The last status-line parse and the live-screen copy it was parsed from.
     /// See [`Self::agent_status`].
     status_memo: std::cell::RefCell<Option<StatusMemo>>,
+    skills_memo: crate::skills::Memo,
+    skills_identity: Option<(String, u64)>,
     #[cfg(test)]
     status_parses: std::cell::Cell<usize>,
     styled_memo: std::cell::RefCell<Option<styling::Memo>>,
@@ -5213,8 +5215,14 @@ impl TerminalView {
         };
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let (cell_w, cell_h) = BORN_CELL_PX;
-        let session = term::spawn_in(grid, cell_w, cell_h, cwd, restore.program.as_ref())
-            .expect("spawn shell");
+        let (env, identity) = if restore.program.is_none() {
+            crate::skills::local_environment()
+        } else {
+            (vec![], None)
+        };
+        let session =
+            term::spawn_in_with_env(grid, cell_w, cell_h, cwd, restore.program.as_ref(), env)
+                .expect("spawn shell");
         if let Some(cmd) = restore
             .resume
             .as_deref()
@@ -5222,7 +5230,9 @@ impl TerminalView {
         {
             session.notifier.notify(format!("{cmd}\n").into_bytes());
         }
-        Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx)
+        let mut pane = Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx);
+        pane.skills_identity = identity;
+        pane
     }
 
     /// A pane showing a terminal this window does not own.
@@ -5410,6 +5420,19 @@ impl TerminalView {
                         // the live status line every tick (independent of the bell's
                         // scroll-settle gate below, which would otherwise skip it).
                         view.accrue_tokens();
+                        if view.hosts_agent() {
+                            let session = match &view.skills_identity {
+                                Some((session, _)) => Some(session.as_str()),
+                                None => crate::surfacefeed::session(),
+                            };
+                            let pane = view.skills_identity.as_ref().map(|v| v.1).or(view.pane_id);
+                            if view
+                                .skills_memo
+                                .refresh(session, pane, view.session.shell_pid)
+                            {
+                                cx.notify();
+                            }
+                        }
                         // A dial press waiting on the harness's own "are you
                         // sure" — answered here, at the clock's own rate,
                         // because the person's composer is held until it is.
@@ -5708,6 +5731,8 @@ impl TerminalView {
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
             status_memo: std::cell::RefCell::new(None),
+            skills_memo: crate::skills::Memo::default(),
+            skills_identity: None,
             #[cfg(test)]
             status_parses: std::cell::Cell::new(0),
             styled_memo: std::cell::RefCell::new(None),
@@ -6053,6 +6078,53 @@ impl TerminalView {
     /// last-drawn focus goes stale; it is not being looked at.
     pub fn focused_last_frame(&self) -> bool {
         self.was_focused && self.shown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn skills_chip(
+        &self,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.hosts_agent() {
+            return None;
+        }
+        let ui = crate::lang::current().strings().ui;
+        let info = &self.skills_memo.info;
+        let glyph = match info.status {
+            crate::skills::Status::Attached => "✓",
+            crate::skills::Status::Partial => "~",
+            crate::skills::Status::NotAttached => "×",
+            crate::skills::Status::Unknown => "?",
+        };
+        Some(
+            sk.chip(false)
+                .id("pane-skills")
+                .debug_selector(|| "pane-skills".into())
+                .text_size(sk.text_px(9. * scale))
+                .text_color(if info.status == crate::skills::Status::Unknown {
+                    th.text.alpha(0.65)
+                } else {
+                    th.accent
+                })
+                .cursor_pointer()
+                .whitespace_nowrap()
+                .child(format!(
+                    "{} {glyph}{}",
+                    ui.skill_hdr,
+                    if info.pending_restart { " *" } else { "" }
+                ))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|view, event: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                        view.hdr_overflow = Some(event.position);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The RESTING or ASLEEP chip for the header, or nothing while awake.
@@ -7191,7 +7263,9 @@ impl TerminalView {
     /// The LAUNCH AGENT panel's other landing: instead of opening a tab
     /// somewhere else, the recipe goes into the prompt the button was pressed
     /// in front of. Deliberately narrow — it takes a whole line rather than
-    /// keystrokes, it is reached only from `Workspace::launch_agent`, and what
+    /// keystrokes, it is reached from `Workspace::launch_agent` or the freshly
+    /// created plain-shell skills initializer. The latter never targets an
+    /// adopted pane or a resume recipe. For a launch, what
     /// makes the line safe to run (the terminal is at a prompt; the prompt is
     /// cleared first) is decided in [`crate::launcher`] where it can be
     /// asserted without a window.
@@ -12300,6 +12374,54 @@ impl Render for TerminalView {
                         .child(sk.control_text(&status)),
                 );
             }
+            if self.hosts_agent() {
+                let ui = crate::lang::current().strings().ui;
+                let info = &self.skills_memo.info;
+                let mut details = div()
+                    .max_w(px(340.))
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(format!("{} · {}", ui.skill_hdr, info.status.label(ui)))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(10.))
+                            .text_color(txt.alpha(0.7))
+                            .child(ui.skill_details),
+                    );
+                if info.pending_restart {
+                    details = details.child(ui.skill_restart);
+                }
+                if let Some(receipt) = &info.receipt {
+                    if let Some(method) = &receipt.method {
+                        details = details.child(method.clone());
+                    }
+                    if let Some(available) = &receipt.available {
+                        for source in available {
+                            details = details.child(format!(
+                                "✓ {} · {}",
+                                source.name,
+                                source.revision.chars().take(16).collect::<String>()
+                            ));
+                        }
+                    }
+                    for missing in &receipt.missing {
+                        details = details.child(format!("× {}: {}", missing.name, missing.reason));
+                    }
+                    if let Some(reason) = &receipt.reason {
+                        details = details.child(reason.clone());
+                    }
+                } else {
+                    details = details.child(if info.bridge_ready == Some(false) {
+                        ui.skill_no_bridge
+                    } else {
+                        ui.skill_waiting
+                    });
+                }
+                menu = menu.child(details);
+            }
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -12942,6 +13064,7 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
+                    .children(self.skills_chip(&th, &sk, scale, cx))
                     .when(ui_face, |d| d.child(face_toggle))
                     .when(ui_agent, |d| {
                         d.child(

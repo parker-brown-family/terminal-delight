@@ -1,0 +1,15 @@
+# Program Design
+
+app/src/skills.rs owns Prefs, Source, Receipt, Status and a throttled Memo; installation, config persistence, helper invocation and CLI routing are its boundaries. app/src/skills/bridge.py owns provider startup and source import. Its unittest fixtures exercise argv forwarding, config exclusions, native JSON-RPC, failure reporting and source containment. app/src/skills/software-factory.md is TD's portable starter, derived from the house workflow without private paths or services.
+
+main.rs adds a Skills section to CONFIG → Agents, switches, a repository/folder form and background import. Localized strings live in lang/chrome.rs. host.rs installs the bridge environment when spawning a shell. launcher.rs names the shim for built-in providers. pane.rs caches and draws a status chip on either pane face; its detail explains the receipt and selected versions.
+
+Tests must fail on lost user arguments, overwritten personal settings, a disabled skill being re-enabled, a fake green receipt, PID reuse, a receipt from another foreground group, partial attachment hidden as success, a source path escaping a repo and a typed command bypassing the bridge after PATH changes. A native Codex fixture verifies its actual skills/list result. A native Claude fixture verifies discovery from the added directory. Isolated native rendering checks the Agents page and HUD.
+
+Agent decisions: activation starts opt-in; starter selections are offered when activated. Ordinary Bash commands and supported native providers are the guaranteed bridge surface. Explicit bypasses and unsupported providers remain observable as unknown. Every config write returns its error to the menu instead of silently claiming persistence.
+
+## Revision after manual testing
+
+Difficulty 6/10. Parker's 2026-11-05 screenshots and instructions supply the revised design: master switch in Agents, a second independently scrolling skills column only while enabled, source links on skill names, and one import field. The list must remain usable with twenty skills. A source field recognizes local folders, SKILL.md files, file URLs, repository URLs and GitHub tree/blob/raw links; an explicit revision can travel with the repository URL. A revision without a repository gets a specific explanation rather than a guess.
+
+The current retained host was measured spawning new shells without bridge functions or receipt identity, explaining the unknown HUD. For a freshly spawned ordinary shell on such a host, the window will queue a TD-owned shell activation script before user input. It will never write it into an attached existing pane or a running/resumed agent. This preserves the host, provider configuration and personal shell overrides. The HUD will distinguish a missing bridge from unconfirmed provider discovery and give a usable restart instruction. Test the old-host/new-window combination in an isolated display, along with twenty-row scrolling, disabled-column absence, single-field import, source links and text editing.

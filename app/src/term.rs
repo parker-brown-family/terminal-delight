@@ -193,12 +193,23 @@ pub fn spawn_in(
     cwd: Option<std::path::PathBuf>,
     program: Option<&(String, Vec<String>)>,
 ) -> io::Result<Session> {
+    spawn_in_with_env(size, cell_width, cell_height, cwd, program, vec![])
+}
+
+pub fn spawn_in_with_env(
+    size: GridSize,
+    cell_width: u16,
+    cell_height: u16,
+    cwd: Option<std::path::PathBuf>,
+    program: Option<&(String, Vec<String>)>,
+    env: Vec<(String, String)>,
+) -> io::Result<Session> {
     let spec = SpawnSpec {
         size,
         cell_width,
         cell_height,
         cwd,
-        env: vec![],
+        env,
         program: program.cloned(),
     };
     let pty = spawn_pty(&spec)?;

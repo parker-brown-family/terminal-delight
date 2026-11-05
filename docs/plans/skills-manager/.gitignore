@@ -1,0 +1,3 @@
+# Local process, session and screenshot evidence is retained on the test machine.
+evidence/
+*.lock

@@ -102,6 +102,7 @@ mod recover;
 mod restricted;
 mod screenread;
 mod session;
+mod skills;
 mod skin;
 mod threshing_floor_view;
 mod uninstall;
@@ -3956,6 +3957,11 @@ struct AgentLauncher {
     local_adapter: Result<launcher::LocalAdapter, String>,
 }
 
+#[derive(Default)]
+struct SkillsForm {
+    source: EditBuffer,
+}
+
 impl AgentLauncher {
     fn recompute(&mut self) {
         self.order = launcher::filter(&self.projects, &self.query.text());
@@ -4951,6 +4957,12 @@ struct Workspace {
     agents_prefs: agentcfg::Prefs,
     /// Whether the CONFIG › Agents page is open.
     agents_menu: bool,
+    skills_prefs: skills::Prefs,
+    skills_error: Option<String>,
+    skills_form: Option<SkillsForm>,
+    skills_scroll: ScrollHandle,
+    skills_importing: bool,
+    skills_import_generation: u64,
     /// Which agents-page slider is being dragged, if any: 0 rest, 1 sleep.
     agents_drag: Option<u8>,
     /// Where the two sliders' tracks were drawn, for mapping a pointer.
@@ -6295,7 +6307,16 @@ fn make_pane_host_spawned(
             info.pane
         );
     }
-    make_pane_attached(&info, restore, ctx, window, cx)
+    let bootstrap = skills::bootstrap_shell(
+        info.shell_pid,
+        started == hostctl::Started::Freshly,
+        restore.resume.as_deref(),
+    );
+    let pane = make_pane_attached(&info, restore, ctx, window, cx)?;
+    if let Some(line) = bootstrap {
+        pane.update(cx, |view, cx| view.run_line(line, cx));
+    }
+    Ok(pane)
 }
 
 /// A pane for a host terminal, falling back rather than leaving a hole.
@@ -6731,6 +6752,12 @@ impl Workspace {
             launch_defaults: launchpref::load(),
             agents_prefs: agentcfg::load(),
             agents_menu: false,
+            skills_prefs: skills::load().unwrap_or_default(),
+            skills_error: None,
+            skills_form: None,
+            skills_scroll: ScrollHandle::new(),
+            skills_importing: false,
+            skills_import_generation: 0,
             agents_drag: None,
             agents_tracks: Default::default(),
             rest_census: RestCensus::default(),
@@ -16610,8 +16637,8 @@ impl Workspace {
         let launch = (|| {
             let dir =
                 surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
-            let kit = briefkit::default_root().ok_or("TD could not find its data directory")?;
-            let briefing = recipe.prepare_briefing(&dir, &kit)?;
+            let kit = skills::briefing_root();
+            let briefing = recipe.prepare_briefing(&dir, kit.as_deref())?;
             let adapter = if lp.harness == launcher::Harness::Local {
                 Some(lp.local_adapter.as_ref().map_err(|e| e.clone())?)
             } else {
@@ -18465,8 +18492,326 @@ impl Workspace {
     fn open_agents(&mut self, cx: &mut Context<Self>) {
         self.more_menu = false;
         self.agents_prefs = agentcfg::load();
+        match skills::load() {
+            Ok(prefs) => {
+                if !prefs.active() {
+                    self.cancel_skill_import();
+                }
+                self.skills_prefs = prefs;
+                self.skills_error = None;
+            }
+            Err(error) => self.skills_error = Some(error),
+        }
         self.agents_menu = true;
         cx.notify();
+    }
+
+    fn change_skill(&mut self, which: usize, remove: bool, cx: &mut Context<Self>) {
+        let result = (|| -> Result<skills::Prefs, String> {
+            let mut prefs = skills::load()?;
+            match which {
+                0 => prefs.active = Some(!prefs.active()),
+                1 => prefs.briefing = Some(!prefs.briefing()),
+                2 => prefs.factory = Some(!prefs.factory()),
+                n => {
+                    if remove {
+                        if n - 3 < prefs.sources.len() {
+                            prefs.sources.remove(n - 3);
+                        }
+                    } else if let Some(source) = prefs.sources.get_mut(n - 3) {
+                        source.enabled = Some(source.enabled == Some(false));
+                    }
+                }
+            }
+            skills::save(&prefs)?;
+            Ok(prefs)
+        })();
+        match result {
+            Ok(prefs) => {
+                self.skills_prefs = prefs;
+                self.skills_error = None;
+            }
+            Err(error) => self.skills_error = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn import_skills(&mut self, cx: &mut Context<Self>) {
+        if self.skills_importing {
+            return;
+        }
+        let Some(form) = self.skills_form.as_ref() else {
+            return;
+        };
+        let source = form.source.text();
+        self.skills_importing = true;
+        self.skills_import_generation = self.skills_import_generation.wrapping_add(1);
+        let generation = self.skills_import_generation;
+        self.skills_error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { skills::import(&source, "", "HEAD") })
+                .await;
+            let _ = this.update(cx, |ws, cx| {
+                if ws.skills_import_generation != generation {
+                    return;
+                }
+                ws.skills_importing = false;
+                let result = result.and_then(|sources| {
+                    let mut prefs = skills::load()?;
+                    prefs.import_sources(sources);
+                    skills::save(&prefs)?;
+                    Ok(prefs)
+                });
+                match result {
+                    Ok(prefs) => {
+                        ws.skills_prefs = prefs;
+                        ws.skills_form = None;
+                    }
+                    Err(error) => ws.skills_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn cancel_skill_import(&mut self) {
+        self.skills_import_generation = self.skills_import_generation.wrapping_add(1);
+        self.skills_importing = false;
+        self.skills_form = None;
+    }
+
+    fn close_skill_form(&mut self) -> bool {
+        if self.skills_form.is_some() {
+            self.cancel_skill_import();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn render_skills_section(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let prefs = &self.skills_prefs;
+        let mut rows = vec![
+            (
+                "Briefing".to_string(),
+                ui.skill_briefing.to_string(),
+                prefs.briefing(),
+                Some(skills::BUNDLED_SOURCE.to_string()),
+            ),
+            (
+                "Software Factory".into(),
+                ui.skill_factory.into(),
+                prefs.factory(),
+                Some(skills::BUNDLED_SOURCE.to_string()),
+            ),
+        ];
+        rows.extend(prefs.sources.iter().map(|source| {
+            (
+                source.name.clone(),
+                source.description.clone(),
+                source.enabled != Some(false),
+                source.target(),
+            )
+        }));
+        let mut list = div()
+            .id("skills-list")
+            .debug_selector(|| "skills-list".into())
+            .track_scroll(&self.skills_scroll)
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2();
+        for (index, (name, description, on, target)) in rows.into_iter().enumerate() {
+            let which = index + 1;
+            let label = div()
+                .id(SharedString::from(format!("skill-source-{which}")))
+                .debug_selector(move || format!("skill-source-{which}"))
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(div().text_color(th.accent).child(name))
+                .child(
+                    div()
+                        .text_size(sk.text_px(8.5))
+                        .text_color(th.text.alpha(0.65))
+                        .child(description),
+                )
+                .when_some(target, |d, target| {
+                    d.cursor_pointer()
+                        .hover(|d| d.text_color(th.complement))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                cx.open_url(&target);
+                            }),
+                        )
+                });
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_2()
+                .flex_shrink_0()
+                .rounded(sk.radius())
+                .border(sk.box_border(1.))
+                .border_color(th.text.alpha(0.16))
+                .child(label)
+                .child(
+                    div()
+                        .id(SharedString::from(format!("skill-toggle-{which}")))
+                        .debug_selector(move || format!("skill-toggle-{which}"))
+                        .cursor_pointer()
+                        .p_1()
+                        .child(slider_switch(on, th, sk))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                ws.change_skill(which, false, cx);
+                            }),
+                        ),
+                );
+            if which >= 3 {
+                row = row.child(
+                    sk.chip(false)
+                        .cursor_pointer()
+                        .child(ui.skill_remove)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                ws.change_skill(which, true, cx);
+                            }),
+                        ),
+                );
+            }
+            list = list.child(row);
+        }
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .h_full()
+            .min_h(px(0.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_color(th.complement)
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .child(ui.skill_hdr),
+                    )
+                    .child(format!("{}", 2 + prefs.sources.len())),
+            )
+            .child(list);
+        if let Some(form) = &self.skills_form {
+            let input =
+                render_edit_buffer(&form.source, 1., th.text, th.accent, th.accent.alpha(0.3))
+                    .when(form.source.text().is_empty(), |d| {
+                        d.child(div().text_color(th.text.alpha(0.4)).child(ui.skill_source))
+                    });
+            section = section
+                .child(
+                    div()
+                        .id("skill-field-0")
+                        .debug_selector(|| "skill-field-0".into())
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_2()
+                        .rounded(sk.radius())
+                        .border(sk.box_border(1.))
+                        .border_color(th.accent)
+                        .overflow_x_hidden()
+                        .child(input)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                window.focus(&ws.focus_handle, cx);
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.6))
+                        .child(ui.skill_source_hint),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            sk.chip(self.skills_importing)
+                                .cursor_pointer()
+                                .child(if self.skills_importing {
+                                    ui.skill_importing
+                                } else {
+                                    ui.skill_import
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        ws.import_skills(cx);
+                                    }),
+                                ),
+                        )
+                        .child(
+                            sk.chip(false)
+                                .cursor_pointer()
+                                .child(ui.skill_cancel)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        ws.cancel_skill_import();
+                                        cx.notify();
+                                    }),
+                                ),
+                        ),
+                );
+        } else {
+            section = section.child(
+                sk.chip(false)
+                    .id("skill-add")
+                    .debug_selector(|| "skill-add".into())
+                    .cursor_pointer()
+                    .child(ui.skill_add)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.skills_form = Some(SkillsForm::default());
+                            window.focus(&ws.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        if let Some(error) = &self.skills_error {
+            section = section.child(div().text_color(th.complement).child(error.clone()));
+        }
+        section
     }
 
     /// CONFIG › Agents: every agent setting in one place. The new ones — rest,
@@ -18583,19 +18928,21 @@ impl Workspace {
             .join(" \u{b7} ");
         let [m0, m1, m2, m3, m4] = self.mcp_switch_buttons(&sk, th, "agents", cx);
         let local = launcher::LocalAdapter::config_path();
-        let panel = div()
-            .id("agents-panel")
-            .debug_selector(|| "agents-panel".into())
-            .w(px(520.))
+        let viewport = self.last_win.map(|(_, _, w, _)| w).unwrap_or(1200.);
+        let enabled = self.skills_prefs.active();
+        let wide = enabled && viewport >= 760.;
+        let panel_w = (if wide { 980_f32 } else { 520_f32 }).min((viewport - 24.).max(280.));
+        let main_w = if wide { panel_w * 0.52 } else { panel_w };
+        let height = self.tray_card_h();
+        let main = div()
+            .id("agents-main")
+            .debug_selector(|| "agents-main".into())
+            .w(px(main_w))
+            .flex_shrink_0()
             .max_h(px(self.tray_card_h()))
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded(sk.radius_lg())
-            .border(sk.box_border(2.))
-            .border_color(th.accent.alpha(0.85))
-            .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -18605,7 +18952,6 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -18613,10 +18959,12 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(div().text_size(sk.text_px(18.)).child(sk.control(
-                        "\u{1f916}",
-                        crate::lang::current().strings().parts.ctl_agents,
-                    )))
+                    .when(!sk.text_controls(), |d| {
+                        d.child(div().text_size(sk.text_px(18.)).child(sk.control(
+                            "\u{1f916}",
+                            crate::lang::current().strings().parts.ctl_agents,
+                        )))
+                    })
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18630,6 +18978,49 @@ impl Workspace {
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.ag_blurb),
             )
+            .child(section(ui.skill_hdr))
+            .child(
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.65))
+                    .child(ui.skill_blurb),
+            )
+            .child(
+                div()
+                    .id("skill-toggle-0")
+                    .debug_selector(|| "skill-toggle-0".into())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2()
+                    .py_2()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(if enabled {
+                        th.accent
+                    } else {
+                        th.text.alpha(0.2)
+                    })
+                    .cursor_pointer()
+                    .child(ui.skill_active)
+                    .child(slider_switch(enabled, th, &sk1))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            ws.change_skill(0, false, cx);
+                            if !ws.skills_prefs.active() {
+                                ws.cancel_skill_import();
+                            }
+                        }),
+                    ),
+            )
+            .when(!enabled, |d| {
+                d.when_some(self.skills_error.clone(), |d, error| {
+                    d.child(div().text_color(th.complement).child(error))
+                })
+            })
             .child(section(ui.ag_rest_hdr))
             .child(
                 switch_row(
@@ -18750,6 +19141,45 @@ impl Workspace {
                         &[("path", &local.display().to_string())],
                     ))),
             );
+        let panel = div()
+            .id("agents-panel")
+            .debug_selector(|| "agents-panel".into())
+            .w(px(panel_w))
+            .max_h(px(height))
+            .overflow_hidden()
+            .rounded(sk.radius_lg())
+            .border(sk.box_border(2.))
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .when(wide, |d| d.flex_row())
+            .when(!wide, |d| d.flex_col().overflow_y_scroll())
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+            )
+            .child(main)
+            .when(enabled, |d| {
+                d.child(
+                    div()
+                        .id("skills-column")
+                        .debug_selector(|| "skills-column".into())
+                        .w(px(if wide { panel_w - main_w } else { panel_w }))
+                        .h(px(height - 4.))
+                        .flex_shrink_0()
+                        .min_h(px(0.))
+                        .p_3()
+                        .when(wide, |d| {
+                            d.border_l(px(sk.m.hairline.max(1.)))
+                                .border_color(sk.ink.rule)
+                        })
+                        .child(self.render_skills_section(th, &sk1, cx)),
+                )
+            });
         Some(
             div()
                 .absolute()
@@ -21567,7 +21997,9 @@ impl Workspace {
             return true;
         }
         if self.agents_menu {
-            self.agents_menu = false;
+            if !self.close_skill_form() {
+                self.agents_menu = false;
+            }
             return true;
         }
         if self.bug_menu {
@@ -21896,6 +22328,42 @@ impl Workspace {
                     return;
                 }
             }
+        }
+        if self.agents_menu && self.skills_form.is_some() {
+            match ks.key.as_str() {
+                "escape" => self.cancel_skill_import(),
+                "enter" => self.import_skills(cx),
+                "v" if m.control => {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        if let Some(form) = &mut self.skills_form {
+                            form.source.insert_capped(text.trim(), 2048);
+                        }
+                    }
+                }
+                "c" | "x" if m.control => {
+                    if let Some(form) = &mut self.skills_form {
+                        let buffer = &mut form.source;
+                        let (a, b) = buffer.sel_range();
+                        if a != b {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                buffer.chars[a..b].iter().collect(),
+                            ));
+                            if ks.key.as_str() == "x" {
+                                buffer.delete_sel();
+                            }
+                        }
+                    }
+                }
+                "tab" => {}
+                _ => {
+                    if let Some(form) = &mut self.skills_form {
+                        form.source
+                            .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 2048);
+                    }
+                }
+            }
+            cx.notify();
+            return;
         }
         // The LAUNCH AGENT panel owns the keyboard while open. Same contract as
         // every other picker, so the muscle memory transfers: esc cancels, ↵
@@ -31641,6 +32109,11 @@ impl Render for Workspace {
             self.more_menu = true;
             cx.notify();
         }
+        // Opens the real settings for isolated-display capture. No fixture
+        // status, provider process or configuration write is fabricated.
+        if std::env::var("TD_SKILLS_DEMO").is_ok() && !self.agents_menu {
+            self.open_agents(cx);
+        }
         // demo/capture hook (TD_OSD_DEMO): open the OUTER display tray, the
         // other tray raised from the bottom-right glyph row, so a change to
         // where that row's panels open can be photographed in both of them
@@ -40833,6 +41306,93 @@ mod tests {
         click(cx, "toolbar-agents");
         draw(cx);
         assert!(cx.debug_bounds("agents-panel").is_some());
+
+        // A long loadout has its own column and scroll position. These fixture
+        // values live only in the test workspace, never in personal config.
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(true);
+            ws.skills_prefs.sources = (0..20)
+                .map(|n| skills::Source {
+                    name: format!("fixture-{n}"),
+                    description: "A skill with supporting material.".into(),
+                    path: format!("/tmp/td-fixture/{n}").into(),
+                    origin: "https://fixture.invalid/repo".into(),
+                    revision: "fixture".into(),
+                    enabled: Some(true),
+                    url: Some(format!("https://fixture.invalid/skill/{n}")),
+                })
+                .collect();
+            cx.notify();
+        });
+        draw(cx);
+        let main = cx.debug_bounds("agents-main").unwrap();
+        let skills = cx.debug_bounds("skills-column").unwrap();
+        assert!(
+            main.right() <= skills.left() + px(2.),
+            "the loadout opens beside Agents"
+        );
+        click(cx, "skill-source-3");
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://fixture.invalid/skill/0")
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.skills_prefs.sources[0].enabled == Some(true)),
+            "opening a source must not toggle it"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_scroll.set_offset(point(px(0.), px(-10000.)));
+            cx.notify();
+        });
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.skills_scroll.offset().y < px(0.)));
+        assert!(
+            cx.debug_bounds("skill-source-22").is_some(),
+            "the last of twenty imports is reachable"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(false);
+            cx.notify();
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("skill-toggle-0").is_some());
+        assert!(
+            cx.debug_bounds("skills-column").is_none(),
+            "off closes the loadout"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(true);
+            cx.notify();
+        });
+        draw(cx);
+        // The one-source form owns typing, clipboard and cancellation.
+        assert!(cx.debug_bounds("skill-toggle-0").is_some());
+        click(cx, "skill-add");
+        draw(cx);
+        assert!(cx.debug_bounds("skill-field-0").is_some());
+        cx.simulate_keystrokes("f i x t u r e");
+        draw(cx);
+        assert!(
+            cx.debug_bounds("skill-field-1").is_none(),
+            "one source, not three input slots"
+        );
+        ws.read_with(cx, |ws, cx| {
+            let form = ws.skills_form.as_ref().expect("import form");
+            assert_eq!(form.source.text(), "fixture");
+            assert!(!ws.every_view()[0]
+                .read(cx)
+                .fixture_screen_text()
+                .contains("fixture"));
+        });
+        cx.simulate_keystrokes("ctrl-a ctrl-c backspace ctrl-v");
+        draw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.skills_form.as_ref().unwrap().source.text()),
+            "fixture"
+        );
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.skills_form.is_none() && ws.agents_menu));
 
         ws.update(cx, |ws, cx| {
             ws.agents_menu = false;
@@ -51167,6 +51727,8 @@ Usage:
                                  reads stdin when no file is given; --catalogue
                                  prints the kinds this build renders)
   terminal-delight briefing      print the briefing a LAUNCH AGENT pane gets, for this pane
+  terminal-delight skills [status|on|off|path|import SOURCE [SUBFOLDER [REVISION]]]
+                                 manage TD's additive skills for new agent sessions
   terminal-delight briefing hook [status|on|off]
                                  have Claude Code run that at the start of every session,
                                  so an agent you start by typing is told too
@@ -51443,6 +52005,7 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    Skills,
     /// Preview, plan and carry out a removal of Terminal Delight.
     Uninstall,
     /// Find, check, install and roll back builds from the stable or dev
@@ -51618,6 +52181,12 @@ const VERBS: &[VerbSpec] = &[
             "prints only inside a Terminal Delight pane, which a suite is not, and its hook verbs read and write the person's ~/.claude/settings.json",
         ),
     },
+    VerbSpec {
+        word: "skills",
+        verb: Verb::Skills,
+        typed: true,
+        piping: Piping::Ungated("skill settings and imports are personal state; fixtures exercise them in isolated directories"),
+    },
 ];
 
 /// One row of [`VERBS`].
@@ -51779,6 +52348,7 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Skills => skills::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
                 Verb::Update => update::run_cli(&argv[2..]),
                 Verb::WireReplay => wirecheck::run_cli(&argv[2..]),
