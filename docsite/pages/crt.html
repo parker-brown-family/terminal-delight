@@ -1,7 +1,7 @@
 <script type="application/json" data-page>
 {
   "title": "CRT",
-  "description": "Terminal Delight can draw every pane as a small CRT tube: curved glass, scanlines, glow, a rolling band. It is a switch at the foot of the GAUGES tray (Ctrl+Shift+G), off on a fresh install. The design sets the texture, warp sets the curve, and GAUGES grades each pane like a monitor.",
+  "description": "Terminal Delight can draw every pane as a small CRT tube: curved glass, scanlines, glow, a rolling band. It is a switch at the foot of the GAUGES tray (Ctrl+Shift+G), on in a new window. The design sets the texture, warp sets the curve, and GAUGES grades each pane like a monitor.",
   "updated": "2026-11-01",
   "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d",
   "summary": "Curved glass, scanlines and the GAUGES tray"
@@ -10,7 +10,7 @@
 
 <section data-register="brief">
 <p class="lede">Terminal Delight can draw every pane as a small CRT tube. Its glass curves, its edges fall into shadow, scanlines run across it, and now and then a faint band rolls down it the way it did on an old monitor. Only the panes bend. The tabs, bars and menus around them stay flat, and a click lands on whatever is drawn under the pointer.</p>
-<p>A fresh install opens flat. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, open the <code>▸ CRT</code> row at the foot, and switch <code>crt on</code>. The <a href="/themes">design</a> then decides the texture: scanlines, glow, the rolling band, flicker. The <code>warp</code> slider beside the switch sets the curve, from 0 for flat glass to 1.5.</p>
+<p>A new window opens on the tube. Press <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>G</kbd> on a pane to open its <b>GAUGES</b> tray, and open the <code>▸ CRT</code> row at the foot to switch it. The <a href="/themes">design</a> decides the texture: scanlines, glow, the rolling band, flicker. The <code>warp</code> slider beside the switch sets the curve, from 0 for flat glass to 1.5.</p>
 <p>Above it, the same tray grades the pane like a monitor: brightness, contrast, colour, gamma, text size, and how brightly lit borders glow.</p>
 <p>Letter glow and the inactive panes' dimming work with the tube off too, erased text fades where it was drawn, and the Clean design holds the tube and every light off.</p>
 <p class="invite">Technical has the warp's formula, every effect and every gauge.</p>
@@ -143,20 +143,22 @@
 <p>An agent can set the same gauges through the <a href="/mcp">MCP server</a>'s <code>set_pane_config</code>, each as a percentage of its range, with writes on.</p>
 
 <div>
-<h3>GAUGES in 0.5.0</h3>
+<h3>GAUGES since 0.5.0</h3>
 <p>The sliders sit in four groups, each folded to its heading until you click it: <code>TYPE</code>, <code>PICTURE</code>, <code>ACTIVE TERMINALS</code> and <code>INACTIVE TERMINALS</code>. The CRT row is called <code>CRT GLASS</code>.<sup><a href="#s4">4</a></sup></p>
 <table>
   <thead><tr><th>Group</th><th>Gauges</th></tr></thead>
   <tbody>
     <tr><td><code>TYPE</code></td><td><code>text size</code>, <code>bench size</code>, <code>menu bar</code></td></tr>
     <tr><td><code>PICTURE</code></td><td><code>brightness</code>, <code>contrast</code>, <code>colour</code>, <code>background</code>, <code>field colour</code>, <code>gamma</code>, <code>phosphor</code></td></tr>
-    <tr><td><code>ACTIVE TERMINALS</code></td><td><code>text</code>, <code>letter glow</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
-    <tr><td><code>INACTIVE TERMINALS</code></td><td><code>brightness</code>, <code>blur</code>, <code>text level</code> (<code>of active text intensity</code>), <code>letter glow</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
+    <tr><td><code>ACTIVE TERMINALS</code></td><td><code>text</code>, <code>letter glow</code>, <code>opacity</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
+    <tr><td><code>INACTIVE TERMINALS</code></td><td><code>brightness</code>, <code>opacity</code>, <code>blur</code>, <code>text level</code> (<code>of active text intensity</code>), <code>letter glow</code>, <code>cursor linger</code>, <code>off-cursor linger</code></td></tr>
   </tbody>
 </table>
 <p>Terminal lighting follows focus in every skin, with the tube on or off. The pane you're typing in and the others each have their own letter glow, and inactive text can dim relative to the active pane's. Left alone, active letter glow is 20% and inactive text 45%; under Intrusive they are 37% and 52%; inactive letter glow is 100% in both, and Clean has no glow at all. A setting you make wins, zero included.</p>
 <p>Erased passages fade where they were drawn, while new text appears at once. <code>cursor linger</code> is how long changed text fades at the cursor, 0 to 220 ms; <code>off-cursor linger</code> is how long an erased passage elsewhere fades, 0 to 650 ms. Both start at their maximum, and 0 turns each one off. The tray says so: <code>New text is instant. Off-cursor = erased text; 0 = off.</code></p>
 <p>Inactive <code>brightness</code> defaults to 78% and can go much darker; <code>blur</code> runs from clear to slightly softer than a popup's backdrop. <code>field colour</code> fades the terminal's default background from black toward the chrome around it; TERMINIMALIST matches it by default, and other skins keep their own background until you move it.</p>
+<p><code>opacity</code> makes a terminal's field see-through to the desktop while its letters stay solid, on the tube too. Both start at 100%, and a fullscreen window stays solid. An inactive pane keeps some of its brightness veil below 100% inactive brightness, so it doesn't go fully clear.</p>
+<p><code>FLOATING DOCUMENT</code> holds a toggle between the fullscreen reader, the default, and the glow pane. It decides where <kbd>Alt</kbd>+<kbd>O</kbd> opens a brief, the window remembers it, and switching keeps your place and your notes.</p>
 <p>While the window wears the Clean design, the tube and every light are held off whatever the dials say: the curve, the roll, the glare, letter glow, the linger fades and the border halos. The dials keep their values for the next design, and each design remembers its own look dials; see <a href="/themes">Themes</a>.</p>
 </div>
 

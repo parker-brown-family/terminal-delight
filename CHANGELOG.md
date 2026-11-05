@@ -9,6 +9,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Terminals
 
+- **Scroll mode reaches Codex.** Alt+[ entered scroll mode in a Codex pane, but
+  the arrows and paging keys left the view where it was: the wheel reports went
+  to the top row, which Codex keeps for its pinned prompt header. They now land
+  on the row below it.
 - **TERMINIMALIST's relationship row reads as a sentence.** It says
   *+ Actor → Choose verb → Choose target*, where its arrows had been spelled
   out as the word "right".
@@ -39,6 +43,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   which section. The map now keeps the path in brackets, the agent opens each
   picture from the section it was pasted on, and the notes bar counts the
   pictures that went.
+
+### Languages
+
+- **The rest of the app follows your language.** The remaining controls and
+  status messages are translated in all nine languages, including the compact
+  action labels in text-control skins and the launcher's model and dial states.
+  (#1228, #1068)
+
+### Upgrading from 0.5.1
+
+- **The Super+C line can go.** If you added
+  `o.window("terminal-delight", { tag = "+terminal" })` to `hyprland.lua`, it
+  does nothing new now and is safe to delete or keep.
 
 ## [0.5.1] — 2026-11-04
 
