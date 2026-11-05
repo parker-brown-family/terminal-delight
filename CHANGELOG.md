@@ -28,9 +28,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **Ordinary Claude and Codex commands receive the selected additions.** TD
   preserves personal skills, exclusions and provider configuration. Each pane's
   TD Skills indicator reports confirmed, partial, absent or unknown attachment;
-  availability does not mean the agent followed an instruction. After updating,
-  open a new Bash terminal before starting the agent to receive the command
-  bridge. Existing running agents keep their original selection.
+  availability does not mean the agent followed an instruction. The command
+  bridge lives in the session host, so after updating, restart everything once
+  and open a new Bash terminal before starting the agent. Until then a new shell
+  starts cleanly without the bridge. Existing running agents keep their original
+  selection.
 
 ### Documents
 

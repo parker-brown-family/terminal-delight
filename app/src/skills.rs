@@ -169,6 +169,9 @@ fn install_inner() -> io::Result<PathBuf> {
     Ok(root)
 }
 
+/// For a person's own startup file, on a host older than the bridge. `function`
+/// and not `name()`, which an alias of that name turns into a syntax error that
+/// ends the script before the remaining providers.
 fn bash_activation(root: &Path) -> String {
     let quote = crate::launcher::shell_quote;
     let mut script = format!(
@@ -178,44 +181,10 @@ fn bash_activation(root: &Path) -> String {
     for provider in PROVIDERS {
         let shim = quote(&root.join("bin").join(provider).to_string_lossy());
         script.push_str(&format!(
-            "if ! declare -F {provider} >/dev/null || [[ $(declare -f {provider}) == *'/skill-manager/'* ]]; then\n  {provider}() {{ {shim} \"$@\"; }}\n  export -f {provider}\nfi\n"
+            "if ! declare -F {provider} >/dev/null || [[ $(declare -f {provider}) == *'/skill-manager/'* ]]; then\n  function {provider} {{ {shim} \"$@\"; }}\n  export -f {provider}\nfi\n"
         ));
     }
     script
-}
-
-/// Only a newly created plain Bash shell may receive this startup line. Never
-/// queue it into an adopted terminal or a shell already running a resume recipe.
-pub fn bootstrap_shell(shell: u32, fresh: bool, resume: Option<&str>) -> Option<String> {
-    if !fresh || resume.is_some() {
-        return None;
-    }
-    let mut exe = std::fs::read_link(format!("/proc/{shell}/exe")).ok()?;
-    // fork may return before the child has exec'd its shell. Wait only at
-    // this creation boundary, never in a render or an existing terminal.
-    for _ in 0..25 {
-        let name = exe.file_name()?.to_string_lossy();
-        if name != "terminal-delight" && !name.starts_with("td-") {
-            break;
-        }
-        std::thread::sleep(Duration::from_millis(1));
-        exe = std::fs::read_link(format!("/proc/{shell}/exe")).ok()?;
-    }
-    if exe.file_name()? != "bash" {
-        return None;
-    }
-    let root = install().ok()?;
-    let env = std::fs::read(format!("/proc/{shell}/environ")).ok()?;
-    if env
-        .windows(root.as_os_str().len())
-        .any(|w| w == root.as_os_str().as_encoded_bytes())
-    {
-        return None;
-    }
-    Some(format!(
-        " . {}\r",
-        crate::launcher::shell_quote(&root.join("activate.bash").to_string_lossy())
-    ))
 }
 
 /// Add discovery to a newly spawned shell without editing its rc files. Bash
@@ -634,30 +603,12 @@ mod tests {
     }
 
     #[test]
-    fn shell_activation_preserves_personal_functions_and_only_targets_a_new_plain_bash() {
-        let mut child = std::process::Command::new("/bin/bash")
-            .args(["--noprofile", "--norc", "-c", "read -r -t 30; :"])
-            .stdin(std::process::Stdio::piped())
-            .env_clear()
-            .env("PATH", "/usr/bin:/bin")
-            .spawn()
-            .unwrap();
-        let pid = child.id();
-        assert_eq!(bootstrap_shell(pid, false, None), None);
-        assert_eq!(
-            bootstrap_shell(pid, true, Some("claude --resume example")),
-            None
-        );
-        let line = bootstrap_shell(pid, true, None).expect("a legacy host needs shell setup");
-        assert!(line.contains("activate.bash"));
-        child.kill().unwrap();
-        child.wait().unwrap();
-
+    fn shell_activation_preserves_personal_functions_and_aliases() {
         let root = install().unwrap();
         let output = std::process::Command::new("/bin/bash")
             .args(["--noprofile", "--norc", "-c"])
             .arg(format!(
-                "claude() {{ printf personal; }}; . {}; claude; declare -f codex",
+                "shopt -s expand_aliases\nalias gemini='printf aliased'\nclaude() {{ printf personal; }}\n. {}\nclaude\ngemini\ndeclare -f crush",
                 crate::launcher::shell_quote(&root.join("activate.bash").to_string_lossy())
             ))
             .env_clear()
@@ -667,9 +618,10 @@ mod tests {
             .output()
             .unwrap();
         assert!(output.status.success());
+        assert_eq!(String::from_utf8_lossy(&output.stderr), "");
         let text = String::from_utf8(output.stdout).unwrap();
-        assert!(text.starts_with("personal"));
-        assert!(text.contains("/skill-manager/") && text.contains("/bin/codex"));
+        assert!(text.starts_with("personalaliased"));
+        assert!(text.contains("/skill-manager/") && text.contains("/bin/crush"));
     }
 
     #[test]
