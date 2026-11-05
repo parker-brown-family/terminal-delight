@@ -2637,6 +2637,21 @@ fn terminal_background(th: &Theme) -> Hsla {
         .unwrap_or_else(|| graded(th.bg, &th.grade, Channel::Bg))
 }
 
+/// What the pane's field is painted with. Below full opacity it replaces what
+/// the window drew underneath, so the desktop shows through it and not the
+/// chrome; letters are painted over it afterwards and stay solid. Parker,
+/// 2026-11-04: *"active and inactive terminal OPACITY! just like we added for
+/// the glowpane docs!"* Nothing stands behind a fullscreen window to see.
+fn field_fill(th: &Theme, focused: bool, fullscreen: bool) -> gpui::Background {
+    let field = terminal_background(th);
+    let opacity = th.grade.opacity_for_focus(focused);
+    if opacity < 1.0 && !fullscreen {
+        gpui::Background::desktop_cutout(field.alpha(field.a * opacity), 0.)
+    } else {
+        field.into()
+    }
+}
+
 /// Apply the monitor-OSD [`Grade`](crate::theme::Grade) to one final cell colour,
 /// in HSLA, at paint time — the last step before a cell is committed so the whole
 /// composited display is graded uniformly (text and background still take their
@@ -13474,7 +13489,7 @@ impl Render for TerminalView {
             // / contrast / colour sliders dim the whole pane like a dimmer light —
             // crucially the flat/paper themes, whose bright background is the bulk of
             // what you see. Neutral grade short-circuits, so the default is unchanged.
-            .bg(terminal_background(&th))
+            .bg(field_fill(&th, focused_now, window.is_fullscreen()))
             .relative()
             .flex()
             .flex_col()
@@ -19328,6 +19343,49 @@ mod harness;
 mod housekeeping_tests;
 #[cfg(test)]
 mod rest_tests;
+
+#[cfg(test)]
+mod field_opacity {
+    use super::*;
+
+    fn wearing(active: Option<f32>, inactive: Option<f32>) -> Theme {
+        let mut th = crate::theme::parse(crate::theme::builtin_toml("deco").unwrap()).unwrap();
+        th.grade.active_opacity = active;
+        th.grade.inactive_opacity = inactive;
+        th
+    }
+
+    /// Unset, and at full, the field is the ordinary solid quad it always was.
+    #[test]
+    fn a_full_field_is_painted_as_it_always_was() {
+        for th in [wearing(None, None), wearing(Some(1.0), Some(1.0))] {
+            for focused in [true, false] {
+                let fill = field_fill(&th, focused, false);
+                assert!(!fill.is_desktop_cutout());
+                assert_eq!(fill, terminal_background(&th).into());
+            }
+        }
+    }
+
+    /// Each dial answers for its own focus, and only the field's alpha moves.
+    #[test]
+    fn a_field_below_full_lets_the_desktop_through_by_its_own_focus() {
+        let th = wearing(None, Some(0.4));
+        assert!(!field_fill(&th, true, false).is_desktop_cutout());
+        assert!(field_fill(&th, false, false).is_desktop_cutout());
+        let th = wearing(Some(0.7), None);
+        assert!(field_fill(&th, true, false).is_desktop_cutout());
+        assert!(!field_fill(&th, false, false).is_desktop_cutout());
+    }
+
+    /// Nothing stands behind a fullscreen window, so it stays solid.
+    #[test]
+    fn a_fullscreen_field_stays_solid() {
+        let th = wearing(Some(0.2), Some(0.2));
+        assert!(!field_fill(&th, true, true).is_desktop_cutout());
+        assert!(!field_fill(&th, false, true).is_desktop_cutout());
+    }
+}
 
 #[cfg(test)]
 mod default_legibility {

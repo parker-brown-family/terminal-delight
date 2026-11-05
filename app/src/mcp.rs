@@ -296,6 +296,10 @@ pub struct GradeReport {
     pub inactive_brightness: Option<f32>,
     /// Softness of an inactive pane's terminal, 0..100; undeclared is clear.
     pub inactive_blur: Option<f32>,
+    /// How solid the focused pane's field is, 0..100; undeclared is solid.
+    pub active_opacity: Option<f32>,
+    /// How solid an unfocused pane's field is, 0..100; undeclared is solid.
+    pub inactive_opacity: Option<f32>,
     /// The floating document's brightness, 0..100 with 50 as drawn; undeclared
     /// draws it as drawn.
     pub doc_brightness: Option<f32>,
@@ -362,6 +366,10 @@ pub struct ConfigPatch {
     pub inactive_brightness: Option<f32>,
     /// Softness of an inactive pane's terminal, 0..100; undeclared is clear.
     pub inactive_blur: Option<f32>,
+    /// How solid the focused pane's field is, 0..100; undeclared is solid.
+    pub active_opacity: Option<f32>,
+    /// How solid an unfocused pane's field is, 0..100; undeclared is solid.
+    pub inactive_opacity: Option<f32>,
     /// The floating document's brightness, 0..100 with 50 as drawn; undeclared
     /// draws it as drawn.
     pub doc_brightness: Option<f32>,
@@ -1645,7 +1653,8 @@ fn tool_defs() -> Value {
                  text, default 45 (Standard) / 52 (Intrusive); active_brightness — how light \
                  the focused pane is drawn, 0 a fifth, 62 as always (default), 100 half again as light; \
                  inactive_brightness — light an inactive pane keeps, default 78; inactive_blur — softness of an inactive \
-                 pane's terminal, default 0; doc_brightness and doc_contrast — the floating document, 50 as drawn; \
+                 pane's terminal, default 0; active_opacity and inactive_opacity — how solid a pane's field is over the \
+                 desktop, text staying solid, default 100; doc_brightness and doc_contrast — the floating document, 50 as drawn; \
                  doc_clear — how much terminal shows through it, default 0; doc_glow — its own halo on the phosphor \
                  scale, unset follows phosphor). The four linger fields use milliseconds: \
                  cursor_linger_ms and inactive_cursor_linger_ms range 0..220; off_cursor_linger_ms \
@@ -1707,7 +1716,7 @@ fn tool_defs() -> Value {
                                 },
                                 "config": {
                                     "type": "object",
-                                    "description": "partial grade — any of brightness/contrast/colour/text/background/field_colour/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text/active_brightness/inactive_brightness/inactive_blur/doc_brightness/doc_contrast/doc_clear/doc_glow (0..100; active_brightness lifts the focused pane from as-is at 0 to half again as light at 100; inactive_brightness is the light an inactive pane keeps, default 78; inactive_blur softens an inactive pane's terminal, default 0; field_colour fades the default terminal field from black at 0 to matching chrome at 100, unset follows the skin; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
+                                    "description": "partial grade — any of brightness/contrast/colour/text/background/field_colour/gamma/menu_bar/text_size/bench_size/warp/crawl_angle/crawl_depth/phosphor/image_glow/inactive_image_glow/inactive_text/active_brightness/inactive_brightness/inactive_blur/active_opacity/inactive_opacity/doc_brightness/doc_contrast/doc_clear/doc_glow (0..100; active_brightness lifts the focused pane from as-is at 0 to half again as light at 100; inactive_brightness is the light an inactive pane keeps, default 78; inactive_blur softens an inactive pane's terminal, default 0; field_colour fades the default terminal field from black at 0 to matching chrome at 100, unset follows the skin; image_glow is active letter glow, 0 off; cursor_linger_ms/inactive_cursor_linger_ms are 0..220ms, off_cursor_linger_ms/inactive_off_cursor_linger_ms are 0..650ms, zero disables each; legacy afterglow_ms is 0..1200ms and resets the four overrides; phosphor 25 = the house border glow, 0 = none) and crawl/crt (bool) — AND `logo`: an absolute path to an image file (png/jpg/jpeg/svg/webp) to ATTACH as this pane's card logo (the agent wall portrait); an empty string clears it. Pane targets only."
                                 }
                             },
                             "required": ["target", "config"],
