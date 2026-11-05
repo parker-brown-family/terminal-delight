@@ -1,0 +1,19 @@
+warning: use of deprecated module `std::usize`: all constants in this module replaced by associated constants on the type
+  --> /home/parker/Work/td-html-build/zed-upstream/crates/gpui/src/elements/uniform_list.rs:14:51
+   |
+14 | use std::{cell::RefCell, cmp, ops::Range, rc::Rc, usize};
+   |                                                   ^^^^^
+   |
+   = note: `#[warn(deprecated)]` on by default
+
+warning: use of deprecated constant `std::usize::MAX`: replaced by the `MAX` associated constant on this type
+   --> /home/parker/Work/td-html-build/zed-upstream/crates/gpui/src/elements/uniform_list.rs:253:36
+    |
+253 |         self.scroll_to_item(usize::MAX, ScrollStrategy::Bottom);
+    |                                    ^^^
+
+warning: `gpui` (lib) generated 2 warnings
+   Compiling terminal-delight v0.5.2 (/home/parker/Work/td-html-build/terminal-delight/app)
+    Finished `dev` profile [unoptimized + debuginfo] target(s) in 10.04s
+warning: the following packages contain code that will be rejected by a future version of Rust: proc-macro-error2 v2.0.1
+note: to see what the problems were, use the option `--future-incompat-report`, or run `cargo report future-incompatibilities --id 1`

@@ -22,6 +22,51 @@ use std::path::{Path, PathBuf};
 
 use serde::{Deserialize, Deserializer, Serialize};
 
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct Dependency {
+    pub path: PathBuf,
+    /// None is a measured missing file; failure to inspect is an error.
+    pub hash: Option<u64>,
+}
+
+impl Dependency {
+    pub fn read(path: PathBuf) -> std::io::Result<Self> {
+        use std::io::Read;
+        let mut file = match std::fs::File::open(&path) {
+            Ok(file) => file,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                return Ok(Self { path, hash: None })
+            }
+            Err(e) => return Err(e),
+        };
+        if file.metadata()?.len() > 128 << 20 {
+            return Err(std::io::Error::other(
+                "resource exceeds cache admission limit",
+            ));
+        }
+        let mut hash = 0xcbf29ce484222325u64;
+        let mut buf = [0u8; 65536];
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            for &b in &buf[..n] {
+                hash ^= u64::from(b);
+                hash = hash.wrapping_mul(0x100000001b3);
+            }
+        }
+        Ok(Self {
+            path,
+            hash: Some(hash),
+        })
+    }
+
+    pub fn unchanged(&self) -> bool {
+        Self::read(self.path.clone()).is_ok_and(|now| now == *self)
+    }
+}
+
 /// Pixels and geometry for an HTML page.
 pub trait PageEngine: Send + Sync {
     fn name(&self) -> &'static str;
@@ -35,6 +80,11 @@ pub trait PageEngine: Send + Sync {
     /// behind them, and the button-to-dialog mapping is plain markup.
     fn dialog(&self, page: PageId, generation: u64, id: &str) -> Result<DialogRender, EngineError>;
     fn close(&self, page: PageId);
+    /// Complete local resource inventory after capture. Unknown means this
+    /// render must not be reused from disk.
+    fn dependencies(&self, _page: PageId) -> Option<Vec<Dependency>> {
+        None
+    }
     /// Stop whatever the engine runs, now: TD is quitting.
     fn shutdown(&self) {}
     /// Load the file as it is on disk now, in a page of its own, and report
@@ -201,6 +251,61 @@ pub struct PageVideo {
 }
 
 impl PageLayout {
+    /// Match the first capture to the viewport instead of photographing an
+    /// extra almost-full band before the reader can see a complete screen.
+    /// Bound very tall windows to keep individual decodes manageable.
+    pub fn bands(&self) -> Vec<Band> {
+        let height = self.geometry.height_dev(self.height_css);
+        let step = self
+            .geometry
+            .height_dev(self.geometry.viewport_css_height as f32)
+            .clamp(256, 4096);
+        if step == TILE_DEV {
+            return bands(height);
+        }
+        (0..height)
+            .step_by(step as usize)
+            .map(|top_dev| Band {
+                top_dev,
+                height_dev: step.min(height - top_dev),
+            })
+            .collect()
+    }
+
+    /// Keep the same uniquely named passage at the same offset after a
+    /// revision. An absent or duplicated name falls back to page fraction.
+    pub fn reading_top(&self, previous: &Self, top: f32) -> f32 {
+        let anchor = previous
+            .anchors
+            .iter()
+            .filter(|a| a.dialog.is_none())
+            .filter_map(|a| {
+                a.rect
+                    .filter(|r| r.y <= top && top < r.y + r.h)
+                    .map(|r| (a, r))
+            })
+            .max_by(|(_, a), (_, b)| a.y.total_cmp(&b.y));
+        if let Some((anchor, rect)) = anchor {
+            let mut before = previous.anchors.iter().filter(|a| a.nid == anchor.nid);
+            let mut after = self
+                .anchors
+                .iter()
+                .filter(|a| a.nid == anchor.nid && a.dialog.is_none());
+            if before.next().is_some() && before.next().is_none() {
+                if let Some(next) = after.next().and_then(|a| a.rect) {
+                    if after.next().is_none() {
+                        return next.y + (top - rect.y).min(next.h.max(0.0));
+                    }
+                }
+            }
+        }
+        if previous.height_css > 0.0 {
+            top * self.height_css / previous.height_css
+        } else {
+            top
+        }
+    }
+
     /// Where a fragment lands on this page, in page CSS px: on the element it
     /// names, which the probe found the way a browser does (the first with
     /// that id, else the first `<a>` with that name), or at the top for an
@@ -665,6 +770,56 @@ mod tests {
             (top - 1280.0).abs() < 1e-9 && (h - 1280.0).abs() < 1e-9,
             "{top} {h}"
         );
+    }
+
+    #[test]
+    fn first_capture_covers_exactly_one_screen_and_bands_have_no_gaps() {
+        let mut l = PageLayout::bare(10000.0, None);
+        l.geometry = Geometry {
+            css_width: 968,
+            viewport_css_height: 1400,
+            scale: 1.6,
+        };
+        let all = l.bands();
+        assert_eq!(
+            all[0],
+            Band {
+                top_dev: 0,
+                height_dev: 2240
+            }
+        );
+        assert!(all
+            .windows(2)
+            .all(|b| b[0].top_dev + b[0].height_dev == b[1].top_dev));
+        assert_eq!(all.iter().map(|b| b.height_dev).sum::<u32>(), 16000);
+        l.height_css = 200.0;
+        assert_eq!(
+            l.bands(),
+            vec![Band {
+                top_dev: 0,
+                height_dev: 320
+            }]
+        );
+    }
+
+    #[test]
+    fn revisions_keep_a_unique_section_offset_and_ambiguous_names_fall_back() {
+        let anchor = |y: f32| {
+            serde_json::from_value::<Anchor>(serde_json::json!({
+                "nid":"results", "title":"Results", "tag":"section",
+                "rect":{"x":0,"y":y,"w":600,"h":500}
+            }))
+            .unwrap()
+        };
+        let mut old = PageLayout::bare(2000.0, None);
+        old.anchors = vec![anchor(500.)];
+        let mut new = PageLayout::bare(3000.0, None);
+        new.anchors = vec![anchor(1200.)];
+        assert_eq!(new.reading_top(&old, 650.), 1350.);
+        new.anchors.push(anchor(1600.));
+        assert_eq!(new.reading_top(&old, 650.), 975.);
+        new.anchors.clear();
+        assert_eq!(new.reading_top(&old, 650.), 975.);
     }
 
     /// The chip's form of each reason names its cause and fits beside a

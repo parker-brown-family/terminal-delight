@@ -216,6 +216,16 @@ impl TerminalView {
         crate::docopen::float_home(w, h, top, bottom)
     }
 
+    pub(crate) fn prepare_float_geometry(&self) -> Option<crate::docview::engine::Geometry> {
+        self.screen_size()?;
+        let r = self.float_home_for(None);
+        Some(crate::docview::engine::Geometry {
+            css_width: (r.w - 4.0).round().max(1.0) as u32,
+            viewport_css_height: (r.h - 4.0 - crate::docopen::FLOAT_STRIP_H).ceil().max(1.0) as u32,
+            scale: self.scale,
+        })
+    }
+
     /// Open a document in a floating square beside the painted row it was
     /// clicked on, or at the top of the screen when there is no row (the
     /// control socket has none). A square already open is replaced, and the
@@ -1234,6 +1244,21 @@ impl TerminalView {
         self.doc_holding = false;
         self.bench.set_face(crate::workbench::Face::Document);
         cx.notify();
+    }
+
+    /// Explicit visibility from the workspace also covers tab switches. A
+    /// document still visible under a floating clip remains resident.
+    pub(crate) fn document_visibility(&mut self, shown: bool, cx: &mut Context<Self>) {
+        if let Some(doc) = &self.doc {
+            let on = shown && self.bench.face() == crate::workbench::Face::Document;
+            doc.view.update(cx, |v, cx| v.visible(on, cx));
+        }
+        let mut float = self.float.as_ref();
+        let on = shown;
+        while let Some(doc) = float {
+            doc.view.update(cx, |v, cx| v.visible(on, cx));
+            float = doc.below.as_deref();
+        }
     }
 
     /// The file this pane's Document face shows, if it has one.

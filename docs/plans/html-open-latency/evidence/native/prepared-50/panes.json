@@ -1,0 +1,871 @@
+{
+  "panes": [
+    {
+      "tab": 0,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 844540,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "1",
+        "header": "shell",
+        "said": "1 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 1,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 848628,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "2",
+        "header": "shell",
+        "said": "2 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 2,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 848811,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "3",
+        "header": "shell",
+        "said": "3 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 3,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 848858,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "4",
+        "header": "shell",
+        "said": "4 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 4,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 848863,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "5",
+        "header": "shell",
+        "said": "5 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 5,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 848977,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "6",
+        "header": "shell",
+        "said": "6 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 6,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849172,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "7",
+        "header": "shell",
+        "said": "7 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 7,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849385,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "8",
+        "header": "shell",
+        "said": "8 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 8,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849514,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "9",
+        "header": "shell",
+        "said": "9 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 9,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849648,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "10",
+        "header": "shell",
+        "said": "10 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 10,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849662,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "11",
+        "header": "shell",
+        "said": "11 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 11,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849666,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "12",
+        "header": "shell",
+        "said": "12 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 12,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 849802,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "13",
+        "header": "shell",
+        "said": "13 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 13,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850135,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "14",
+        "header": "shell",
+        "said": "14 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 14,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850357,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "15",
+        "header": "shell",
+        "said": "15 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 15,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850442,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "16",
+        "header": "shell",
+        "said": "16 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 16,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850453,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "17",
+        "header": "shell",
+        "said": "17 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 17,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850564,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "18",
+        "header": "shell",
+        "said": "18 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 18,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850570,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "19",
+        "header": "shell",
+        "said": "19 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 19,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 850574,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "20",
+        "header": "shell",
+        "said": "20 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 20,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 851327,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "21",
+        "header": "shell",
+        "said": "21 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 21,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 851754,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "22",
+        "header": "shell",
+        "said": "22 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 22,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 852004,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "23",
+        "header": "shell",
+        "said": "23 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 23,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 852285,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "24",
+        "header": "shell",
+        "said": "24 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 24,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 852659,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "25",
+        "header": "shell",
+        "said": "25 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 25,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 853164,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "26",
+        "header": "shell",
+        "said": "26 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 26,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 853665,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "27",
+        "header": "shell",
+        "said": "27 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 27,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 854300,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "28",
+        "header": "shell",
+        "said": "28 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 28,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 854778,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "29",
+        "header": "shell",
+        "said": "29 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 29,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 856029,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "30",
+        "header": "shell",
+        "said": "30 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 30,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 856276,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "31",
+        "header": "shell",
+        "said": "31 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 31,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 856340,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "32",
+        "header": "shell",
+        "said": "32 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 32,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 856471,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "33",
+        "header": "shell",
+        "said": "33 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 33,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 856710,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "34",
+        "header": "shell",
+        "said": "34 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 34,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 857403,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "35",
+        "header": "shell",
+        "said": "35 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 35,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 857956,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "36",
+        "header": "shell",
+        "said": "36 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 36,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 858425,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "37",
+        "header": "shell",
+        "said": "37 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 37,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 858806,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "38",
+        "header": "shell",
+        "said": "38 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 38,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 858916,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "39",
+        "header": "shell",
+        "said": "39 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 39,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 859023,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "40",
+        "header": "shell",
+        "said": "40 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 40,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 859548,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "41",
+        "header": "shell",
+        "said": "41 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 41,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 859921,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "42",
+        "header": "shell",
+        "said": "42 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 42,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 860375,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "43",
+        "header": "shell",
+        "said": "43 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 43,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 860460,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "44",
+        "header": "shell",
+        "said": "44 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 44,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 860671,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "45",
+        "header": "shell",
+        "said": "45 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 45,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 860737,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "46",
+        "header": "shell",
+        "said": "46 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 46,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 860965,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "47",
+        "header": "shell",
+        "said": "47 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 47,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 861225,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "48",
+        "header": "shell",
+        "said": "48 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 48,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 861481,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "49",
+        "header": "shell",
+        "said": "49 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    },
+    {
+      "tab": 49,
+      "title": "shell",
+      "mode": "SHELL",
+      "is_agent": false,
+      "pid": 861715,
+      "pane_id": null,
+      "cwd": "/home/parker/Work/td-html-build/terminal-delight",
+      "reach": "read",
+      "name": {
+        "place": "50",
+        "header": "shell",
+        "said": "50 \u00b7 shell"
+      },
+      "agent": null,
+      "dormancy": null
+    }
+  ],
+  "hidden": 0,
+  "untrusted_terminal_data": [
+    "panes[].title",
+    "panes[].name.place",
+    "panes[].name.header",
+    "panes[].name.said",
+    "panes[].agent",
+    "panes[].mode",
+    "panes[].cwd",
+    "panes[].note.title",
+    "panes[].note.text"
+  ],
+  "instance": {
+    "session": "html-perf-844174",
+    "window": 844203,
+    "build": "td-html-native-opt3"
+  }
+}

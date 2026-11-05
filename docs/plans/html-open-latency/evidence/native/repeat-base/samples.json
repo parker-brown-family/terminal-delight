@@ -1,0 +1,122 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 1480.6818440556526,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 269.15237307548523,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 230.87874287739396,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 3,
+    "wall_ms": 233.60578902065754,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 4,
+    "wall_ms": 248.6551080364734,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 5,
+    "wall_ms": 266.8907518964261,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 6,
+    "wall_ms": 264.4505468197167,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 7,
+    "wall_ms": 260.1910999510437,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 8,
+    "wall_ms": 265.5729770194739,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 9,
+    "wall_ms": 284.55753484740853,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 10,
+    "wall_ms": 265.2204150799662,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 11,
+    "wall_ms": 261.00894901901484,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 12,
+    "wall_ms": 233.78458502702415,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 13,
+    "wall_ms": 238.9733479358256,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 14,
+    "wall_ms": 232.3640009853989,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 15,
+    "wall_ms": 281.781820114702,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 16,
+    "wall_ms": 233.49940520711243,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 17,
+    "wall_ms": 248.60893306322396,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 18,
+    "wall_ms": 232.6734762173146,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  },
+  {
+    "cycle": 19,
+    "wall_ms": 250.489620026201,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "ms": {}
+  }
+]

@@ -1,0 +1,116 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-judge-speed-by-the-visible-page",
+      "at": "2026-11-05T06:43Z",
+      "title": "Judge speed by the visible page",
+      "context": null,
+      "chose": "Measure time to first readable pixels and a filled viewport; use 4x as the initial target and 10x as the stretch target.",
+      "because": "Background completion can improve while Alt+O still feels slow. The user asked for the opening experience.",
+      "passed_over": [],
+      "undo": "Change the acceptance thresholds before implementation.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-05T18:01Z",
+        "via": "reported",
+        "note": "Parker authorized the complete plan on 2026-11-05.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      }
+    },
+    {
+      "id": "call-resource-first",
+      "at": "2026-11-05T07:23Z",
+      "title": "Measure retained pages before choosing a cache policy",
+      "context": "A recommendation for the revised plan; production implementation is still unapproved.",
+      "chose": "Measure nine retained page contexts using the real renderer; propose disk reuse and release of browser pages, with recent panes used for priority.",
+      "because": "Parker asked for resource cost first. Nine retained pages used 1975 MiB browser RAM; cached PNG reads were only 1–6 ms.",
+      "passed_over": [
+        "Keep nine complete live browser pages as the fast cache"
+      ],
+      "undo": "Revise the recommendation; no product behavior has changed.",
+      "door": null,
+      "evidence": [
+        {
+          "href": "evidence/resource-summary.json",
+          "sha256": "sha256:2d36fd7a6b2c4236d3a0ab9953da3f5c98427957adbf80d1b07a3ddf3e73d0ea",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-05T18:01Z",
+        "via": "reported",
+        "note": "Parker explicitly authorized the resource-first implementation after reviewing the cost study on 2026-11-05.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": [
+          "sha256:2d36fd7a6b2c4236d3a0ab9953da3f5c98427957adbf80d1b07a3ddf3e73d0ea"
+        ]
+      }
+    },
+    {
+      "id": "call-preparation-stays-bounded",
+      "at": "2026-11-05T17:58Z",
+      "title": "Preparation stays bounded",
+      "context": null,
+      "chose": "Prepare the newest HTML from up to nine recently visited panes, one page at a time, after a 400 ms dwell; keep completed pixels on disk within the existing 256 MiB budget.",
+      "because": "The native fifty-pane run met the prepared-open target while hidden views retained no image tiles. No measured benefit yet justifies preparing additional hovered artifacts.",
+      "passed_over": [
+        "Extra hover-triggered preparation and a pinned image-memory cache"
+      ],
+      "undo": "Change the preparation candidate policy and constants",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "evidence/native/prepared-50/samples.json",
+          "sha256": "sha256:ffd6b46f7f2e692aca97b74b49a0b6264507faaa7ae66cdf12ae2ba99a695cb4",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

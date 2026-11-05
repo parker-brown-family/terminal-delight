@@ -1,0 +1,16 @@
+{
+  "geometry": {
+    "css_width": 1234,
+    "viewport_css_height": 795,
+    "scale": 1.0
+  },
+  "same_height": true,
+  "same_anchors": true,
+  "same_links": true,
+  "anchors": 10,
+  "links": 15,
+  "baseline_layout": "/tmp/td-html-native-baseline-2/cache/terminal-delight/pages/2dbc55335669e621/layout.json",
+  "new_layout": "/tmp/td-html-native-opt3-reader/cache/terminal-delight/pages/2dbc54335669e46e/layout.json",
+  "first_viewport_mae_normalized": 5.3805e-06,
+  "first_viewport_mae_255": 0.0013720275
+}

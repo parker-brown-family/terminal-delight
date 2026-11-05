@@ -100,6 +100,7 @@ pub mod page;
 pub mod pdf;
 pub mod poppler;
 pub mod pref;
+pub mod prepare;
 pub mod progress;
 pub mod snapshot;
 pub mod video;
@@ -1255,6 +1256,10 @@ impl DocumentView {
         self.backend.hold();
     }
 
+    pub fn visible(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.backend.visible(shown || self.lent.is_some(), cx);
+    }
+
     /// Show what a fragment names as soon as the document has been laid out:
     /// a link that named a heading in another file, or an element of a
     /// brief, opens that file there.
@@ -1374,9 +1379,19 @@ impl Render for DocumentView {
         // Last, so gpui has prepainted everything above it, every link's text
         // included, by the time it records where the view was drawn.
         let painted_at = self.painted_at.clone();
+        let painted = cx.entity().downgrade();
+        let timed = std::env::var_os("TD_DOCDEBUG").is_some();
         let drawn = canvas(
             move |bounds, _, _| painted_at.set(Some(bounds.origin)),
-            |_, _, _, _| {},
+            move |_, _, _, cx| {
+                if !timed {
+                    return;
+                }
+                let painted = painted.clone();
+                cx.defer(move |cx| {
+                    let _ = painted.update(cx, |v, _| v.backend.painted());
+                });
+            },
         )
         .absolute()
         .inset_0();
@@ -1482,6 +1497,10 @@ mod tests {
             ("docview/cdp.rs", strip(include_str!("docview/cdp.rs"))),
             ("docview/cache.rs", strip(include_str!("docview/cache.rs"))),
             ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
+            (
+                "docview/prepare.rs",
+                strip(include_str!("docview/prepare.rs")),
+            ),
             (
                 "docview/progress.rs",
                 strip(include_str!("docview/progress.rs")),

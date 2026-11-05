@@ -21492,6 +21492,35 @@ impl Workspace {
         }
     }
 
+    fn prepare_focused_artifact(&self, window: &Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.focused_leaf(window, cx) else {
+            return;
+        };
+        let Some(path) = pane.read(cx).handovers().newest().and_then(|h| h.path()) else {
+            return;
+        };
+        let geometry = if self.doc_glow_pane == Some(true) {
+            pane.read(cx).prepare_float_geometry()
+        } else {
+            self.last_win.map(|(_, _, w, h)| {
+                let glass = ReaderGlass::in_window(w, h);
+                let border = f32::from(skin::skin(cx, 1.).box_border(2.));
+                docview::engine::Geometry {
+                    css_width: (glass.panel_w - glass.pad * 2. - border * 2.)
+                        .round()
+                        .max(1.) as u32,
+                    viewport_css_height: (glass.panel_h - glass.hdr_h - glass.pad - border * 2.)
+                        .ceil()
+                        .max(1.) as u32,
+                    scale: window.scale_factor(),
+                }
+            })
+        };
+        if let Some(geometry) = geometry {
+            docview::prepare::offer(pane.entity_id().as_u64(), path, geometry, cx);
+        }
+    }
+
     /// Alt+0 / Alt+Shift+0 and the mouse's back and forward: one step along
     /// the panes visited, skipping any that have closed.
     fn trail_step(&mut self, back: bool, cx: &mut Context<Self>) {
@@ -27800,7 +27829,7 @@ impl Workspace {
     /// for a frame now or every `pane::OFFSCREEN_REFRESH` (#964). Set here
     /// because the draw is the one place that knows exactly what is on
     /// screen, so a pane that has just come into view is told in that frame.
-    fn mark_shown_panes(&self, cx: &App) {
+    fn mark_shown_panes(&self, cx: &mut Context<Self>) {
         let mut active = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
             tab.root.leaves(&mut active);
@@ -27811,6 +27840,7 @@ impl Workspace {
             for leaf in leaves {
                 let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
                 leaf.read(cx).mark_shown(shown);
+                leaf.update(cx, |v, cx| v.document_visibility(shown, cx));
             }
         }
     }
@@ -31754,6 +31784,7 @@ impl Render for Workspace {
             self.fold_hover = None;
         }
         self.mark_shown_panes(cx);
+        self.prepare_focused_artifact(window, cx);
         self.reap(window, cx);
         self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
