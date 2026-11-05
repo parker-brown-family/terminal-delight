@@ -159,6 +159,8 @@ look_dials! {
     active_brightness: f32 => "active_brightness", opt;
     inactive_brightness: f32 => "inactive_brightness", opt;
     inactive_blur: f32 => "inactive_blur", opt;
+    active_opacity: f32 => "active_opacity", opt;
+    inactive_opacity: f32 => "inactive_opacity", opt;
     afterglow_ms: f32 => "afterglow_ms", opt;
     cursor_linger_ms: f32 => "cursor_linger_ms", opt;
     off_cursor_linger_ms: f32 => "off_cursor_linger_ms", opt;
@@ -178,6 +180,8 @@ pub fn look_key(k: GradeKey) -> Option<&'static str> {
         GradeKey::ActiveBrightness => "active_brightness",
         GradeKey::InactiveBrightness => "inactive_brightness",
         GradeKey::InactiveBlur => "inactive_blur",
+        GradeKey::ActiveOpacity => "active_opacity",
+        GradeKey::InactiveOpacity => "inactive_opacity",
         GradeKey::AfterglowMs => "afterglow_ms",
         GradeKey::CursorLingerMs => "cursor_linger_ms",
         GradeKey::OffCursorLingerMs => "off_cursor_linger_ms",

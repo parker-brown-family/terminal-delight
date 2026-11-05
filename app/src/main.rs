@@ -9142,6 +9142,8 @@ impl Workspace {
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
             inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
+            active_opacity: g.active_opacity.map(|v| K::ActiveOpacity.to_percent(v)),
+            inactive_opacity: g.inactive_opacity.map(|v| K::InactiveOpacity.to_percent(v)),
             doc_brightness: g.doc_brightness.map(|v| K::DocBrightness.to_percent(v)),
             doc_contrast: g.doc_contrast.map(|v| K::DocContrast.to_percent(v)),
             doc_clear: g.doc_clear.map(|v| K::DocClear.to_percent(v)),
@@ -9227,6 +9229,12 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_blur {
             set!(K::InactiveBlur, p);
+        }
+        if let Some(p) = patch.active_opacity {
+            set!(K::ActiveOpacity, p);
+        }
+        if let Some(p) = patch.inactive_opacity {
+            set!(K::InactiveOpacity, p);
         }
         if let Some(p) = patch.doc_brightness {
             set!(K::DocBrightness, p);
@@ -23792,7 +23800,9 @@ impl Workspace {
                         | theme::GradeKey::InactiveText
                         | theme::GradeKey::ActiveBrightness
                         | theme::GradeKey::InactiveBrightness
-                        | theme::GradeKey::InactiveBlur => {
+                        | theme::GradeKey::InactiveBlur
+                        | theme::GradeKey::ActiveOpacity
+                        | theme::GradeKey::InactiveOpacity => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::AfterglowMs
@@ -31775,14 +31785,18 @@ impl Render for Workspace {
         // strip and every overlay without a line of this function changing.
         let sk = skin::skin(cx, scale);
         let bezel = darken(th.surface, 0.55);
-        window.set_background_appearance(if sk.m.frost > 0. {
+        let tab = &self.tabs[self.active];
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        // A pane the desktop shows through needs a surface with alpha in it.
+        let see_through = leaves
+            .iter()
+            .any(|l| l.read(cx).resolved_theme(cx).grade.see_through());
+        window.set_background_appearance(if sk.m.frost > 0. || see_through {
             gpui::WindowBackgroundAppearance::Blurred
         } else {
             gpui::WindowBackgroundAppearance::Opaque
         });
-        let tab = &self.tabs[self.active];
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
         // Which pane holds the keyboard — passed down to `render_node`, which
         // draws the focus ring.
         //
@@ -34147,6 +34161,7 @@ impl Render for Workspace {
                             t.g_brightness,
                             grade.active_brightness_at_edge(),
                         ),
+                        (G::ActiveOpacity, t.g_opacity, grade.opacity_for_focus(true)),
                         (G::Text, t.g_text, grade.text),
                         (
                             G::ImageGlow,
@@ -34172,6 +34187,11 @@ impl Render for Workspace {
                             G::InactiveBrightness,
                             t.g_brightness,
                             grade.inactive_brightness_at_edge(),
+                        ),
+                        (
+                            G::InactiveOpacity,
+                            t.g_opacity,
+                            grade.opacity_for_focus(false),
                         ),
                         (G::InactiveBlur, t.g_blur, grade.inactive_blur_at_edge()),
                         (

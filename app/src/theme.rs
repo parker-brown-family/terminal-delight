@@ -467,6 +467,10 @@ pub enum GradeKey {
     ActiveBrightness,
     InactiveBrightness,
     InactiveBlur,
+    /// How solid a pane's field is, focused or not, over the desktop behind
+    /// the window. Text stays solid; unset is a solid field.
+    ActiveOpacity,
+    InactiveOpacity,
     AfterglowMs,
     CursorLingerMs,
     OffCursorLingerMs,
@@ -517,6 +521,7 @@ impl GradeKey {
             GradeKey::InactiveBrightness => (0.0, 1.0, INACTIVE_BRIGHTNESS),
             GradeKey::ActiveBrightness => (ACTIVE_BRIGHTNESS_MIN, ACTIVE_BRIGHTNESS_MAX, 1.0),
             GradeKey::InactiveBlur => (0.0, 1.0, 0.0),
+            GradeKey::ActiveOpacity | GradeKey::InactiveOpacity => (0.0, 1.0, 1.0),
             GradeKey::AfterglowMs => (0.0, 1200.0, 220.0),
             GradeKey::CursorLingerMs | GradeKey::InactiveCursorLingerMs => {
                 (0.0, TextLinger::CURSOR_MAX_MS, TextLinger::CURSOR_MAX_MS)
@@ -679,6 +684,12 @@ pub struct Grade {
     /// the popups' frosted backdrop at 1. None is crystal clear.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub inactive_blur: Option<f32>,
+    /// How solid the focused pane's field is, 0..1. None is solid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub active_opacity: Option<f32>,
+    /// How solid an unfocused pane's field is, 0..1. None is solid.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub inactive_opacity: Option<f32>,
     /// Legacy unified timing. New optional dials override each trail independently.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub afterglow_ms: Option<f32>,
@@ -839,6 +850,8 @@ pub enum GradeChannel {
     ActiveBrightness,
     InactiveBrightness,
     InactiveBlur,
+    ActiveOpacity,
+    InactiveOpacity,
     AfterglowMs,
     CursorLingerMs,
     OffCursorLingerMs,
@@ -866,7 +879,7 @@ impl GradeChannel {
     /// Sixty-four is the most the bitmask holds — [`GradePins`] is a `u64`,
     /// widened from `u32` when the floating document's dials took it past
     /// thirty-two.
-    pub const ALL: [GradeChannel; 34] = [
+    pub const ALL: [GradeChannel; 36] = [
         Self::Brightness,
         Self::Contrast,
         Self::Colour,
@@ -885,6 +898,8 @@ impl GradeChannel {
         Self::ActiveBrightness,
         Self::InactiveBrightness,
         Self::InactiveBlur,
+        Self::ActiveOpacity,
+        Self::InactiveOpacity,
         Self::AfterglowMs,
         Self::CursorLingerMs,
         Self::OffCursorLingerMs,
@@ -931,6 +946,8 @@ impl GradeChannel {
             Self::InactiveBrightness => "inactive_brightness",
             Self::ActiveBrightness => "active_brightness",
             Self::InactiveBlur => "inactive_blur",
+            Self::ActiveOpacity => "active_opacity",
+            Self::InactiveOpacity => "inactive_opacity",
             Self::InactiveImageGlow => "inactive_image_glow",
             Self::CrawlAngle => "crawl_angle",
             Self::CrawlDepth => "crawl_depth",
@@ -1030,6 +1047,16 @@ impl GradeChannel {
                 (Some(x), Some(y)) => close(x, y),
                 _ => false,
             },
+            Self::ActiveOpacity => match (a.active_opacity, b.active_opacity) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
+            Self::InactiveOpacity => match (a.inactive_opacity, b.inactive_opacity) {
+                (None, None) => true,
+                (Some(x), Some(y)) => close(x, y),
+                _ => false,
+            },
             Self::AfterglowMs => match (a.afterglow_ms, b.afterglow_ms) {
                 (None, None) => true,
                 (Some(x), Some(y)) => close(x, y),
@@ -1115,6 +1142,8 @@ impl GradeChannel {
             Self::InactiveBrightness => dst.inactive_brightness = src.inactive_brightness,
             Self::ActiveBrightness => dst.active_brightness = src.active_brightness,
             Self::InactiveBlur => dst.inactive_blur = src.inactive_blur,
+            Self::ActiveOpacity => dst.active_opacity = src.active_opacity,
+            Self::InactiveOpacity => dst.inactive_opacity = src.inactive_opacity,
             Self::InactiveImageGlow => dst.inactive_image_glow = src.inactive_image_glow,
             Self::CrawlAngle => dst.crawl_angle = src.crawl_angle,
             Self::CrawlDepth => dst.crawl_depth = src.crawl_depth,
@@ -1157,6 +1186,8 @@ impl From<GradeKey> for GradeChannel {
             GradeKey::InactiveBrightness => Self::InactiveBrightness,
             GradeKey::ActiveBrightness => Self::ActiveBrightness,
             GradeKey::InactiveBlur => Self::InactiveBlur,
+            GradeKey::ActiveOpacity => Self::ActiveOpacity,
+            GradeKey::InactiveOpacity => Self::InactiveOpacity,
             GradeKey::InactiveImageGlow => Self::InactiveImageGlow,
             GradeKey::CrawlAngle => Self::CrawlAngle,
             GradeKey::CrawlDepth => Self::CrawlDepth,
@@ -1327,6 +1358,8 @@ impl Default for Grade {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            active_opacity: None,
+            inactive_opacity: None,
             doc_brightness: None,
             doc_contrast: None,
             doc_clear: None,
@@ -1359,7 +1392,7 @@ impl Grade {
     /// roll bar live in the collapsed CRT section and the crawl knobs in their
     /// own, so this list is also exactly what `reset` clears — see
     /// [`Grade::reset_gauges`].
-    pub const CHANNELS: [(GradeKey, &'static str); 25] = [
+    pub const CHANNELS: [(GradeKey, &'static str); 27] = [
         (GradeKey::TextSize, "text size"),
         (GradeKey::BenchSize, "bench size"),
         (GradeKey::Brightness, "brightness"),
@@ -1377,6 +1410,8 @@ impl Grade {
         (GradeKey::ActiveBrightness, "active brightness"),
         (GradeKey::InactiveBrightness, "inactive brightness"),
         (GradeKey::InactiveBlur, "inactive blur"),
+        (GradeKey::ActiveOpacity, "active opacity"),
+        (GradeKey::InactiveOpacity, "inactive opacity"),
         (GradeKey::CursorLingerMs, "cursor linger"),
         (GradeKey::OffCursorLingerMs, "off-cursor linger"),
         (GradeKey::InactiveCursorLingerMs, "inactive cursor linger"),
@@ -1416,6 +1451,8 @@ impl Grade {
             active_brightness: n.active_brightness,
             inactive_brightness: n.inactive_brightness,
             inactive_blur: n.inactive_blur,
+            active_opacity: n.active_opacity,
+            inactive_opacity: n.inactive_opacity,
             doc_brightness: n.doc_brightness,
             doc_contrast: n.doc_contrast,
             doc_clear: n.doc_clear,
@@ -1456,6 +1493,8 @@ impl Grade {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            active_opacity: None,
+            inactive_opacity: None,
             doc_brightness: None,
             doc_contrast: None,
             doc_clear: None,
@@ -1551,6 +1590,8 @@ impl Grade {
             && self.inactive_brightness == d.inactive_brightness
             && self.active_brightness == d.active_brightness
             && self.inactive_blur == d.inactive_blur
+            && self.active_opacity == d.active_opacity
+            && self.inactive_opacity == d.inactive_opacity
             && self.doc_brightness == d.doc_brightness
             && self.doc_contrast == d.doc_contrast
             && self.doc_clear == d.doc_clear
@@ -1683,6 +1724,23 @@ impl Grade {
             .clamp(0.0, 1.0)
     }
 
+    /// How solid a pane's field is drawn, focused or not, 0..1.
+    pub fn opacity_for_focus(&self, focused: bool) -> f32 {
+        let dial = if focused {
+            self.active_opacity
+        } else {
+            self.inactive_opacity
+        };
+        dial.filter(|v| v.is_finite())
+            .unwrap_or(1.0)
+            .clamp(0.0, 1.0)
+    }
+
+    /// Whether either opacity dial lets the desktop through.
+    pub fn see_through(&self) -> bool {
+        self.opacity_for_focus(true) < 1.0 || self.opacity_for_focus(false) < 1.0
+    }
+
     pub fn text_for_focus(&self, focused: bool, preset: TerminalLightPreset) -> f32 {
         if focused {
             self.text
@@ -1760,6 +1818,8 @@ impl Grade {
             GradeKey::InactiveBrightness => return self.inactive_brightness,
             GradeKey::ActiveBrightness => return self.active_brightness,
             GradeKey::InactiveBlur => return self.inactive_blur,
+            GradeKey::ActiveOpacity => return self.active_opacity,
+            GradeKey::InactiveOpacity => return self.inactive_opacity,
             GradeKey::DocBrightness => return self.doc_brightness,
             GradeKey::DocContrast => return self.doc_contrast,
             GradeKey::DocClear => return self.doc_clear,
@@ -1814,6 +1874,16 @@ impl Grade {
             GradeKey::InactiveBlur => {
                 if v.is_finite() {
                     self.inactive_blur = Some(v);
+                }
+            }
+            GradeKey::ActiveOpacity => {
+                if v.is_finite() {
+                    self.active_opacity = Some(v);
+                }
+            }
+            GradeKey::InactiveOpacity => {
+                if v.is_finite() {
+                    self.inactive_opacity = Some(v);
                 }
             }
             GradeKey::DocBrightness => {
@@ -2039,6 +2109,8 @@ pub fn house_outer() -> ThemeChoice {
             active_brightness: None,
             inactive_brightness: None,
             inactive_blur: None,
+            active_opacity: None,
+            inactive_opacity: None,
             doc_brightness: None,
             doc_contrast: None,
             doc_clear: None,
@@ -4348,6 +4420,32 @@ mod tests {
         assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");
     }
 
+    /// Opacity is unset until someone moves it: a solid field, nothing written
+    /// to the file, and each dial answering for its own focus.
+    #[test]
+    fn a_panes_opacity_is_solid_until_a_dial_is_moved() {
+        let house = house_outer().grade;
+        assert_eq!(house.opacity_for_focus(true), 1.0);
+        assert_eq!(house.opacity_for_focus(false), 1.0);
+        assert!(!house.see_through());
+        assert!(!toml::to_string(&house).unwrap().contains("opacity"));
+
+        let mut g = house;
+        g.set(GradeKey::InactiveOpacity, 0.4);
+        assert_eq!(
+            g.opacity_for_focus(true),
+            1.0,
+            "the focused pane is unmoved"
+        );
+        assert_eq!(g.opacity_for_focus(false), 0.4);
+        assert!(g.see_through());
+        g.set(GradeKey::ActiveOpacity, 0.7);
+        assert_eq!(g.opacity_for_focus(true), 0.7);
+        let back: Grade = toml::from_str(&toml::to_string(&g).unwrap()).unwrap();
+        assert_eq!(back.opacity_for_focus(true), 0.7);
+        assert_eq!(back.opacity_for_focus(false), 0.4);
+    }
+
     /// Every shipped design says what its tube is, so one nobody has touched
     /// looks as designed whichever design was worn before it: only Clean ships
     /// the CRT off.
@@ -5069,6 +5167,8 @@ mod tests {
             active_brightness: Some(1.3),
             inactive_brightness: Some(0.6),
             inactive_blur: Some(0.5),
+            active_opacity: Some(0.7),
+            inactive_opacity: Some(0.4),
             afterglow_ms: Some(900.0),
             cursor_linger_ms: Some(123.0),
             off_cursor_linger_ms: Some(456.0),
@@ -5790,7 +5890,7 @@ warp = 1.5
     fn glare_is_a_channel_that_pins_and_persists() {
         // Every channel still owns a separate bit after extending the set.
         let last = *GradeChannel::ALL.last().unwrap();
-        assert_eq!(GradeChannel::ALL.len(), 34);
+        assert_eq!(GradeChannel::ALL.len(), 36);
         assert_eq!(GradePins::all().iter().count(), GradeChannel::ALL.len());
         assert!(!GradePins::only(last).has(GradeChannel::Brightness));
         assert_eq!(GradeChannel::parse("glare"), Some(GradeChannel::Glare));
@@ -5837,6 +5937,8 @@ warp = 1.5
                     | GradeKey::ActiveBrightness
                     | GradeKey::InactiveBrightness
                     | GradeKey::InactiveBlur
+                    | GradeKey::ActiveOpacity
+                    | GradeKey::InactiveOpacity
                     | GradeKey::AfterglowMs
                     | GradeKey::CursorLingerMs
                     | GradeKey::OffCursorLingerMs
