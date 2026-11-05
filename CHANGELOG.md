@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Terminals
 
+- **Inactive brightness reaches the active pane.** Above its shipped 78% the
+  gauge also lifts text and letter glow, so 100% looks like the pane you're in.
+  The default look is unchanged.
 - **See your desktop through a terminal.** GAUGES gains **opacity** under ACTIVE
   TERMINALS and INACTIVE TERMINALS. The field goes see-through while the letters
   stay solid, on the CRT too. Both start at 100%, and a fullscreen window stays

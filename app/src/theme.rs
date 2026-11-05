@@ -1639,10 +1639,12 @@ impl Grade {
     }
 
     pub fn letter_glow_for_focus(&self, focused: bool, preset: TerminalLightPreset) -> f32 {
+        let active = self.image_glow_at_edge(preset);
         if focused {
-            self.image_glow_at_edge(preset)
+            active
         } else {
-            self.inactive_image_glow_at_edge()
+            let inactive = self.inactive_image_glow_at_edge();
+            inactive + (active - inactive) * self.inactive_lift()
         }
     }
 
@@ -1745,8 +1747,24 @@ impl Grade {
         if focused {
             self.text
         } else {
-            self.text * self.inactive_text_at_edge(preset)
+            self.text * self.inactive_text_lit(preset)
         }
+    }
+
+    /// How far the inactive brightness gauge has climbed from the shipped 78%
+    /// towards the active pane, 0..1. Below that it only lays its veil. Above
+    /// it, the inactive text level and letter glow give way to the active
+    /// pane's, so full brightness is the active pane. Parker, 2026-11-04: *"max
+    /// brightness should be basically the SAME brightness as the ACTIVE pane"*.
+    /// The veil alone could not get there, with the text level under it.
+    fn inactive_lift(&self) -> f32 {
+        let above_shipped = self.inactive_brightness_at_edge() - INACTIVE_BRIGHTNESS;
+        (above_shipped / (1.0 - INACTIVE_BRIGHTNESS)).clamp(0.0, 1.0)
+    }
+
+    fn inactive_text_lit(&self, preset: TerminalLightPreset) -> f32 {
+        let level = self.inactive_text_at_edge(preset);
+        level + (1.0 - level) * self.inactive_lift()
     }
 
     pub fn afterglow_ms_at_edge(&self) -> f32 {
@@ -4418,6 +4436,49 @@ mod tests {
         let mut th = parse(src).unwrap();
         flatten_tube(&mut th);
         assert_eq!(th.letter_glow, 0.0, "a flat tube still bleeds");
+    }
+
+    /// Full inactive brightness is the active pane, whatever the text level,
+    /// and the shipped look does not move.
+    #[test]
+    fn full_inactive_brightness_matches_the_active_pane() {
+        let preset = TerminalLightPreset::Standard;
+        let mut g = house_outer().grade;
+        g.inactive_text = Some(0.37);
+        let inactive = |g: &Grade| g.text_for_focus(false, preset);
+        let shipped = inactive(&g);
+        assert!(
+            (shipped - g.text * 0.37).abs() < 1e-6,
+            "unset keeps the level"
+        );
+
+        g.inactive_brightness = Some(INACTIVE_BRIGHTNESS);
+        assert!(
+            (inactive(&g) - shipped).abs() < 1e-6,
+            "78% is the same place"
+        );
+        g.inactive_brightness = Some(0.3);
+        assert!(
+            (inactive(&g) - shipped).abs() < 1e-6,
+            "dimming leaves the text"
+        );
+
+        g.inactive_brightness = Some(1.0);
+        assert!((inactive(&g) - g.text_for_focus(true, preset)).abs() < 1e-6);
+        let glow = |g: &Grade, focused| g.letter_glow_for_focus(focused, preset);
+        assert!(
+            (glow(&g, false) - glow(&g, true)).abs() < 1e-6,
+            "and its glow"
+        );
+        g.inactive_brightness = None;
+        assert_eq!(glow(&g, false), 1.0, "unset keeps the inactive glow");
+
+        let mut last = shipped;
+        for b in [0.82, 0.88, 0.94, 0.96, 1.0] {
+            g.inactive_brightness = Some(b);
+            assert!(inactive(&g) > last, "{b} must climb");
+            last = inactive(&g);
+        }
     }
 
     /// Opacity is unset until someone moves it: a solid field, nothing written
