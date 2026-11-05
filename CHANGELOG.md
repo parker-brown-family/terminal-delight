@@ -30,6 +30,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Documents
 
+- **Choose the glow pane or fullscreen reader.** GAUGES → FLOATING DOCUMENT
+  gains a mode toggle. Fullscreen remains the default; the saved choice applies
+  across the window and can switch an open brief while keeping its view and notes.
 - **A pasted picture stays on its section in the agent's prompt.** ↪ sent each
   picture under its section, but Claude Code lifted the path out of the paste
   and attached the picture at the top, so nothing said which picture was on
