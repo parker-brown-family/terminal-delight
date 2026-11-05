@@ -276,6 +276,7 @@ impl EventEmitter<FollowLink> for DocumentView {}
 pub struct SendNotes {
     pub map: String,
     pub unsaved: usize,
+    pub pictures: Option<usize>,
 }
 
 impl EventEmitter<SendNotes> for DocumentView {}

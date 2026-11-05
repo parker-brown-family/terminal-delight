@@ -12465,6 +12465,7 @@ impl Workspace {
                     // English for the notes report.
                     let named = who != "agent";
                     let unsaved_n = ev.unsaved;
+                    let pictures_n = ev.pictures;
                     Said::Done(Words::said(|l| {
                         let ui = l.strings().ui;
                         let (place, chars) = match landed {
@@ -12474,12 +12475,7 @@ impl Workspace {
                             pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
                         };
                         let prompt = lang::fill(place, &[("who", &who)]);
-                        // A send saves as it goes; this counts only what a
-                        // brief that cannot be saved into kept out of the file.
-                        let unsaved = match unsaved_n {
-                            0 => String::new(),
-                            n => l.count(&ui.doc_unsaved, n),
-                        };
+                        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
                         lang::fill(
                             ui.doc_landed_in,
                             &[

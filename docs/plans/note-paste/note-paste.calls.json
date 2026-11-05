@@ -1,0 +1,35 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-a-pasted-picture-reaches-the-agent-as-a-path-it",
+      "at": "2026-11-05T06:34Z",
+      "title": "A pasted picture reaches the agent as a path it opens, not as an attachment",
+      "context": "Claude Code lifted a bare image path out of the paste and attached the picture, which sent the image but lost its section",
+      "chose": "write the path in brackets, so the map arrives whole and the agent opens each picture itself",
+      "because": "it is what the approved plan says, it keeps every picture on its section for every agent, and it stops notes being cut in two; a test with neutral notes showed a real agent opening both pictures and placing them correctly",
+      "passed_over": [
+        "keep the attachment and say the order in the map: depends on one agent's paste rule, and still cuts notes in two",
+        "paste the map, then paste the paths: attachments and a whole map, but timing-dependent and Claude-only"
+      ],
+      "undo": "one line in picture_lines",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

@@ -204,6 +204,7 @@ impl MarkdownDoc {
             LayerPress::Send(sending) => cx.emit(SendNotes {
                 map: sending.map,
                 unsaved: sending.unsaved,
+                pictures: sending.pictures,
             }),
             LayerPress::Unattach(u) => {
                 super::unattach_picture::<MarkdownDoc>(u, cx, |m| m.notes.as_mut());
@@ -496,6 +497,7 @@ impl Backend for MarkdownDoc {
                 cx.emit(SendNotes {
                     map: sending.map,
                     unsaved: sending.unsaved,
+                    pictures: sending.pictures,
                 });
                 self.keep(cx);
                 cx.notify();

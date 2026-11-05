@@ -2,6 +2,7 @@
 """Start, build and check a brief, then place a reader's returned comments against it.
 
 new → write → html (HTML only) → check → deliver → feedback / resolve. `doctor` says what works here.
+adopt turns a glass page built some other way into a source and a commentable page: no brief is read-only.
 While the work runs: orient re-reads what was approved; call records a decision nobody made;
 calls lists them, renders them into the closing brief and says whether the work has settled; verdict
 records the reader's answer."""
@@ -11,7 +12,7 @@ from collections import Counter
 from contextlib import contextmanager
 from datetime import datetime, timezone
 import hashlib
-from html import escape as html_escape
+from html import escape as html_escape, unescape as html_unescape
 from html.parser import HTMLParser
 import json
 import os
@@ -534,7 +535,7 @@ def source_extras(text):
     return extras
 
 
-def build(source, output, identity=None, purpose=None, no_wall=False, discard_edits=False):
+def build(source, output, identity=None, purpose=None, no_wall=False, discard_edits=False, wall_from=None):
     if output.suffix != '.html':
         raise Refusal('HTML output needs an .html suffix')
     if source.resolve() == output.resolve():
@@ -602,7 +603,7 @@ def build(source, output, identity=None, purpose=None, no_wall=False, discard_ed
     note_js = note_js.replace(hook, "if (el.hasAttribute('data-brief-anchor')) id = el.getAttribute('data-brief-anchor');\n        else " + hook)
     if '</script' in note_js.lower():
         raise Refusal('canonical notes script contains a closing script tag')
-    wall = pick_wall(old, no_wall)
+    wall = pick_wall(old if old is not None else wall_from, no_wall)
     revision = content_revision(text, identity, purpose)
     meta = {'id': identity, 'medium': 'html', 'purpose': purpose, 'revision': revision, 'feedback_revision': revision,
             'built_at': utc_minute(), **extras}
@@ -652,6 +653,154 @@ def build(source, output, identity=None, purpose=None, no_wall=False, discard_ed
     return result
 
 
+LOOK_MARKS = ('decision-brief — glass over an Omarchy wallpaper', 'fancy-pants-brief — the rail of gel buttons')
+HEAD_METAS = re.compile(r'<meta\b[^>]*(?:charset|name=["\']?(?:viewport|color-scheme))[^>]*>\s*', re.I)
+START_TAG = re.compile(r'<(h2|figure|div|section|aside|p|li)\b([^>]*)>', re.I)
+
+
+def anchor_slug(words, prefix, taken):
+    words = re.sub(r'<[^>]+>', ' ', words)
+    words = re.sub(r'^\s*\d+\s*', '', html_unescape(words))
+    slug = '-'.join(re.findall(r'[a-z0-9]+', words.lower())[:6]) or 'part'
+    base = candidate = f'{prefix}-{slug}'
+    n = 2
+    while candidate in taken:
+        candidate, n = f'{base}-{n}', n + 1
+    taken.add(candidate)
+    return candidate
+
+
+def stamp_anchors(region):
+    """Give every h2, figure and decision block in the region an id equal to its data-brief-anchor.
+
+    An existing lowercase id is kept as the anchor; an element without one is named from its words."""
+    taken = set(re.findall(r'\bid=["\']([^"\']+)["\']', region))
+    out, at, made = [], 0, []
+    for m in START_TAG.finditer(region):
+        tag, attrs = m[1].lower(), m[2]
+        classes = (re.search(r'\bclass=["\']([^"\']*)["\']', attrs) or [None, ''])[1].split()
+        if tag not in ('h2', 'figure') and not DECISION_CLASSES & set(classes):
+            continue
+        if 'data-brief-anchor' in attrs:
+            continue
+        given = re.search(r'\bid=["\']([^"\']+)["\']', attrs)
+        if given and SAFE_ID.fullmatch(given[1]):
+            anchor, add = given[1], f' data-brief-anchor="{given[1]}"'
+        elif given:
+            raise Refusal(f'<{tag} id="{given[1]}">: an anchor must be a lowercase id; rename it, then adopt again')
+        else:
+            if tag == 'h2':
+                words = region[m.end():region.find('</h2', m.end())]
+                anchor = anchor_slug(words, 'sec', taken)
+            elif tag == 'figure':
+                end = region.find('</figure', m.end())
+                inner = region[m.end():end if end > 0 else None]
+                label = re.search(r'<(?:figcaption|span class="lbl")[^>]*>(.*?)</', inner, re.S)
+                anchor = anchor_slug(label[1] if label else 'figure', 'fig', taken)
+            else:
+                anchor = anchor_slug(region[m.end():m.end() + 200], 'ask', taken)
+            add = f' id="{anchor}" data-brief-anchor="{anchor}"'
+        made.append(anchor)
+        out.append(region[at:m.end() - 1] + add)
+        at = m.end() - 1
+    out.append(region[at:])
+    return ''.join(out), made
+
+
+def adopt(page, identity=None, purpose=None):
+    """Turn a finished glass page built without briefing into a briefing source, and rebuild the page from it.
+
+    The page keeps its own CSS, scripts, figures and wallpaper. What it gains is the reader's half: a note on
+    every section, figure and decision, the copy map, and Terminal Delight's send-back to the agent."""
+    if page.suffix != '.html' or page.name.endswith('.src.html'):
+        raise Refusal('adopt takes a built .html page, not a source')
+    text = read(page)
+    if 'id="brief-meta"' in text:
+        raise Refusal(f'{page.name} is already a brief; edit its .src.html and run html')
+    if '<!--BRIEF:' in text or CONTENT.search(text):
+        raise Refusal(f'{page.name} already carries briefing markers; it is a source, not a page to adopt')
+    identity = identity or re.sub(r'[^a-z0-9]+', '-', page.stem.lower()).strip('-')
+    if not SAFE_ID.fullmatch(identity):
+        raise Refusal('name the brief with --id: a stable lowercase id such as update-channels-gate-1')
+    if not purpose or not purpose.strip():
+        raise Refusal('name the purpose with --purpose: summary, engineering, decision, or an outcome stated plainly')
+    source = page.with_name(page.stem + '.src.html')
+    if source.exists():
+        raise Refusal(f'{source.name} exists; that page is already adopted, so edit the source and run html')
+    wall = wall_of(text)
+    # The look's own blocks come back through BRIEF:head and BRIEF:notes; everything the page wrote stays.
+    cuts = []
+    for kind in ('style', 'script'):
+        for attrs, start, content_start, content_end, end in Scripts(text, kind).blocks:
+            body = text[content_start:content_end]
+            if attrs.get('id') == 'brief-wall' or any(mark in body[:400] for mark in LOOK_MARKS):
+                cuts.append((start, end))
+    for start, end in sorted(cuts, reverse=True):
+        text = text[:start] + text[end:]
+    head = re.search(r'</head\s*>', text, re.I)
+    if not head:
+        raise Refusal('the page has no </head>; adopt needs an ordinary html document')
+    marker = '<!-- briefing: ' + json.dumps({'id': identity, 'purpose': purpose}, ensure_ascii=False).replace('--', '\\u002d\\u002d') + ' --><!--BRIEF:head-->\n'
+    title = re.search(r'</title\s*>', text[:head.start()], re.I)
+    at = title.end() if title else head.start()
+    text = HEAD_METAS.sub('', text[:at]) + marker + text[at:]
+    body = re.search(r'<body\b[^>]*>', text, re.I)
+    close = text.lower().rfind('</body')
+    if not body or close < 0:
+        raise Refusal('the page has no <body>…</body>')
+    first = re.search(r'<(header|main)\b', text[body.end():close], re.I)
+    if not first:
+        raise Refusal('adopt looks for the authored <header> or <main>; the page has neither')
+    start = body.end() + first.start()
+    end = text.lower().rfind('</main>', start, close)
+    if end < 0:
+        raise Refusal('the page has no </main>; wrap its authored content in <main>')
+    end += len('</main>')
+    tail = re.match(r'\s*<footer\b.*?</footer>', text[end:close], re.S | re.I)
+    if tail:
+        end += tail.end()
+    region, made = stamp_anchors(text[start:end])
+    text = text[:start] + '<!--brief-content-->\n' + region + '\n<!--/brief-content-->' + text[end:close] + '<!--BRIEF:notes-->' + text[close:]
+    if not Page(text).headings:
+        raise Refusal('the page has no h2 sections; a brief is commented on by section, so give it some first')
+    with source.open('x', encoding='utf-8') as stream:
+        stream.write(text)
+    original = read(page)
+    backup = page.with_name(page.name + '.' + hashlib.sha256(original.encode()).hexdigest()[:12] + '.pre-adopt.bak')
+    page.rename(backup)
+    try:
+        result = build(source, page, wall_from=wall)
+    except Exception:
+        backup.rename(page)
+        source.unlink()
+        raise
+    result.update({'source': str(source), 'pre_adopt': str(backup), 'anchors_added': made,
+                   'next': f'edit {source.name}, then: python3 {Path(__file__).resolve()} html {source} {page}'})
+    return result
+
+
+def kept_pictures(path):
+    """The pictures a reader pasted onto this document in Terminal Delight, or None if it keeps none.
+
+    Terminal Delight keeps a document's pictures outside the document, so a saved brief holds none of
+    them. It writes pictures/<document>/images.json, whose `file` names the document it belongs to."""
+    root = Path(os.environ.get('XDG_STATE_HOME') or Path.home() / '.local/state') / 'terminal-delight/notes/pictures'
+    for listed in root.glob('*/images.json'):
+        try:
+            kept = json.loads(read(listed))
+            if kept.get('file') != str(path.resolve()) or kept.get('format') != 1:
+                continue
+            images = sorted(((target, image) for target, images in kept['on'].items() for image in images), key=lambda pair: pair[1]['n'])
+            # Terminal Delight refuses a list naming a file outside its folder, so this does too.
+            pictures = [{'target': target, 'label': f"[doc-image #{image['n']}]", 'path': str(listed.parent / image['file']),
+                         'here': (listed.parent / image['file']).is_file()}
+                        for target, image in images if Path(image['file']).name == image['file'] and image['file'][0] != '.']
+        except (OSError, ValueError, AttributeError, KeyError, TypeError, IndexError):
+            continue  # damaged, or written by a later Terminal Delight: nothing is claimed about it
+        return pictures or None
+    return None
+
+
 def feedback(path):
     text, meta, revision, anchors, _ = inspect(path)
     comments = []
@@ -662,14 +811,24 @@ def feedback(path):
                 comments.append({'target': anchor, 'title': entry.get('title'), 'text': entry['text'], 'stance': None, 'at': entry.get('ts')})
         comments += [{'target': a, 'title': None, 'text': '', 'stance': 'agree', 'at': ts} for a, ts in cm.items()]
         revision = meta.get('feedback_revision')
-    return {'format': 1, 'document': {'id': meta['id'], 'href': path.name, 'medium': meta['medium'], 'revision': revision}, 'comments': comments}
+    data = {'format': 1, 'document': {'id': meta['id'], 'href': path.name, 'medium': meta['medium'], 'revision': revision}, 'comments': comments}
+    pictures = kept_pictures(path)
+    if pictures:
+        data['pictures'] = pictures
+    return data
+
+
+# A picture's line in a map. The path is absent where an agent's paste handler lifted it out, as Claude
+# Code did until Terminal Delight wrote it in brackets. A note merely naming a picture does not match.
+PICTURE = re.compile(r'(\[doc-image #(\d+)\])(?: \(?(/.*/doc-image-\2\.[a-z0-9]+)\)?)?( \(not on this machine\))?')
 
 
 def copy_map(text):
     """Normalize the HTML reader's Copy map text into a format-1 envelope, or None if it is not one.
 
     The text names the page as `NOTES — <id>-<first 12 hex of its revision>`. It joins each note's
-    lines with spaces, so the envelope says so rather than passing the words off as exact."""
+    lines with spaces, so the envelope says so rather than passing the words off as exact. A picture
+    pasted onto a passage is listed apart from the comments, on the passage it was pasted onto."""
     text = text.lstrip('\ufeff').replace('\r\n', '\n').replace('\r', '\n')
     head = re.search(r'^NOTES — (\S+)[ \t]*$', text, re.M)
     if not head and re.search(r'^> ?NOTES — ', text, re.M):
@@ -682,7 +841,7 @@ def copy_map(text):
     # The bridge marks carried notes; a READER NOTES mirror inside a saved file never carries that mark.
     if 'REVISION UNKNOWN' in text or 'READER NOTES —' in text[:head.start()]:
         revision = None
-    comments, target, title, orphan = [], None, None, False
+    comments, pictures, target, title, orphan = [], [], None, None, False
     for line in text[head.end():].splitlines():
         block = re.match(r'\[([^\]\s]+)\] ?(.*)$', line)
         if block:
@@ -693,7 +852,11 @@ def copy_map(text):
                 comments.append({'target': target, 'title': title, 'text': '', 'stance': 'agree', 'at': None})
             continue
         note = re.match(r'  · (.*)$', line)
-        if note and target:
+        picture = PICTURE.fullmatch(note[1]) if note else None
+        if picture and target:
+            here = False if picture[4] else True if picture[3] else None
+            pictures.append({'target': target, 'title': title, 'label': picture[1], 'path': picture[3], 'here': here})
+        elif note and target:
             if orphan and note[1] == 'Explicit agreement on the earlier target':
                 comments.append({'target': target, 'title': None, 'text': '', 'stance': 'agree', 'at': None})
             else:
@@ -701,8 +864,11 @@ def copy_map(text):
         elif not line.strip():
             target = None
     # `revision` is a full fingerprint by contract; the copy carries only its first twelve hex digits.
-    return {'format': 1, 'document': {'id': identity, 'href': None, 'medium': 'html', 'revision': None, 'revision_prefix': revision},
+    data = {'format': 1, 'document': {'id': identity, 'href': None, 'medium': 'html', 'revision': None, 'revision_prefix': revision},
             'comments': comments, 'source': 'copy-map', 'text_exact': False}
+    if pictures:
+        data['pictures'] = pictures
+    return data
 
 
 def load_map(map_path):
@@ -745,6 +911,16 @@ def resolve(path, map_path):
         reasons = common + ([] if comment['target'] in anchors else ['target_missing'])
         comment['status'] = 'needs_review' if reasons else 'resolved'
         comment['reasons'] = reasons
+    kept = {p['label']: p for p in kept_pictures(path) or []}
+    for picture in data.get('pictures', []):
+        if not isinstance(picture, dict) or not isinstance(picture.get('target'), str) or not isinstance(picture.get('label'), str):
+            raise Refusal('each picture needs a target and a label')
+        if picture.get('path') is None and picture['label'] in kept:
+            picture.update(path=kept[picture['label']]['path'], here=kept[picture['label']]['here'])
+        reasons = common + ([] if picture['target'] in anchors else ['target_missing'])
+        reasons += [] if picture.get('path') else ['picture_path_unknown']
+        picture['status'] = 'needs_review' if reasons else 'resolved'
+        picture['reasons'] = reasons
     data['current_revision'] = revision
     return data
 
@@ -1299,13 +1475,14 @@ def standing(path, seen=None, depth=0, ledger=None):
     asked_calls = [{'id': c['id'], 'title': c['title'], 'reasons': c['judgement']['reasons']}
                    for c in verdicts.values() if c['status'] == 'asked']
     said = [{'anchor': a, 'text': n['text'], 'at': n.get('ts')} for a, entries in saved.items() for n in entries]
+    pictures = kept_pictures(path) or []
     parents = [standing(path.parent / p, seen, depth + 1) if depth < 8 else {'href': p, 'state': 'not read: too deep'}
                for p in meta.get('derives_from') or []]
     report = calls_report(ledger) if ledger_state == 'read' else None
     return {'href': str(path), 'id': meta['id'], 'purpose': meta['purpose'], 'revision': revision, 'state': 'read',
             'calls': meta.get('calls'), 'ledger_state': ledger_state, 'ledger_path': str(ledger) if ledger else None,
             'ledger_settled': report['settled'] if report else None, 'approved': approved, 'unstamped': unstamped,
-            'overturned': overturned, 'restamp': restamp, 'mismatched': mismatched, 'notes': said, 'parents': parents,
+            'overturned': overturned, 'restamp': restamp, 'mismatched': mismatched, 'notes': said, 'pictures': pictures, 'parents': parents,
             'shows_calls': any((d['anchor'] or '').startswith('call-') for d in found),
             'open_calls': open_calls, 'asked_calls': asked_calls}
 
@@ -1394,6 +1571,11 @@ def orient_text(tree):
               ('' if owner == tree['id'] else f'   · from {owner}'))
     block('NOTES  the reader\'s words on these briefs; answer each before relying on the passage', every(tree, 'notes'),
           lambda n, owner: f"  [{n['anchor']}]  \"{n['text']}\"" + ('' if owner == tree['id'] else f'   · on {owner}'))
+    pictures = every(tree, 'pictures')
+    if pictures:
+        block('PICTURES  the reader pasted these onto the passages named; open each before answering the notes there', pictures,
+              lambda p, owner: f"  [{p['target']}]  {p['label']}  {p['path']}" + ('' if p['here'] else '   · not on this machine') +
+              ('' if owner == tree['id'] else f'   · on {owner}'))
     if tree['ledger'] is None:
         lines.append('')
         lines.append('CALLS  ' + ('no ledger named: pass --calls, or name one in the brief' if tree['ledger_state'] == 'none named'
@@ -1559,6 +1741,10 @@ def main():
     p.add_argument('--derives-from', type=Path, action='append', default=[], metavar='BRIEF',
                    help='a brief this one builds on; orient reads what it approved too (repeatable)')
     p.add_argument('--calls', type=Path, metavar='LEDGER', help='the NAME.calls.json ledger this brief shows')
+    p = commands.add_parser('adopt', help='make a finished glass page commentable: write its .src.html and rebuild it with notes')
+    p.add_argument('page', type=Path)
+    p.add_argument('--id', help='defaults to the page\'s file name')
+    p.add_argument('--purpose', required=True)
     p = commands.add_parser('html', help='assemble a .src.html source into a self-contained, commentable page')
     p.add_argument('source', type=Path)
     p.add_argument('output', type=Path)
@@ -1639,6 +1825,8 @@ def main():
             return 0
         if args.command == 'new':
             result = scaffold(args.source, args.id, args.purpose, args.title, args.derives_from, args.calls)
+        elif args.command == 'adopt':
+            result = adopt(args.page, args.id, args.purpose)
         elif args.command == 'html':
             result = build(args.source, args.output, args.id, args.purpose, args.no_wall, args.discard_output_edits)
         elif args.command == 'check':
@@ -1650,7 +1838,7 @@ def main():
         else:
             result = resolve(args.document, args.map)
         print(json.dumps(result, ensure_ascii=False, indent=2))
-        return 2 if args.command == 'resolve' and any(c['status'] != 'resolved' for c in result['comments']) else 0
+        return 2 if args.command == 'resolve' and any(c['status'] != 'resolved' for c in result['comments'] + result.get('pictures', [])) else 0
     except (Refusal, OSError, ValueError, subprocess.CalledProcessError) as exc:
         print('brief: ' + str(exc), file=sys.stderr)
         return 1

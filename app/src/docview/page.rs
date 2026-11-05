@@ -1668,6 +1668,7 @@ impl PageDoc {
         Some(super::SendNotes {
             map: sending.map,
             unsaved: sending.unsaved,
+            pictures: sending.pictures,
         })
     }
 
@@ -1735,6 +1736,7 @@ impl PageDoc {
                     return Pressed::Send(super::SendNotes {
                         map: sending.map,
                         unsaved: sending.unsaved,
+                        pictures: sending.pictures,
                     });
                 }
                 LayerPress::Unattach(u) => {

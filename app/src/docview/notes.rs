@@ -788,10 +788,13 @@ pub type PictureLines = std::collections::BTreeMap<String, Vec<String>>;
 /// [`build_map`] with the pictures pasted onto the brief's elements, which
 /// only Terminal Delight keeps: each follows its element's notes on a line of
 /// its own, an element with only pictures still gets its line, the header
-/// counts them, and one more line of legend says what they are. With no
-/// pictures it is `build_map`, byte for byte, which the fixtures hold; and
-/// the mirror a save writes into the brief never passes any, so the file
-/// `notes.js` shares is the same with or without them.
+/// counts them, and one more line of legend says what they are. A picture on
+/// an element the page no longer has, which a rebuilt brief leaves behind, is
+/// listed at the end under its old id: the header counted it, and a picture
+/// counted and not listed is one nobody can find. With no pictures it is
+/// `build_map`, byte for byte, which the fixtures hold; and the mirror a save
+/// writes into the brief never passes any, so the file `notes.js` shares is
+/// the same with or without them.
 pub fn build_map_with(
     file_label: &str,
     notes: &NoteMap,
@@ -836,6 +839,21 @@ pub fn build_map_with(
             out.push(format!("  · {line}"));
         }
         out.push(String::new());
+    }
+    let gone: Vec<_> = pictures
+        .iter()
+        .filter(|(nid, lines)| {
+            !lines.is_empty() && !anchors.iter().any(|&(live, _)| live == nid.as_str())
+        })
+        .collect();
+    if !gone.is_empty() {
+        out.push("On elements no longer in the page:".into());
+        out.push(String::new());
+        for (nid, lines) in gone {
+            out.push(format!("[{nid}]"));
+            out.extend(lines.iter().map(|line| format!("  · {line}")));
+            out.push(String::new());
+        }
     }
     out.join("\n")
 }
@@ -2068,6 +2086,29 @@ mod tests {
             "{map}"
         );
         assert!(map.contains("1 notes on 1 elements · 2 concurs."), "{map}");
+    }
+
+    #[test]
+    fn a_picture_on_an_element_the_page_lost_is_listed_at_the_end() {
+        let mut pictures = PictureLines::new();
+        pictures.insert("sec-live".into(), vec!["[doc-image #1] (/s/1.png)".into()]);
+        pictures.insert("sec-cut".into(), vec!["[doc-image #2] (/s/2.png)".into()]);
+        let map = build_map_with(
+            "b.html",
+            &NoteMap::default(),
+            &ConcurMap::default(),
+            &[("sec-live", "Still here")],
+            &pictures,
+        );
+        assert!(map.contains("0 notes on 0 elements · 2 pictures."), "{map}");
+        assert!(
+            map.ends_with(
+                "[sec-live] Still here\n  · [doc-image #1] (/s/1.png)\n\n\
+                 On elements no longer in the page:\n\n\
+                 [sec-cut]\n  · [doc-image #2] (/s/2.png)\n"
+            ),
+            "{map}"
+        );
     }
 
     #[test]
