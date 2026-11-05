@@ -293,8 +293,10 @@ impl TerminalView {
         self.float.as_ref().is_some_and(|f| f.to_read)
     }
 
-    /// Move the same readable view between the square and reading frame.
+    /// Move the same readable view between the glow pane and reading frame.
     /// Clear frame ownership before closing it, so the document stays open.
+    /// Either way it is read: in the glow pane it sits centred on this pane
+    /// and takes the same keys the frame gives it.
     pub(crate) fn set_float_to_read(&mut self, on: bool, cx: &mut Context<Self>) -> bool {
         let Some(top) = self.float.as_mut() else {
             return false;
@@ -310,8 +312,22 @@ impl TerminalView {
             return false;
         }
         doc.to_read = on;
+        doc.in_glow = !on;
+        doc.seated = !on;
         cx.notify();
         true
+    }
+
+    /// Where a square is drawn now. A square the glow pane seated keeps its
+    /// place as the pane changes size; any other stays where it was put, and
+    /// inside the screen.
+    pub(super) fn square_rect(&self, float: &FloatingDoc) -> crate::docopen::FloatRect {
+        let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
+        if float.seated {
+            crate::docopen::glow_home(w, h)
+        } else {
+            crate::docopen::clamp_float(float.rect, w, h)
+        }
     }
 
     /// Open a video or a sound as a clip: in a glowing box of its own, above
@@ -339,10 +355,7 @@ impl TerminalView {
             None => None,
         };
         let rect = match &below {
-            Some(b) => {
-                let (w, h) = self.screen_size().unwrap_or((640.0, 480.0));
-                crate::docopen::clip_home(crate::docopen::clamp_float(b.rect, w, h))
-            }
+            Some(b) => crate::docopen::clip_home(self.square_rect(b)),
             None => self.float_home_for(row),
         };
         let rect = if target.kind == crate::docopen::DocKind::Audio {
@@ -417,8 +430,7 @@ impl TerminalView {
         let chrome = sk.chrome_theme(th);
         let th = &chrome;
         let s = crate::lang::current().strings();
-        let (w, h) = self.screen_size().unwrap_or((0.0, 0.0));
-        let r = crate::docopen::clamp_float(float.rect, w, h);
+        let r = self.square_rect(float);
         let view = float.view.read(cx);
         let name = view
             .target()
@@ -560,6 +572,27 @@ impl TerminalView {
                             .into_any_element()
                     }),
             )
+            // The keys that work here, where the frame's header says them.
+            .when(live && float.in_glow && !self.lends(&float.view), |d| {
+                d.child(
+                    div()
+                        .relative()
+                        .flex_none()
+                        .h(px(crate::docopen::FLOAT_STRIP_H))
+                        .px(px(8.))
+                        .flex()
+                        .items_center()
+                        .border_t_1()
+                        .border_color(acc.alpha(0.4))
+                        .overflow_hidden()
+                        .whitespace_nowrap()
+                        .text_size(px(11.))
+                        .text_color(th.text.alpha(0.6))
+                        .when(clear > 0.0, |d| d.bg(th.bg))
+                        .children(zone(FloatHit::Strip))
+                        .child(s.ui.focus_read_keys),
+                )
+            })
             // Under a clip: dimmed, so the eye goes to the box on top, and
             // one zone over the whole of it that a press lands on and stops.
             .when(!live, |d| {
@@ -612,6 +645,8 @@ impl TerminalView {
     pub(super) fn float_back(carry: FloatCarry, cx: &mut Context<Self>) -> FloatingDoc {
         let mut float = Self::float_of(carry.view, carry.rect, cx);
         float.note = carry.note;
+        float.in_glow = carry.in_glow;
+        float.seated = carry.seated;
         float.below = carry.below.map(|b| Box::new(Self::float_back(*b, cx)));
         float
     }
@@ -685,7 +720,7 @@ impl TerminalView {
         // why. The Document face is a face of the pane, not something opened
         // over it, so it stays.
         if sent && seat == crate::docopen::DocSeat::Float {
-            if self.reading_view(cx).is_some() {
+            if self.being_read && self.reading_view(cx).is_some() {
                 cx.emit(CloseFocusRead);
                 // Asked once, here: the frame noticing its document gone is
                 // the same ask again.
@@ -808,15 +843,21 @@ impl TerminalView {
                 }
                 match seat {
                     crate::docopen::DocSeat::Float => {
-                        let Some(rect) = self.float.as_ref().map(|f| f.rect) else {
+                        let Some((rect, in_glow, seated)) =
+                            self.float.as_ref().map(|f| (f.rect, f.in_glow, f.seated))
+                        else {
                             return;
                         };
                         // A link on the handover page is the plain click that
                         // opens a handover into the pane, and opening it is
                         // what clears its dot.
                         let opened = target.path.clone();
-                        self.float =
-                            Some(Self::float_doc(target, link.fragment.clone(), rect, cx));
+                        let mut next = Self::float_doc(target, link.fragment.clone(), rect, cx);
+                        // A link followed while reading is still being read,
+                        // unless it landed on something that is only looked at.
+                        next.in_glow = in_glow && next.view.read(cx).target().kind.reads();
+                        next.seated = seated;
+                        self.float = Some(next);
                         self.note_opened_path(&opened);
                     }
                     crate::docopen::DocSeat::Face => {
@@ -1342,14 +1383,14 @@ impl TerminalView {
         Handled::Consumed
     }
 
-    /// A key on a page or Markdown file being read in the FOCUS frame
-    /// ([`crate::keylayer::Layer::Reading`]). Always consumed: nothing typed
+    /// A key on a page or Markdown file being read, in the FOCUS frame or the
+    /// glow pane ([`crate::keylayer::Layer::Reading`]). Always consumed: nothing typed
     /// while reading reaches the shell. The document is asked first, so the
     /// note box takes its typing, a brief's dialog its Escape, and ↪ its
     /// chord; then [`crate::keylayer::read_key`] says what the key does.
     ///
     /// Escape puts away one thing a press: the selection, then a clip
-    /// playing over the page, then the document and the frame together.
+    /// playing over the page, then the document, with its frame if it has one.
     pub(super) fn reading_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
         use crate::docview::{notes_ui::Pick, ReadAct, ZoomStep};
         use crate::keylayer::{GlowMove, Paging, ReadKey};
@@ -1399,7 +1440,7 @@ impl TerminalView {
                     .as_ref()
                     .is_some_and(|top| top.view != view && top.below.is_some());
                 if view.update(cx, |v, cx| v.read_act(ReadAct::Unselect, cx)) {
-                } else if clip_up {
+                } else if clip_up || !self.being_read {
                     self.request_close_float(cx);
                 } else {
                     cx.emit(CloseFocusRead);
@@ -1528,7 +1569,7 @@ impl TerminalView {
         let hit = float_hit_through_glass(
             self.tube_rect()?,
             self.warp_k,
-            float.rect,
+            self.square_rect(float),
             &self.float_zones.borrow(),
             (f32::from(pos.x), f32::from(pos.y)),
         );
@@ -1559,6 +1600,9 @@ impl TerminalView {
     ) {
         use crate::docopen::FloatHit;
         use crate::docview::ZoomStep;
+        let Some(placed) = self.float.as_ref().map(|f| self.square_rect(f)) else {
+            return;
+        };
         let Some(float) = self.float.as_mut() else {
             return;
         };
@@ -1585,10 +1629,10 @@ impl TerminalView {
                 cx.notify();
             }
             FloatHit::Strip => {
-                float.drag = Some(crate::docopen::FloatDrag::new(flat, float.rect));
+                float.drag = Some(crate::docopen::FloatDrag::new(flat, placed));
             }
             FloatHit::Resize(edges) => {
-                float.drag = Some(crate::docopen::FloatDrag::resize(flat, float.rect, edges));
+                float.drag = Some(crate::docopen::FloatDrag::resize(flat, placed, edges));
             }
             FloatHit::Body => {
                 let at = gpui::point(px(flat.0 - zone.x), px(flat.1 - zone.y));
@@ -1642,6 +1686,7 @@ impl TerminalView {
             let rect = crate::docopen::drag_to(drag, flat, screen.2, screen.3);
             if rect != float.rect {
                 float.rect = rect;
+                float.seated = false;
                 cx.notify();
             }
         } else if let Some(body) = body {

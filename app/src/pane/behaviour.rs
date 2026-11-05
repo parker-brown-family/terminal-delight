@@ -4097,6 +4097,224 @@ fn a_brief_opened_by_a_person_is_read_from_the_keyboard(cx: &mut TestAppContext)
     );
 }
 
+/// Open the brief as a person does and seat it in the glow pane, as the
+/// workspace does when GAUGES says so.
+fn read_the_brief_in_the_glow_pane(pane: &mut Pane, brief: &str) {
+    let at = pane.point_at(brief);
+    pane.click(at, Pane::alt());
+    pane.redraw();
+    pane.view
+        .update(pane.cx, |v, cx| v.set_float_to_read(false, cx));
+    pane.redraw();
+}
+
+/// The glow pane reads the way the reader does, from the keyboard alone, with
+/// no frame anywhere: Parker, 2026-11-05, *"keyboard only --- needs to beahave
+/// just like reader mode! scrolling. enter to add comment, etc. + ctrl + shift
+/// + enter"*.
+#[gpui::test]
+fn a_brief_in_the_glow_pane_is_read_from_the_keyboard(cx: &mut TestAppContext) {
+    use super::harness::FakeDecisionEngine;
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "glow-keys");
+    pane.html_engine(Ok(std::sync::Arc::new(FakeDecisionEngine)));
+    let closes = reader_closes(&mut pane);
+    read_the_brief_in_the_glow_pane(&mut pane, &brief);
+    pane.settle();
+    assert!(!pane.read(|v| v.float_to_read()), "no frame to close with");
+    let page = pane.float_view().expect("the brief floats");
+    let report = |pane: &mut Pane| pane.doc_notes().expect("notes");
+
+    let place = page.read_with(pane.cx, |v, _| v.reading_now());
+    pane.keys("space");
+    pane.redraw();
+    assert_ne!(
+        page.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "Space turns a page of the brief"
+    );
+    pane.keys("g");
+    pane.redraw();
+    assert_eq!(
+        page.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "g goes back to the top"
+    );
+
+    let (first, _) = BRIEF_ANCHORS[0];
+    pane.keys("tab");
+    pane.redraw();
+    assert_eq!(report(&mut pane)["selected"], first, "Tab selects");
+    pane.keys("enter");
+    pane.redraw();
+    assert_eq!(report(&mut pane)["open"], first, "Enter opens a note");
+    pane.keys("o k space g l o w");
+    pane.keys("ctrl-enter");
+    pane.redraw();
+    assert!(
+        report(&mut pane)["map"]
+            .as_str()
+            .is_some_and(|m| m.contains("ok glow")),
+        "the note is written from the keyboard"
+    );
+    pane.keys("escape");
+    pane.redraw();
+    assert_eq!(report(&mut pane)["open"], serde_json::Value::Null);
+    assert_eq!(report(&mut pane)["selected"], first);
+    pane.keys("escape");
+    pane.redraw();
+    assert_eq!(report(&mut pane)["selected"], serde_json::Value::Null);
+    assert!(pane.float_path().is_some(), "two Escapes, two things");
+
+    // ↪, and the workspace saying it landed, closes the brief.
+    let sent = std::rc::Rc::new(std::cell::Cell::new(0usize));
+    let log = sent.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, _: &super::SendNotesBeside, _| {
+            log.set(log.get() + 1)
+        })
+        .detach();
+    });
+    pane.view.update(pane.cx, |v, cx| {
+        v.set_notes_beside(Some("agent".into()), None, cx)
+    });
+    pane.redraw();
+    pane.keys("ctrl-shift-enter");
+    pane.redraw();
+    assert_eq!(sent.get(), 1, "one chord sends the notes");
+    pane.view.update(pane.cx, |v, cx| {
+        let said =
+            crate::docview::notes_ui::Said::Done(crate::docview::notes_ui::Words::as_is("landed"));
+        v.doc_said(crate::docopen::DocSeat::Float, said, cx)
+    });
+    pane.redraw();
+    assert_eq!(pane.float_path(), None, "landed, the brief closes");
+    assert_eq!(closes.get(), 0, "and no frame was asked to close");
+
+    // The control: with the brief gone, typing reaches `cat`, which echoes it.
+    // Anything typed while reading would have arrived before this did.
+    pane.keys("z q z q enter");
+    pane.wait_for("zqzq");
+    let screen = pane.rows().join("\n");
+    assert!(
+        !screen.contains("ok glow") && !screen.contains("okglow") && !screen.contains("gtt"),
+        "nothing typed while reading reached the shell: {screen}"
+    );
+}
+
+/// Escape with nothing selected closes the glow pane's document, and the
+/// keyboard is the shell's again.
+#[gpui::test]
+fn escape_closes_a_brief_in_the_glow_pane_and_gives_the_keys_back(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "glow-escape");
+    read_the_brief_in_the_glow_pane(&mut pane, &brief);
+    pane.settle();
+    pane.cx
+        .update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string("clipped".into())));
+    pane.keys("x y z");
+    pane.keys("ctrl-shift-v");
+    pane.keys("escape");
+    pane.redraw();
+    assert_eq!(pane.float_path(), None, "Escape closes it");
+    // The control: the same paste now arrives, so the one above was stopped
+    // rather than lost.
+    pane.keys("ctrl-shift-v");
+    pane.keys("enter");
+    pane.wait_for("clipped");
+    let screen = pane.rows().join("\n");
+    assert!(
+        !screen.contains("xyz") && screen.matches("clipped").count() == 2,
+        "only the paste after it closed reached the shell, echoed by cat: {screen}"
+    );
+}
+
+/// The box sits centred on the pane, and keeps its place as the pane changes
+/// size, until a person moves it.
+#[gpui::test]
+fn the_glow_pane_sits_centred_on_its_pane(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "glow-seat");
+    read_the_brief_in_the_glow_pane(&mut pane, &brief);
+    let (sx, sy, sw, sh) = pane.read(|v| v.tube_rect()).expect("laid out");
+    let (x, y, w, h) = pane.float_rect().expect("the square");
+    assert!((x - sx - sw * 0.10).abs() < 0.5, "10% from the left");
+    assert!(
+        (sx + sw - x - w - sw * 0.10).abs() < 0.5,
+        "10% from the right"
+    );
+    assert!((y - sy - sh * 0.05).abs() < 0.5, "5% from the top");
+    assert!(
+        (sy + sh - y - h - sh * 0.05).abs() < 0.5,
+        "5% from the bottom"
+    );
+
+    let size_the_pane = |pane: &mut Pane, w: f32, h: f32| {
+        pane.read(|v| {
+            *v.content_bounds.lock().unwrap() = Some(gpui::Bounds::new(
+                point(px(sx), px(sy)),
+                gpui::size(px(w), px(h)),
+            ))
+        })
+    };
+    size_the_pane(&mut pane, sw * 2.0, sh);
+    let (_, _, wider, _) = pane.float_rect().expect("the square");
+    assert!((wider - sw * 1.6).abs() < 0.5, "it grows with its pane");
+    size_the_pane(&mut pane, sw, sh);
+
+    // Moved by hand, it stays where it was put.
+    let at = point(px(x + 30.0), px(y + 10.0));
+    pane.press(at);
+    pane.drag_to(point(px(x + 10.0), px(y + 30.0)));
+    pane.release(point(px(x + 10.0), px(y + 30.0)));
+    pane.redraw();
+    let moved = pane.float_rect().expect("the square");
+    assert!(moved.1 > y + 10.0, "the strip moved it: {moved:?}");
+    size_the_pane(&mut pane, sw * 2.0, sh);
+    assert_eq!(
+        pane.float_rect(),
+        Some(moved),
+        "and the pane no longer seats it"
+    );
+}
+
+/// A document being read stays read across a replica repair and a link
+/// followed inside it: losing the rung would hand the next key to the shell.
+#[gpui::test]
+fn a_brief_in_the_glow_pane_is_still_read_after_a_repair_and_a_link(cx: &mut TestAppContext) {
+    let (mut old, dir, brief, _png) = pane_showing_a_brief(cx, "glow-carry");
+    let md = dir.fixture("../README.md", "readme.md");
+    read_the_brief_in_the_glow_pane(&mut old, &brief);
+    let square = old.float_view().expect("the brief");
+    let carried = old.read(|v| v.presentation());
+
+    let mut new = Pane::running(cx, "echo repaired; exec cat");
+    new.wait_for("repaired");
+    new.view
+        .update(new.cx, |v, cx| v.adopt_presentation(carried, cx));
+    new.redraw();
+    let reading = |p: &mut Pane| p.view.read_with(p.cx, |v, cx| v.reading_view(cx).is_some());
+    assert!(reading(&mut new), "the repair keeps it read");
+
+    new.follow(&square, md.to_str().expect("UTF-8"));
+    new.redraw();
+    assert_eq!(new.float_path(), Some(md), "the link opens in the box");
+    assert!(reading(&mut new), "and what it opens is read too");
+}
+
+/// An agent's square leaves the keyboard where it was, however long it stays
+/// up: a prompt being typed beside it still reaches the shell.
+#[gpui::test]
+fn an_agents_square_leaves_typing_with_the_shell(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "agent-keys");
+    let target = crate::docopen::drawable_document(std::path::Path::new(&brief)).expect("a page");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    pane.redraw();
+    assert!(said.starts_with("ok float"), "{said}");
+    pane.settle();
+    pane.keys("z q z q enter");
+    pane.wait_for("zqzq");
+    assert!(pane.float_path().is_some(), "and the square stays up");
+}
+
 /// A clip playing over a page being read is deaf: the page keeps the keys,
 /// because a video has nothing to note, concur or send, and the frame draws
 /// the clip over the page rather than reading the clip instead. Escape puts

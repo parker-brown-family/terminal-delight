@@ -5522,6 +5522,13 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
                 if ws.focus_read.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(pane) {
                     ws.close_focus_read(cx);
                 }
+                // The keys follow the document, however it was opened: the
+                // rail can open one on a pane that is not the focused one.
+                // Deferred, as `open_focus_read` defers it.
+                let pane = pane.clone();
+                cx.defer_in(window, move |_ws, window, cx| {
+                    window.focus(&pane.focus_handle(cx), cx);
+                });
             } else {
                 ws.open_focus_read(pane.clone(), window, cx);
             }
@@ -20979,13 +20986,18 @@ impl Workspace {
             _ => self.focused_leaf(window, cx),
         });
         if let Some(pane) = pane {
-            let readable = pane.update(cx, |v, cx| v.set_float_to_read(!glow, cx));
-            if readable {
-                if glow && reader.as_ref() == Some(&pane) {
+            // Only what is being read moves between the two: a small square
+            // an agent opened stays small, and keeps leaving the keys alone.
+            if glow {
+                if reader.as_ref() == Some(&pane)
+                    && pane.update(cx, |v, cx| v.set_float_to_read(false, cx))
+                {
                     self.close_focus_read(cx);
-                } else if !glow {
-                    self.open_focus_read(pane, window, cx);
                 }
+            } else if pane.read(cx).reading_view(cx).is_some()
+                && pane.update(cx, |v, cx| v.set_float_to_read(true, cx))
+            {
+                self.open_focus_read(pane, window, cx);
             }
         }
         self.save(cx);
@@ -40075,6 +40087,139 @@ mod tests {
     /// tab through a reorder and a save; a letter the window already answers,
     /// or another tab holds, is refused; and with the digits off Alt+N is the
     /// program's again.
+    #[gpui::test]
+    fn a_person_reading_in_the_glow_pane_keeps_the_keyboard_and_the_tabs(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx);
+                    ws.split(SplitDir::Row, w, cx);
+                })
+            });
+        }
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        let dir = std::env::temp_dir().join(format!("td-glow-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("plan.md");
+        std::fs::write(&doc, "# Plan\n\nA paragraph to read.\n").unwrap();
+        let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+        let (second, beside) = ws.read_with(cx, |ws, _| {
+            let mut leaves = vec![];
+            ws.tabs[1].root.leaves(&mut leaves);
+            (leaves[0].clone(), leaves[1].clone())
+        });
+
+        // Opened on a pane that does not hold the keyboard, as the rail can:
+        // the keys follow the document.
+        ws.update(cx, |ws, _| ws.doc_glow_pane = Some(true));
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
+            w.focus(&beside.focus_handle(cx), cx);
+        });
+        draw(cx);
+        assert!(
+            !cx.update(|w, cx| second.focus_handle(cx).is_focused(w)),
+            "the pane beside it has the keyboard"
+        );
+        second
+            .update(cx, |v, cx| v.open_to_read(target, None, cx))
+            .unwrap();
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "no frame comes up"
+        );
+        assert!(
+            second.read_with(cx, |v, cx| v.reading_view(cx).is_some()),
+            "the document in the glow pane is being read"
+        );
+        assert!(
+            cx.update(|w, cx| second.focus_handle(cx).is_focused(w)),
+            "and it holds the keyboard"
+        );
+
+        // Ctrl+= zooms the document, as it does in the frame.
+        let zoom = |cx: &mut gpui::VisualTestContext| {
+            let view = second.read_with(cx, |v, cx| v.reading_view(cx).expect("being read"));
+            view.read_with(cx, |v, _| v.zoom_now())
+        };
+        let before = zoom(cx);
+        assert!(before.is_some(), "a Markdown document has a zoom to step");
+        cx.simulate_keystrokes("ctrl-=");
+        draw(cx);
+        assert_ne!(zoom(cx), before, "Ctrl+= zooms the document in");
+
+        // A window chord is still the window's.
+        cx.simulate_keystrokes("ctrl-pageup");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.active), 0, "Ctrl+PgUp switches");
+        assert!(
+            second.read_with(cx, |v, _| v.has_float()),
+            "the brief waits"
+        );
+
+        // An agent's small square is nobody's read, whichever way the gauge
+        // is switched over it.
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
+            w.focus(&second.focus_handle(cx), cx);
+        });
+        draw(cx);
+        second.update(cx, |v, cx| {
+            v.close_float(cx);
+            let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+            v.open_float(target, None, cx).expect("the small square");
+        });
+        draw(cx);
+        for _ in 0..2 {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.toggle_doc_glow_pane(w, cx)));
+            draw(cx);
+            assert!(
+                ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+                "no frame"
+            );
+            assert!(!second.read_with(cx, |v, _| v.float_to_read()));
+            assert!(second.read_with(cx, |v, cx| v.reading_view(cx).is_none()));
+            assert!(second.read_with(cx, |v, _| v.has_float()), "it stays up");
+        }
+    }
+
     #[gpui::test]
     /// Alt+O climbs Parker's ladder from the FOCUSED pane: its newest artifact,
     /// then its own artifacts, then every pane's, then away. And what another
