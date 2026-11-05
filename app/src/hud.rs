@@ -436,13 +436,12 @@ fn is_blocked_prompt(l: &str) -> bool {
 
 /// Does a (lowercased) row look like a rate-limit / API error?
 fn has_error(l: &str) -> bool {
-    const NEEDLES: [&str; 6] = [
+    const NEEDLES: [&str; 5] = [
         "rate limit",
         "api error",
         "overloaded",
         "too many requests",
         "error: connection",
-        "529",
     ];
     NEEDLES.iter().any(|n| l.contains(n))
 }
@@ -758,6 +757,22 @@ mod tests {
             "  2. No",
         ]));
         assert_eq!(st.state, AgentState::Blocked);
+    }
+
+    /// The number alone proves nothing. A prompt's header prints its sender's
+    /// pid on the worker's screen, so a pid holding 529 read as an overloaded
+    /// API and the prompt was refused before Enter. The real message names itself.
+    #[test]
+    fn a_529_in_ordinary_text_is_not_an_api_error() {
+        let idle = "? for shortcuts";
+        for row in ["[from planner (pid 15294): a line]", "wrote 1529 lines"] {
+            let st = parse_status_line(&rows(&[row, idle]));
+            assert_eq!(st.state, AgentState::Idle, "{row}");
+        }
+        for row in ["API Error: 529", "529 overloaded, retrying"] {
+            let st = parse_status_line(&rows(&[row, idle]));
+            assert_eq!(st.state, AgentState::Error, "{row}");
+        }
     }
 
     #[test]
