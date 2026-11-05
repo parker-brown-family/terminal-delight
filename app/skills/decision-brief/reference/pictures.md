@@ -216,12 +216,20 @@ Extra minutes of a reader's attention are bought with pictures, and a brief that
 paragraphs should be cut instead. If a figure needs three paragraphs of setup before it makes
 sense, the picture is wrong — redraw it rather than propping it up.
 
-**When you are unsure whether to draw one more, draw it.** Nobody has ever complained that a
-brief had too many pictures; the complaint is always the other way. Parker, 2026-11-05: *"In
-general briefs shoudl have more imagery!!"* `brief.py check` refuses a page with more than about
-150 words of prose per drawing, and a figure that is only a table does not count. That is a
-floor, and the exemplar above runs at 54. The real test is whether a reader skimming only the
-figures and their captions would come away with the argument.
+**Ask what would teach this reader the most, and draw that.** Nobody has ever complained that a
+brief had too many good pictures. A count is the wrong tool, though. Parker, 2026-11-05: *"In
+general briefs shoudl have more imagery!!"*, and on a rule that counted them: *"its not so
+formulaic... the drawings can easily become slop that is done to death and then they become
+noise... WHAT ARE THD DRAWINGS THAT BEST CONVEY INFORMATION visually that will confer the best
+UNDERSTANDING"*. So nothing counts them. The test is whether a reader skimming only the figures
+and their captions would come away with the argument.
+
+What has landed, across the reactions recorded so far, is the thing itself rather than a
+description of it: the real surface with its real strings, numbers computed from the stored
+results, the broken thing beside the fixed one, a layered thing drawn as its layers, a proposal
+drawn so its gaps show. What has failed is boxes with labels in them, which assert a relationship
+where a real example would have shown it. A host may keep a ledger of labelled specimens; if it
+does, read it first and add to it when the reader reacts.
 
 A figure the reader cannot argue with is decoration. The first grill question in the exemplar
 is *"do the pictures match what you had in your head?"*, and it works because every picture

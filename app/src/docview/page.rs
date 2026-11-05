@@ -2504,7 +2504,7 @@ impl PageDoc {
         // everything, as a browser's dialog sits above its notebar.
         if let (Some(layer), Some(r)) = (&self.notes, &self.current) {
             layers.push(layer.draw_bar(&r.layout.anchors, th, self.beside.as_deref(), sk));
-            layers.extend(layer.draw_box(m.size, th, sk));
+            layers.extend(layer.draw_box(&r.layout.anchors, m.size, th, sk));
         }
         div()
             .absolute()

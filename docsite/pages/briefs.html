@@ -3,7 +3,7 @@
   "title": "Briefs and notes",
   "description": "Decision briefs and Markdown files opened in Terminal Delight take notes on each figure, finding, heading or paragraph, and a decision takes a CONCUR stamp. ↪ send to agent, or Ctrl+Shift+Enter, puts every note in the agent's prompt without pressing Enter, and the document_notes tool lets the agent read them.",
   "updated": "2026-11-01",
-  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d; the map's picture lines from dev/0.5.1 at d81c86f8",
+  "trueOf": "main at dad844fa (0.4.0); 0.5.0 parts from dev/0.5.0 at d9aa472d; the map's picture lines from dev/0.5.1 at d81c86f8; Submit & concur from dev/0.5.1 at 41404556",
   "summary": "Notes on documents, and the notes go back to the agent"
 }
 </script>
@@ -35,7 +35,7 @@
 <div><p>The box's button reads <b>Submit comment</b>. A box with more notes than fit scrolls: the wheel, <kbd>PageUp</kbd> and <kbd>PageDown</kbd>, <kbd>Ctrl</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> and <kbd>Ctrl</kbd>+<kbd>Shift</kbd>+<kbd>↑</kbd> <kbd>↓</kbd> turn it, and it opens on the newest. In 0.4.0 older notes past the box's height are hidden.</p></div>
 
 <h3>CONCUR</h3>
-<p>On a brief whose notes script supports stamps, each decision carries a dashed slot reading <code>?</code> over <code>CONCUR</code>. Click it to stamp the decision; click the stamp to peel it off. A concur with no note means the decision is approved as recommended, and the kit tells the agent to read it that way. A brief whose script predates stamps refuses one: <code>This brief's notes script is older than CONCUR stamps, so a stamp saved here would never show.</code><sup><a href="#s3">3</a></sup></p>
+<p>On a brief whose notes script supports stamps, each decision carries a dashed slot reading <code>?</code> over <code>CONCUR</code>. To agree and say something at once, write the note and press <b>Submit &amp; concur</b> in the note box. Click the slot to stamp the decision; click the stamp to peel it off. A concur with no note means the decision is approved as recommended, and the kit tells the agent to read it that way. A brief whose script predates stamps refuses one: <code>This brief's notes script is older than CONCUR stamps, so a stamp saved here would never show.</code><sup><a href="#s3">3</a></sup></p>
 
 <h3>Saving a brief</h3>
 <p>A brief's notes are saved into the brief itself. The notes bar reads, left to right: the count (<code>2 notes · 1 concur</code>), <b>⎘ copy map</b>, the send button, <b>💾 save into file</b>, and <code>N unsaved</code> while edits wait. A save changes only the notes inside the file, then reads it back: <code>saving into …</code>, <code>saved into … · reading it back…</code>, and <code>saved into … ✓</code> once the reopened file shows every note and stamp.</p>

@@ -15,7 +15,7 @@ Give each significant comment target an explicit stable id and matching `data-br
 </figure>
 ```
 
-Terminal Delight draws a page as a picture and presses only links and `[data-dlg]` buttons, so a closed `<details>` stays closed there. Anything collapsed is a button that opens a `<dialog>`, which is what the Last time strip is. `<dialog>` text doesn't count against a page's prose.
+Terminal Delight draws a page as a picture and presses only links and `[data-dlg]` buttons, so a closed `<details>` stays closed there. Anything collapsed is a button that opens a `<dialog>`, which is what the Last time strip is.
 
 Build with `scripts/brief.py html SOURCE OUTPUT`, adding `--id` and `--purpose` when the source does not name itself. It reads the existing canonical notes assets, with a checked one-line adaptation for explicit anchors. There is no forked asset or storage-format migration. Rebuild through the same command; do not paste empty notes islands over a reader's comments.
 
