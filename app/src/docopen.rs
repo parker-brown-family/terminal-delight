@@ -668,6 +668,23 @@ pub fn float_home(screen_w: f32, screen_h: f32, line_top: f32, line_bottom: f32)
     )
 }
 
+/// What a document read in the glow pane leaves clear of the pane's left and
+/// right edges, and of its top and bottom. Parker, 2026-11-05: *"centered at 5%
+/// top and bottom padded and 10% left right padded againts the active pane"*.
+const GLOW_SIDE: f32 = 0.10;
+const GLOW_END: f32 = 0.05;
+
+/// Where a document a person opens in the glow pane sits: centred on the pane,
+/// whichever line it was opened from.
+pub fn glow_home(screen_w: f32, screen_h: f32) -> FloatRect {
+    FloatRect {
+        x: screen_w * GLOW_SIDE,
+        y: screen_h * GLOW_END,
+        w: screen_w * (1.0 - 2.0 * GLOW_SIDE),
+        h: screen_h * (1.0 - 2.0 * GLOW_END),
+    }
+}
+
 /// The square's strip: its file's name and its controls, across the top.
 pub const FLOAT_STRIP_H: f32 = 22.0;
 
@@ -1384,6 +1401,22 @@ mod tests {
 
     fn inside(r: FloatRect, w: f32, h: f32) -> bool {
         r.x >= 0.0 && r.y >= 0.0 && r.x + r.w <= w + 1e-3 && r.y + r.h <= h + 1e-3
+    }
+
+    #[test]
+    fn the_glow_pane_sits_centred_inside_the_pane() {
+        let r = glow_home(1000.0, 800.0);
+        assert_eq!(
+            r,
+            FloatRect {
+                x: 100.0,
+                y: 40.0,
+                w: 800.0,
+                h: 720.0
+            }
+        );
+        assert!((r.x + r.w - 900.0).abs() < 1e-3, "10% clear on the right");
+        assert!((r.y + r.h - 760.0).abs() < 1e-3, "5% clear at the bottom");
     }
 
     #[test]

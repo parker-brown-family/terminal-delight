@@ -30,6 +30,22 @@
 - Alt+R on an agent's small square also reads the document with the reading keys, because the rule is "a page or Markdown file in the frame is read". Escape then closes only the reader, and the square stays.
 - The F1 help sheet does not list the reading keys yet. The frame's own header does.
 
+## The glow pane reads too (2026-11-05)
+
+Parker, the day the FLOATING DOCUMENT toggle landed: *"keyboard only --- needs to beahave just like reader mode! scrolling. enter to add comment, etc. + ctrl + shift + enter"*, with the box *"centered at 5% top and bottom padded and 10% left right padded againts the active pane"*. His question was whether the box swallows what would reach the terminal: *"Simple answer is yes, we imagine the doc glowbox artifact is PRIMARY attention.. however we do not want to eat the other keystrokes for general TDS funcaitonlity."*
+
+- `FloatingDoc::in_glow` puts a person's open in the glow pane on the same `Layer::Reading` rung as the frame, through `reading_view`. There is no new rung or `Up` bit, so the two surfaces cannot drift apart.
+- `docopen::glow_home` is the box's place, measured against the pane's screen (below its header). `FloatingDoc::seated` keeps it there as the pane changes size, until a person moves or resizes it.
+- Two leaks in reading itself were closed for both surfaces. Ctrl+PgUp/PgDn and their shifted pair were eaten, and now leave for the window (`tab_page_chord`). Ctrl+Shift+V and Shift+Insert pasted into the shell behind the document, and now stop there unless a note box takes them (`keeps_paste`).
+
+Calls made without Parker (overturn any):
+
+- An agent's own square is not read: it stays small and leaves typing with the shell, because an auto-open must not take a prompt being typed (*"agents will AUTO-OPEN artifacts, and THOSE should be small"*). Alt+R reads it in the frame, and choosing it from the Alt+O list reopens it to read.
+- Switching GAUGES to glow pane moves only a document being read. A small agent square stays what it is.
+- Ctrl+F and Ctrl+X stay swallowed as they are in the frame, and so does Ctrl+C. Ctrl+Shift+F still finds across panes.
+- The padding is measured from the pane's screen, below its header, because that is the space a square is drawn in.
+- The keys are shown along the box's foot, reusing the frame's translated line, because the strip across the top is full.
+
 ## Evidence
 
 - `keylayer.rs` standalone: 43 tests, including four new reading-rung tests. The property test now covers all 65,536 layer states.

@@ -506,6 +506,14 @@ pub(crate) struct FloatingDoc {
     /// came up in the FOCUS frame, and it goes when the frame does. A square
     /// an agent opened beside itself is not, and stays small.
     to_read: bool,
+    /// A person is reading this in the glow pane rather than the FOCUS frame
+    /// ([`TerminalView::set_float_to_read`]): it takes the keys the frame
+    /// would ([`crate::keylayer::Layer::Reading`]).
+    in_glow: bool,
+    /// Still where the glow pane put it, so it keeps its place as the pane
+    /// changes size ([`crate::docopen::glow_home`]). Moving or resizing it by
+    /// hand ends that, and it stays where it was put.
+    seated: bool,
 }
 
 impl FloatingDoc {
@@ -530,6 +538,8 @@ impl FloatingDoc {
             _finished: finished,
             below: None,
             to_read: false,
+            in_glow: false,
+            seated: false,
         }
     }
 
@@ -540,6 +550,8 @@ impl FloatingDoc {
             view: self.view.clone(),
             rect: self.rect,
             note: self.note,
+            in_glow: self.in_glow,
+            seated: self.seated,
             below: self.below.as_ref().map(|b| Box::new(b.carry())),
         }
     }
@@ -2944,6 +2956,8 @@ pub(crate) struct FloatCarry {
     view: gpui::Entity<crate::docview::DocumentView>,
     rect: crate::docopen::FloatRect,
     note: Option<crate::docopen::FloatNote>,
+    in_glow: bool,
+    seated: bool,
     /// The square a clip covers, carried with it.
     below: Option<Box<FloatCarry>>,
 }
@@ -4539,18 +4553,30 @@ impl TerminalView {
         want
     }
 
-    /// The page or Markdown file being READ in the FOCUS frame, while one is:
-    /// the document that takes every key ([`crate::keylayer::Layer::Reading`]).
-    /// A picture or a PDF lent to the reader is only being looked at.
+    /// The page or Markdown file being READ, in the FOCUS frame or the glow
+    /// pane, while one is: the document that takes every key
+    /// ([`crate::keylayer::Layer::Reading`]). A picture or a PDF lent to the
+    /// reader is only being looked at. So is a square an agent opened, until
+    /// a person opens it to read.
     pub(crate) fn reading_view(
         &self,
         cx: &App,
     ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
-        if !self.being_read {
+        if self.being_read {
+            return self
+                .lent_view()
+                .filter(|v| v.read(cx).target().kind.reads());
+        }
+        if !float_shows_on(self.bench.face()) {
             return None;
         }
-        self.lent_view()
-            .filter(|v| v.read(cx).target().kind.reads())
+        // A clip over a page leaves the page the keys, as it does in the frame.
+        let top = self.float.as_ref()?;
+        let doc = match top.below.as_deref() {
+            Some(page) if top.view.read(cx).target().kind.plays() => page,
+            _ => top,
+        };
+        doc.in_glow.then(|| doc.view.clone())
     }
 
     /// The document [`crate::docopen::read_from`] names for this pane now,
@@ -8514,6 +8540,17 @@ impl TerminalView {
         };
         if self.being_read {
             return Handled::Declined;
+        }
+        // Read in the glow pane, the document is what these size, as they do
+        // in the frame.
+        if let Some(view) = self.reading_view(cx) {
+            let step = if notches > 0.0 {
+                crate::docview::ZoomStep::In
+            } else {
+                crate::docview::ZoomStep::Out
+            };
+            view.update(cx, |v, cx| v.zoom(step, cx));
+            return Handled::Consumed;
         }
         match self.bench.face() {
             crate::workbench::Face::Terminal => {
