@@ -11161,16 +11161,16 @@ fn erase_run_keys(
 
 /// One synthetic wheel notch, encoded the way the running app asked for its
 /// mouse reports: SGR when it negotiated 1006, otherwise the legacy X10 form.
-/// Row and column are reported as 1,1 — the app scrolls its own view, so where
-/// the pointer happens to sit is irrelevant. Used by the agent prompt seek (see
-/// [`TerminalView::seek_agent_prompt`]), which scrolls a full-screen TUI that
-/// keeps its scrollback to itself.
+/// Target column 1, row 2: Codex reserves the first row for a pinned prompt
+/// header and ignores wheel reports outside the transcript body. Scroll mode
+/// and [`TerminalView::seek_agent_prompt`] use this to scroll a full-screen TUI
+/// that keeps its scrollback to itself.
 fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
     let button: u8 = if up { 64 } else { 65 };
     if sgr {
-        format!("\u{1b}[<{button};1;1M").into_bytes()
+        format!("\u{1b}[<{button};1;2M").into_bytes()
     } else {
-        vec![0x1b, b'[', b'M', 32 + button, 33, 33]
+        vec![0x1b, b'[', b'M', 32 + button, 33, 34]
     }
 }
 
@@ -17147,17 +17147,17 @@ mod tests {
     /// they must never be cursor keys, which agents read as history recall.
     #[test]
     fn a_synthetic_wheel_notch_is_a_mouse_report_not_a_cursor_key() {
-        // SGR (1006): button 64 = wheel up, 65 = wheel down, at cell 1,1.
-        assert_eq!(wheel_step_bytes(true, true), b"\x1b[<64;1;1M".to_vec());
-        assert_eq!(wheel_step_bytes(false, true), b"\x1b[<65;1;1M".to_vec());
+        // SGR (1006): button 64 = wheel up, 65 = wheel down, at cell 1,2.
+        assert_eq!(wheel_step_bytes(true, true), b"\x1b[<64;1;2M".to_vec());
+        assert_eq!(wheel_step_bytes(false, true), b"\x1b[<65;1;2M".to_vec());
         // legacy X10: ESC [ M <32+button> <col+32> <row+32>
         assert_eq!(
             wheel_step_bytes(true, false),
-            vec![0x1b, b'[', b'M', 96, 33, 33]
+            vec![0x1b, b'[', b'M', 96, 33, 34]
         );
         assert_eq!(
             wheel_step_bytes(false, false),
-            vec![0x1b, b'[', b'M', 97, 33, 33]
+            vec![0x1b, b'[', b'M', 97, 33, 34]
         );
         for bytes in [
             wheel_step_bytes(true, true),
