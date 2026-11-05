@@ -9,9 +9,6 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Documents
 
-- **Stamp a decision and leave your remark in one press.** The note box on a
-  decision now has **Submit & concur**, which saves the note, puts the stamp down
-  and closes the box.
 - Prepare the newest HTML artifact from recently visited panes before opening it,
   using one cancellable job and the existing 256 MiB disk-cache budget. Capture
   and load visible pixels first, validate local assets before cache reuse, and
@@ -40,8 +37,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **A brief's next round is a new page.** Agents now answer your notes with a
   new brief under a new title, instead of the same one slightly altered. A
   closed Last time strip above the title holds what you said and what came of
-  it, the title and first line take a note, decisions stay short, and a page
-  short on drawings is refused.
+  it, the title and first line take a note, and decisions stay short.
 - **The glow pane reads from the keyboard.** A page or Markdown file you open
   there now opens centred on the active pane, 5% in from the top and bottom and
   10% from the sides, and takes the same keys as the reader: scrolling, Tab, Enter

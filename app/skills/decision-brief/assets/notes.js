@@ -402,8 +402,6 @@
     activeTitle = el.dataset.ntitle;
     document.getElementById('note-title').textContent = activeTitle;
     document.getElementById('note-anchor').textContent = '#' + active;
-    var both = document.getElementById('note-concur');
-    if (both) both.style.display = el.classList.contains('concurrable') && !C[active] ? '' : 'none';
     render();
     document.getElementById('d-note').showModal();
     document.getElementById('note-text').focus();
@@ -420,23 +418,6 @@
     });
     ta.value = '';
     save(); render(); badges();
-  }
-
-  /* One press on a decision: the remark and the stamp together, for the concur that comes with
-     something to say. Parker had been stamping and then typing "see remarks" by hand. */
-  function addAndConcur() {
-    var id = active, had = (N[id] || []).length;
-    add();
-    if ((N[id] || []).length === had) return;
-    if (!C[id]) {
-      C[id] = stamp();
-      saveConcurs();
-      Array.prototype.forEach.call(document.querySelectorAll('.concurrable'), function (el) {
-        if (el.dataset.nid === id) showConcur(el, el.querySelector(':scope > .concur-zone'), true, true);
-      });
-      badges();
-    }
-    document.getElementById('d-note').close();
   }
 
   function del(i) {
@@ -587,17 +568,6 @@
     document.addEventListener('decision-brief:snapshot', function (e) {
       if (e.detail) e.detail.html = snapshotNotes();
     });
-    var save = document.querySelector('#d-note [data-note-action="add"]');
-    if (save) {
-      var both = document.createElement('button');
-      both.id = 'note-concur';
-      both.className = 'save';
-      both.type = 'button';
-      both.dataset.noteAction = 'add-concur';
-      both.textContent = 'Submit & concur';
-      both.style.display = 'none';
-      save.after(both);
-    }
     var ta = document.getElementById('note-text');
     if (ta) {
       ta.addEventListener('keydown', function (e) {
@@ -609,7 +579,6 @@
       if (!t) return;
       var a = t.dataset.noteAction;
       if (a === 'add') add();
-      else if (a === 'add-concur') addAndConcur();
       else if (a === 'export') exportNotes();
       else if (a === 'clear') clearNotes();
       else if (a === 'copy') copyExport(t);

@@ -229,7 +229,7 @@ description of it: the real surface with its real strings, numbers computed from
 results, the broken thing beside the fixed one, a layered thing drawn as its layers, a proposal
 drawn so its gaps show. What has failed is boxes with labels in them, which assert a relationship
 where a real example would have shown it. A host may keep a ledger of labelled specimens; if it
-does, read it first and add to it when the reader reacts.
+does, read it first.
 
 A figure the reader cannot argue with is decoration. The first grill question in the exemplar
 is *"do the pictures match what you had in your head?"*, and it works because every picture
