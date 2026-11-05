@@ -18,11 +18,13 @@ Parker approved the assessed global-first, additive scope and delegated complete
 - [x] Meaningful integration tests, native acceptance and full application gates.
 - [x] Commentable closing brief and source handoff.
 
-Worktree: /home/parker/Work/td-skills-lab/terminal-delight, branch feat/skills-manager, advanced to origin/dev/0.5.1 at f740cb68 before installation so the concurrent floating-document update is retained. The sibling zed-upstream is an isolated checkout of TD's pin with its patch stack applied. The shared Zed checkout had patch drift and was left alone. The source remains uncommitted in this feature worktree; no commit or push was requested. The canonical TD checkout retains its pre-existing changes.
+Worktree: /home/parker/Work/td-skills-lab/terminal-delight, branch feat/skills-manager. The installed preview was based on f740cb68, retaining the concurrent floating-document update. Following Parker's acceptance and cutover request, the source was committed and updated to the current dev/0.5.1 baseline for the 0.5.3 wave, including the newer glow-pane keyboard behavior. The sibling zed-upstream is an isolated checkout of TD's pin with its patch stack applied. The shared Zed checkout had patch drift and was left alone. The canonical TD checkout retains its pre-existing changes.
 
 ## Installed for manual testing
 
 Release intent: **0.5.3**, landing on **dev/0.5.1**. Parker approved cutover and asked about this release on 2026-11-05. The live milestone and current integration-branch release context confirm that target; older version references in the historical installation record describe the preview's base. Local process snapshots, resume lines and screenshots remain under ignored evidence/ rather than being published with the source.
+
+Integration gates on the current release baseline: **3,367 Rust tests passed**, 18 existing ignored; formatting and strict Clippy passed. All 25 bridge/importer tests, including four native provider checks, passed again. The source delta from the installed preview is the newer integration baseline; no skill behavior was changed during release integration. The fixture-only captures loadout.png and import.png show the revised native controls without publishing process or recovery data.
 
 ### Revised loadout preview — current
 
