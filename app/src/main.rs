@@ -18930,16 +18930,27 @@ impl Workspace {
         let local = launcher::LocalAdapter::config_path();
         let viewport = self.last_win.map(|(_, _, w, _)| w).unwrap_or(1200.);
         let enabled = self.skills_prefs.active();
-        let wide = enabled && viewport >= 760.;
-        let panel_w = (if wide { 980_f32 } else { 520_f32 }).min((viewport - 24.).max(280.));
-        let main_w = if wide { panel_w * 0.52 } else { panel_w };
-        let height = self.tray_card_h();
+        // The switch changes the contents, never the menu's frame. Keep long
+        // settings and loadouts scrolling inside a compact, centred card.
+        let wide = viewport >= 760.;
+        let panel_w = 840_f32.min((viewport - 24.).max(280.));
+        let main_w = if wide && enabled {
+            panel_w * 0.52
+        } else {
+            panel_w
+        };
+        let height = self.tray_card_h().min(600.);
+        let main_h = if enabled && !wide {
+            height * 0.55
+        } else {
+            height - 4.
+        };
         let main = div()
             .id("agents-main")
             .debug_selector(|| "agents-main".into())
             .w(px(main_w))
             .flex_shrink_0()
-            .max_h(px(self.tray_card_h()))
+            .h(px(main_h))
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
@@ -19145,7 +19156,7 @@ impl Workspace {
             .id("agents-panel")
             .debug_selector(|| "agents-panel".into())
             .w(px(panel_w))
-            .max_h(px(height))
+            .h(px(height))
             .overflow_hidden()
             .rounded(sk.radius_lg())
             .border(sk.box_border(2.))
@@ -19154,7 +19165,7 @@ impl Workspace {
             .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .when(wide, |d| d.flex_row())
-            .when(!wide, |d| d.flex_col().overflow_y_scroll())
+            .when(!wide, |d| d.flex_col())
             .text_size(sk.text_px(10.))
             .text_color(th.text)
             .map(|d| sk.chrome(sk.popup(sk.finish(d))))
@@ -19169,12 +19180,20 @@ impl Workspace {
                         .id("skills-column")
                         .debug_selector(|| "skills-column".into())
                         .w(px(if wide { panel_w - main_w } else { panel_w }))
-                        .h(px(height - 4.))
+                        .h(px(if wide {
+                            height - 4.
+                        } else {
+                            height - main_h - 4.
+                        }))
                         .flex_shrink_0()
                         .min_h(px(0.))
                         .p_3()
                         .when(wide, |d| {
                             d.border_l(px(sk.m.hairline.max(1.)))
+                                .border_color(sk.ink.rule)
+                        })
+                        .when(!wide, |d| {
+                            d.border_t(px(sk.m.hairline.max(1.)))
                                 .border_color(sk.ink.rule)
                         })
                         .child(self.render_skills_section(th, &sk1, cx)),
@@ -41329,7 +41348,8 @@ mod tests {
                 gpui::Modifiers::default(),
             );
         };
-        ws.update(cx, |_, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(false);
             uiconfig::flip(cx, uiconfig::Key::Agents, true);
             uiconfig::flip(cx, uiconfig::Key::AgentCounter, true);
         });
@@ -41337,6 +41357,8 @@ mod tests {
         click(cx, "toolbar-agents");
         draw(cx);
         assert!(cx.debug_bounds("agents-panel").is_some());
+        let frame = cx.debug_bounds("agents-panel").unwrap();
+        assert!(frame.size.width <= px(840.) && frame.size.height <= px(600.));
 
         // A long loadout has its own column and scroll position. These fixture
         // values live only in the test workspace, never in personal config.
@@ -41358,6 +41380,7 @@ mod tests {
         draw(cx);
         let main = cx.debug_bounds("agents-main").unwrap();
         let skills = cx.debug_bounds("skills-column").unwrap();
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
         assert!(
             main.right() <= skills.left() + px(2.),
             "the loadout opens beside Agents"
@@ -41387,6 +41410,7 @@ mod tests {
         });
         draw(cx);
         assert!(cx.debug_bounds("skill-toggle-0").is_some());
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
         assert!(
             cx.debug_bounds("skills-column").is_none(),
             "off closes the loadout"
@@ -41400,6 +41424,7 @@ mod tests {
         assert!(cx.debug_bounds("skill-toggle-0").is_some());
         click(cx, "skill-add");
         draw(cx);
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
         assert!(cx.debug_bounds("skill-field-0").is_some());
         cx.simulate_keystrokes("f i x t u r e");
         draw(cx);
@@ -41424,6 +41449,25 @@ mod tests {
         cx.simulate_keystrokes("escape");
         draw(cx);
         assert!(ws.read_with(cx, |ws, _| ws.skills_form.is_none() && ws.agents_menu));
+
+        // Both boxed and text-control skins keep the same compact frame; a
+        // switch cannot turn either one into a screen-height settings page.
+        for id in ["deco", "terminimalist"] {
+            ws.update(cx, |ws, cx| {
+                skin::select(cx, id).unwrap();
+                ws.skills_prefs.active = Some(false);
+                cx.notify();
+            });
+            draw(cx);
+            let off = cx.debug_bounds("agents-panel").unwrap();
+            assert!(off.size.width <= px(840.) && off.size.height <= px(600.));
+            ws.update(cx, |ws, cx| {
+                ws.skills_prefs.active = Some(true);
+                cx.notify();
+            });
+            draw(cx);
+            assert_eq!(cx.debug_bounds("agents-panel").unwrap(), off, "under {id}");
+        }
 
         ws.update(cx, |ws, cx| {
             ws.agents_menu = false;

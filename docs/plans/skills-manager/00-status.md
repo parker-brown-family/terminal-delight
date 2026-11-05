@@ -22,6 +22,10 @@ Worktree: /home/parker/Work/td-skills-lab/terminal-delight, branch feat/skills-m
 
 ## Installed for manual testing
 
+### Compact frame revision
+
+Difficulty 3/10. Parker's next manual test found that enabling Skills widened the menu and stretched it toward screen height. The menu now uses one centred frame capped at 840 × 600 logical pixels, independent of the Skills switch and list length. Both sections scroll within it. Smaller windows clamp the frame and stack the sections. Off still hides the skills section. The existing UI regression compares complete frame bounds across off/on, twenty imports, the import form, Deco and TERMINIMALIST. Validation: 3,376 Rust tests passed (18 existing ignored), formatting and strict Clippy passed, and a clean standalone build succeeded. Native isolated-display checks covered both skins at 1440 × 1000, off/on at 640 × 560, and scrolling to the last of 23 selected skills. No live desktop input was used. Predicted and observed difficulty: 3/10.
+
 Release intent: **0.5.3**, landing on **dev/0.5.1**. Parker approved cutover and asked about this release on 2026-11-05. The live milestone and current integration-branch release context confirm that target; older version references in the historical installation record describe the preview's base. Local process snapshots, resume lines and screenshots remain under ignored evidence/ rather than being published with the source.
 
 Integration gates on the current release baseline: **3,367 Rust tests passed**, 18 existing ignored; formatting and strict Clippy passed. All 25 bridge/importer tests, including four native provider checks, passed again. The source delta from the installed preview is the newer integration baseline; no skill behavior was changed during release integration. The fixture-only captures loadout.png and import.png show the revised native controls without publishing process or recovery data.
