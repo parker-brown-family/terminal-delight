@@ -1,0 +1,101 @@
+{
+  "method": "Unicode East Asian W/F=2, combining=0; placeholders removed. Budgets are translator estimates, not measured native pixel slots.",
+  "over_budget": [
+    {
+      "key": "ctl_recover",
+      "language": "de",
+      "text": "wiederherstellen",
+      "cells": 16,
+      "soft_budget": 14,
+      "reason": "Full German recovery verb retained. The native recovery scene shows the header fitting without clipping."
+    },
+    {
+      "key": "archive_intro",
+      "language": "en",
+      "text": "Documents handed over in TD, including closed conversations. A captured revision preserves the file’s bytes at capture time. Linked images and other external resources are not copied.",
+      "cells": 183,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "es",
+      "text": "Documentos entregados en TD, incluidos los de conversaciones cerradas. Una revisión capturada conserva los bytes del archivo en el momento de la captura. Las imágenes enlazadas y otros recursos externos no se copian.",
+      "cells": 216,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "de",
+      "text": "In TD übergebene Dokumente, auch aus geschlossenen Unterhaltungen. Eine erfasste Revision bewahrt die Bytes der Datei zum Zeitpunkt der Erfassung. Verlinkte Bilder und andere externe Ressourcen werden nicht kopiert.",
+      "cells": 215,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "fr",
+      "text": "Documents remis dans TD, y compris ceux des conversations fermées. Un instantané de révision conserve les octets du fichier au moment de la capture. Les images liées et les autres ressources externes ne sont pas copiées.",
+      "cells": 220,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "ru",
+      "text": "Документы, переданные в TD, в том числе в закрытых диалогах. Зафиксированная версия сохраняет байты файла на момент фиксации. Изображения по ссылкам и другие внешние ресурсы не копируются.",
+      "cells": 188,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "zh",
+      "text": "在 TD 中交付的文档，包括已关闭对话中的文档。修订快照会保留创建快照时文件的字节内容。链接的图片和其他外部资源不会被复制。",
+      "cells": 120,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "ja",
+      "text": "TD で受け渡されたドキュメント（終了した会話の分を含む）。リビジョンのスナップショットは、取得時点のファイルのバイト列を保持します。リンク先の画像やその他の外部リソースはコピーされません。",
+      "cells": 187,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "ko",
+      "text": "TD에서 전달된 문서로, 종료된 대화의 문서도 포함합니다. 리비전 스냅샷은 생성 시점의 파일 바이트를 보존합니다. 링크된 이미지와 기타 외부 리소스는 복사하지 않습니다.",
+      "cells": 162,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "archive_intro",
+      "language": "hi",
+      "text": "TD में सौंपे गए दस्तावेज़, बंद की गई बातचीत के दस्तावेज़ों सहित। संस्करण का स्नैपशॉट बनाते समय फ़ाइल में जो बाइट्स थे, वे उसमें सुरक्षित रहते हैं। लिंक की गई छवियाँ और अन्य बाहरी संसाधन कॉपी नहीं किए जाते।",
+      "cells": 195,
+      "soft_budget": 100,
+      "reason": "Wrapping archive paragraph; the English source itself exceeds this estimate."
+    },
+    {
+      "key": "ctl_adopt",
+      "language": "hi",
+      "text": "प्रोजेक्ट में लें",
+      "cells": 15,
+      "soft_budget": 14,
+      "reason": "Hindi adoption action retains its full meaning. This is a soft cell estimate; a dedicated Hindi adoption slot was not photographed."
+    },
+    {
+      "key": "ctl_lookup",
+      "language": "fr",
+      "text": "chercher par nom",
+      "cells": 16,
+      "soft_budget": 14,
+      "reason": "French explicitly names a name-based lookup. This is a soft cell estimate; a dedicated French lookup slot was not photographed."
+    }
+  ]
+}

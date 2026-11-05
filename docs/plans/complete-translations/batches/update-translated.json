@@ -1,0 +1,246 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "entries": [
+    {
+      "key": "update_commit_unknown",
+      "en": "commit unknown",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "commit unknown",
+        "es": "commit desconocido",
+        "de": "Commit unbekannt",
+        "fr": "commit inconnu",
+        "ru": "коммит неизвестен",
+        "zh": "提交未知",
+        "ja": "コミット不明",
+        "ko": "커밋 알 수 없음",
+        "hi": "कमिट अज्ञात"
+      }
+    },
+    {
+      "key": "update_launcher",
+      "en": "launcher build · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "launcher build · {path}",
+        "es": "compilación del lanzador · {path}",
+        "de": "Launcher-Build · {path}",
+        "fr": "build du lanceur · {path}",
+        "ru": "сборка лаунчера · {path}",
+        "zh": "启动器构建 · {path}",
+        "ja": "ランチャービルド · {path}",
+        "ko": "런처 빌드 · {path}",
+        "hi": "लॉन्चर बिल्ड · {path}"
+      }
+    },
+    {
+      "key": "update_source",
+      "en": "source checkout · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "source checkout · {path}",
+        "es": "copia de trabajo del código fuente · {path}",
+        "de": "Arbeitskopie des Quellcodes · {path}",
+        "fr": "copie de travail du code source · {path}",
+        "ru": "рабочая копия исходников · {path}",
+        "zh": "源码工作副本 · {path}",
+        "ja": "ソースの作業コピー · {path}",
+        "ko": "소스 작업 사본 · {path}",
+        "hi": "सोर्स कोड की वर्किंग कॉपी · {path}"
+      }
+    },
+    {
+      "key": "update_package",
+      "en": "system package · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "system package · {path}",
+        "es": "paquete del sistema · {path}",
+        "de": "Systempaket · {path}",
+        "fr": "paquet système · {path}",
+        "ru": "системный пакет · {path}",
+        "zh": "系统软件包 · {path}",
+        "ja": "システムパッケージ · {path}",
+        "ko": "시스템 패키지 · {path}",
+        "hi": "सिस्टम पैकेज · {path}"
+      }
+    },
+    {
+      "key": "update_unknown",
+      "en": "unrecognised · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "unrecognised · {path}",
+        "es": "no reconocido · {path}",
+        "de": "nicht erkannt · {path}",
+        "fr": "non reconnu · {path}",
+        "ru": "не распознано · {path}",
+        "zh": "未识别 · {path}",
+        "ja": "未認識 · {path}",
+        "ko": "인식되지 않음 · {path}",
+        "hi": "पहचाना नहीं गया · {path}"
+      }
+    },
+    {
+      "key": "update_refuse_source",
+      "en": "TD never pulls or rebuilds a checkout. To update it yourself:\n{commands}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "TD never pulls or rebuilds a checkout. To update it yourself:\n{commands}",
+        "es": "TD nunca hace pull ni recompila una copia de trabajo. Para actualizarla por tu cuenta:\n{commands}",
+        "de": "TD führt für Arbeitskopien nie einen Pull oder eine Neukompilierung aus. So aktualisierst du diese Kopie selbst:\n{commands}",
+        "fr": "TD n’effectue jamais de pull ni de recompilation d’une copie de travail. Pour la mettre à jour vous-même :\n{commands}",
+        "ru": "TD никогда не выполняет pull и не пересобирает рабочую копию. Чтобы обновить её самостоятельно:\n{commands}",
+        "zh": "TD 从不对源码工作副本执行 pull 或重新构建。如需自行更新：\n{commands}",
+        "ja": "TD は作業コピーに対して pull や再ビルドを一切行いません。自分で更新するには:\n{commands}",
+        "ko": "TD는 작업 사본에서 pull이나 재빌드를 절대 수행하지 않습니다. 직접 업데이트하려면:\n{commands}",
+        "hi": "TD किसी वर्किंग कॉपी पर कभी pull या रीबिल्ड नहीं करता। इसे खुद अपडेट करने के लिए:\n{commands}"
+      }
+    },
+    {
+      "key": "update_refuse_package",
+      "en": "your package manager owns this install — update it there",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "your package manager owns this install — update it there",
+        "es": "tu gestor de paquetes administra esta instalación — actualízala desde allí",
+        "de": "dein Paketmanager verwaltet diese Installation — aktualisiere sie dort",
+        "fr": "cette installation est gérée par votre gestionnaire de paquets — effectuez la mise à jour depuis celui-ci",
+        "ru": "этой установкой управляет ваш пакетный менеджер — обновляйте её через него",
+        "zh": "此安装由你的软件包管理器管理，请通过它更新",
+        "ja": "このインストールはパッケージマネージャーが管理しています。そちらで更新してください",
+        "ko": "이 설치는 패키지 관리자가 관리합니다. 해당 패키지 관리자에서 업데이트하세요",
+        "hi": "इस इंस्टॉलेशन को आपका पैकेज मैनेजर संभालता है — वहीं से अपडेट करें"
+      }
+    },
+    {
+      "key": "update_refuse_unknown",
+      "en": "this file was not installed as an AppImage or into TD’s build library, so TD does not replace it",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this file was not installed as an AppImage or into TD’s build library, so TD does not replace it",
+        "es": "este archivo no se instaló como AppImage ni en la biblioteca de compilaciones de TD, por lo que TD no lo reemplaza",
+        "de": "diese Datei wurde weder als AppImage noch in der Build-Bibliothek von TD installiert; deshalb ersetzt TD sie nicht",
+        "fr": "ce fichier n’a été installé ni comme AppImage ni dans la bibliothèque de builds de TD ; TD ne le remplace donc pas",
+        "ru": "этот файл не был установлен ни как AppImage, ни в библиотеку сборок TD, поэтому TD его не заменяет",
+        "zh": "此文件既未作为 AppImage 安装，也未安装到 TD 的构建库中，因此 TD 不会替换它",
+        "ja": "このファイルは AppImage としても TD のビルドライブラリ内にもインストールされていないため、TD は置き換えません",
+        "ko": "이 파일은 AppImage로도 TD 빌드 라이브러리에도 설치되지 않았으므로 TD가 교체하지 않습니다",
+        "hi": "यह फ़ाइल न तो AppImage के रूप में और न ही TD की बिल्ड लाइब्रेरी में इंस्टॉल की गई थी, इसलिए TD इसे बदलता नहीं है"
+      }
+    },
+    {
+      "key": "update_no_stable",
+      "en": "no stable release has been published",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no stable release has been published",
+        "es": "no se ha publicado ninguna versión estable",
+        "de": "es wurde keine stabile Version veröffentlicht",
+        "fr": "aucune version stable n’a été publiée",
+        "ru": "стабильных выпусков не опубликовано",
+        "zh": "尚未发布稳定版本",
+        "ja": "安定版は公開されていません",
+        "ko": "공개된 안정 버전이 없음",
+        "hi": "कोई स्थिर रिलीज़ प्रकाशित नहीं की गई है"
+      }
+    },
+    {
+      "key": "update_no_dev",
+      "en": "no public dev build has been published yet",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no public dev build has been published yet",
+        "es": "todavía no se ha publicado ninguna compilación de desarrollo pública",
+        "de": "es wurde noch kein öffentlicher Entwicklungsbuild veröffentlicht",
+        "fr": "aucun build de développement public n’a encore été publié",
+        "ru": "публичных сборок разрабатываемой версии пока не опубликовано",
+        "zh": "尚未发布公开的开发构建版本",
+        "ja": "開発ビルドはまだ一般公開されていません",
+        "ko": "공개 개발 빌드가 아직 게시되지 않음",
+        "hi": "अभी तक कोई सार्वजनिक डेवलपमेंट बिल्ड प्रकाशित नहीं किया गया है"
+      }
+    },
+    {
+      "key": "update_no_image",
+      "en": "this release has no Linux AppImage",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this release has no Linux AppImage",
+        "es": "esta versión no incluye un AppImage para Linux",
+        "de": "für diese Version gibt es kein Linux-AppImage",
+        "fr": "cette version ne contient pas d’AppImage pour Linux",
+        "ru": "в этом выпуске нет AppImage для Linux",
+        "zh": "此版本不包含 Linux AppImage",
+        "ja": "このリリースには Linux 用の AppImage がありません",
+        "ko": "이 릴리스에는 Linux용 AppImage가 없음",
+        "hi": "इस रिलीज़ में Linux के लिए AppImage नहीं है"
+      }
+    },
+    {
+      "key": "update_no_checksum",
+      "en": "no checksum was published for it, so TD cannot check the download — download it yourself from its page",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no checksum was published for it, so TD cannot check the download — download it yourself from its page",
+        "es": "no se publicó ninguna suma de comprobación para este archivo, así que TD no puede verificar la descarga — descárgalo por tu cuenta desde su página",
+        "de": "dafür wurde keine Prüfsumme veröffentlicht, daher kann TD den Download nicht prüfen — lade die Datei selbst von ihrer Seite herunter",
+        "fr": "aucune somme de contrôle n’a été publiée pour ce fichier, donc TD ne peut pas vérifier le téléchargement — téléchargez-le vous-même depuis sa page",
+        "ru": "для этого файла не опубликована контрольная сумма, поэтому TD не может проверить загрузку — скачайте файл самостоятельно с его страницы",
+        "zh": "未发布此文件的校验和，因此 TD 无法验证下载内容，请自行从其页面下载",
+        "ja": "このファイルのチェックサムが公開されていないため、TD はダウンロード内容を検証できません。そのページから自分でダウンロードしてください",
+        "ko": "이 파일의 체크섬이 공개되지 않아 TD가 다운로드를 검증할 수 없습니다. 해당 페이지에서 직접 다운로드하세요",
+        "hi": "इस फ़ाइल का चेकसम प्रकाशित नहीं किया गया है, इसलिए TD डाउनलोड की जाँच नहीं कर सकता — इसके पेज से खुद डाउनलोड करें"
+      }
+    },
+    {
+      "key": "update_host_older",
+      "en": "this build was proven against this window’s build, and your terminals’ host runs an older one",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this build was proven against this window’s build, and your terminals’ host runs an older one",
+        "es": "esta compilación se ha validado con la compilación de esta ventana, y el host de tus terminales ejecuta una más antigua",
+        "de": "dieser Build wurde mit dem Build dieses Fensters erfolgreich geprüft; der Host deiner Terminals führt einen älteren Build aus",
+        "fr": "ce build a été validé avec le build de cette fenêtre, et l’hôte de vos terminaux exécute un build plus ancien",
+        "ru": "эта сборка успешно проверена со сборкой этого окна, а хост ваших терминалов использует более старую сборку",
+        "zh": "此构建已基于当前窗口的构建版本通过验证，而你的终端宿主运行的是更旧的构建版本",
+        "ja": "このビルドは、このウィンドウのビルドとの組み合わせで検証に合格していますが、ターミナルのホストはより古いビルドで動作しています",
+        "ko": "이 빌드는 이 창의 빌드와 함께 검증을 통과했지만, 터미널 호스트는 더 오래된 빌드를 실행 중입니다",
+        "hi": "यह बिल्ड इस विंडो के बिल्ड के साथ सत्यापित हो चुका है, लेकिन आपके टर्मिनलों का होस्ट अधिक पुराना बिल्ड चला रहा है"
+      }
+    },
+    {
+      "key": "update_wire_changed",
+      "en": "this build changes how the window talks to your terminals",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this build changes how the window talks to your terminals",
+        "es": "esta compilación cambia cómo se comunica la ventana con tus terminales",
+        "de": "dieser Build ändert, wie das Fenster mit deinen Terminals kommuniziert",
+        "fr": "ce build modifie la façon dont la fenêtre communique avec vos terminaux",
+        "ru": "эта сборка меняет способ взаимодействия окна с вашими терминалами",
+        "zh": "此构建改变了窗口与你的终端通信的方式",
+        "ja": "このビルドでは、ウィンドウとターミナルの通信方法が変わります",
+        "ko": "이 빌드는 창이 터미널과 통신하는 방식을 변경합니다",
+        "hi": "यह बिल्ड विंडो और आपके टर्मिनलों के बीच संचार का तरीका बदलता है"
+      }
+    },
+    {
+      "key": "update_host_unknown",
+      "en": "the session host of {hosts} runs a build TD cannot vouch for",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "the session host of {hosts} runs a build TD cannot vouch for",
+        "es": "el host de sesión de {hosts} ejecuta una compilación que TD no puede avalar",
+        "de": "der Sitzungshost von {hosts} führt einen Build aus, für den TD nicht einstehen kann",
+        "fr": "l’hôte de session de {hosts} exécute un build dont TD ne peut pas se porter garant",
+        "ru": "хост сеансов {hosts} работает на сборке, за которую TD не может поручиться",
+        "zh": "TD 无法为 {hosts} 的会话宿主当前运行的构建版本作保证",
+        "ja": "{hosts} のセッションホストは、TD が保証できないビルドで動作しています",
+        "ko": "{hosts}의 세션 호스트는 TD가 보증할 수 없는 빌드를 실행 중입니다",
+        "hi": "{hosts} का सेशन होस्ट ऐसा बिल्ड चला रहा है जिसकी गारंटी TD नहीं दे सकता"
+      }
+    }
+  ]
+}

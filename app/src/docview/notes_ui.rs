@@ -2079,7 +2079,8 @@ impl NotesLayer {
                         (
                             th.surface,
                             th.text.alpha(0.8),
-                            sk.control("💬", "add").into(),
+                            sk.control("💬", crate::lang::current().strings().parts.ctl_add)
+                                .into(),
                         )
                     };
                     at_rect(div(), *at)

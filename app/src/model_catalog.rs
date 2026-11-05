@@ -10,6 +10,46 @@ use std::sync::{mpsc, Mutex, OnceLock};
 use std::time::{Duration, Instant};
 
 const MAX_OUTPUT: u64 = 2 * 1024 * 1024;
+
+#[cfg(test)]
+mod translation_tests {
+    use super::*;
+    #[test]
+    fn captions_and_statuses_translate_without_changing_wire_choices() {
+        let model = Model {
+            id: Some("opus".into()),
+            label: "Recommended · Opus · version unknown".into(),
+            resolved_id: None,
+            efforts: Some(vec!["xhigh".into()]),
+            default_effort: Some("xhigh".into()),
+            caption: Caption::Described {
+                name: "Opus".into(),
+                unknown_version: true,
+                recommended: true,
+            },
+        };
+        for l in crate::lang::Lang::ALL {
+            let t = l.strings().parts;
+            assert_eq!(Model::agent_default().label_in(l), t.model_default);
+            assert_eq!(Status::Loading.text(l), t.model_loading);
+            assert_eq!(Status::Ready.text(l), t.model_ready);
+            assert_eq!(
+                Status::Unavailable("missing model ID".into()).text(l),
+                crate::lang::fill(t.model_unavailable, &[("reason", t.model_error_11)])
+            );
+            assert!(model.label_in(l).contains("Opus"));
+            assert_eq!(model.id.as_deref(), Some("opus"));
+            assert!(model.matches("opus"));
+            assert_eq!(model.efforts.as_ref().unwrap()[0], "xhigh");
+            assert_eq!(effort_in(Some("xhigh"), l), t.effort_xhigh);
+            assert_eq!(effort_in(Some("future-level"), l), "future-level");
+            assert_eq!(
+                reason_in("external executable diagnostic", l),
+                "external executable diagnostic"
+            );
+        }
+    }
+}
 const DEADLINE: Duration = Duration::from_secs(15);
 const EXPIRY: Duration = Duration::from_secs(60);
 static ACTIVE_DISCOVERIES: AtomicUsize = AtomicUsize::new(0);
@@ -29,6 +69,19 @@ pub struct Model {
     pub resolved_id: Option<String>,
     pub efforts: Option<Vec<String>>,
     pub default_effort: Option<String>,
+    pub caption: Caption,
+}
+
+/// Qualifiers owned by TD, apart from the model's own name and wire id.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum Caption {
+    Name,
+    Default,
+    Described {
+        name: String,
+        unknown_version: bool,
+        recommended: bool,
+    },
 }
 
 impl Model {
@@ -39,6 +92,7 @@ impl Model {
             resolved_id: None,
             efforts: None,
             default_effort: None,
+            caption: Caption::Default,
         }
     }
 
@@ -46,12 +100,128 @@ impl Model {
         self.resolved_id.as_deref().or(self.id.as_deref()) == Some(raw)
             || self.id.as_deref() == Some(raw)
     }
+
+    pub fn label_in(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
+        match &self.caption {
+            Caption::Name => self.label.clone(),
+            Caption::Default => t.model_default.into(),
+            Caption::Described {
+                name,
+                unknown_version,
+                recommended,
+            } => {
+                let name = if *unknown_version {
+                    crate::lang::fill(t.model_version_unknown, &[("model", name)])
+                } else {
+                    name.clone()
+                };
+                if *recommended {
+                    crate::lang::fill(t.model_recommended, &[("model", &name)])
+                } else {
+                    name
+                }
+            }
+        }
+    }
+}
+
+#[derive(Clone, Debug)]
+pub enum Status {
+    Local,
+    Loading,
+    Ready,
+    Unavailable(String),
+}
+
+impl Status {
+    pub fn text(&self, l: crate::lang::Lang) -> String {
+        let t = &l.strings().parts;
+        match self {
+            Self::Local => "local-agent.toml".into(),
+            Self::Loading => t.model_loading.into(),
+            Self::Ready => t.model_ready.into(),
+            Self::Unavailable(reason) => {
+                crate::lang::fill(t.model_unavailable, &[("reason", &reason_in(reason, l))])
+            }
+        }
+    }
+}
+
+impl std::fmt::Display for Status {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(&self.text(crate::lang::Lang::En))
+    }
+}
+
+/// Known harness levels are captions; unknown future levels keep their own name.
+pub fn effort_in(raw: Option<&str>, l: crate::lang::Lang) -> String {
+    let t = &l.strings().parts;
+    match raw {
+        None => t.model_default,
+        Some("none") => t.effort_none,
+        Some("minimal") => t.effort_minimal,
+        Some("low") => t.effort_low,
+        Some("medium") => t.effort_medium,
+        Some("high") => t.effort_high,
+        Some("xhigh") => t.effort_xhigh,
+        Some("max") => t.effort_max,
+        Some("ultra") => t.effort_ultra,
+        Some(other) => other,
+    }
+    .into()
+}
+
+/// Discovery diagnostics remain English data; only the UI translates known reasons.
+fn reason_in(reason: &str, l: crate::lang::Lang) -> String {
+    let t = &l.strings().parts;
+    let literal = match reason {
+        "running executable not identified" => Some(t.model_error_1),
+        "running profile unavailable" => Some(t.model_error_2),
+        "agent rejected catalog request" => Some(t.model_error_3),
+        "missing catalog response" => Some(t.model_error_4),
+        "repeated catalog cursor" => Some(t.model_error_5),
+        "too many catalog pages" => Some(t.model_error_6),
+        "agent returned no visible models" => Some(t.model_error_7),
+        "invalid catalog choice" => Some(t.model_error_8),
+        "invalid effort list" => Some(t.model_error_9),
+        "missing Codex model list" => Some(t.model_error_10),
+        "missing model ID" => Some(t.model_error_11),
+        "invalid effort level" => Some(t.model_error_12),
+        "missing Claude model list" => Some(t.model_error_13),
+        "agent input unavailable" => Some(t.model_error_14),
+        "agent output unavailable" => Some(t.model_error_15),
+        "missing catalog result" => Some(t.model_error_16),
+        _ => None,
+    };
+    if let Some(text) = literal {
+        return text.into();
+    }
+    for (prefix, suffix, template) in [
+        ("", " output exceeded limit", t.model_output_limit),
+        ("invalid ", " JSON", t.model_invalid_json),
+        ("cannot read agent ", "", t.model_read_error),
+        ("", " input already closed", t.model_input_closed),
+        ("cannot request agent ", "", t.model_request_error),
+        ("cannot flush ", " request", t.model_flush_error),
+        ("", " request timed out", t.model_timeout),
+        ("agent closed ", " connection", t.model_connection_closed),
+    ] {
+        if let Some(source) = reason
+            .strip_prefix(prefix)
+            .and_then(|s| s.strip_suffix(suffix))
+            .filter(|s| !s.is_empty())
+        {
+            return crate::lang::fill(template, &[("source", source)]);
+        }
+    }
+    reason.into()
 }
 
 #[derive(Clone, Debug)]
 pub struct Snapshot {
     pub models: Vec<Model>,
-    pub status: String,
+    pub status: Status,
     pub ready: bool,
 }
 
@@ -98,7 +268,7 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
     if harness == Harness::Local {
         return Snapshot {
             models: vec![Model::agent_default()],
-            status: "local-agent.toml".into(),
+            status: Status::Local,
             ready: true,
         };
     }
@@ -114,7 +284,7 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
     let entry = entries.entry(scope.clone()).or_insert_with(|| Entry {
         snapshot: Snapshot {
             models: vec![Model::agent_default()],
-            status: "Loading models…".into(),
+            status: Status::Loading,
             ready: false,
         },
         requested: Instant::now() - EXPIRY,
@@ -131,7 +301,7 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
         entry.loading = true;
         entry.requested = Instant::now();
         entry.snapshot.ready = false;
-        entry.snapshot.status = "Loading models…".into();
+        entry.snapshot.status = Status::Loading;
         std::thread::spawn(move || {
             let _slot = DiscoverySlot;
             let result = discover(&scope);
@@ -142,12 +312,12 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
                         models: std::iter::once(Model::agent_default())
                             .chain(models)
                             .collect(),
-                        status: "Installed agent catalog".into(),
+                        status: Status::Ready,
                         ready: true,
                     },
                     Err(reason) => Snapshot {
                         models: vec![Model::agent_default()],
-                        status: format!("Models unavailable · {reason}"),
+                        status: Status::Unavailable(reason),
                         ready: false,
                     },
                 };
@@ -347,6 +517,7 @@ pub fn parse_codex(response: &Value) -> Result<Vec<Model>, String> {
                     .get("defaultReasoningEffort")
                     .and_then(Value::as_str)
                     .map(str::to_string),
+                caption: Caption::Name,
             })
         })
         .collect()
@@ -364,27 +535,33 @@ pub fn parse_claude(response: &Value) -> Result<Vec<Model>, String> {
                 .get("resolvedModel")
                 .and_then(Value::as_str)
                 .map(str::to_string);
-            let mut display = resolved
-                .as_deref()
-                .and_then(label)
-                .or_else(|| {
-                    id.chars()
-                        .any(|character| character.is_ascii_digit())
-                        .then(|| label(&id))
-                        .flatten()
-                })
-                .unwrap_or_else(|| {
-                    format!(
-                        "{} · version unknown",
-                        row.get("displayName")
-                            .and_then(Value::as_str)
-                            .unwrap_or(&id)
-                    )
-                });
+            let resolved_name = resolved.as_deref().and_then(label).or_else(|| {
+                id.chars()
+                    .any(|character| character.is_ascii_digit())
+                    .then(|| label(&id))
+                    .flatten()
+            });
+            let unknown_version = resolved_name.is_none();
+            let name = resolved_name.unwrap_or_else(|| {
+                row.get("displayName")
+                    .and_then(Value::as_str)
+                    .unwrap_or(&id)
+                    .to_string()
+            });
+            let mut display = if unknown_version {
+                format!("{name} · version unknown")
+            } else {
+                name.clone()
+            };
             if id == "default" {
                 display = format!("Recommended · {display}");
             }
             Ok(Model {
+                caption: Caption::Described {
+                    name,
+                    unknown_version,
+                    recommended: id == "default",
+                },
                 id: Some(id),
                 label: display,
                 resolved_id: resolved,

@@ -21,7 +21,7 @@ python3 scripts/translation-suggest.py
 | `app/src/lang/parts.rs` | Everything drawn by the other modules: pane, workbench, document viewer, vitals, notes (`strings().parts`) |
 | `app/src/lang/coord.rs` | The Git coordination overlay (`strings().gc`) |
 
-The tables were generated once and are edited by hand from here.
+Small edits can be made by hand. For a batch, use the committed inserter so every field reaches all nine tables together.
 
 ## Adding a string
 
@@ -33,6 +33,21 @@ The tables were generated once and are edited by hand from here.
 6. A new skin or design also needs its caption arm in the picker's caption match in `main.rs` (beside `"chalk" => t.ui.pal_skin_chalk`), and a help line.
 
 `no_translation_is_left_as_its_english_unless_it_is_a_cognate` fails if a non-English value is identical to its English. When the match is right (a cognate such as CRT or Plugins, a Git word developers keep such as HEAD, a name such as ELI5), add the field to `SAME_AS_ENGLISH` in `lang.rs`, with a reason if it isn't obvious. A name that isn't a word in other languages is still translated: the OPS skin is a command deck, so its caption is the word for command in each language.
+
+## Batch Insertion
+
+Prepare JSON with `target` (a file under `app/src/lang`), `struct`, and `entries`. Each entry has `key`, translator `context`, `en`, and a `translations` object with `en/es/de/fr/ru/zh/ja/ko/hi`. A plural value has all four `one/few/many/other` forms in every language. The complete example is `docs/plans/complete-translations/complete.json`.
+
+```bash
+python3 scripts/i18n-batch.py batch.json --check
+python3 scripts/i18n-batch.py batch.json
+cargo fmt --manifest-path app/Cargo.toml
+python3 scripts/i18n-batch.py batch.json --verify
+```
+
+The inserter validates the whole batch before an atomic write. It refuses missing languages, changed English, lost or duplicated placeholders and physical keycaps, incomplete plurals, duplicate fields, and unexplained English fallbacks. A shared word needs its language code in `same_as_english` and a `cognate_reason`; add the field to the Rust cognate allowlist too. `--verify` checks the installed values against the batch after formatting.
+
+Audit all tracked Rust sources with `python3 scripts/translation-suggest.py --all --json`. Candidates still need a reader decision: an agent refusal, a saved identifier, a fixture and a human caption have different translation rules. The detector recognizes text controls and status fields and excludes standalone tests as well as test modules.
 
 ## Wording
 

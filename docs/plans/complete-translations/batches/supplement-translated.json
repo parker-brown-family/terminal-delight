@@ -1,0 +1,225 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "languages": [
+    "en",
+    "es",
+    "de",
+    "fr",
+    "ru",
+    "zh",
+    "ja",
+    "ko",
+    "hi"
+  ],
+  "entries": [
+    {
+      "key": "model_selected_effort",
+      "en": "Selected effort unavailable; choose Agent default or a reported effort",
+      "context": "Launcher validation. Agent default is a translated label; match model_default from previous batch.",
+      "translations": {
+        "en": "Selected effort unavailable; choose Agent default or a reported effort",
+        "es": "El nivel de esfuerzo seleccionado no está disponible; elige «Predeterminado del agente» o un nivel de esfuerzo indicado por el agente",
+        "de": "Gewählter Denkaufwand nicht verfügbar; „Agentenstandard“ oder eine gemeldete Stufe wählen",
+        "fr": "Le niveau d’effort sélectionné est indisponible ; choisissez « Choix par défaut de l’agent » ou un niveau d’effort indiqué par l’agent",
+        "ru": "Выбранный уровень рассуждения недоступен; выберите «По умолчанию у агента» или уровень, о котором сообщил агент",
+        "zh": "所选推理强度不可用；请选择“智能体默认”或智能体报告的推理强度",
+        "ja": "選択した推論強度は利用できません。「エージェントの既定値」またはエージェントが報告した推論強度を選択してください",
+        "ko": "선택한 추론 강도를 사용할 수 없습니다. ‘에이전트 기본값’ 또는 에이전트가 보고한 추론 강도를 선택하세요",
+        "hi": "चुना गया तर्क-प्रयास स्तर उपलब्ध नहीं है; “एजेंट का डिफ़ॉल्ट” या एजेंट द्वारा बताया गया स्तर चुनें"
+      }
+    },
+    {
+      "key": "ctl_gauges",
+      "en": "gauges",
+      "context": "Compact tab label for gauges and CRT controls.",
+      "translations": {
+        "en": "gauges",
+        "es": "indicadores",
+        "de": "Messanzeigen",
+        "fr": "jauges",
+        "ru": "индикаторы",
+        "zh": "仪表",
+        "ja": "メーター",
+        "ko": "게이지",
+        "hi": "गेज"
+      }
+    },
+    {
+      "key": "archive_open_error",
+      "en": "Artifact archive could not be opened: {reason}",
+      "context": "App notice when archive page cannot open.",
+      "translations": {
+        "en": "Artifact archive could not be opened: {reason}",
+        "es": "No se pudo abrir el archivo de artefactos: {reason}",
+        "de": "Das Artefaktarchiv konnte nicht geöffnet werden: {reason}",
+        "fr": "Impossible d’ouvrir l’archive des artefacts : {reason}",
+        "ru": "Не удалось открыть архив артефактов: {reason}",
+        "zh": "无法打开产物归档：{reason}",
+        "ja": "成果物アーカイブを開けませんでした: {reason}",
+        "ko": "아티팩트 아카이브를 열 수 없었습니다: {reason}",
+        "hi": "आर्टिफ़ैक्ट आर्काइव खोला नहीं जा सका: {reason}"
+      }
+    },
+    {
+      "key": "archive_file_limit",
+      "en": "not a regular file within the capture limit",
+      "context": "Archive capture diagnostic shown to humans.",
+      "translations": {
+        "en": "not a regular file within the capture limit",
+        "es": "no es un archivo normal o supera el límite de captura",
+        "de": "keine reguläre Datei oder Erfassungsgrenze überschritten",
+        "fr": "ce n’est pas un fichier ordinaire ou la limite de capture est dépassée",
+        "ru": "не обычный файл или превышен лимит фиксации",
+        "zh": "不是常规文件，或超出快照生成限制",
+        "ja": "通常ファイルではないか、スナップショットの取得上限を超えています",
+        "ko": "일반 파일이 아니거나 스냅샷 캡처 한도를 초과함",
+        "hi": "सामान्य फ़ाइल नहीं है या स्नैपशॉट की सीमा से अधिक है"
+      }
+    },
+    {
+      "key": "archive_file_changed",
+      "en": "file changed during capture",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "file changed during capture",
+        "es": "el archivo cambió durante la captura",
+        "de": "Datei während der Erfassung geändert",
+        "fr": "le fichier a changé pendant la capture",
+        "ru": "файл изменился во время фиксации",
+        "zh": "生成快照期间文件发生了变化",
+        "ja": "スナップショットの取得中にファイルが変更されました",
+        "ko": "스냅샷 캡처 중 파일이 변경됨",
+        "hi": "स्नैपशॉट लेते समय फ़ाइल बदल गई"
+      }
+    },
+    {
+      "key": "archive_remote",
+      "en": "Remote link; no local bytes captured.",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "Remote link; no local bytes captured.",
+        "es": "Enlace remoto; no se capturaron bytes locales.",
+        "de": "Remote-Link; keine lokalen Bytes erfasst.",
+        "fr": "Lien distant ; aucun octet local capturé.",
+        "ru": "Ссылка на удалённый ресурс; локальные байты не зафиксированы.",
+        "zh": "远程链接；未捕获本地字节内容。",
+        "ja": "リモートリンクです。ローカルのバイト列は取得されていません。",
+        "ko": "원격 링크입니다. 로컬 바이트는 캡처되지 않았습니다.",
+        "hi": "दूरस्थ लिंक; स्थानीय बाइट्स कैप्चर नहीं किए गए।"
+      }
+    },
+    {
+      "key": "archive_local_missing",
+      "en": "Local revision unavailable: {reason}",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "Local revision unavailable: {reason}",
+        "es": "Revisión local no disponible: {reason}",
+        "de": "Lokale Revision nicht verfügbar: {reason}",
+        "fr": "Révision locale indisponible : {reason}",
+        "ru": "Локальная версия недоступна: {reason}",
+        "zh": "本地修订版本不可用：{reason}",
+        "ja": "ローカルのリビジョンを利用できません: {reason}",
+        "ko": "로컬 리비전을 사용할 수 없음: {reason}",
+        "hi": "स्थानीय संस्करण अनुपलब्ध: {reason}"
+      }
+    },
+    {
+      "key": "archive_saved_hash",
+      "en": "saved revision failed its content hash",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "saved revision failed its content hash",
+        "es": "la revisión guardada no superó la comprobación del hash de contenido",
+        "de": "gespeicherte Revision hat die Inhalts-Hash-Prüfung nicht bestanden",
+        "fr": "la révision enregistrée a échoué à la vérification de l’empreinte du contenu",
+        "ru": "сохранённая версия не прошла проверку хеша содержимого",
+        "zh": "已保存的修订版本未通过内容哈希校验",
+        "ja": "保存済みリビジョンが内容のハッシュ検証に失敗しました",
+        "ko": "저장된 리비전이 콘텐츠 해시 검증을 통과하지 못함",
+        "hi": "सहेजा गया संस्करण सामग्री के हैश की जाँच में विफल रहा"
+      }
+    },
+    {
+      "key": "archive_save_failed",
+      "en": "Revision measured; snapshot could not be saved: {reason}",
+      "context": "Archive capture diagnostic. Bytes measured, persistence unavailable.",
+      "translations": {
+        "en": "Revision measured; snapshot could not be saved: {reason}",
+        "es": "Medición de la revisión completada; no se pudo guardar la instantánea: {reason}",
+        "de": "Messung der Revision abgeschlossen; Snapshot konnte nicht gespeichert werden: {reason}",
+        "fr": "Mesure de la révision effectuée ; l’instantané n’a pas pu être enregistré : {reason}",
+        "ru": "Измерение версии завершено; не удалось сохранить снимок: {reason}",
+        "zh": "修订版本的字节测量已完成；无法保存快照：{reason}",
+        "ja": "リビジョンの計測は完了しましたが、スナップショットを保存できませんでした: {reason}",
+        "ko": "리비전 측정은 완료했지만 스냅샷을 저장할 수 없었습니다: {reason}",
+        "hi": "संस्करण का मापन पूरा हुआ; स्नैपशॉट सहेजा नहीं जा सका: {reason}"
+      }
+    },
+    {
+      "key": "archive_not_regular",
+      "en": "not a regular record",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "not a regular record",
+        "es": "no es un registro normal",
+        "de": "kein regulärer Datensatz",
+        "fr": "ce n’est pas un enregistrement ordinaire",
+        "ru": "не обычная запись",
+        "zh": "不是常规记录",
+        "ja": "通常の記録ではありません",
+        "ko": "일반 기록이 아님",
+        "hi": "सामान्य रिकॉर्ड नहीं है"
+      }
+    },
+    {
+      "key": "archive_scan_limit",
+      "en": "record exceeds archive scan limit",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "record exceeds archive scan limit",
+        "es": "el registro supera el límite de exploración del archivo de artefactos",
+        "de": "Datensatz überschreitet die Scan-Grenze des Archivs",
+        "fr": "l’enregistrement dépasse la limite d’analyse de l’archive",
+        "ru": "запись превышает лимит сканирования архива",
+        "zh": "记录超出归档扫描上限",
+        "ja": "記録がアーカイブのスキャン上限を超えています",
+        "ko": "기록이 아카이브 스캔 한도를 초과함",
+        "hi": "रिकॉर्ड आर्काइव की स्कैन सीमा से अधिक है"
+      }
+    },
+    {
+      "key": "archive_line_unreadable",
+      "en": "{path}: line {n} could not be read",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "{path}: line {n} could not be read",
+        "es": "{path}: no se pudo leer la línea {n}",
+        "de": "{path}: Zeile {n} konnte nicht gelesen werden",
+        "fr": "{path} : la ligne {n} n’a pas pu être lue",
+        "ru": "{path}: не удалось прочитать строку {n}",
+        "zh": "{path}：无法读取第 {n} 行",
+        "ja": "{path}: {n} 行目を読み取れませんでした",
+        "ko": "{path}: {n}번째 줄을 읽을 수 없었습니다",
+        "hi": "{path}: पंक्ति {n} पढ़ी नहीं जा सकी"
+      }
+    },
+    {
+      "key": "archive_path_unreadable",
+      "en": "Could not read {path}: {reason}",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "Could not read {path}: {reason}",
+        "es": "No se pudo leer {path}: {reason}",
+        "de": "{path} konnte nicht gelesen werden: {reason}",
+        "fr": "Impossible de lire {path} : {reason}",
+        "ru": "Не удалось прочитать {path}: {reason}",
+        "zh": "无法读取 {path}：{reason}",
+        "ja": "{path} を読み取れませんでした: {reason}",
+        "ko": "{path} 읽기에 실패했습니다: {reason}",
+        "hi": "{path} पढ़ा नहीं जा सका: {reason}"
+      }
+    }
+  ]
+}

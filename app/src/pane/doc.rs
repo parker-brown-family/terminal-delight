@@ -471,17 +471,22 @@ impl TerminalView {
             };
             strip = strip
                 .child(button(
-                    sk.control("−", "zoom out").into(),
+                    sk.control("−", crate::lang::current().strings().parts.ctl_zoom_out)
+                        .into(),
                     FloatHit::ZoomOut,
                 ))
                 .child(button(now, FloatHit::ZoomFit))
-                .child(button(sk.control("+", "zoom in").into(), FloatHit::ZoomIn))
+                .child(button(
+                    sk.control("+", crate::lang::current().strings().parts.ctl_zoom_in)
+                        .into(),
+                    FloatHit::ZoomIn,
+                ))
                 .child(div().w(px(4.)));
         }
         strip = strip
             .child(button(s.float_split.into(), FloatHit::Split))
             .child(button(s.float_desktop.into(), FloatHit::Desktop))
-            .child(button("✕ esc".into(), FloatHit::Close));
+            .child(button("✕ Esc".into(), FloatHit::Close));
         div()
             .absolute()
             .left(px(r.x))

@@ -1,0 +1,686 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "entries": [
+    {
+      "key": "ctl_about",
+      "en": "about",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "about",
+        "es": "aprox.",
+        "de": "ca.",
+        "fr": "env.",
+        "ru": "около",
+        "zh": "约",
+        "ja": "約",
+        "ko": "약",
+        "hi": "लगभग"
+      }
+    },
+    {
+      "key": "ctl_active",
+      "en": "active",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "active",
+        "es": "activo",
+        "de": "aktiv",
+        "fr": "actif",
+        "ru": "активно",
+        "zh": "活跃",
+        "ja": "アクティブ",
+        "ko": "활성",
+        "hi": "सक्रिय"
+      }
+    },
+    {
+      "key": "ctl_adopt",
+      "en": "adopt",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "adopt",
+        "es": "incorporar",
+        "de": "übernehmen",
+        "fr": "rattacher",
+        "ru": "присоединить",
+        "zh": "纳入项目",
+        "ja": "取り込む",
+        "ko": "프로젝트 편입",
+        "hi": "प्रोजेक्ट में लें"
+      }
+    },
+    {
+      "key": "ctl_anchor",
+      "en": "anchor",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "anchor",
+        "es": "anclar",
+        "de": "verankern",
+        "fr": "ancrer",
+        "ru": "закрепить",
+        "zh": "锚定",
+        "ja": "固定",
+        "ko": "고정",
+        "hi": "स्थिर करें"
+      }
+    },
+    {
+      "key": "ctl_available",
+      "en": "available",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "available",
+        "es": "disponible",
+        "de": "verfügbar",
+        "fr": "disponible",
+        "ru": "доступно",
+        "zh": "可用",
+        "ja": "利用可能",
+        "ko": "사용 가능",
+        "hi": "उपलब्ध"
+      }
+    },
+    {
+      "key": "ctl_awake",
+      "en": "awake",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "awake",
+        "es": "despierto",
+        "de": "wach",
+        "fr": "éveillé",
+        "ru": "бодрствует",
+        "zh": "醒着",
+        "ja": "起きている",
+        "ko": "깨어 있음",
+        "hi": "जागृत"
+      }
+    },
+    {
+      "key": "ctl_beside",
+      "en": "beside",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "beside",
+        "es": "al lado",
+        "de": "daneben",
+        "fr": "à côté",
+        "ru": "рядом",
+        "zh": "旁边",
+        "ja": "隣に",
+        "ko": "옆에",
+        "hi": "बगल में"
+      }
+    },
+    {
+      "key": "ctl_comment",
+      "en": "comment",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "comment",
+        "es": "comentar",
+        "de": "kommentieren",
+        "fr": "commenter",
+        "ru": "комментировать",
+        "zh": "评论",
+        "ja": "コメント",
+        "ko": "댓글",
+        "hi": "टिप्पणी करें"
+      }
+    },
+    {
+      "key": "ctl_copy",
+      "en": "copy",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "copy",
+        "es": "copiar",
+        "de": "kopieren",
+        "fr": "copier",
+        "ru": "копировать",
+        "zh": "复制",
+        "ja": "コピー",
+        "ko": "복사",
+        "hi": "कॉपी करें"
+      }
+    },
+    {
+      "key": "ctl_display",
+      "en": "display",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "display",
+        "es": "pantalla",
+        "de": "Anzeige",
+        "fr": "affichage",
+        "ru": "экран",
+        "zh": "显示",
+        "ja": "表示",
+        "ko": "화면",
+        "hi": "डिस्प्ले"
+      }
+    },
+    {
+      "key": "ctl_effects",
+      "en": "effects",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "effects",
+        "es": "efectos",
+        "de": "Effekte",
+        "fr": "effets",
+        "ru": "эффекты",
+        "zh": "特效",
+        "ja": "エフェクト",
+        "ko": "효과",
+        "hi": "प्रभाव"
+      }
+    },
+    {
+      "key": "ctl_find",
+      "en": "find",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "find",
+        "es": "buscar",
+        "de": "suchen",
+        "fr": "rechercher",
+        "ru": "найти",
+        "zh": "查找",
+        "ja": "検索",
+        "ko": "찾기",
+        "hi": "ढूँढें"
+      }
+    },
+    {
+      "key": "ctl_images",
+      "en": "images",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "images",
+        "es": "imágenes",
+        "de": "Bilder",
+        "fr": "images",
+        "ru": "изображения",
+        "zh": "图片",
+        "ja": "画像",
+        "ko": "이미지",
+        "hi": "छवियाँ"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: images is the standard French plural of image."
+    },
+    {
+      "key": "ctl_language",
+      "en": "language",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "language",
+        "es": "idioma",
+        "de": "Sprache",
+        "fr": "langue",
+        "ru": "язык",
+        "zh": "语言",
+        "ja": "言語",
+        "ko": "언어",
+        "hi": "भाषा"
+      }
+    },
+    {
+      "key": "ctl_launch",
+      "en": "launch",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "launch",
+        "es": "iniciar",
+        "de": "starten",
+        "fr": "lancer",
+        "ru": "запустить",
+        "zh": "启动",
+        "ja": "起動",
+        "ko": "실행",
+        "hi": "शुरू करें"
+      }
+    },
+    {
+      "key": "ctl_left",
+      "en": "left",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "left",
+        "es": "izquierda",
+        "de": "links",
+        "fr": "gauche",
+        "ru": "влево",
+        "zh": "向左",
+        "ja": "左へ",
+        "ko": "왼쪽",
+        "hi": "बाएँ"
+      }
+    },
+    {
+      "key": "ctl_lookup",
+      "en": "lookup",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "lookup",
+        "es": "buscar nombre",
+        "de": "Namenssuche",
+        "fr": "chercher par nom",
+        "ru": "поиск по имени",
+        "zh": "按名查找",
+        "ja": "名前検索",
+        "ko": "이름 검색",
+        "hi": "नाम खोजें"
+      }
+    },
+    {
+      "key": "ctl_maximize",
+      "en": "maximize",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "maximize",
+        "es": "maximizar",
+        "de": "maximieren",
+        "fr": "maximiser",
+        "ru": "развернуть",
+        "zh": "最大化",
+        "ja": "最大化",
+        "ko": "최대화",
+        "hi": "अधिकतम करें"
+      }
+    },
+    {
+      "key": "ctl_new",
+      "en": "new",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "new",
+        "es": "nuevo",
+        "de": "neu",
+        "fr": "nouveau",
+        "ru": "новое",
+        "zh": "新建",
+        "ja": "新規",
+        "ko": "새로 만들기",
+        "hi": "नया"
+      }
+    },
+    {
+      "key": "ctl_next",
+      "en": "next",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "next",
+        "es": "siguiente",
+        "de": "weiter",
+        "fr": "suivant",
+        "ru": "далее",
+        "zh": "下一个",
+        "ja": "次へ",
+        "ko": "다음",
+        "hi": "अगला"
+      }
+    },
+    {
+      "key": "ctl_notes",
+      "en": "notes",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "notes",
+        "es": "notas",
+        "de": "Notizen",
+        "fr": "notes",
+        "ru": "заметки",
+        "zh": "笔记",
+        "ja": "メモ",
+        "ko": "메모",
+        "hi": "नोट्स"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: notes is the standard French plural of note."
+    },
+    {
+      "key": "ctl_open",
+      "en": "open",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "open",
+        "es": "abrir",
+        "de": "öffnen",
+        "fr": "ouvrir",
+        "ru": "открыть",
+        "zh": "打开",
+        "ja": "開く",
+        "ko": "열기",
+        "hi": "खोलें"
+      }
+    },
+    {
+      "key": "ctl_paused",
+      "en": "paused",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "paused",
+        "es": "en pausa",
+        "de": "pausiert",
+        "fr": "en pause",
+        "ru": "приостановлено",
+        "zh": "已暂停",
+        "ja": "一時停止中",
+        "ko": "일시 중지됨",
+        "hi": "रुका हुआ"
+      }
+    },
+    {
+      "key": "ctl_plugins",
+      "en": "plugins",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "plugins",
+        "es": "complementos",
+        "de": "Plugins",
+        "fr": "plugins",
+        "ru": "плагины",
+        "zh": "插件",
+        "ja": "プラグイン",
+        "ko": "플러그인",
+        "hi": "प्लगइन"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: plugins is an established French term for software plugins."
+    },
+    {
+      "key": "ctl_previous",
+      "en": "previous",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "previous",
+        "es": "anterior",
+        "de": "zurück",
+        "fr": "précédent",
+        "ru": "назад",
+        "zh": "上一个",
+        "ja": "前へ",
+        "ko": "이전",
+        "hi": "पिछला"
+      }
+    },
+    {
+      "key": "ctl_refresh",
+      "en": "refresh",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "refresh",
+        "es": "actualizar",
+        "de": "aktualisieren",
+        "fr": "actualiser",
+        "ru": "обновить",
+        "zh": "刷新",
+        "ja": "更新",
+        "ko": "새로 고침",
+        "hi": "रीफ़्रेश"
+      }
+    },
+    {
+      "key": "ctl_remove",
+      "en": "remove",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "remove",
+        "es": "quitar",
+        "de": "entfernen",
+        "fr": "retirer",
+        "ru": "убрать",
+        "zh": "移除",
+        "ja": "取り除く",
+        "ko": "제거",
+        "hi": "निकालें"
+      }
+    },
+    {
+      "key": "ctl_reset",
+      "en": "reset",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "reset",
+        "es": "restablecer",
+        "de": "zurücksetzen",
+        "fr": "réinitialiser",
+        "ru": "сбросить",
+        "zh": "重置",
+        "ja": "リセット",
+        "ko": "초기화",
+        "hi": "रीसेट"
+      }
+    },
+    {
+      "key": "ctl_rest",
+      "en": "rest",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "rest",
+        "es": "descanso",
+        "de": "Pause",
+        "fr": "repos",
+        "ru": "отдых",
+        "zh": "休息",
+        "ja": "休憩",
+        "ko": "휴식",
+        "hi": "आराम"
+      }
+    },
+    {
+      "key": "ctl_selected",
+      "en": "selected",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "selected",
+        "es": "seleccionado",
+        "de": "ausgewählt",
+        "fr": "sélectionné",
+        "ru": "выбрано",
+        "zh": "已选中",
+        "ja": "選択済み",
+        "ko": "선택됨",
+        "hi": "चयनित"
+      }
+    },
+    {
+      "key": "ctl_send",
+      "en": "send",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "send",
+        "es": "enviar",
+        "de": "senden",
+        "fr": "envoyer",
+        "ru": "отправить",
+        "zh": "发送",
+        "ja": "送信",
+        "ko": "보내기",
+        "hi": "भेजें"
+      }
+    },
+    {
+      "key": "ctl_settings",
+      "en": "settings",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "settings",
+        "es": "ajustes",
+        "de": "Einstellungen",
+        "fr": "paramètres",
+        "ru": "настройки",
+        "zh": "设置",
+        "ja": "設定",
+        "ko": "설정",
+        "hi": "सेटिंग्स"
+      }
+    },
+    {
+      "key": "ctl_sleep",
+      "en": "sleep",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "sleep",
+        "es": "dormir",
+        "de": "schlafen",
+        "fr": "endormir",
+        "ru": "усыпить",
+        "zh": "休眠",
+        "ja": "スリープ",
+        "ko": "재우기",
+        "hi": "सुलाएँ"
+      }
+    },
+    {
+      "key": "ctl_total",
+      "en": "total",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "total",
+        "es": "total",
+        "de": "gesamt",
+        "fr": "total",
+        "ru": "всего",
+        "zh": "总计",
+        "ja": "合計",
+        "ko": "합계",
+        "hi": "कुल"
+      },
+      "same_as_english": [
+        "es",
+        "fr"
+      ],
+      "cognate_reason": "es/fr: total is the standard shared word for an aggregate amount."
+    },
+    {
+      "key": "ctl_up",
+      "en": "up",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "up",
+        "es": "arriba",
+        "de": "oben",
+        "fr": "haut",
+        "ru": "вверх",
+        "zh": "向上",
+        "ja": "上へ",
+        "ko": "위",
+        "hi": "ऊपर"
+      }
+    },
+    {
+      "key": "ctl_usage",
+      "en": "usage",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "usage",
+        "es": "uso",
+        "de": "Nutzung",
+        "fr": "utilisation",
+        "ru": "использование",
+        "zh": "用量",
+        "ja": "使用量",
+        "ko": "사용량",
+        "hi": "उपयोग"
+      }
+    },
+    {
+      "key": "ctl_window",
+      "en": "window",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "window",
+        "es": "ventana",
+        "de": "Fenster",
+        "fr": "fenêtre",
+        "ru": "окно",
+        "zh": "窗口",
+        "ja": "ウィンドウ",
+        "ko": "창",
+        "hi": "विंडो"
+      }
+    },
+    {
+      "key": "ctl_add_project",
+      "en": "ADD PROJECT",
+      "context": "Compact native text-control label in top/bottom bar. All-caps header; keep short.",
+      "width_cells": 16,
+      "translations": {
+        "en": "ADD PROJECT",
+        "es": "AÑADIR PROYECTO",
+        "de": "PROJEKT ANLEGEN",
+        "fr": "AJOUTER PROJET",
+        "ru": "ДОБАВИТЬ ПРОЕКТ",
+        "zh": "添加项目",
+        "ja": "プロジェクト追加",
+        "ko": "프로젝트 추가",
+        "hi": "प्रोजेक्ट जोड़ें"
+      }
+    },
+    {
+      "key": "ctl_config",
+      "en": "CONFIG",
+      "context": "Compact native text-control label in top/bottom bar. All-caps header; keep short.",
+      "width_cells": 16,
+      "translations": {
+        "en": "CONFIG",
+        "es": "CONFIGURACIÓN",
+        "de": "KONFIGURATION",
+        "fr": "CONFIGURATION",
+        "ru": "КОНФИГУРАЦИЯ",
+        "zh": "配置",
+        "ja": "設定",
+        "ko": "구성",
+        "hi": "कॉन्फ़िगरेशन"
+      }
+    }
+  ]
+}

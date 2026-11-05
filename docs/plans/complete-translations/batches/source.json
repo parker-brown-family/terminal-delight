@@ -1,0 +1,717 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "languages": [
+    "en",
+    "es",
+    "de",
+    "fr",
+    "ru",
+    "zh",
+    "ja",
+    "ko",
+    "hi"
+  ],
+  "entries": [
+    {
+      "key": "ctl_add",
+      "en": "add",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_hide",
+      "en": "hide",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_show",
+      "en": "show",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_warning",
+      "en": "warning",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_locked",
+      "en": "locked",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_agents",
+      "en": "agents",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_current",
+      "en": "current",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_close",
+      "en": "close",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_on",
+      "en": "on",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_off",
+      "en": "off",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_done",
+      "en": "done",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_blocked",
+      "en": "blocked",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_pinned",
+      "en": "pinned",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_pace",
+      "en": "pace",
+      "context": "Compact word replacing an icon in text-control skins. Opens token-usage pace.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_delete",
+      "en": "delete",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_size",
+      "en": "size",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_look",
+      "en": "look",
+      "context": "Compact word replacing an icon in text-control skins. Opens appearance settings.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_recover",
+      "en": "recover",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_notices",
+      "en": "notices",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_report",
+      "en": "report",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_artifacts",
+      "en": "artifacts",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_more",
+      "en": "more",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_download",
+      "en": "download",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_right",
+      "en": "right",
+      "context": "Compact word replacing an icon in text-control skins. Direction arrow, not the word correct.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_down",
+      "en": "down",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_light",
+      "en": "light",
+      "context": "Compact word replacing an icon in text-control skins. Image brightness.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_score",
+      "en": "score",
+      "context": "Compact word replacing an icon in text-control skins. Theme contrast score.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_asleep",
+      "en": "asleep",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_turns",
+      "en": "turns",
+      "context": "Compact word replacing an icon in text-control skins. Human messages in agent conversation.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_menu",
+      "en": "menu",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_zoom_out",
+      "en": "zoom out",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_zoom_in",
+      "en": "zoom in",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_fold",
+      "en": "fold",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_unfold",
+      "en": "unfold",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_custom",
+      "en": "custom",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_tabs",
+      "en": "TABS",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "ctl_split_right",
+      "en": "split right",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "ctl_split_down",
+      "en": "split down",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "ctl_custom_file",
+      "en": "custom file",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "ctl_spine",
+      "en": "SPINE",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "ctl_download_cdx",
+      "en": "download .cdx",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20
+    },
+    {
+      "key": "model_default",
+      "en": "Agent default",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_loading",
+      "en": "Loading models…",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_ready",
+      "en": "Installed agent catalog",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_unavailable",
+      "en": "Models unavailable · {reason}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_version_unknown",
+      "en": "{model} · version unknown",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_recommended",
+      "en": "Recommended · {model}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_retry",
+      "en": "{status} · retry",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_no_choices",
+      "en": "No reported choices · retry",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_requested_running",
+      "en": "{requested} requested · running {running}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_selected_unavailable",
+      "en": "Selected model unavailable · {status}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_choice_unavailable",
+      "en": "{choice} · unavailable",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60
+    },
+    {
+      "key": "model_error_1",
+      "en": "running executable not identified",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_2",
+      "en": "running profile unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_3",
+      "en": "agent rejected catalog request",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_4",
+      "en": "missing catalog response",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_5",
+      "en": "repeated catalog cursor",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_6",
+      "en": "too many catalog pages",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_7",
+      "en": "agent returned no visible models",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_8",
+      "en": "invalid catalog choice",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_9",
+      "en": "invalid effort list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_10",
+      "en": "missing Codex model list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_11",
+      "en": "missing model ID",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_12",
+      "en": "invalid effort level",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_13",
+      "en": "missing Claude model list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_14",
+      "en": "agent input unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_15",
+      "en": "agent output unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_error_16",
+      "en": "missing catalog result",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_output_limit",
+      "en": "{source} output exceeded limit",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_invalid_json",
+      "en": "invalid {source} JSON",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_read_error",
+      "en": "cannot read agent {source}",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_input_closed",
+      "en": "{source} input already closed",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_request_error",
+      "en": "cannot request agent {source}",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_flush_error",
+      "en": "cannot flush {source} request",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_timeout",
+      "en": "{source} request timed out",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "model_connection_closed",
+      "en": "agent closed {source} connection",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70
+    },
+    {
+      "key": "effort_none",
+      "en": "none",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_minimal",
+      "en": "minimal",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_low",
+      "en": "low",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_medium",
+      "en": "medium",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_high",
+      "en": "high",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_xhigh",
+      "en": "extra high",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_max",
+      "en": "maximum",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "effort_ultra",
+      "en": "ultra",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15
+    },
+    {
+      "key": "archive_unavailable",
+      "en": "unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_date",
+      "en": "{date} (local)",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_pending",
+      "en": "Some revision captures are still pending. Reopen the archive to refresh.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_conversation_unavailable",
+      "en": "Conversation unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_name_invalid",
+      "en": "Saved revision name is invalid.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_revision_unavailable",
+      "en": "Saved revision unavailable: {reason}",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_hash_changed",
+      "en": "Saved revision changed; its content hash no longer matches.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_current_exists",
+      "en": "Current file exists; bytes may have changed.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_current_unavailable",
+      "en": "Current file unavailable.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_remote_unchecked",
+      "en": "Remote link; availability not checked.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_open_revision",
+      "en": "Open captured revision",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_copy_unavailable",
+      "en": "Captured copy unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_no_record",
+      "en": "Revision unavailable: this handover has no capture record.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_open_target",
+      "en": "Open current target",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_cannot_open",
+      "en": "Target cannot be opened",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_source_revision",
+      "en": "Source and revision",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_origin",
+      "en": "Origin",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_target",
+      "en": "Target",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_identity",
+      "en": "Artifact identity",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_hash",
+      "en": "Revision SHA-256",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_handed",
+      "en": "Handed over",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_captured",
+      "en": "Captured",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_incomplete",
+      "en": "Some records could not be read. This archive is incomplete.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_title",
+      "en": "Artifact archive",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_intro",
+      "en": "Documents handed over in TD, including closed conversations. A captured revision preserves the file’s bytes at capture time. Linked images and other external resources are not copied.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_find",
+      "en": "Find a title, path or conversation",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_search",
+      "en": "Search saved artifacts",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_count_filtered",
+      "en": "{n} of {total} archive entries",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100
+    },
+    {
+      "key": "archive_count",
+      "en": {
+        "one": "{n} archive entry",
+        "few": "{n} archive entries",
+        "many": "{n} archive entries",
+        "other": "{n} archive entries"
+      },
+      "context": "Count of archived artifacts. Four plural forms required; Russian one/few/many must be natural."
+    },
+    {
+      "key": "help_footer",
+      "en": "Type to filter · Tab switches {shortcuts} / {features} · ↑ ↓ PgUp PgDn scroll · Esc clears, then closes",
+      "context": "Help footer. Preserve Tab, PgUp, PgDn, Esc. {shortcuts}/{features} are already translated tab names.",
+      "width_cells": 120
+    },
+    {
+      "key": "help_marks_off",
+      "en": "Alt+1 … 4 (marks off)",
+      "context": "Help key column; translate only marks off. Preserve Alt+1.",
+      "width_cells": 120
+    },
+    {
+      "key": "help_needs_me",
+      "en": "NEEDS ME",
+      "context": "Feature name in help; matches the attention rail meaning.",
+      "width_cells": 120
+    }
+  ]
+}

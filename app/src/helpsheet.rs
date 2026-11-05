@@ -21,6 +21,42 @@
 
 use crate::lang::Strings;
 
+#[cfg(test)]
+mod translation_tests {
+    #[test]
+    fn physical_key_names_remain_canonical_in_the_packs() {
+        for source in [
+            include_str!("lang.rs"),
+            include_str!("lang/help.rs"),
+            include_str!("lang/chrome.rs"),
+        ] {
+            for translated_key in [
+                "Strg", "Échap", "RePág", "AvPág", "Bild↑", "Bild↓", "PgPréc", "PgSuiv",
+            ] {
+                assert!(
+                    !source.contains(translated_key),
+                    "physical key translated: {translated_key}"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn footer_names_real_tabs_and_preserves_physical_keys_in_every_language() {
+        for l in crate::lang::Lang::ALL {
+            let s = l.strings();
+            let footer = super::footer(s);
+            for label in [s.shortcuts, s.features, "Tab", "PgUp", "PgDn", "Esc"] {
+                assert!(
+                    footer.contains(label),
+                    "{l:?}: {label} missing from {footer}"
+                );
+            }
+            assert!(!footer.contains('{'));
+        }
+    }
+}
+
 /// One line: what to press (or a feature's name) and what it does.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Row {
@@ -50,6 +86,14 @@ fn section(title: impl Into<String>, rows: Vec<Row>) -> Section {
         rows,
         feature: false,
     }
+}
+
+/// Footer names the actual translated tab labels and preserves physical keys.
+pub fn footer(s: &Strings) -> String {
+    crate::lang::fill(
+        s.parts.help_footer,
+        &[("shortcuts", s.shortcuts), ("features", s.features)],
+    )
 }
 
 /// The SHORTCUTS view, in reading order: the two halves of the sheet are cut
@@ -172,7 +216,7 @@ pub fn shortcuts(s: &Strings) -> Vec<Section> {
                 row("Ctrl+↑ / ↓", s.jump_msg),
                 row("Alt+R", s.focus),
                 row(s.k_focus_inherit_key, s.focus_inherit),
-                row("Alt+1 … 4 (marks off)", s.bench_shelf),
+                row(s.parts.help_marks_off, s.bench_shelf),
                 row("Alt+M", s.bench_note),
                 row("Alt+S", s.sticky),
                 row("Alt+Backspace", s.sticky_peel),
@@ -225,7 +269,7 @@ pub fn features(s: &Strings) -> Vec<Section> {
                 row("claude / codex", s.f_detect),
                 row(h.fk_launch, h.fd_launch),
                 row(h.fk_bench, h.fd_bench),
-                row("NEEDS ME", h.fd_needs),
+                row(s.parts.help_needs_me, h.fd_needs),
                 row(format!("\u{f06a9} {}", h.fk_floor), h.fd_floor),
                 row(h.fk_watch, h.fd_watch),
                 row(h.fk_access, h.fd_access),

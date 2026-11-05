@@ -452,24 +452,74 @@ fn file_url(path: &Path) -> String {
     out
 }
 
-fn date(ms: u64) -> String {
+fn date(ms: u64, l: crate::lang::Lang) -> String {
+    let p = l.strings().parts;
     handover::local(ms)
         .map(|c| {
-            format!(
-                "{:04}-{:02}-{:02} {:02}:{:02} (local)",
+            let date = format!(
+                "{:04}-{:02}-{:02} {:02}:{:02}",
                 c.year, c.month, c.day, c.hour, c.minute
-            )
+            );
+            crate::lang::fill(p.archive_date, &[("date", &date)])
         })
-        .unwrap_or_else(|| "unavailable".into())
+        .unwrap_or_else(|| p.archive_unavailable.into())
+}
+
+// Stored observations and operating-system errors remain language-free records.
+// Translate TD's own diagnostics only when a person opens the archive.
+fn diagnostic(reason: &str, l: crate::lang::Lang) -> String {
+    let p = l.strings().parts;
+    match reason {
+        "not a regular file within the capture limit" => return p.archive_file_limit.into(),
+        "file changed during capture" => return p.archive_file_changed.into(),
+        "Remote link; no local bytes captured." => return p.archive_remote.into(),
+        "saved revision failed its content hash" => return p.archive_saved_hash.into(),
+        "not a regular record" => return p.archive_not_regular.into(),
+        "record exceeds archive scan limit" => return p.archive_scan_limit.into(),
+        _ => {}
+    }
+    for (prefix, template) in [
+        ("Local revision unavailable: ", p.archive_local_missing),
+        (
+            "Revision measured; snapshot could not be saved: ",
+            p.archive_save_failed,
+        ),
+    ] {
+        if let Some(detail) = reason.strip_prefix(prefix) {
+            return crate::lang::fill(template, &[("reason", &diagnostic(detail, l))]);
+        }
+    }
+    if let Some((path, line)) = reason.rsplit_once(": line ") {
+        if let Some(n) = line.strip_suffix(" could not be read") {
+            return crate::lang::fill(p.archive_line_unreadable, &[("path", path), ("n", n)]);
+        }
+    }
+    if let Some(detail) = reason.strip_prefix("Could not read ") {
+        if let Some((path, why)) = detail.rsplit_once(": ") {
+            return crate::lang::fill(
+                p.archive_path_unreadable,
+                &[("path", path), ("reason", &diagnostic(why, l))],
+            );
+        }
+    }
+    // Path-prefixed record failures retain the exact path and OS diagnostics.
+    if let Some((path, why)) = reason.rsplit_once(": ") {
+        let translated = diagnostic(why, l);
+        return format!("{path}: {translated}");
+    }
+    reason.into()
 }
 
 pub fn write_page(store: &Path) -> io::Result<PathBuf> {
+    write_page_in(store, crate::lang::current())
+}
+
+fn write_page_in(store: &Path, l: crate::lang::Lang) -> io::Result<PathBuf> {
+    let p = l.strings().parts;
     let completed = drain();
     let mut archive = load(store);
     if !completed {
-        archive.problems.push(
-            "Some revision captures are still pending. Reopen the archive to refresh.".into(),
-        );
+        archive.problems.push(p.archive_pending.into());
     }
     let mut rows = String::new();
     let mut checked: HashMap<String, Result<PathBuf, String>> = HashMap::new();
@@ -477,7 +527,7 @@ pub fn write_page(store: &Path) -> io::Result<PathBuf> {
         let origin = entry
             .origin
             .as_deref()
-            .unwrap_or("Conversation unavailable");
+            .unwrap_or(p.archive_conversation_unavailable);
         let observation = entry.observation.as_ref();
         let revision = observation.and_then(|o| o.revision.as_deref());
         let saved = observation.and_then(|o| o.snapshot.as_deref()).map(|name| {
@@ -485,14 +535,16 @@ pub fn write_page(store: &Path) -> io::Result<PathBuf> {
                 .entry(name.to_string())
                 .or_insert_with(|| {
                     let path = snapshot_path(store, name)
-                        .ok_or_else(|| "Saved revision name is invalid.".to_string())?;
+                        .ok_or_else(|| p.archive_name_invalid.to_string())?;
                     let expected = name.split_once('.').map(|(hash, _)| hash).unwrap_or("");
-                    let bytes = read_regular(&path, CAPTURE_LIMIT)
-                        .map_err(|e| format!("Saved revision unavailable: {e}"))?;
+                    let bytes = read_regular(&path, CAPTURE_LIMIT).map_err(|e| {
+                        crate::lang::fill(
+                            p.archive_revision_unavailable,
+                            &[("reason", &diagnostic(&e.to_string(), l))],
+                        )
+                    })?;
                     if digest(&bytes) != expected {
-                        return Err(
-                            "Saved revision changed; its content hash no longer matches.".into(),
-                        );
+                        return Err(p.archive_hash_changed.into());
                     }
                     Ok(path)
                 })
@@ -502,26 +554,27 @@ pub fn write_page(store: &Path) -> io::Result<PathBuf> {
         let saved = saved.and_then(Result::ok);
         let live = handover::file_path(&entry.handed.href);
         let current = match live.as_ref() {
-            Some(path) if path.is_file() => "Current file exists; bytes may have changed.",
-            Some(_) => "Current file unavailable.",
-            None => "Remote link; availability not checked.",
+            Some(path) if path.is_file() => p.archive_current_exists,
+            Some(_) => p.archive_current_unavailable,
+            None => p.archive_remote_unchecked,
         };
         let snapshot = saved
             .map(|path| {
                 format!(
-                    "<a href=\"{}\">Open captured revision</a>",
-                    html(&file_url(&path))
+                    "<a href=\"{}\">{}</a>",
+                    html(&file_url(&path)),
+                    html(p.archive_open_revision)
                 )
             })
-            .unwrap_or_else(|| "<span>Captured copy unavailable</span>".into());
+            .unwrap_or_else(|| format!("<span>{}</span>", html(p.archive_copy_unavailable)));
         let reason = observation
             .and_then(|o| o.unavailable.as_deref())
             .unwrap_or(if observation.is_none() {
-                "Revision unavailable: this handover has no capture record."
+                p.archive_no_record
             } else {
                 ""
             });
-        let reason = snapshot_problem.as_deref().unwrap_or(reason);
+        let reason = snapshot_problem.unwrap_or_else(|| diagnostic(reason, l));
         let target = match live.as_ref() {
             Some(path) => Some(file_url(path)),
             None if entry.handed.href.starts_with("https://")
@@ -532,34 +585,54 @@ pub fn write_page(store: &Path) -> io::Result<PathBuf> {
             None => None,
         };
         let current_link = target
-            .map(|href| format!("<a href=\"{}\">Open current target</a>", html(&href)))
-            .unwrap_or_else(|| "Target cannot be opened".into());
+            .map(|href| {
+                format!(
+                    "<a href=\"{}\">{}</a>",
+                    html(&href),
+                    html(p.archive_open_target)
+                )
+            })
+            .unwrap_or_else(|| html(p.archive_cannot_open));
         let search = format!("{} {} {}", entry.handed.label, entry.handed.href, origin);
         rows.push_str(&format!(
-            "<article data-search=\"{}\"><h2>{}</h2><p>{current_link} · {snapshot}</p><p>{current} {}</p><details><summary>Source and revision</summary><p>Origin: {}</p><p>Target: {}</p><p>Artifact identity: <code>{}</code></p><p>Revision SHA-256: <code>{}</code></p><p>Handed over: {} · Captured: {}</p></details></article>",
-            html(&search.to_lowercase()), html(&entry.handed.label),
-            html(reason), html(origin), html(&entry.handed.href), entry.id,
-            revision.map(html).unwrap_or_else(|| "unavailable".into()), date(entry.handed.at_ms),
-            entry.captured_ms.map(date).unwrap_or_else(|| "unavailable".into())
+            "<article data-search=\"{}\"><h2>{}</h2><p>{current_link} · {snapshot}</p><p>{} {}</p><details><summary>{}</summary><p>{}: {}</p><p>{}: {}</p><p>{}: <code>{}</code></p><p>{}: <code>{}</code></p><p>{}: {} · {}: {}</p></details></article>",
+            html(&search.to_lowercase()), html(&entry.handed.label), html(current), html(&reason),
+            html(p.archive_source_revision), html(p.archive_origin), html(origin),
+            html(p.archive_target), html(&entry.handed.href), html(p.archive_identity), entry.id,
+            html(p.archive_hash), revision.map(html).unwrap_or_else(|| html(p.archive_unavailable)),
+            html(p.archive_handed), html(&date(entry.handed.at_ms, l)), html(p.archive_captured),
+            entry.captured_ms.map(|ms| html(&date(ms, l))).unwrap_or_else(|| html(p.archive_unavailable))
         ));
     }
     let problems: String = archive
         .problems
         .iter()
-        .map(|p| format!("<li>{}</li>", html(p)))
+        .map(|p| format!("<li>{}</li>", html(&diagnostic(p, l))))
         .collect();
     let warning = if problems.is_empty() {
         String::new()
     } else {
-        format!("<aside>Some records could not be read. This archive is incomplete.<ul>{problems}</ul></aside>")
+        format!(
+            "<aside>{}<ul>{problems}</ul></aside>",
+            html(p.archive_incomplete)
+        )
     };
+    let title = html(p.archive_title);
+    let intro = html(p.archive_intro);
+    let find = html(p.archive_find);
+    let search = html(p.archive_search);
+    let count = html(&l.count(&p.archive_count, archive.entries.len()));
+    // JSON plus '<' escaping prevents a translated string from ending script.
+    let filtered = serde_json::to_string(p.archive_count_filtered)
+        .expect("string JSON")
+        .replace('<', "\\u003c");
+    let language = l.code();
     let body = format!(
-        r#"<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Artifact archive</title><style>
+        r#"<!doctype html><html lang="{language}"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>{title}</title><style>
 :root{{color-scheme:dark}}body{{margin:0 auto;padding:24px;max-width:900px;background:#111827;color:#e5e7eb;font:16px/1.55 system-ui}}h1{{font-size:28px}}h2{{font-size:19px;margin:0}}a{{color:#93c5fd}}input{{box-sizing:border-box;width:100%;padding:12px;background:#1f2937;color:inherit;border:1px solid #6b7280;border-radius:6px;font:inherit}}article{{padding:20px 0;border-bottom:1px solid #374151}}p{{margin:8px 0}}details{{font-size:13px;color:#cbd5e1;overflow-wrap:anywhere}}aside{{padding:14px;background:#512e19}}code{{overflow-wrap:anywhere}}[hidden]{{display:none}}
-</style><h1>Artifact archive</h1><p>Documents handed over in TD, including closed conversations. A captured revision preserves the file's bytes at capture time. Linked images and other external resources are not copied.</p><label for="search">Find a title, path or conversation</label><input id="search" type="search" placeholder="Search saved artifacts"><p id="count">{} archive entries</p>{warning}<main>{rows}</main><script>
-const rows=[...document.querySelectorAll('article')],input=document.querySelector('input'),count=document.querySelector('#count');input.addEventListener('input',()=>{{const q=input.value.toLowerCase();let n=0;for(const row of rows){{row.hidden=!row.dataset.search.includes(q);if(!row.hidden)n++;}}count.textContent=n+' of '+rows.length+' archive entries';}});
-</script></html>"#,
-        archive.entries.len()
+</style><h1>{title}</h1><p>{intro}</p><label for="search">{find}</label><input id="search" type="search" placeholder="{search}"><p id="count">{count}</p>{warning}<main>{rows}</main><script>
+const rows=[...document.querySelectorAll('article')],input=document.querySelector('input'),count=document.querySelector('#count');input.addEventListener('input',()=>{{const q=input.value.toLowerCase();let n=0;for(const row of rows){{row.hidden=!row.dataset.search.includes(q);if(!row.hidden)n++;}}count.textContent={filtered}.replaceAll('{{n}}',n).replaceAll('{{total}}',rows.length);}});
+</script></html>"#
     );
     let path = store.join("artifact-archive.html");
     handover::write_if_changed(&path, &body)?;

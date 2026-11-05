@@ -1,0 +1,38 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-keep-complete-words-where-a-soft-estimate-is-too",
+      "at": "2026-11-05T04:46Z",
+      "title": "Keep complete words where a soft estimate is too small",
+      "context": null,
+      "chose": "Retain the full French name-lookup and Hindi adoption labels, with their width estimates recorded.",
+      "because": "Meaning is clearer than an unverified abbreviation; the width budget is a translator estimate rather than a measured pixel slot. Translation wording is delegated in TRANSLATING.md.",
+      "passed_over": [],
+      "undo": "Edit the batch value and corresponding language field, verify the installed matrix, and photograph the affected slot.",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "width-report.json",
+          "sha256": "sha256:9676db9be8b6f050f857fccdee937191d459458a2d9f387a0a1b9b2b23ba5986",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

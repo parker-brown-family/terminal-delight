@@ -1,0 +1,2571 @@
+{
+  "schema": "td-i18n-inventory/1",
+  "base": "ea393457",
+  "scope": "Native app; docsite excluded. Includes all detector candidates plus separately reviewed dynamic strings in batches.",
+  "candidates": [
+    {
+      "file": "app/src/access.rs",
+      "line": 139,
+      "literal": "MCP writes are on",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 140,
+      "literal": "plain shells are shown to agents",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 141,
+      "literal": "agents' tool calls are shown to agents",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 155,
+      "literal": "MCP writes stay off",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 156,
+      "literal": "only agent panes are shown to agents",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 157,
+      "literal": "agents' tool calls stay hidden",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 167,
+      "literal": "the pane",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 289,
+      "literal": "this change is about one pane, and none was named",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/access.rs",
+      "line": 307,
+      "literal": "a bypass is to one pane, and none was named",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/artifact_archive.rs",
+      "line": 505,
+      "literal": "Current file exists; bytes may have changed.",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/artifact_archive.rs",
+      "line": 506,
+      "literal": "Current file unavailable.",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/artifact_archive.rs",
+      "line": 507,
+      "literal": "Remote link; availability not checked.",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/attention.rs",
+      "line": 135,
+      "literal": "Asks you to change its access",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "reason_in() already supplies localized human captions. English reason() serves tests and data."
+    },
+    {
+      "file": "app/src/attention.rs",
+      "line": 136,
+      "literal": "Stopped at a prompt",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "reason_in() already supplies localized human captions. English reason() serves tests and data."
+    },
+    {
+      "file": "app/src/attention.rs",
+      "line": 137,
+      "literal": "Finished against a wall",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "reason_in() already supplies localized human captions. English reason() serves tests and data."
+    },
+    {
+      "file": "app/src/attention.rs",
+      "line": 138,
+      "literal": "Finished, not yet seen",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "reason_in() already supplies localized human captions. English reason() serves tests and data."
+    },
+    {
+      "file": "app/src/attention.rs",
+      "line": 141,
+      "literal": "Screen could not be read",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "reason_in() already supplies localized human captions. English reason() serves tests and data."
+    },
+    {
+      "file": "app/src/benchdraw.rs",
+      "line": 522,
+      "literal": "add",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/benchdraw.rs",
+      "line": 532,
+      "literal": "ALT+M",
+      "reader": "person",
+      "disposition": "retained-key",
+      "reason": "Alt+M is a physical keycap."
+    },
+    {
+      "file": "app/src/benchdraw.rs",
+      "line": 4109,
+      "literal": "hide",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/benchdraw.rs",
+      "line": 4109,
+      "literal": "show",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/benchstore.rs",
+      "line": 1208,
+      "literal": "unusable reference",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/coordination.rs",
+      "line": 797,
+      "literal": "These panes represent one known session",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Structured hotspot reason/qualification is stable MCP data; overlay derives localized captions with attention_summary_in/render_coordination."
+    },
+    {
+      "file": "app/src/coordination.rs",
+      "line": 798,
+      "literal": "Occupancy is observed; concurrent writes are not established",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Structured hotspot reason/qualification is stable MCP data; overlay derives localized captions with attention_summary_in/render_coordination."
+    },
+    {
+      "file": "app/src/coordination.rs",
+      "line": 799,
+      "literal": "Distinct agent/session identities are unknown",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Structured hotspot reason/qualification is stable MCP data; overlay derives localized captions with attention_summary_in/render_coordination."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 164,
+      "literal": "mcp on",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 165,
+      "literal": "mcp off",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 166,
+      "literal": "mcp writes on",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 167,
+      "literal": "mcp writes off",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 168,
+      "literal": "mcp expose all",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 169,
+      "literal": "mcp expose agents",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1839,
+      "literal": "bench choose",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1840,
+      "literal": "bench submit",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1841,
+      "literal": "bench probe",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1842,
+      "literal": "bench say",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1843,
+      "literal": "bench type",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1844,
+      "literal": "doc here",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1845,
+      "literal": "doc beside",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1846,
+      "literal": "doc close",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1847,
+      "literal": "doc scroll",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1848,
+      "literal": "doc notes",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/ctl.rs",
+      "line": 1849,
+      "literal": "doc note",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/defaultterm.rs",
+      "line": 323,
+      "literal": "no list — xdg-terminal-exec picks the first terminal it finds",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/docview/notes.rs",
+      "line": 810,
+      "literal": " · 1 concur",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Copied note map is written for agents."
+    },
+    {
+      "file": "app/src/docview/notes.rs",
+      "line": 852,
+      "literal": " · 1 picture",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Copied note map is written for agents."
+    },
+    {
+      "file": "app/src/docview/notes_ui.rs",
+      "line": 1793,
+      "literal": "label",
+      "reader": "program-or-audit",
+      "disposition": "detector-noise",
+      "reason": "JSON property name or fill placeholder; visible note labels already translated."
+    },
+    {
+      "file": "app/src/docview/notes_ui.rs",
+      "line": 2082,
+      "literal": "add",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/docview/notes_ui.rs",
+      "line": 2363,
+      "literal": "why",
+      "reader": "program-or-audit",
+      "disposition": "detector-noise",
+      "reason": "JSON property name or fill placeholder; visible note labels already translated."
+    },
+    {
+      "file": "app/src/engstate.rs",
+      "line": 1589,
+      "literal": "no checkout in use",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "badge/sentence/report serve engineering_state MCP. Human panel now renders localized coordination data."
+    },
+    {
+      "file": "app/src/engstate.rs",
+      "line": 1590,
+      "literal": "one line of work",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "badge/sentence/report serve engineering_state MCP. Human panel now renders localized coordination data."
+    },
+    {
+      "file": "app/src/engstate.rs",
+      "line": 1595,
+      "literal": "one line of work, shared",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "badge/sentence/report serve engineering_state MCP. Human panel now renders localized coordination data."
+    },
+    {
+      "file": "app/src/fav.rs",
+      "line": 51,
+      "literal": "set:{}",
+      "reader": "program-or-audit",
+      "disposition": "detector-noise",
+      "reason": "Stable saved favourite key, not a label."
+    },
+    {
+      "file": "app/src/launcher.rs",
+      "line": 569,
+      "literal": "\\n\\nThis is launch context only. Wait for the user to give a task. Acknowledge briefly; do not create a brief for this startup message.",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 9820,
+      "literal": "err no allowed pane is showing its bench; an off-limits pane takes no scripted pointer or probe",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 10856,
+      "literal": "{effort} · unavailable",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 10884,
+      "literal": "hide",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 10886,
+      "literal": "show",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 11345,
+      "literal": "hide",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 11347,
+      "literal": "show",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 11659,
+      "literal": "Lean",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 11666,
+      "literal": "CTX",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 13321,
+      "literal": "warning",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 17602,
+      "literal": "query",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 18007,
+      "literal": "locked",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 18566,
+      "literal": "agents",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 18821,
+      "literal": "current",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 18860,
+      "literal": "query",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 19139,
+      "literal": "Agent default",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 19160,
+      "literal": "{effort} · unavailable",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 19596,
+      "literal": "close",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 20660,
+      "literal": "on",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 20662,
+      "literal": "off",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 24622,
+      "literal": "done",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 24626,
+      "literal": "blocked",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 24650,
+      "literal": "TABS",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 24745,
+      "literal": "split right",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 24746,
+      "literal": "split down",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 25606,
+      "literal": "pinned",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 25622,
+      "literal": "close",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 26016,
+      "literal": "pace",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 26022,
+      "literal": "delete",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 26607,
+      "literal": "agents",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 27855,
+      "literal": "on",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 28004,
+      "literal": "esc",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 29090,
+      "literal": "close",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 29226,
+      "literal": "pinned ",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 29228,
+      "literal": "pinned",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 31873,
+      "literal": "SPINE",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32011,
+      "literal": "size",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32094,
+      "literal": "size",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32108,
+      "literal": "size",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32262,
+      "literal": "look",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32277,
+      "literal": "gauges",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32303,
+      "literal": "agents",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32328,
+      "literal": "recover",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32354,
+      "literal": "notices",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32383,
+      "literal": "report",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32444,
+      "literal": "artifacts",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32466,
+      "literal": "more",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32941,
+      "literal": "custom file",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32943,
+      "literal": "TERMINIMALIST",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33551,
+      "literal": "theme",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33554,
+      "literal": "note",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33557,
+      "literal": "design",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33561,
+      "literal": "skin",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33565,
+      "literal": "colour",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 33567,
+      "literal": "syntax",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 35024,
+      "literal": "mcps-{}",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 35629,
+      "literal": "warning",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36623,
+      "literal": "kind",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36686,
+      "literal": "on",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36748,
+      "literal": "download .cdx",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36776,
+      "literal": "enter",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36827,
+      "literal": "recover",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36838,
+      "literal": "{n_claude} claude \\u{00b7} {n_codex} codex",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 36862,
+      "literal": "download",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 37147,
+      "literal": "XL",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 37434,
+      "literal": "right",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 37449,
+      "literal": "down",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 37705,
+      "literal": "close",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 38850,
+      "literal": "Ctrl+↑↓ · Esc",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 50631,
+      "literal": "CLAUDE",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 50632,
+      "literal": "CODEX",
+      "reader": "program-or-audit",
+      "disposition": "retained-name-or-noise",
+      "reason": "Reviewed: protocol error, provider/brand name, physical keycap, size acronym, internal fold/id or fill placeholder."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2240,
+      "literal": "— terminal-delight · instance unknown: this answer names no window",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2529,
+      "literal": "a manager: lines run to you and from you",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2530,
+      "literal": "a worker: lines run to you and none from you",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2531,
+      "literal": "seated alone: no line runs to you or from you",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2739,
+      "literal": "an unknown number of tokens",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 2744,
+      "literal": "and the person presses Yes for every copy",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 3522,
+      "literal": "nothing to draw",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 3724,
+      "literal": "not kept yet",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/mcp.rs",
+      "line": 3725,
+      "literal": "not saved into the file yet",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/model_catalog.rs",
+      "line": 117,
+      "literal": "Loading models…",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/model_catalog.rs",
+      "line": 145,
+      "literal": "Installed agent catalog",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/paint.rs",
+      "line": 547,
+      "literal": "light",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/paint.rs",
+      "line": 638,
+      "literal": "score",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 110,
+      "literal": "SHELL",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 111,
+      "literal": "CLAUDE",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 112,
+      "literal": "CODEX",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 113,
+      "literal": "REMOTE",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 114,
+      "literal": "LOCAL",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 119,
+      "literal": "UNKNOWN",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_i18n() supplies UI labels; label() supplies stable mode data."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 12158,
+      "literal": "asleep",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 12273,
+      "literal": "turns",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 12690,
+      "literal": "add",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 12963,
+      "literal": "turns",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 12983,
+      "literal": "focus",
+      "reader": "person",
+      "disposition": "translated-existing",
+      "reason": "Uses the existing pane_overflow_focus field."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 13004,
+      "literal": "look",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 13047,
+      "literal": "menu",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane.rs",
+      "line": 13119,
+      "literal": "close",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 474,
+      "literal": "zoom out",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 478,
+      "literal": "zoom in",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 484,
+      "literal": "✕ esc",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 880,
+      "literal": "err the square over your pane holds notes not yet saved, so it stays — they have to be saved or dropped first",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 1780,
+      "literal": "the page is not laid out yet",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 1784,
+      "literal": "an image takes no notes",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 1785,
+      "literal": "a video takes no notes",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 1786,
+      "literal": "a sound takes no notes",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/doc.rs",
+      "line": 1787,
+      "literal": "a PDF takes no notes",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/pane/handed.rs",
+      "line": 543,
+      "literal": "on",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/pane/handed.rs",
+      "line": 597,
+      "literal": "more",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/prompt.rs",
+      "line": 773,
+      "literal": "showing a picker for its person",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/prompt.rs",
+      "line": 774,
+      "literal": "being typed in by its person",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/prompt.rs",
+      "line": 778,
+      "literal": "coming to rest",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/recover.rs",
+      "line": 25,
+      "literal": "CLAUDE",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Claude/Codex proper names."
+    },
+    {
+      "file": "app/src/recover.rs",
+      "line": 26,
+      "literal": "CODEX",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Claude/Codex proper names."
+    },
+    {
+      "file": "app/src/session.rs",
+      "line": 292,
+      "literal": "codex resume --last",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/skin/parts.rs",
+      "line": 16,
+      "literal": "on",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/skin/parts.rs",
+      "line": 16,
+      "literal": "off",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1240,
+      "literal": "HTML",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1241,
+      "literal": "MD",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1242,
+      "literal": "PDF",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1243,
+      "literal": "JSON",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1244,
+      "literal": "CSV",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1245,
+      "literal": "TXT",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1257,
+      "literal": "HTML",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1258,
+      "literal": "MD",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1259,
+      "literal": "PDF",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1260,
+      "literal": "JSON",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1261,
+      "literal": "CSV",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surface.rs",
+      "line": 1262,
+      "literal": "TXT",
+      "reader": "person",
+      "disposition": "retained-name",
+      "reason": "Standard file-format acronym; non-acronym format labels already use the pack."
+    },
+    {
+      "file": "app/src/surfacefeed.rs",
+      "line": 631,
+      "literal": "patch",
+      "reader": "program-or-audit",
+      "disposition": "retained-example",
+      "reason": "Illustrative user-authored source patch in demo fixture, not application chrome."
+    },
+    {
+      "file": "app/src/surfacefeed.rs",
+      "line": 631,
+      "literal": "+.child(if on_bench { bench_el } else { grid })",
+      "reader": "program-or-audit",
+      "disposition": "retained-example",
+      "reason": "Illustrative user-authored source patch in demo fixture, not application chrome."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 895,
+      "literal": "MCP is switched off in this window",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 896,
+      "literal": "no line from your seat reaches this pane as far as ask; only a person draws one, in the Threshing Floor, or grants a bypass on the rail",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 897,
+      "literal": "that pane is off-limits to agents",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 898,
+      "literal": "that pane is not running an agent",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 899,
+      "literal": "that is your own pane",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 900,
+      "literal": "the question is empty or longer than 4,000 characters",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 901,
+      "literal": "the asking pane or the pane asked is not in this window",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 902,
+      "literal": "a read-only copy can be made of a Claude or Codex agent only",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 903,
+      "literal": "your earlier copy is still running or waiting for a person; read it with ask_answer first",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 904,
+      "literal": "the agent in that pane has not named its conversation, so a copy would be of a guess",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 905,
+      "literal": "another pane names the same conversation, so a copy could be of the wrong agent",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 906,
+      "literal": "the copy came up able to do more than read, and was stopped before it answered",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 907,
+      "literal": "this version of the agent program has not been checked for read-only copies",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 908,
+      "literal": "no copy ask by that id was made from your pane",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 909,
+      "literal": "no line from your seat reaches this pane as far as prompt; only a person draws one, in the Threshing Floor",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 910,
+      "literal": "that pane is read-only: it can be asked, never prompted",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 911,
+      "literal": "the prompt is empty or longer than 32,000 characters",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 912,
+      "literal": "your earlier prompt to that pane has not finished; read it with prompt_status first",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 913,
+      "literal": "no prompt by that id was sent from your pane",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor.rs",
+      "line": 914,
+      "literal": "the prompt key record is unavailable; this request sent no work. Repair the record or storage, then restart Terminal Delight before retrying that key",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "Agent/control-protocol answer or launch prompt; keep stable English. Physical key Esc stays a keycap."
+    },
+    {
+      "file": "app/src/threshing_floor_view.rs",
+      "line": 1464,
+      "literal": "off",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/threshing_floor_view.rs",
+      "line": 4647,
+      "literal": "add",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/threshing_floor_view.rs",
+      "line": 4922,
+      "literal": "right",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/threshing_floor_view.rs",
+      "line": 4924,
+      "literal": "right",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Drawn from the nine-language pack; batch contains source and translations."
+    },
+    {
+      "file": "app/src/uiconfig.rs",
+      "line": 505,
+      "literal": "shown (no opinion)",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 605,
+      "literal": "protected from the ADMIN tools",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 685,
+      "literal": "exported and verified, then removed",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 686,
+      "literal": "removed without an export",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 694,
+      "literal": "not present",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 695,
+      "literal": "unknown, part of it cannot be read",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall.rs",
+      "line": 696,
+      "literal": "unknown, it cannot be looked at",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 359,
+      "literal": "exported and verified; ",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 360,
+      "literal": "the export did not finish, so none were removed; ",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 971,
+      "literal": "none running",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1091,
+      "literal": "refresh desktop and icon caches",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1125,
+      "literal": "Terminal Delight was not removed",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1126,
+      "literal": "Terminal Delight was removed",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1127,
+      "literal": "Terminal Delight was removed in part",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1147,
+      "literal": "not attempted",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/apply.rs",
+      "line": 1148,
+      "literal": "FAILED",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/plan.rs",
+      "line": 625,
+      "literal": "{name}, installed by TD ({})",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/uninstall/plan.rs",
+      "line": 896,
+      "literal": "content unrecognised",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/update.rs",
+      "line": 2173,
+      "literal": "your package manager owns this install — update it there",
+      "reader": "program-or-audit",
+      "disposition": "retained-cli",
+      "reason": "CLI output, saved protocol value or engine diagnostic; not a native UI caption."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 235,
+      "literal": "RUN",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 236,
+      "literal": "WATCH",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 237,
+      "literal": "COMPACT",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 238,
+      "literal": "HAND OFF",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 239,
+      "literal": "STOP",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 240,
+      "literal": "NO READING",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 1086,
+      "literal": "repeating calls it has already made",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 1087,
+      "literal": "turns slowing per token produced",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/vitals.rs",
+      "line": 1088,
+      "literal": "re-reading what it already had",
+      "reader": "program-or-audit",
+      "disposition": "retained-machine",
+      "reason": "label_in() supplies UI verdicts; raw verdict/fatigue prose serves CLI assessment and copied agent context."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 28852,
+      "source_base": "361d0644",
+      "literal": "ADD PROJECT",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Unboxed project action now uses ctl_add_project; bezel helper recognized by detector."
+    },
+    {
+      "file": "app/src/main.rs",
+      "line": 32687,
+      "source_base": "361d0644",
+      "literal": "ADD PROJECT",
+      "reader": "person",
+      "disposition": "translated",
+      "reason": "Unboxed project action now uses ctl_add_project; bezel helper recognized by detector."
+    }
+  ],
+  "reviewed_mixed_surfaces": [
+    "access.rs ask_words/ask_words_reading are localized; done_words/kept_words/pane_words and refusals remain agent English.",
+    "Model catalog: typed UI captions and status, stable model IDs and raw diagnostic data.",
+    "Archive: localized generated page and TD-owned capture diagnostics; stored records and OS errors stay original.",
+    "Help: actual tab captions interpolated into translated footer; physical keycaps canonical.",
+    "Update panel: localized install captions/refusals/no-offer/not-installable states; release notes, commands and OS failure details retain their source.",
+    "Provider-supplied usage-limit titles remain source data: usage.rs documents their provenance, and window_seconds/tick_count parse the original labels. The translated UI wraps that data; provider text is not rewritten."
+  ],
+  "counts": {
+    "retained-machine": 94,
+    "translated": 79,
+    "retained-key": 1,
+    "retained-cli": 22,
+    "detector-noise": 3,
+    "retained-name-or-noise": 21,
+    "translated-existing": 1,
+    "retained-name": 14,
+    "retained-example": 2
+  },
+  "excluded_after_call_trace": [
+    {
+      "key": "update_host_older",
+      "en": "this build was proven against this window’s build, and your terminals’ host runs an older one",
+      "reader": "engine/CLI",
+      "decision": "Do not add an unused UI field. Current human restart panel already has a translated wire warning; the detailed reason is engine/CLI data."
+    },
+    {
+      "key": "update_wire_changed",
+      "en": "this build changes how the window talks to your terminals",
+      "reader": "engine/CLI",
+      "decision": "Do not add an unused UI field. Current human restart panel already has a translated wire warning; the detailed reason is engine/CLI data."
+    },
+    {
+      "key": "update_host_unknown",
+      "en": "the session host of {hosts} runs a build TD cannot vouch for",
+      "reader": "engine/CLI",
+      "decision": "Do not add an unused UI field. Current human restart panel already has a translated wire warning; the detailed reason is engine/CLI data."
+    },
+    {
+      "key": "ctl_config",
+      "en": "CONFIG",
+      "reader": "person",
+      "decision": "Existing product/menu name, intentionally shared across languages by lang.rs SAME_AS_ENGLISH. Preserve established naming and avoid duplicate field."
+    }
+  ],
+  "native_findings": [
+    {
+      "surface": "Text-control skin",
+      "finding": "Icon-only controls went through skin::words::label and returned English after ordinary captions were translated.",
+      "resolution": "Each icon now carries a typed language-pack caption function; control_text_in renders by reader language."
+    },
+    {
+      "surface": "Unboxed top bar",
+      "finding": "ADD PROJECT bypassed the ordinary .child detector through bezel_btn_s.",
+      "resolution": "Translated field; detector recognizes bezel helpers even across rustfmt line breaks."
+    },
+    {
+      "surface": "CONFIG menu",
+      "finding": "CONFIG remains English in the screenshots.",
+      "resolution": "Intentional established product/menu name, already allowed in lang.rs; preserve it."
+    },
+    {
+      "surface": "Text-control painter tile",
+      "finding": "Japanese desktop tile displayed only D. split_lead kept the translated word in Entry.second; the text-control renderer drew only key+rest.",
+      "resolution": "text_tile_label includes second and preserves the physical shortcut. Regression checks all nine desktop captions and hyphenated theme names."
+    }
+  ],
+  "related_issues": {
+    "compact_text_controls": "https://github.com/parker-brown-family/terminal-delight/issues/1228",
+    "model_catalog_states": "https://github.com/parker-brown-family/terminal-delight/issues/1068",
+    "engineering_report_invalidation": "https://github.com/parker-brown-family/terminal-delight/issues/1061",
+    "help_footer_keys": "https://github.com/parker-brown-family/terminal-delight/issues/1313",
+    "historical_soft_width_budgets": "https://github.com/parker-brown-family/terminal-delight/issues/1037"
+  },
+  "engineering_readout_evidence": {
+    "human": "Workspace::eng_badge calls coordination_store().attention_summary_in(self.lang); render_eng_table delegates to render_coordination.",
+    "agent": "Reading::report uses badge/sentence/landing for engineering_state MCP; frames is cfg(test).",
+    "verdict": "The old issue explicitly permits invalidation when no English engineering line is drawn for humans. Preserve the report in English."
+  },
+  "installed_fields": 179,
+  "csv_rows": 182,
+  "integration_base": "361d0644",
+  "shared_icon_labels": [
+    {
+      "icon_rust": "📜",
+      "english_semantics": "artifacts",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⚓",
+      "english_semantics": "anchor",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↻",
+      "english_semantics": "refresh",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "‖",
+      "english_semantics": "paused",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⏸",
+      "english_semantics": "paused",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "☾",
+      "english_semantics": "rest",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⬇",
+      "english_semantics": "download",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⏎",
+      "english_semantics": "enter",
+      "reader": "person",
+      "disposition": "canonical keycap or variation selector"
+    },
+    {
+      "icon_rust": "↵",
+      "english_semantics": "enter",
+      "reader": "person",
+      "disposition": "canonical keycap or variation selector"
+    },
+    {
+      "icon_rust": "🎨",
+      "english_semantics": "look",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "👓",
+      "english_semantics": "focus",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "👤",
+      "english_semantics": "turns",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🤖",
+      "english_semantics": "agents",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "\\u{f06a9}",
+      "english_semantics": "agents",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "\\u{f04b2}",
+      "english_semantics": "asleep",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "\\u{f0594}",
+      "english_semantics": "rest",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🪦",
+      "english_semantics": "recover",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🔔",
+      "english_semantics": "notices",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🐞",
+      "english_semantics": "report",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🐛",
+      "english_semantics": "report",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🧩",
+      "english_semantics": "plugins",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "📦",
+      "english_semantics": "artifacts",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🗂",
+      "english_semantics": "artifacts",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▤",
+      "english_semantics": "artifacts",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "📊",
+      "english_semantics": "usage",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⛭",
+      "english_semantics": "gauges",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⚙",
+      "english_semantics": "settings",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🖥",
+      "english_semantics": "display",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "☀",
+      "english_semantics": "light",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🌐",
+      "english_semantics": "language",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🔍",
+      "english_semantics": "find",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🔎",
+      "english_semantics": "lookup",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🖼",
+      "english_semantics": "images",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🔒",
+      "english_semantics": "locked",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "📝",
+      "english_semantics": "notes",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "💬",
+      "english_semantics": "comment",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "📌",
+      "english_semantics": "pinned",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🔥",
+      "english_semantics": "pace",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🗑",
+      "english_semantics": "delete",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🍡",
+      "english_semantics": "notices",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "🌙",
+      "english_semantics": "rest",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "💤",
+      "english_semantics": "sleep",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "☕",
+      "english_semantics": "awake",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✨",
+      "english_semantics": "effects",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✦",
+      "english_semantics": "new",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✅",
+      "english_semantics": "done",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "❌",
+      "english_semantics": "blocked",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⚠",
+      "english_semantics": "warning",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✔",
+      "english_semantics": "done",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✓",
+      "english_semantics": "selected",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "✕",
+      "english_semantics": "close",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "×",
+      "english_semantics": "close",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⋯",
+      "english_semantics": "menu",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "…",
+      "english_semantics": "more",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⌁",
+      "english_semantics": "launch",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⎘",
+      "english_semantics": "copy",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◳",
+      "english_semantics": "open",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◧",
+      "english_semantics": "split right",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⬓",
+      "english_semantics": "split down",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◨",
+      "english_semantics": "split right",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◩",
+      "english_semantics": "split down",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "＋",
+      "english_semantics": "add",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "+",
+      "english_semantics": "add",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "−",
+      "english_semantics": "remove",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▾",
+      "english_semantics": "hide",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▸",
+      "english_semantics": "show",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▿",
+      "english_semantics": "hide",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▹",
+      "english_semantics": "show",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▼",
+      "english_semantics": "next",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▲",
+      "english_semantics": "previous",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◀",
+      "english_semantics": "hide",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▶",
+      "english_semantics": "show",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "☐",
+      "english_semantics": "maximize",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▭",
+      "english_semantics": "size",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "▣",
+      "english_semantics": "window",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◉",
+      "english_semantics": "on",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "●",
+      "english_semantics": "on",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "○",
+      "english_semantics": "off",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◯",
+      "english_semantics": "off",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◆",
+      "english_semantics": "active",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "◇",
+      "english_semantics": "available",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⤓",
+      "english_semantics": "adopt",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⟲",
+      "english_semantics": "reset",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↺",
+      "english_semantics": "reset",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↪",
+      "english_semantics": "send",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↗",
+      "english_semantics": "open",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "⇲",
+      "english_semantics": "beside",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "→",
+      "english_semantics": "right",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↓",
+      "english_semantics": "down",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "←",
+      "english_semantics": "left",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "↑",
+      "english_semantics": "up",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "★",
+      "english_semantics": "score",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "Σ",
+      "english_semantics": "total",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "≈",
+      "english_semantics": "about",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "☰",
+      "english_semantics": "menu",
+      "reader": "person",
+      "disposition": "translated via typed caption function"
+    },
+    {
+      "icon_rust": "\\u{fe0f}",
+      "english_semantics": "",
+      "reader": "person",
+      "disposition": "canonical keycap or variation selector"
+    },
+    {
+      "icon_rust": "\\u{fe0e}",
+      "english_semantics": "",
+      "reader": "person",
+      "disposition": "canonical keycap or variation selector"
+    }
+  ]
+}

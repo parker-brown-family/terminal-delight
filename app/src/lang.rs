@@ -1126,7 +1126,7 @@ pub const DE: Strings = Strings {
     word_jump: "Wortweise springen (Shell)",
     move_focus_dir: "Fokus richtungsweise bewegen",
     drag_subtab: "Verschieben / teilen · herausziehen = neues Fenster",
-    rclick_tab: "Direkt umbenennen · Strg+Klick = Farbe · Gruppe",
+    rclick_tab: "Direkt umbenennen · Ctrl+Klick = Farbe · Gruppe",
     reopen_closed: "zuletzt Geschlossenes wieder öffnen",
     rclick: "Hier öffnen · Link kopieren · Kopieren · Einfügen · Leeren",
     copy_paste: "Kopieren / Einfügen",
@@ -1243,16 +1243,16 @@ pub const DE: Strings = Strings {
     d_angle: "Winkel",
     d_depth: "Tiefe",
     k_alt_arrows: "Alt + Pfeile",
-    k_ctrl_arrows: "Strg + Pfeile",
+    k_ctrl_arrows: "Ctrl + Pfeile",
     k_drag_subtab: "Untertab ziehen",
     k_rclick_tab: "Rechtsklick auf einen Namen",
     k_rclick: "Rechtsklick",
     k_rclick_note: "Rechtsklick auf die Haftnotiz",
     k_dbl_click: "Doppel- / Dreifachklick",
-    k_super_ctrl_click: "Super+Strg-Klick",
+    k_super_ctrl_click: "Super+Ctrl-Klick",
     open_here: "Ein Bild oder Dokument in einem Feld über dem Bereich öffnen",
     open_beside: "Ein Dokument in einem Bereich neben diesem öffnen",
-    k_ctrl_alt_click: "Strg+Alt-Klick",
+    k_ctrl_alt_click: "Ctrl+Alt-Klick",
     float_split: "⇲ teilen",
     float_four_panes: "vier Bereiche · hier geöffnet",
     doc_being_read: "wird gelesen",
@@ -1263,7 +1263,7 @@ pub const DE: Strings = Strings {
     reader_you: "DU",
     reader_empty: "Hier wurde noch nichts gesagt.",
     m_open_beside: "⤢ Daneben öffnen",
-    k_ctrl_click: "Strg-Klick",
+    k_ctrl_click: "Ctrl-Klick",
     k_shift_click: "Umschalt-Klick",
     k_alt_click: "Alt-Klick",
     chip_open_here: "◳ alt+click · hier öffnen",
@@ -1282,7 +1282,7 @@ pub const DE: Strings = Strings {
     k_scroll_wheel: "Mausrad",
     k_theme_icon: "Theme-Symbol (oben rechts)",
     k_display_tray: "Reglerleiste",
-    k_text_size_key: "A──A · Strg+Rad",
+    k_text_size_key: "A──A · Ctrl+Rad",
     k_warp_dial: "Wölbungsregler",
     k_pane_header: "(Bereichskopf)",
     k_focus_inherit_key: "FOCUS · Theme erben",
@@ -3176,6 +3176,17 @@ mod tests {
     /// terms the interface names (CONCUR, ELI5), and templates that are only
     /// placeholders and symbols.
     const SAME_AS_ENGLISH: &[&str] = &[
+        "parts.ctl_images",     // fr: images is the standard French plural of image.
+        "parts.ctl_notes",      // fr: notes is the standard French plural of note.
+        "parts.ctl_plugins",    // fr: plugins is an established French term for software plugins.
+        "parts.ctl_total",      // es/fr: total is the standard shared word for an aggregate amount.
+        "parts.ctl_agents",     // fr: agents is the standard French plural of agent.
+        "parts.ctl_score",      // fr: score is an established French word for a numerical score.
+        "parts.ctl_menu",       // fr: menu is the standard French UI word.
+        "parts.ctl_tabs",       // de: TABS is the uppercase plural of Tab required by the glossary.
+        "parts.effort_minimal", // de/fr: minimal is the native adjective for the lowest reasoning-effort tier in both languages.
+        "parts.effort_max",     // fr: maximum is the standard French word for the maximum level.
+        "parts.effort_ultra", // es/de/fr: ultra is a shared, established intensifier used as a tier label.
         // German says UPDATES too, and French spells STABLE the same way.
         "chrome.cfg_updates",
         "chrome.upd_stable",
