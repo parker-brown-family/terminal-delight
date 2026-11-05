@@ -241,6 +241,8 @@ pub enum Zone {
     Draft,
     CloseBox,
     AddNote,
+    /// The note being written and a stamp on its decision, in one press.
+    AddConcur,
     /// The delete on the note box's `n`th note.
     Delete(usize),
     /// The delete on the note box's `n`th picture.
@@ -1667,6 +1669,27 @@ impl NotesLayer {
         true
     }
 
+    /// One press on a decision: the note being written, then the stamp, and
+    /// the box closes on the stamped page. Parker had been stamping and then
+    /// typing "see remarks". An empty draft stamps nothing, and a decision
+    /// already stamped keeps its stamp.
+    pub fn add_and_concur(&mut self, now: SystemTime) -> bool {
+        let Some(nid) = self.note_box.as_ref().map(|b| b.nid.clone()) else {
+            return false;
+        };
+        if !self.add(now) {
+            return false;
+        }
+        if !self.concurs().is_some_and(|c| c.has(&nid)) {
+            if let Err(why) = self.toggle_concur(&nid, now) {
+                self.say(Said::Refused(Words::as_is(why)));
+                return true;
+            }
+        }
+        self.note_box = None;
+        true
+    }
+
     /// Add a note to an anchor, open or not: the control socket's way in.
     pub fn add_note(&mut self, nid: String, title: String, text: String, ts: String) {
         let edit = NoteEdit::Add {
@@ -1903,6 +1926,7 @@ impl NotesLayer {
             match hit {
                 Some(Zone::CloseBox) => self.note_box = None,
                 Some(Zone::AddNote) if self.add(now) => return LayerPress::Edited,
+                Some(Zone::AddConcur) if self.add_and_concur(now) => return LayerPress::Edited,
                 Some(Zone::Delete(i)) if self.can_delete() => {
                     self.delete_shown(i);
                     return LayerPress::Edited;
@@ -2443,6 +2467,7 @@ impl NotesLayer {
     /// lays them out.
     pub fn draw_box(
         &self,
+        anchors: &[Anchor],
         view: gpui::Size<Pixels>,
         th: &Theme,
         sk: &crate::skin::Skin,
@@ -2520,9 +2545,20 @@ impl NotesLayer {
                 .child(label.to_string())
                 .child(self.record(zone))
         };
-        let mut actions = div().flex().flex_row().items_center().gap(px(8.));
+        let mut actions = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap(px(8.));
         if editable {
             actions = actions.child(pill(t.notes_add_note, Zone::AddNote, true));
+            let decision = anchors
+                .iter()
+                .any(|a| a.nid == b.nid && a.concur_zone.is_some());
+            if decision && self.concurs().is_some_and(|c| !c.has(&b.nid)) {
+                actions = actions.child(pill(t.notes_add_concur, Zone::AddConcur, true));
+            }
         }
         actions = actions.child(pill(t.notes_close, Zone::CloseBox, false));
         if editable {
@@ -3039,7 +3075,7 @@ mod tests {
         let deletes = |l: &NotesLayer, cx: &mut gpui::VisualTestContext| {
             l.clear_zones();
             cx.draw(Point::default(), view, |_, _| {
-                l.draw_box(view, &th, &sk).expect("open")
+                l.draw_box(&[], view, &th, &sk).expect("open")
             });
             let zones = l.zones.borrow();
             let shown: Vec<usize> = zones
@@ -3124,6 +3160,67 @@ mod tests {
 
     /// Enter is a new line in the note; Ctrl+Enter adds it, as the brief's
     /// own dialog does, stamped with the time as notes.js stamps it.
+    #[test]
+    fn one_press_keeps_the_remark_and_the_stamp_and_closes_the_box() {
+        let now = std::time::UNIX_EPOCH + std::time::Duration::from_secs(1_790_278_680);
+        let r = Some(rect_css(0.0, 0.0, 700.0, 100.0));
+        let anchors = vec![anchor("a", r, true)];
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        assert!(!l.add_and_concur(now), "nothing written stamps nothing");
+        assert!(l.note_box().is_some(), "and the box stays");
+        assert_eq!(l.unsaved(), 0);
+        for c in ["o", "k"] {
+            assert!(l.key(&ks(c, false, Some(c)), now));
+        }
+        assert!(l.add_and_concur(now));
+        assert!(l.note_box().is_none(), "the box closes on the stamped page");
+        assert_eq!(l.unsaved(), 2, "a note and a stamp");
+        let map = l.map(&anchors).expect("a map");
+        assert!(map.contains("[a] a title  ✓ concur\n  · ok\n"), "{map}");
+        // A second remark on a stamped decision never peels the stamp.
+        l.open("a".into(), "a title".into());
+        assert!(l.key(&ks("x", false, Some("x")), now));
+        assert!(l.add_and_concur(now));
+        assert!(
+            l.map(&anchors).expect("a map").contains("✓ concur"),
+            "the stamp stays"
+        );
+    }
+
+    /// Only a decision offers the press, and only until it is stamped.
+    #[gpui::test]
+    fn one_press_is_offered_on_an_unstamped_decision_and_nowhere_else(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let th = crate::theme::parse(crate::theme::DEFAULT_THEME_TOML).expect("the embedded theme");
+        let sk = crate::skin::parse(crate::skin::DEFAULT_SKIN_TOML)
+            .expect("the embedded skin")
+            .bake(&th, 1.0);
+        let view = gpui::size(px(600.), px(400.));
+        let cx = cx.add_empty_window();
+        let r = Some(rect_css(0.0, 0.0, 700.0, 100.0));
+        let offered = |l: &NotesLayer, anchors: &[Anchor], cx: &mut gpui::VisualTestContext| {
+            l.clear_zones();
+            cx.draw(Point::default(), view, |_, _| {
+                l.draw_box(anchors, view, &th, &sk).expect("open")
+            });
+            let found = l.zones.borrow().iter().any(|(_, z)| *z == Zone::AddConcur);
+            found
+        };
+        let decision = vec![anchor("a", r, true)];
+        let figure = vec![anchor("a", r, false)];
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        l.open("a".into(), "a title".into());
+        assert!(offered(&l, &decision, cx));
+        assert!(!offered(&l, &figure, cx), "a figure takes no stamp");
+        l.toggle_concur("a", SystemTime::now()).expect("stamped");
+        assert!(!offered(&l, &decision, cx), "already stamped");
+        let mut old = layer("{}", "{}", ConcurSupport::NotSupported);
+        old.open("a".into(), "a title".into());
+        assert!(!offered(&old, &decision, cx), "a page with no stamps");
+    }
+
     #[test]
     fn ctrl_enter_adds_and_enter_starts_a_new_line() {
         let mut l = layer("{}", "{}", ConcurSupport::Supported);

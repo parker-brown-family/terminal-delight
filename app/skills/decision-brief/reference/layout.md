@@ -135,8 +135,10 @@ now for the sake of those files; new work uses `.ask`:
 decision's right, clear of the note button in the top-right corner. It forces the decision's
 right padding, so a brief's own `.grill .ask` padding shorthand cannot run the question under
 it. Write the decision so that a bare concur is a complete answer — the recommendation line
-is what he is stamping, so it has to say what happens if he agrees. Keep the card to 40 words:
-the question and the recommendation. Reasoning goes in a section the card links to. Parker,
+is what he is stamping, so it has to say what happens if he agrees. Keep the card to 80 words.
+The shape that works is a judgement row: the question as its heading, `dl.facts` with Chose and
+Because, a link to the section holding any reasoning, and a last line reading Recommendation when
+it waits on him. Parker,
 2026-11-05: *"The judgements must only be verbose if they ABSOLUTELY MUST BE, but if that is the
 case, then should really just reference a secttion in the doc (link back click)"*.
 

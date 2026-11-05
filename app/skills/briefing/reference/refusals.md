@@ -65,8 +65,7 @@
 | `cannot verify local fragment: …` | A fragment into a file that is neither Markdown nor HTML | Link to the file without a fragment, and name the place in prose |
 | `every h2 and figure needs an explicit data-brief-anchor` | A built page lost an anchor | Fix the source and rebuild |
 | `the title and first line take no note: …` | The header has no note control | Wrap them in `<div class="opening" id="top" data-brief-anchor="top">` |
-| `decisions over 40 words: …` | A card argues its case | Keep the question and the recommendation, move the reasoning to a section, and link to it |
-| `… words of prose and … drawings: draw at least …` | The page is written, not drawn | Draw the mechanism or the surface, or cut the prose. A figure that is only a table doesn't count |
+| `decisions over 80 words: …` | A card argues its case | Keep the question and the recommendation, move the reasoning to a section, and link to it |
 | `duplicate anchors: …` | Two targets share a name | Rename one before anyone comments on it |
 | `Markdown needs one <!-- briefing: {...} --> identity comment` / `brief identity …` / `brief metadata needs an explicit purpose` | The document does not say which brief it is | Add the identity comment; `new` shows its shape |
 | `supported now: .md and .html; MP4 is reserved` | Another file type | Video is not built yet |

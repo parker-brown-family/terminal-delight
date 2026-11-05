@@ -1,4 +1,4 @@
-parker-brown-family/agent-skills deb1998
+parker-brown-family/agent-skills 0fb0b4b
 briefing/SKILL.md briefing/LICENSE briefing/README.md briefing/assets briefing/reference briefing/scripts briefing/examples briefing/tests/browser.mjs decision-brief/LICENSE decision-brief/assets decision-brief/reference decision-brief/scripts/brief-wall fancy-pants-brief/LICENSE fancy-pants-brief/assets fancy-pants-brief/scripts/fancy-pants
 
 Copied byte for byte from that commit (git archive), every file under

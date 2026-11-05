@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Documents
 
+- **Stamp a decision and leave your remark in one press.** The note box on a
+  decision now has **Submit & concur**, which saves the note, puts the stamp down
+  and closes the box.
 - Prepare the newest HTML artifact from recently visited panes before opening it,
   using one cancellable job and the existing 256 MiB disk-cache budget. Capture
   and load visible pixels first, validate local assets before cache reuse, and

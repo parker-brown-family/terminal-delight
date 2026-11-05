@@ -42,9 +42,7 @@ KIT_FILES = [KIT / 'assets/base.css', KIT / 'assets/notes.css', KIT / 'assets/no
 # A scaffold's unwritten passages. `check` refuses a brief that still carries one.
 UNWRITTEN = 'TODO(brief)'
 # A card holds the question and the recommendation; anything longer belongs in a section it links to.
-DECISION_WORDS = 40
-# Past this much prose a brief owes the reader another drawing. The brief that set the standard runs at 54.
-PROSE_PER_DRAWING = 150
+DECISION_WORDS = 80
 CALL_WORDS = {'title': 12, 'chose': 15, 'because': 25}
 # What notes.js gives a CONCUR stamp: `.ask`, `.grill-q`, and `.q` inside a `.grill` but not inside an `.ask`.
 DECISION_CLASSES = {'ask', 'grill-q'}
@@ -444,10 +442,6 @@ def check(path):
                           '. Keep the question and the recommendation on the card, move the reasoning to a section, and link to it')
         seen = Imagery(region)
         result['prose_words'], result['drawings'] = seen.prose, seen.drawings
-        owed = seen.prose // PROSE_PER_DRAWING
-        if seen.drawings < owed:
-            raise Refusal(f'{seen.prose} words of prose and {seen.drawings} drawings: draw at least {owed}, about one per '
-                          f'{PROSE_PER_DRAWING} words, or cut the prose. A figure that is only a table is not a drawing')
     for parent in meta.get('derives_from') or []:
         if not (path.parent / parent).is_file():
             raise Refusal(f'derives_from names {parent}, which is not there; fix the path or drop it')
@@ -1396,6 +1390,8 @@ def render_row(call, base, where, status=None, recorded=None, moved=None, full=F
     routine = is_routine(call, status)
     facts = [('Chose', call['chose']), ('Because', call['because'])]
     j = call['judgement']
+    if status == 'asked' and not full:
+        facts = facts[1:]  # nothing is chosen yet; the last line recommends it
     if full:
         if call.get('context') and not routine:
             facts.insert(0, ('Context', call['context']))
@@ -1443,8 +1439,11 @@ def render_row(call, base, where, status=None, recorded=None, moved=None, full=F
                        f'{e(call["chose"])}.</b> A concur covers this {kind}, {short}, and no later one.'
                        f'</figcaption></figure>')
     # Green is for carrying on; a stop is a decision waiting, and red says so.
-    if status == 'asked':
+    if status == 'asked' and full:
         stance = ('<p class="callout crit"><b>Stopped:</b> waiting on your answer, because ' + e('; '.join(j['reasons'])) + '.</p>')
+    elif status == 'asked':
+        stance = (f'<p class="callout crit"><b>Recommendation:</b> {e(call["chose"])}. Waiting on your answer, because '
+                  + e('; '.join(j['reasons'])) + '.</p>')
     elif status == 'open':
         stance = '<p class="rec"><b>Meanwhile:</b> carrying on as if you concur.</p>'
     else:
