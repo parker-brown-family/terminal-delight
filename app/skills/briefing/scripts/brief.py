@@ -177,46 +177,6 @@ UNANCHORED = ('every decision a reader can stamp (.ask, .grill-q, or .q inside a
               'data-brief-anchor="x"; without one it takes no note and no CONCUR. Unanchored: ')
 
 
-class Imagery(HTMLParser):
-    """How much prose a page carries and how many drawings carry it. A figure that is only a table is prose in a box."""
-    HIDDEN = {'script', 'style', 'nav', 'dialog'}
-    PICTURES = {'svg', 'img', 'video', 'canvas'}
-
-    def __init__(self, text):
-        super().__init__()
-        self.prose = self.drawings = self.hidden = self.held = 0
-        self.figure = None
-        self.feed(text)
-
-    def handle_starttag(self, tag, attributes):
-        if tag in self.HIDDEN:
-            self.hidden += 1
-        elif tag == 'figure' and self.figure is None:
-            self.figure, self.held = {'picture': False, 'table': False}, 0
-        elif self.figure is not None and tag in self.PICTURES:
-            self.figure['picture'] = True
-        elif self.figure is not None and tag == 'table':
-            self.figure['table'] = True
-
-    def handle_endtag(self, tag):
-        if tag in self.HIDDEN:
-            self.hidden -= 1
-        elif tag == 'figure' and self.figure is not None:
-            if self.figure['picture'] or not self.figure['table']:
-                self.drawings += 1
-            else:
-                self.prose += self.held
-            self.figure = None
-
-    def handle_data(self, data):
-        if self.hidden:
-            return
-        if self.figure is None:
-            self.prose += len(data.split())
-        else:
-            self.held += len(data.split())
-
-
 def heading_slug(heading):
     return re.sub(r'[^\w\- ]', '', re.sub(r'\s+#+\s*$', '', heading).strip().lower()).replace(' ', '-')
 
@@ -440,8 +400,6 @@ def check(path):
         if long:
             raise Refusal(f'decisions over {DECISION_WORDS} words: ' + '; '.join(f"{d['anchor']} ({d['words']})" for d in long) +
                           '. Keep the question and the recommendation on the card, move the reasoning to a section, and link to it')
-        seen = Imagery(region)
-        result['prose_words'], result['drawings'] = seen.prose, seen.drawings
     for parent in meta.get('derives_from') or []:
         if not (path.parent / parent).is_file():
             raise Refusal(f'derives_from names {parent}, which is not there; fix the path or drop it')
@@ -1739,7 +1697,7 @@ def last_time(path, previous):
         rows.append(f'<tr><td>{place}</td><td>{e(words)}</td><td>{UNWRITTEN}: what came of it</td></tr>')
     rows.append(f'<tr><td>Outside the notes</td><td>{UNWRITTEN}: anything said in the prompt, or delete this row</td>'
                 f'<td>{UNWRITTEN}: what came of it</td></tr>')
-    count = len(data['comments'])
+    count = sum(bool(c['text']) for c in data['comments'])  # a stamp is not a note
     return (f'<div class="last-time-strip" id="last-time" data-brief-anchor="last-time"><button class="last-time" type="button" '
             f'data-dlg="d-last-time"><b>Last time</b> {count} note{"" if count == 1 else "s"} · {UNWRITTEN}: what came of them, in a few words'
             f'</button></div>\n<dialog id="d-last-time"><div class="dlg-head"><h3>Last time</h3><button class="x" type="button" '
