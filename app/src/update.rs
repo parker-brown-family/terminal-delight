@@ -81,6 +81,11 @@ pub(crate) struct BuildInfo {
     /// test. Absent from builds before it existed.
     #[serde(default)]
     pub(crate) wire_proto: Option<String>,
+    /// Effective Cargo settings. Older binaries leave these unknown.
+    #[serde(default)]
+    pub(crate) opt_level: Option<String>,
+    #[serde(default)]
+    pub(crate) profile: Option<String>,
 }
 
 pub(crate) const BUILD_SCHEMA: &str = "td-build/1";
@@ -96,6 +101,8 @@ impl BuildInfo {
             wire: option_env!("TD_BUILD_WIRE").map(String::from),
             core: crate::vt::CORE_NAME.into(),
             wire_proto: option_env!("TD_BUILD_WIRE_PROTO").map(String::from),
+            opt_level: option_env!("TD_BUILD_OPT_LEVEL").map(String::from),
+            profile: option_env!("TD_BUILD_PROFILE").map(String::from),
         }
     }
 
@@ -2847,6 +2854,17 @@ mod tests {
         )
         .unwrap();
         assert_eq!(old.wire_proto, None);
+        assert_eq!(
+            old.opt_level, None,
+            "old builds did not report optimization"
+        );
+        assert_eq!(old.profile, None);
+        let this = BuildInfo::this();
+        assert!(matches!(
+            this.opt_level.as_deref(),
+            Some("0" | "1" | "2" | "3" | "s" | "z")
+        ));
+        assert!(this.profile.is_some());
         assert!(BuildInfo::this().wire_proto.is_some_and(|w| w.len() == 16));
     }
 

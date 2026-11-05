@@ -10,6 +10,7 @@ For each PR:
 - Set the base branch to the selected integration branch. Release intent and merge destination are separate facts. Do not retarget another owner’s work merely because it looks related.
 - Land on `dev/0.5.1` by the waves rule in RELEASING.md: merging does not wait for CI, so run your own gates, check the branch’s newest CI run first, and fix a red branch before landing more. Outside contributions still wait for green CI and a review.
 - Use area labels to describe the work. Release membership belongs in the milestone rather than a second version label.
+- Before installing a locally built executable, verify its `--build-info`: `sha` must match the clean source commit, `dirty` must be false, and `opt_level` must be `2` or `3`. A binary name, target directory or release profile name does not establish optimization. Older builds that omit the field have unknown optimization; do not label them optimized from their name.
 - State why the change fits the release and preserve its validation evidence. A milestone is a plan; passing review and tests, integration and the tagged candidate determine what actually ships.
 
 For release management, follow the PR-survey procedure in RELEASING.md. Survey unassigned work, readiness, dependencies and changes since the previous candidate. Record inclusion or deferral decisions; do not include every open PR automatically.
