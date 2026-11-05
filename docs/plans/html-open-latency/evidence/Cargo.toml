@@ -1,0 +1,22 @@
+[package]
+name = "td-html-open-profile"
+version = "0.0.0"
+edition = "2021"
+publish = false
+
+[workspace]
+
+[[bin]]
+name = "td-html-open-profile"
+path = "main.rs"
+
+[[bin]]
+name = "td-html-resource-profile"
+path = "resources.rs"
+
+[dependencies]
+serde = { version = "=1.0.229", features = ["derive"] }
+serde_json = "=1.0.150"
+libc = "=0.2.189"
+toml = "=0.8.23"
+image = { version = "=0.25.10", default-features = false, features = ["png"] }

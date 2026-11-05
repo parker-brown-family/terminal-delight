@@ -46,7 +46,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     div, hsla, img, point, prelude::*, px, size, App, Bounds, Context, ImageSource, Keystroke,
@@ -57,8 +57,8 @@ use super::backend::{Backend, Drawn};
 use super::cache::{self, CacheKey};
 use super::engine::ConcurSupport;
 use super::engine::{
-    bands, layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener,
-    PageEngine, PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
+    layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener, PageEngine,
+    PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said, Words};
@@ -87,8 +87,9 @@ pub struct Residency {
 
 /// How far a band starting at `top` lies from the viewport, and on which
 /// side: 0 inside it. Ties go below first, the way a page is read.
-fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
-    let bottom = top.saturating_add(TILE_DEV);
+fn band_distance(band: Band, view_top: u32, view_h: u32) -> (u32, bool) {
+    let top = band.top_dev;
+    let bottom = top.saturating_add(band.height_dev);
     let view_bottom = view_top.saturating_add(view_h.max(1));
     if bottom <= view_top {
         (view_top - bottom + 1, true)
@@ -99,12 +100,25 @@ fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
     }
 }
 
+#[cfg(test)]
+fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
+    band_distance(
+        Band {
+            top_dev: top,
+            height_dev: TILE_DEV,
+        },
+        view_top,
+        view_h,
+    )
+}
+
 /// Pure. Which bands belong on the GPU for a viewport, and what to fetch.
 ///
 /// `all` is every band's top (in device rows); `resident` the tops on the GPU
 /// or on their way there; `have_png` the tops whose PNG is in hand. The
 /// visible bands are always wanted; one above and one below join them while
 /// the total stays within [`MAX_RESIDENT`].
+#[cfg(test)]
 pub fn plan_residency(
     all: &[u32],
     resident: &[u32],
@@ -112,7 +126,32 @@ pub fn plan_residency(
     view_top_dev: u32,
     view_h_dev: u32,
 ) -> Residency {
-    let mut order: Vec<u32> = all.to_vec();
+    let bands: Vec<Band> = all
+        .iter()
+        .map(|&top_dev| Band {
+            top_dev,
+            height_dev: TILE_DEV,
+        })
+        .collect();
+    plan_bands(&bands, resident, have_png, view_top_dev, view_h_dev)
+}
+
+fn plan_bands(
+    bands: &[Band],
+    resident: &[u32],
+    have_png: &[u32],
+    view_top_dev: u32,
+    view_h_dev: u32,
+) -> Residency {
+    let all: Vec<u32> = bands.iter().map(|b| b.top_dev).collect();
+    let distance = |top, view_top, view_h| {
+        band_distance(
+            *bands.iter().find(|b| b.top_dev == top).expect("known band"),
+            view_top,
+            view_h,
+        )
+    };
+    let mut order: Vec<u32> = all.clone();
     order.sort_by_key(|&t| {
         let (d, above) = distance(t, view_top_dev, view_h_dev);
         (d, above, t)
@@ -125,11 +164,9 @@ pub fn plan_residency(
     let mut wanted = visible.clone();
     let first = visible.iter().min().copied();
     let last = visible.iter().max().copied();
-    let neighbours = all.iter().copied().filter(|&t| {
-        let above = first.is_some_and(|f| t < f && f - t <= TILE_DEV);
-        let below = last.is_some_and(|l| t > l && t - l <= TILE_DEV);
-        above || below
-    });
+    let above = first.and_then(|f| all.iter().copied().filter(|&t| t < f).max());
+    let below = last.and_then(|l| all.iter().copied().filter(|&t| t > l).min());
+    let neighbours = above.into_iter().chain(below);
     let mut neighbours: Vec<u32> = neighbours.collect();
     neighbours.sort_by_key(|&t| distance(t, view_top_dev, view_h_dev));
     for t in neighbours {
@@ -376,7 +413,7 @@ impl TileSet {
     fn new(layout: &PageLayout) -> Self {
         Self {
             generation: layout.generation,
-            bands: bands(layout.geometry.height_dev(layout.height_css)),
+            bands: layout.bands(),
             ..Default::default()
         }
     }
@@ -387,6 +424,7 @@ impl TileSet {
 }
 
 struct Rendered {
+    stale_scroll: Option<f32>,
     layout: PageLayout,
     tiles: TileSet,
     /// The zoom this render was laid out at, which may no longer be the
@@ -434,6 +472,7 @@ pub struct Measured {
 }
 
 pub struct PageDoc {
+    timing: OpenTiming,
     path: PathBuf,
     engine: Result<Arc<dyn PageEngine>, Unavailable>,
     status: Status,
@@ -480,6 +519,43 @@ pub struct PageDoc {
     saving: Option<Task<()>>,
     /// The file read again after it changed on disk.
     rereading: Option<Task<()>>,
+    hidden: bool,
+    epoch: u64,
+}
+
+/// Elapsed milliseconds from the view's open request. Missing stages remain
+/// null. Paint is native command submission, not a monitor presentation claim.
+#[derive(serde::Serialize)]
+struct OpenTiming {
+    #[serde(skip)]
+    started: Instant,
+    geometry: Option<f64>,
+    cache_lookup: Option<f64>,
+    cache_hit: Option<bool>,
+    layout: Option<f64>,
+    first_tile: Option<f64>,
+    first_decode: Option<f64>,
+    first_paint: Option<f64>,
+    viewport_paint: Option<f64>,
+}
+
+impl OpenTiming {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            geometry: None,
+            cache_lookup: None,
+            cache_hit: None,
+            layout: None,
+            first_tile: None,
+            first_decode: None,
+            first_paint: None,
+            viewport_paint: None,
+        }
+    }
+    fn elapsed(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() * 1000.0
+    }
 }
 
 fn debug() -> bool {
@@ -494,6 +570,7 @@ fn page_of(view: &mut DocumentView) -> Option<&mut PageDoc> {
 impl PageDoc {
     pub fn new(path: &Path, engine: Result<Arc<dyn PageEngine>, Unavailable>) -> Self {
         Self {
+            timing: OpenTiming::new(),
             path: path.to_path_buf(),
             engine,
             status: Status::Waiting,
@@ -518,6 +595,8 @@ impl PageDoc {
             beside: None,
             saving: None,
             rereading: None,
+            hidden: false,
+            epoch: 0,
         }
     }
 
@@ -546,7 +625,7 @@ impl PageDoc {
         let zoom = zoom.max(0.01);
         Geometry {
             css_width: (f32::from(m.size.width) / zoom).round().max(1.0) as u32,
-            viewport_css_height: (f32::from(m.size.height) / zoom).round().max(1.0) as u32,
+            viewport_css_height: (f32::from(m.size.height) / zoom).ceil().max(1.0) as u32,
             scale: m.scale * zoom,
         }
     }
@@ -633,6 +712,11 @@ impl PageDoc {
         }
         self.status = Status::Failed(why);
         self.work = None;
+        if let (Some((page, _)), Ok(engine)) = (self.live.take(), &self.engine) {
+            let engine = engine.clone();
+            cx.background_spawn(async move { engine.close(page) })
+                .detach();
+        }
         // Once, however the view is resized afterwards: a file handed to the
         // desktop on every resize would open a browser window each time.
         if desktop && !self.handed_over {
@@ -652,6 +736,13 @@ impl PageDoc {
     }
 
     fn start(&mut self, g: Geometry, zoom: f32, cx: &mut Context<DocumentView>) {
+        if self.hidden {
+            return;
+        }
+        if self.asked.is_some() {
+            self.timing = OpenTiming::new();
+        }
+        self.timing.geometry = Some(self.timing.elapsed());
         self.asked = Some((g, zoom));
         // Handed to the desktop already: this view only says why from now on.
         if self.handed_over {
@@ -675,7 +766,9 @@ impl PageDoc {
         // newer render replaced it — so a page the browser finishes opening
         // after that is closed at once instead of living on in Chromium.
         let wanted = Wanted::new();
+        let foreground = super::prepare::foreground(cx);
         self.work = Some(cx.spawn(async move |this, cx| {
+            let _foreground = foreground;
             let wanted = wanted;
             let root = cache::root();
             let name = engine.name();
@@ -690,13 +783,7 @@ impl PageDoc {
                         let hash = layout_hash(&bytes);
                         let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
-                        let cached = cache::lookup(&root, key).and_then(|c| {
-                            let mut pngs = Vec::with_capacity(c.tiles.len());
-                            for (band, file) in &c.tiles {
-                                pngs.push((*band, Arc::<[u8]>::from(std::fs::read(file).ok()?)));
-                            }
-                            Some((c.layout, pngs))
-                        });
+                        let cached = cache::lookup(&root, key);
                         Ok::<_, (String, String)>((hash, read, key, cached))
                     }
                 })
@@ -715,21 +802,49 @@ impl PageDoc {
                     return;
                 }
             };
-            if let Some((layout, pngs)) = cached {
-                if debug() {
-                    eprintln!("[doc] page cache hit {} ({} tiles)", path.display(), pngs.len());
+            this.update(cx, |view, _| {
+                if let Some(p) = page_of(view) {
+                    p.timing.cache_lookup = Some(p.timing.elapsed());
+                    p.timing.cache_hit = Some(cached.is_some());
                 }
+            }).ok();
+            if let Some(cached) = cached {
+                let generation = cached.layout.generation;
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.adopt(layout, key, None, read, zoom, cx);
-                        for (band, png) in pngs {
-                            p.landed(band, png, cx);
-                        }
-                        p.status = Status::Ready;
-                        p.work = None;
+                        p.adopt(cached.layout, key, None, read, zoom, cx);
                     }
-                })
-                .ok();
+                }).ok();
+                loop {
+                    let next = this.update(cx, |view, _| page_of(view).and_then(|p| p.next_fetch(generation))).ok().flatten();
+                    let Some(band) = next else { break };
+                    let Some((_, file)) = cached.tiles.iter().find(|(b, _)| *b == band) else { break };
+                    let file = file.clone();
+                    let root = root.clone();
+                    let png = cx.background_spawn(async move {
+                        let read = std::fs::read(file);
+                        if read.is_err() { cache::invalidate(&root, key); }
+                        read
+                    }).await;
+                    let keep = this.update(cx, |view, cx| {
+                        let Some(p) = page_of(view) else { return false };
+                        if !p.is_current(generation) { return false; }
+                        match png {
+                            Ok(png) => { p.landed(band, Arc::from(png), cx); true }
+                            Err(_) => {
+                                // Eviction raced the read. Start a fresh render;
+                                // never keep a ready page with a missing band.
+                                p.asked = None;
+                                p.start(g, zoom, cx);
+                                false
+                            }
+                        }
+                    }).unwrap_or(false);
+                    if !keep { return; }
+                }
+                this.update(cx, |view, _| {
+                    if let Some(p) = page_of(view) { p.status = Status::Ready; }
+                }).ok();
                 return;
             }
             // Render. A file that changed between the read and the load is
@@ -826,8 +941,8 @@ impl PageDoc {
                     .ok()
                     .flatten();
                 let Some(band) = next else { break };
-                let engine = engine.clone();
-                let got = cx.background_spawn(async move { engine.tile(page, generation, band) }).await;
+                let capturing = engine.clone();
+                let got = cx.background_spawn(async move { capturing.tile(page, generation, band) }).await;
                 let ok = this
                     .update(cx, |view, cx| {
                         let Some(p) = page_of(view) else { return false };
@@ -849,9 +964,27 @@ impl PageDoc {
                     })
                     .unwrap_or(false);
                 if !ok {
+                    let closing = engine.clone();
+                    cx.background_spawn(async move { closing.close(page) }).detach();
+                    this.update(cx, |view, _| {
+                        if let Some(p) = page_of(view) {
+                            if p.live == Some((page, generation)) { p.live = None; }
+                        }
+                    }).ok();
                     return;
                 }
             }
+            this.update(cx, |view, _| {
+                if let Some(p) = page_of(view) {
+                    if p.live == Some((page, generation)) { p.live = None; }
+                }
+            }).ok();
+            let closing = engine.clone();
+            let dependencies = cx.background_spawn(async move {
+                let dependencies = closing.dependencies(page);
+                closing.close(page);
+                dependencies
+            }).await;
             // Every band landed: keep the render whole on disk.
             let whole = this
                 .update(cx, |view, cx| {
@@ -869,10 +1002,10 @@ impl PageDoc {
                 })
                 .ok()
                 .flatten();
-            if let Some((layout, tiles)) = whole {
+            if let (Some((layout, tiles)), Some(dependencies)) = (whole, dependencies) {
                 cx.background_spawn(async move {
                     let borrowed: Vec<(Band, &[u8])> = tiles.iter().map(|(b, p)| (*b, &p[..])).collect();
-                    if let Err(e) = cache::store(&root, key, &layout, &borrowed) {
+                    if let Err(e) = cache::store_validated(&root, key, &layout, &borrowed, &dependencies) {
                         if debug() {
                             eprintln!("[doc] page cache store failed: {e}");
                         }
@@ -901,6 +1034,8 @@ impl PageDoc {
         zoom: f32,
         cx: &mut Context<DocumentView>,
     ) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.timing.layout = Some(self.timing.elapsed());
         // The notes the new render's bytes hold, read as its own page reads
         // them. A note box open on an anchor the new render still has stays
         // open: a resize re-lays the page out and moves nothing it says.
@@ -926,6 +1061,7 @@ impl PageDoc {
         if unread {
             super::read_pictures::<PageDoc>(self.path.clone(), cx, |p| p.notes.as_mut());
         }
+        let previous_scroll = self.scroll_css;
         self.land(&layout);
         let previous_live = self.live.take();
         if let (Some((old_page, _)), Ok(engine)) = (previous_live, &self.engine) {
@@ -936,11 +1072,13 @@ impl PageDoc {
         self.live = live;
         self.key = Some(key);
         let incoming = Rendered {
+            stale_scroll: None,
             tiles: TileSet::new(&layout),
             layout,
             zoom,
         };
         if let Some(mut outgoing) = self.current.replace(incoming) {
+            outgoing.stale_scroll = Some(previous_scroll);
             let visible = self.visible_tops(&outgoing);
             let mut spare = Vec::new();
             outgoing.tiles.gpu.retain(|top, image| {
@@ -952,8 +1090,10 @@ impl PageDoc {
             });
             outgoing.tiles.png.clear();
             give_back(spare, cx);
-            if let Some(mut older) = self.old.replace(outgoing) {
-                give_back(older.tiles.take_gpu(), cx);
+            if !outgoing.tiles.gpu.is_empty() {
+                if let Some(mut older) = self.old.replace(outgoing) {
+                    give_back(older.tiles.take_gpu(), cx);
+                }
             }
         }
         self.clamp_scroll();
@@ -970,9 +1110,7 @@ impl PageDoc {
         if let Some(top) = self.pending_top.take() {
             self.scroll_css = top * layout.height_css;
         } else if let Some(prev) = &self.current {
-            if prev.layout.height_css > 0.0 {
-                self.scroll_css *= layout.height_css / prev.layout.height_css;
-            }
+            self.scroll_css = layout.reading_top(&prev.layout, self.scroll_css);
         }
         let fragment = self.pending_fragment.take();
         if let Some(top) = fragment.and_then(|f| layout.fragment_top_css(&f)) {
@@ -1000,6 +1138,9 @@ impl PageDoc {
 
     /// A band's PNG is in hand.
     fn landed(&mut self, band: Band, png: Arc<[u8]>, cx: &mut Context<DocumentView>) {
+        if self.timing.first_tile.is_none() {
+            self.timing.first_tile = Some(self.timing.elapsed());
+        }
         if let Some(r) = self.current.as_mut() {
             r.tiles.fetching.remove(&band.top_dev);
             r.tiles.png.insert(band.top_dev, png);
@@ -1011,16 +1152,14 @@ impl PageDoc {
         let m = self.view?;
         let g = r.layout.geometry;
         let stretch = self.stretch(r);
-        let top = (f64::from(self.scroll_css) * f64::from(g.scale))
+        let top = (f64::from(r.stale_scroll.unwrap_or(self.scroll_css)) * f64::from(g.scale))
             .round()
             .max(0.0) as u32;
-        let h = (f64::from(f32::from(m.size.height)) / f64::from(stretch) * f64::from(g.scale))
-            .ceil() as u32;
+        let h = g.height_dev(f32::from(m.size.height) / stretch);
         Some((top, h))
     }
 
     fn residency(&self, r: &Rendered) -> Residency {
-        let all: Vec<u32> = r.tiles.bands.iter().map(|b| b.top_dev).collect();
         let resident: Vec<u32> = r
             .tiles
             .gpu
@@ -1030,7 +1169,7 @@ impl PageDoc {
             .collect();
         let have: Vec<u32> = r.tiles.png.keys().copied().collect();
         let (top, h) = self.view_dev(r).unwrap_or((0, TILE_DEV));
-        plan_residency(&all, &resident, &have, top, h)
+        plan_bands(&r.tiles.bands, &resident, &have, top, h)
     }
 
     fn visible_tops(&self, r: &Rendered) -> Vec<u32> {
@@ -1040,14 +1179,18 @@ impl PageDoc {
         r.tiles
             .bands
             .iter()
+            .filter(|&&b| band_distance(b, top, h).0 == 0)
             .map(|b| b.top_dev)
-            .filter(|&t| distance(t, top, h).0 == 0)
             .collect()
     }
 
     /// Bring the GPU in line with the viewport: evict what is out of reach,
     /// decode what is wanted and in hand.
     fn plan(&mut self, cx: &mut Context<DocumentView>) {
+        if self.hidden {
+            return;
+        }
+        let epoch = self.epoch;
         let Some(r) = self.current.as_ref() else {
             return;
         };
@@ -1079,7 +1222,9 @@ impl PageDoc {
                     .await;
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.decoded(generation, top, decoded.ok(), cx);
+                        if p.epoch == epoch && !p.hidden {
+                            p.decoded(generation, top, decoded.ok(), cx);
+                        }
                     }
                 })
                 .ok();
@@ -1101,6 +1246,33 @@ impl PageDoc {
         image: Option<Arc<RenderImage>>,
         cx: &mut Context<DocumentView>,
     ) {
+        if image.is_none() && self.is_current(generation) {
+            // Do not retry the same corrupt PNG on every frame. A cached
+            // image gets one fresh render; a bad capture reports its failure.
+            if self.timing.cache_hit == Some(true) {
+                if let (Some(key), Some((g, zoom))) = (self.key, self.asked) {
+                    self.work = Some(cx.spawn(async move |this, cx| {
+                        cx.background_spawn(async move { cache::invalidate(&cache::root(), key) })
+                            .await;
+                        this.update(cx, |view, cx| {
+                            if let Some(p) = page_of(view) {
+                                p.start(g, zoom, cx);
+                            }
+                        })
+                        .ok();
+                    }));
+                    return;
+                }
+            }
+            let error = EngineError::Page("Could not decode the captured page image".into());
+            self.fail(
+                error.say(crate::lang::current()),
+                error.to_string(),
+                false,
+                cx,
+            );
+            return;
+        }
         let wanted = {
             let Some(r) = self
                 .current
@@ -1120,6 +1292,9 @@ impl PageDoc {
         r.tiles.decoding.remove(&top);
         match image {
             Some(image) if wanted && !r.tiles.gpu.contains_key(&top) => {
+                if self.timing.first_decode.is_none() {
+                    self.timing.first_decode = Some(self.timing.elapsed());
+                }
                 r.tiles.gpu.insert(top, image);
             }
             _ => {}
@@ -1211,6 +1386,9 @@ impl PageDoc {
     /// The marks the notes layer draws on the page itself: none while one of
     /// the brief's own dialogs covers it.
     fn page_marks(&self) -> Vec<Mark> {
+        if self.old.is_some() && !self.covers_view() {
+            return Vec::new();
+        }
         let (Some(layer), Some(r)) = (self.notes.as_ref(), self.current.as_ref()) else {
             return Vec::new();
         };
@@ -1547,6 +1725,9 @@ impl PageDoc {
     /// copies the map. Answers whether anything changed.
     pub fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
         use super::ReadAct;
+        if self.old.is_some() && !self.covers_view() {
+            return false;
+        }
         let Some(r) = self.current.as_ref() else {
             return false;
         };
@@ -1746,6 +1927,9 @@ impl PageDoc {
                 }
                 LayerPress::Pass => {}
             }
+        }
+        if self.old.is_some() && self.dialog.is_none() && !self.covers_view() {
+            return Pressed::Took;
         }
         let marks = match self.dialog.is_some() {
             true => self.dialog_marks(),
@@ -2030,10 +2214,8 @@ impl PageDoc {
                                 let l = open_if_wanted(&*engine, &req, &still)?;
                                 let page = l.page.ok_or(EngineError::Closed)?;
                                 let drawn = try_live(page, l.generation);
-                                if drawn.is_err() || !still.load(Ordering::SeqCst) {
-                                    engine.close(page);
-                                }
-                                (drawn?, Some((page, l.generation)))
+                                engine.close(page);
+                                (drawn?, None)
                             }
                             other => (other?, None),
                         };
@@ -2107,6 +2289,53 @@ impl PageDoc {
     /// Everything this page holds on the GPU, and the live page, given back.
     /// Runs from the view's release hook, when every window is in gpui's list,
     /// so the textures are dropped at once rather than deferred.
+    fn visibility(&mut self, shown: bool, cx: &mut Context<DocumentView>) {
+        if self.hidden == !shown {
+            return;
+        }
+        self.hidden = !shown;
+        if shown {
+            self.timing = OpenTiming::new();
+            self.asked = None;
+            self.lay_out(cx);
+        } else {
+            self.epoch = self.epoch.wrapping_add(1);
+            self.work = None;
+            self.settle = None;
+            self.asked = None;
+            let mut images = Vec::new();
+            if let Some(r) = &mut self.current {
+                images.extend(r.tiles.take_gpu());
+                r.tiles.png.clear();
+                r.tiles.decoding.clear();
+                r.tiles.fetching.clear();
+            }
+            if let Some(mut r) = self.old.take() {
+                images.extend(r.tiles.take_gpu());
+            }
+            if let Some(d) = self.dialog.take() {
+                images.extend(d.image);
+            }
+            give_back(images, cx);
+            if let (Some((page, _)), Ok(engine)) = (self.live.take(), &self.engine) {
+                let engine = engine.clone();
+                cx.background_spawn(async move { engine.close(page) })
+                    .detach();
+            }
+            if debug() {
+                eprintln!(
+                    "[doc-hidden] {}",
+                    serde_json::json!({
+                        "path": self.path, "resident_tiles": self.current.as_ref().map(|r| r.tiles.gpu.len()),
+                        "png_bytes": self.current.as_ref().map(|r| r.tiles.png.values().map(|p| p.len()).sum::<usize>()),
+                        "browser_page": self.live.is_some(), "scroll_css": self.scroll_css,
+                    })
+                );
+            }
+        }
+        cx.notify();
+    }
+
     pub fn release(&mut self, cx: &mut App) -> usize {
         let mut images = Vec::new();
         if let Some(mut r) = self.current.take() {
@@ -2135,7 +2364,7 @@ impl PageDoc {
     fn tiles_of(&self, r: &Rendered, m: Measured) -> Vec<gpui::AnyElement> {
         let g = r.layout.geometry;
         let stretch = self.stretch(r);
-        let scroll_dev = (f64::from(self.scroll_css) * f64::from(g.scale))
+        let scroll_dev = (f64::from(r.stale_scroll.unwrap_or(self.scroll_css)) * f64::from(g.scale))
             .round()
             .max(0.0) as u32;
         // Tiles are snapped to whole device pixels against the view's origin.
@@ -2379,6 +2608,35 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
 // fragment, follows its file and carries a brief's notes. It does not zoom or
 // follow a drag, so those are the trait's defaults.
 impl Backend for PageDoc {
+    fn painted(&mut self) {
+        if self.hidden {
+            return;
+        }
+        let any = self
+            .current
+            .as_ref()
+            .is_some_and(|r| !r.tiles.gpu.is_empty());
+        let mut changed = false;
+        if any && self.timing.first_paint.is_none() {
+            self.timing.first_paint = Some(self.timing.elapsed());
+            changed = true;
+        }
+        if self.covers_view() && self.timing.viewport_paint.is_none() {
+            self.timing.viewport_paint = Some(self.timing.elapsed());
+            changed = true;
+        }
+        if changed && debug() {
+            eprintln!(
+                "[doc-timing] {}",
+                serde_json::json!({"path": self.path, "geometry": self.asked.map(|(g, _)| g), "ms": self.timing})
+            );
+        }
+    }
+
+    fn visible(&mut self, shown: bool, cx: &mut Context<DocumentView>) {
+        self.visibility(shown, cx);
+    }
+
     fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
         PageDoc::read_act(self, act, cx)
     }
@@ -2563,6 +2821,93 @@ impl Backend for PageDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn hiding_a_document_cancels_work_and_releases_pixels_but_keeps_its_place(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::super::engine::{ConcurSupport, LayoutHash, NotesCapability};
+        cx.update(|cx| super::super::set_engine(cx, Err(Unavailable::Off)));
+        let view = cx.new(|cx| {
+            DocumentView::new(
+                crate::docopen::DocTarget {
+                    path: "/missing/visibility-test.html".into(),
+                    kind: crate::docopen::DocKind::Html,
+                },
+                cx,
+            )
+        });
+        let image = Arc::new(RenderImage::new(vec![::image::Frame::new(
+            ::image::RgbaImage::new(8, 8),
+        )]));
+        let wanted = Wanted::new();
+        let flag = wanted.flag();
+        view.update(cx, |v, cx| {
+            let p = page_of(v).unwrap();
+            let layout = PageLayout {
+                page: None,
+                generation: 7,
+                rendered: LayoutHash(1),
+                geometry: Geometry {
+                    css_width: 600,
+                    viewport_css_height: 800,
+                    scale: 1.6,
+                },
+                height_css: 4000.,
+                notes_file: None,
+                capability: NotesCapability {
+                    notes_islands: 0,
+                    concurs_island: false,
+                    tagged: 0,
+                    concur: ConcurSupport::Unknown,
+                },
+                anchors: vec![],
+                links: vec![],
+                targets: None,
+                openers: vec![],
+                dialogs: vec![],
+                diagnostics: vec![],
+                videos: None,
+            };
+            let mut tiles = TileSet::new(&layout);
+            tiles.gpu.insert(0, image.clone());
+            tiles.png.insert(0, Arc::from(&b"cached PNG"[..]));
+            tiles.decoding.insert(1280);
+            tiles.fetching.insert(2560);
+            p.current = Some(Rendered {
+                layout,
+                tiles,
+                stale_scroll: None,
+                zoom: 1.,
+            });
+            p.scroll_css = 1234.;
+            p.pending_fragment = Some("the-passage".into());
+            p.work = Some(cx.spawn(async move |_, _| {
+                let _wanted = wanted;
+                std::future::pending::<()>().await;
+            }));
+            let epoch = p.epoch;
+            p.visibility(false, cx);
+            assert_ne!(p.epoch, epoch, "late decode results have an obsolete epoch");
+            let r = p.current.as_ref().unwrap();
+            assert!(r.tiles.gpu.is_empty() && r.tiles.png.is_empty());
+            assert!(r.tiles.decoding.is_empty() && r.tiles.fetching.is_empty());
+            assert!(p.work.is_none() && p.asked.is_none());
+            assert_eq!(p.scroll_css, 1234.);
+            assert_eq!(p.pending_fragment.as_deref(), Some("the-passage"));
+            assert_eq!(r.layout.height_css, 4000.);
+            p.visibility(true, cx);
+            assert!(!p.hidden);
+            assert_eq!(p.scroll_css, 1234.);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            Arc::strong_count(&image),
+            1,
+            "the deferred atlas release has run"
+        );
+        assert!(!flag.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     fn tops(n: u32) -> Vec<u32> {
         (0..n).map(|k| k * TILE_DEV).collect()

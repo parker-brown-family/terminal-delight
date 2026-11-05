@@ -1,0 +1,62 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 463.92115694470704,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 25.833128000000002,
+      "cache_lookup": 35.053379,
+      "cache_hit": true,
+      "layout": 35.059106,
+      "first_tile": 39.500772000000005,
+      "first_decode": 176.194253,
+      "first_paint": 379.630764,
+      "viewport_paint": 379.63502500000004
+    }
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 538.9934619888663,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.047824,
+      "cache_lookup": 13.434581,
+      "cache_hit": true,
+      "layout": 13.445197,
+      "first_tile": 14.549536999999999,
+      "first_decode": 107.860502,
+      "first_paint": 460.013219,
+      "viewport_paint": 460.01894599999997
+    }
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 211.86985191889107,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 3.414222,
+      "cache_lookup": 8.744906,
+      "cache_hit": true,
+      "layout": 8.751541,
+      "first_tile": 9.584267,
+      "first_decode": 85.33473900000001,
+      "first_paint": 166.99118299999998,
+      "viewport_paint": 166.995862
+    }
+  }
+]

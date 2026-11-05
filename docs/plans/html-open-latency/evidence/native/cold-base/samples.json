@@ -1,0 +1,122 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 2093.48098305054,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 2625.7979860529304,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 2482.776585035026,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 3,
+    "wall_ms": 2139.11112700589,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 4,
+    "wall_ms": 2571.4399949647486,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 5,
+    "wall_ms": 3221.9375839922577,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 6,
+    "wall_ms": 3156.7893030587584,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 7,
+    "wall_ms": 3442.2509241849184,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 8,
+    "wall_ms": 2837.134584086016,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 9,
+    "wall_ms": 3592.719681095332,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 10,
+    "wall_ms": 1504.5380878727883,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 11,
+    "wall_ms": 1699.624118860811,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 12,
+    "wall_ms": 1906.6520729102194,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 13,
+    "wall_ms": 1642.0446131378412,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 14,
+    "wall_ms": 1636.2651910167187,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 15,
+    "wall_ms": 1352.5057509541512,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 16,
+    "wall_ms": 1384.6308700740337,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 17,
+    "wall_ms": 1273.0298941023648,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 18,
+    "wall_ms": 1279.6955371741205,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  },
+  {
+    "cycle": 19,
+    "wall_ms": 1467.3156749922782,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "ms": {}
+  }
+]

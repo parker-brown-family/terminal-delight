@@ -1,0 +1,32 @@
+{
+  "chromium": "152.0.7977.82",
+  "source_revision": "8913e9501239900b767b5db77770af06711e5674",
+  "geometry": {
+    "css_width": 968,
+    "viewport_css_height": 1400,
+    "scale": 1.6
+  },
+  "native_presentation_measured": false,
+  "files": [
+    {
+      "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+      "bytes": 94705,
+      "sha256": "fdf014817580352aa2f6dc10557da87ca84a2e96ec1a924ba715b5d4f11cb037"
+    },
+    {
+      "path": "/home/parker/Work/reports/system-contention-2026-11-04.html",
+      "bytes": 99812,
+      "sha256": "b781207cec76e928b9389ce945f2f2a26a5776899f8c6b4f5a23c56c08b413e0"
+    },
+    {
+      "path": "/home/parker/Work/terminal-delight/reports/2026-11-02-agent-identity-built.html",
+      "bytes": 178110,
+      "sha256": "88944dcd7bdb0225630ace5cd8c191936ce7c8326cfc8fded92d16fb3e2194aa"
+    },
+    {
+      "path": "/home/parker/Work/terminal-delight/reports/2026-10-20-chalk-marker-and-depth.html",
+      "bytes": 26508787,
+      "sha256": "0240eaa969adbb5bb5f2f80a0a5ee9667e852baeae88c78501bbb38c90dcfb1e"
+    }
+  ]
+}

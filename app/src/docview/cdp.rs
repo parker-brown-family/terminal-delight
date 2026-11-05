@@ -86,6 +86,7 @@ pub struct Cdp {
     out: Mutex<Box<dyn Write + Send>>,
     waiting: Mutex<HashMap<u64, mpsc::Sender<Result<Value, CdpError>>>>,
     expects: Mutex<Vec<Waiter>>,
+    resources: Mutex<HashMap<SessionId, Option<Vec<String>>>>,
     next: AtomicU64,
     /// Set by the reader when the pipe ends, under the `waiting` lock, so a
     /// call either sees it or is drained by it — never neither.
@@ -223,6 +224,7 @@ impl Cdp {
             out: Mutex::new(write),
             waiting: Mutex::new(HashMap::new()),
             expects: Mutex::new(Vec::new()),
+            resources: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
             closed: AtomicBool::new(false),
         });
@@ -241,6 +243,18 @@ impl Cdp {
     /// Whether the pipe has ended.
     pub fn is_closed(&self) -> bool {
         self.closed.load(Ordering::SeqCst)
+    }
+
+    pub fn watch_resources(&self, session: &SessionId) {
+        lock(&self.resources).insert(session.clone(), Some(Vec::new()));
+    }
+
+    pub fn resources(&self, session: &SessionId) -> Option<Vec<String>> {
+        lock(&self.resources).get(session).cloned().flatten()
+    }
+
+    pub fn forget_resources(&self, session: &SessionId) {
+        lock(&self.resources).remove(session);
     }
 
     /// Send `method` and wait for its reply.
@@ -335,6 +349,7 @@ impl Cdp {
         }
         // Dropping the senders wakes every Expect with Closed.
         lock(&self.expects).clear();
+        lock(&self.resources).clear();
     }
 
     fn dispatch(&self, raw: &[u8]) {
@@ -366,6 +381,24 @@ impl Cdp {
             .get("sessionId")
             .and_then(Value::as_str)
             .map(|s| SessionId(s.to_string()));
+        if method == "Network.requestWillBeSent" {
+            if let (Some(session), Some(url)) = (
+                &session,
+                msg.pointer("/params/request/url").and_then(Value::as_str),
+            ) {
+                if !url.starts_with("data:") {
+                    if let Some(record) = lock(&self.resources).get_mut(session) {
+                        if let Some(urls) = record {
+                            if urls.len() >= 512 || url.len() > 8192 {
+                                *record = None;
+                            } else if !urls.iter().any(|u| u == url) {
+                                urls.push(url.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if method == "Page.javascriptDialogOpening" {
             // An unanswered alert/confirm/prompt blocks the page's main thread,
             // and every later call on that page would time out behind it.

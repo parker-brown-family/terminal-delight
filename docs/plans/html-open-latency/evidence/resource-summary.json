@@ -1,0 +1,304 @@
+{
+  "default": [
+    {
+      "stage": "warm",
+      "pages": null,
+      "browser_pss_mib": 160.62,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.39,
+      "png_mib": null,
+      "idle_sample_cpu_percent": 0.0
+    },
+    {
+      "stage": "retained",
+      "pages": 1,
+      "browser_pss_mib": 498.19,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.6,
+      "png_mib": 3.43,
+      "idle_sample_cpu_percent": 0.0
+    },
+    {
+      "stage": "retained",
+      "pages": 2,
+      "browser_pss_mib": 724.48,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.6,
+      "png_mib": 5.43,
+      "idle_sample_cpu_percent": 0.0
+    },
+    {
+      "stage": "retained",
+      "pages": 3,
+      "browser_pss_mib": 920.53,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.62,
+      "png_mib": 16.03,
+      "idle_sample_cpu_percent": 0.0
+    },
+    {
+      "stage": "retained",
+      "pages": 4,
+      "browser_pss_mib": 1058.26,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.62,
+      "png_mib": 19.46,
+      "idle_sample_cpu_percent": 1.59
+    },
+    {
+      "stage": "retained",
+      "pages": 5,
+      "browser_pss_mib": 1275.93,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.62,
+      "png_mib": 21.46,
+      "idle_sample_cpu_percent": 2.34
+    },
+    {
+      "stage": "retained",
+      "pages": 6,
+      "browser_pss_mib": 1456.65,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.58,
+      "png_mib": 32.06,
+      "idle_sample_cpu_percent": 3.84
+    },
+    {
+      "stage": "retained",
+      "pages": 7,
+      "browser_pss_mib": 1584.84,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.58,
+      "png_mib": 35.48,
+      "idle_sample_cpu_percent": 6.87
+    },
+    {
+      "stage": "retained",
+      "pages": 8,
+      "browser_pss_mib": 1813.05,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.58,
+      "png_mib": 37.49,
+      "idle_sample_cpu_percent": 0.74
+    },
+    {
+      "stage": "retained",
+      "pages": 9,
+      "browser_pss_mib": 1975.24,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.58,
+      "png_mib": 48.09,
+      "idle_sample_cpu_percent": 5.19
+    },
+    {
+      "stage": "closed_pages",
+      "pages": null,
+      "browser_pss_mib": 292.79,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 2.58,
+      "png_mib": 48.09,
+      "idle_sample_cpu_percent": 0.83
+    },
+    {
+      "stage": "shutdown",
+      "pages": null,
+      "browser_pss_mib": 0.0,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 0.0,
+      "png_mib": 48.09,
+      "idle_sample_cpu_percent": 0.0
+    }
+  ],
+  "default_nine": {
+    "png_mib": 48.086737632751465,
+    "top_decoded_mib": 280.77634048461914,
+    "viewport_png_mib": 23.132397651672363,
+    "samples": [
+      {
+        "file": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+        "height_css": 4017.0,
+        "png_bytes": 3593322,
+        "top_decoded_bytes": 38068224,
+        "viewport_png_bytes": 2883256,
+        "wall_ms": 2430.618827
+      },
+      {
+        "file": "/home/parker/Work/reports/system-contention-2026-11-04.html",
+        "height_css": 2219.0,
+        "png_bytes": 2105083,
+        "top_decoded_bytes": 22001996,
+        "viewport_png_bytes": 2105083,
+        "wall_ms": 1416.356859
+      },
+      {
+        "file": "/home/parker/Work/terminal-delight/reports/2026-11-02-agent-identity-built.html",
+        "height_css": 10389.0,
+        "png_bytes": 11109128,
+        "top_decoded_bytes": 38068224,
+        "viewport_png_bytes": 3097020,
+        "wall_ms": 7680.39495
+      }
+    ]
+  },
+  "vulkan": [
+    {
+      "stage": "warm",
+      "pages": null,
+      "browser_pss_mib": 337.59,
+      "browser_gpu_mib": 14.0,
+      "profile_mib": 2.39,
+      "png_mib": null,
+      "idle_sample_cpu_percent": 4.17
+    },
+    {
+      "stage": "retained",
+      "pages": 1,
+      "browser_pss_mib": 525.98,
+      "browser_gpu_mib": 201.0,
+      "profile_mib": 6.03,
+      "png_mib": 3.12,
+      "idle_sample_cpu_percent": 4.93
+    },
+    {
+      "stage": "retained",
+      "pages": 2,
+      "browser_pss_mib": 607.96,
+      "browser_gpu_mib": 345.0,
+      "profile_mib": 7.87,
+      "png_mib": 4.96,
+      "idle_sample_cpu_percent": 4.79
+    },
+    {
+      "stage": "retained",
+      "pages": 3,
+      "browser_pss_mib": 747.53,
+      "browser_gpu_mib": 547.0,
+      "profile_mib": 7.87,
+      "png_mib": 14.49,
+      "idle_sample_cpu_percent": 5.08
+    },
+    {
+      "stage": "retained",
+      "pages": 4,
+      "browser_pss_mib": 824.4,
+      "browser_gpu_mib": 573.0,
+      "profile_mib": 7.87,
+      "png_mib": 17.6,
+      "idle_sample_cpu_percent": 5.44
+    },
+    {
+      "stage": "retained",
+      "pages": 5,
+      "browser_pss_mib": 884.37,
+      "browser_gpu_mib": 589.0,
+      "profile_mib": 7.87,
+      "png_mib": 19.44,
+      "idle_sample_cpu_percent": 3.08
+    },
+    {
+      "stage": "retained",
+      "pages": 6,
+      "browser_pss_mib": 1011.69,
+      "browser_gpu_mib": 703.0,
+      "profile_mib": 7.87,
+      "png_mib": 28.96,
+      "idle_sample_cpu_percent": 0.77
+    },
+    {
+      "stage": "retained",
+      "pages": 7,
+      "browser_pss_mib": 1073.17,
+      "browser_gpu_mib": 753.0,
+      "profile_mib": 7.87,
+      "png_mib": 32.08,
+      "idle_sample_cpu_percent": 3.12
+    },
+    {
+      "stage": "retained",
+      "pages": 8,
+      "browser_pss_mib": 1135.43,
+      "browser_gpu_mib": 801.0,
+      "profile_mib": 7.83,
+      "png_mib": 33.92,
+      "idle_sample_cpu_percent": 3.83
+    },
+    {
+      "stage": "retained",
+      "pages": 9,
+      "browser_pss_mib": 1245.5,
+      "browser_gpu_mib": 859.0,
+      "profile_mib": 7.83,
+      "png_mib": 43.45,
+      "idle_sample_cpu_percent": 3.59
+    },
+    {
+      "stage": "closed_pages",
+      "pages": null,
+      "browser_pss_mib": 475.38,
+      "browser_gpu_mib": 25.0,
+      "profile_mib": 7.83,
+      "png_mib": 43.45,
+      "idle_sample_cpu_percent": 1.65
+    },
+    {
+      "stage": "shutdown",
+      "pages": null,
+      "browser_pss_mib": 0.0,
+      "browser_gpu_mib": 0.0,
+      "profile_mib": 0.0,
+      "png_mib": 43.45,
+      "idle_sample_cpu_percent": 0.0
+    }
+  ],
+  "vulkan_nine": {
+    "png_mib": 43.44897937774658,
+    "top_decoded_mib": 280.77634048461914,
+    "viewport_png_mib": 21.43546485900879,
+    "samples": [
+      {
+        "file": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+        "height_css": 4017.0,
+        "png_bytes": 3266811,
+        "top_decoded_bytes": 38068224,
+        "viewport_png_bytes": 2596238,
+        "wall_ms": 5446.76344
+      },
+      {
+        "file": "/home/parker/Work/reports/system-contention-2026-11-04.html",
+        "height_css": 2219.0,
+        "png_bytes": 1930784,
+        "top_decoded_bytes": 22001996,
+        "viewport_png_bytes": 1930784,
+        "wall_ms": 617.7003970000001
+      },
+      {
+        "file": "/home/parker/Work/terminal-delight/reports/2026-11-02-agent-identity-built.html",
+        "height_css": 10389.0,
+        "png_bytes": 9991127,
+        "top_decoded_bytes": 38068224,
+        "viewport_png_bytes": 2965216,
+        "wall_ms": 2312.5435350000002
+      }
+    ]
+  },
+  "projection": {
+    "note": "Arithmetic only, repeating the three-page mix at measured geometry. Browser projection uses warm baseline + N*(nine-warm)/9. Not a 30/50-page stress run. Native GPU allocation is unmeasured.",
+    "default": {
+      "9": {
+        "browser_ram_gib": 1.93,
+        "decoded_ram_mib": 280.8,
+        "png_mib": 48.1
+      },
+      "30": {
+        "browser_ram_gib": 6.06,
+        "decoded_ram_mib": 935.9,
+        "png_mib": 160.3
+      },
+      "50": {
+        "browser_ram_gib": 10.0,
+        "decoded_ram_mib": 1559.9,
+        "png_mib": 267.1
+      }
+    }
+  }
+}

@@ -1,0 +1,399 @@
+{
+  "root": "/home/parker/.cache/terminal-delight/pages",
+  "measured_date": "2026-11-05",
+  "total_bytes": 262183001,
+  "render_entries": 58,
+  "render_bytes": 240168031,
+  "median_render_bytes": 3438158.0,
+  "p95_render_bytes": 8083839,
+  "min_render_bytes": 841526,
+  "max_render_bytes": 23283349,
+  "clip_entries": 6,
+  "clip_bytes": 22014970,
+  "entries": [
+    {
+      "entry": "clip-fa00836116d1b0b6",
+      "kind": "clip",
+      "bytes": 35,
+      "used_ns": 1793862206853724978
+    },
+    {
+      "entry": "clip-65b22eac7b825f1c",
+      "kind": "clip",
+      "bytes": 39,
+      "used_ns": 1793862207326835210
+    },
+    {
+      "entry": "c9b3fcb5d3f4a27d",
+      "kind": "layout",
+      "bytes": 1632647,
+      "used_ns": 1793732867547311162
+    },
+    {
+      "entry": "df2e6252bec3b1e5",
+      "kind": "layout",
+      "bytes": 1802195,
+      "used_ns": 1793734517114869284
+    },
+    {
+      "entry": "60a5a871c6d38040",
+      "kind": "layout",
+      "bytes": 7703530,
+      "used_ns": 1793739235799338060
+    },
+    {
+      "entry": "9c9d6291d4c31fcf",
+      "kind": "layout",
+      "bytes": 2275131,
+      "used_ns": 1793745110992414207
+    },
+    {
+      "entry": "03dea4afd39f5e54",
+      "kind": "layout",
+      "bytes": 2575587,
+      "used_ns": 1793745116013402671
+    },
+    {
+      "entry": "5a02ae14accac5b7",
+      "kind": "layout",
+      "bytes": 7490430,
+      "used_ns": 1793750704800748959
+    },
+    {
+      "entry": "a99618364fb0c141",
+      "kind": "layout",
+      "bytes": 2611730,
+      "used_ns": 1793755234917161960
+    },
+    {
+      "entry": "4d75c872b0c77a35",
+      "kind": "layout",
+      "bytes": 4232083,
+      "used_ns": 1793767787287461561
+    },
+    {
+      "entry": "b7e5f3e3ec31217f",
+      "kind": "layout",
+      "bytes": 4671127,
+      "used_ns": 1793768275270775550
+    },
+    {
+      "entry": "231f441194286ed4",
+      "kind": "layout",
+      "bytes": 4350260,
+      "used_ns": 1793768297271680590
+    },
+    {
+      "entry": "9632ad61268cca27",
+      "kind": "layout",
+      "bytes": 3756917,
+      "used_ns": 1793772583248308810
+    },
+    {
+      "entry": "d931c47d9a069cb2",
+      "kind": "layout",
+      "bytes": 3963180,
+      "used_ns": 1793772592837278628
+    },
+    {
+      "entry": "84c0059a17d60802",
+      "kind": "layout",
+      "bytes": 4231694,
+      "used_ns": 1793773885957451092
+    },
+    {
+      "entry": "2700556a8ccef704",
+      "kind": "layout",
+      "bytes": 4946550,
+      "used_ns": 1793774339085507976
+    },
+    {
+      "entry": "2dc08a18471c8dd4",
+      "kind": "layout",
+      "bytes": 6249989,
+      "used_ns": 1793775122206710105
+    },
+    {
+      "entry": "59dd47e36138b64b",
+      "kind": "layout",
+      "bytes": 6945363,
+      "used_ns": 1793809158386142949
+    },
+    {
+      "entry": "d0787b53da0c3088",
+      "kind": "layout",
+      "bytes": 4043888,
+      "used_ns": 1793807687534189348
+    },
+    {
+      "entry": "55443ca93972f288",
+      "kind": "layout",
+      "bytes": 7605070,
+      "used_ns": 1793809100692672660
+    },
+    {
+      "entry": "7eef39417fc956c0",
+      "kind": "layout",
+      "bytes": 2888262,
+      "used_ns": 1793810312401730492
+    },
+    {
+      "entry": "c0f7777d0717f1df",
+      "kind": "layout",
+      "bytes": 2752074,
+      "used_ns": 1793810315049724103
+    },
+    {
+      "entry": "52fd066a3bb22458",
+      "kind": "layout",
+      "bytes": 841526,
+      "used_ns": 1793810793530946486
+    },
+    {
+      "entry": "e05bd015877cd0a4",
+      "kind": "layout",
+      "bytes": 2613775,
+      "used_ns": 1793811039953757101
+    },
+    {
+      "entry": "578bbabddd5d397e",
+      "kind": "layout",
+      "bytes": 1346195,
+      "used_ns": 1793811591692550396
+    },
+    {
+      "entry": "292f8cfc0a254635",
+      "kind": "layout",
+      "bytes": 1314113,
+      "used_ns": 1793811896242430377
+    },
+    {
+      "entry": "b471fb4cca1526ee",
+      "kind": "layout",
+      "bytes": 1652013,
+      "used_ns": 1793812349987922551
+    },
+    {
+      "entry": "db3fe8085cb9c6f5",
+      "kind": "layout",
+      "bytes": 1294965,
+      "used_ns": 1793813078671331625
+    },
+    {
+      "entry": "5d1a609bda540556",
+      "kind": "layout",
+      "bytes": 1697597,
+      "used_ns": 1793813078917330557
+    },
+    {
+      "entry": "5067d7786876ad09",
+      "kind": "layout",
+      "bytes": 4769845,
+      "used_ns": 1793813595655232482
+    },
+    {
+      "entry": "57d6214f5626e52c",
+      "kind": "layout",
+      "bytes": 1434600,
+      "used_ns": 1793815811348947085
+    },
+    {
+      "entry": "169f9304dce62c57",
+      "kind": "layout",
+      "bytes": 5948298,
+      "used_ns": 1793816091239925698
+    },
+    {
+      "entry": "7ae1c2524cea778f",
+      "kind": "layout",
+      "bytes": 8083839,
+      "used_ns": 1793816350749533469
+    },
+    {
+      "entry": "230b8dd14d9d939d",
+      "kind": "layout",
+      "bytes": 5196658,
+      "used_ns": 1793816115055838914
+    },
+    {
+      "entry": "b9bf61d395252ef2",
+      "kind": "layout",
+      "bytes": 1537796,
+      "used_ns": 1793818014101299746
+    },
+    {
+      "entry": "c67e84733c85a643",
+      "kind": "layout",
+      "bytes": 5983720,
+      "used_ns": 1793824616348577626
+    },
+    {
+      "entry": "39e33e837bb556d5",
+      "kind": "layout",
+      "bytes": 8615906,
+      "used_ns": 1793824724932285100
+    },
+    {
+      "entry": "b3533f68c8c7ab59",
+      "kind": "layout",
+      "bytes": 23283349,
+      "used_ns": 1793825918763605427
+    },
+    {
+      "entry": "54a2bb7ab20acbf8",
+      "kind": "layout",
+      "bytes": 8509224,
+      "used_ns": 1793828541525646473
+    },
+    {
+      "entry": "59ee2e513c5a84d7",
+      "kind": "layout",
+      "bytes": 5942238,
+      "used_ns": 1793834582970340475
+    },
+    {
+      "entry": "9df55227366f22e1",
+      "kind": "layout",
+      "bytes": 3898825,
+      "used_ns": 1793852461336450490
+    },
+    {
+      "entry": "clip-51b39854e1b7cb19",
+      "kind": "clip",
+      "bytes": 5628524,
+      "used_ns": 1793853774879819913
+    },
+    {
+      "entry": "clip-f38dbc9f2b45aaa4",
+      "kind": "clip",
+      "bytes": 5378924,
+      "used_ns": 1793853774886912568
+    },
+    {
+      "entry": "7e4176c44b2ac546",
+      "kind": "layout",
+      "bytes": 1718683,
+      "used_ns": 1793853771448781736
+    },
+    {
+      "entry": "7c1a70793a97c053",
+      "kind": "layout",
+      "bytes": 2179591,
+      "used_ns": 1793853775978765564
+    },
+    {
+      "entry": "a3cd7d82c4c84379",
+      "kind": "layout",
+      "bytes": 2461158,
+      "used_ns": 1793855077268769301
+    },
+    {
+      "entry": "b8db0ddb665c5360",
+      "kind": "layout",
+      "bytes": 2981612,
+      "used_ns": 1793854685377660029
+    },
+    {
+      "entry": "ab77985fbffac6d4",
+      "kind": "layout",
+      "bytes": 2562687,
+      "used_ns": 1793855082905342669
+    },
+    {
+      "entry": "601351da6f879339",
+      "kind": "layout",
+      "bytes": 3252915,
+      "used_ns": 1793855138642158669
+    },
+    {
+      "entry": "75ebd688e0b0e0af",
+      "kind": "layout",
+      "bytes": 3308026,
+      "used_ns": 1793855145662135504
+    },
+    {
+      "entry": "8eef3a95bb74eb5f",
+      "kind": "layout",
+      "bytes": 3135363,
+      "used_ns": 1793855152737112159
+    },
+    {
+      "entry": "38f07232adf14ac9",
+      "kind": "layout",
+      "bytes": 3239516,
+      "used_ns": 1793855873705759357
+    },
+    {
+      "entry": "668183ff8eba12be",
+      "kind": "layout",
+      "bytes": 3568290,
+      "used_ns": 1793855880886724086
+    },
+    {
+      "entry": "6d3b5986380b3c62",
+      "kind": "layout",
+      "bytes": 4944723,
+      "used_ns": 1793856883764788236
+    },
+    {
+      "entry": "72024ae83c3eafb9",
+      "kind": "layout",
+      "bytes": 3938031,
+      "used_ns": 1793856816802773782
+    },
+    {
+      "entry": "842d1643461c92bf",
+      "kind": "layout",
+      "bytes": 4654676,
+      "used_ns": 1793858012571183083
+    },
+    {
+      "entry": "15844942237b42e2",
+      "kind": "layout",
+      "bytes": 7021844,
+      "used_ns": 1793858504911462412
+    },
+    {
+      "entry": "clip-e8fe412ff6d1bf4f",
+      "kind": "clip",
+      "bytes": 5628524,
+      "used_ns": 1793859833901535090
+    },
+    {
+      "entry": "clip-3ee855b7e81089f8",
+      "kind": "clip",
+      "bytes": 5378924,
+      "used_ns": 1793859833908629636
+    },
+    {
+      "entry": "6b27ae1b129ab364",
+      "kind": "layout",
+      "bytes": 1013980,
+      "used_ns": 1793859834875694298
+    },
+    {
+      "entry": "626f57dc1f1229a2",
+      "kind": "layout",
+      "bytes": 3069041,
+      "used_ns": 1793861011082949262
+    },
+    {
+      "entry": "d6eea9b1140bdbb3",
+      "kind": "layout",
+      "bytes": 1050216,
+      "used_ns": 1793862294889131227
+    },
+    {
+      "entry": "e38d61d0159b5fac",
+      "kind": "layout",
+      "bytes": 1330082,
+      "used_ns": 1793862300835104182
+    },
+    {
+      "entry": "2ddca525e1210a07",
+      "kind": "layout",
+      "bytes": 4045408,
+      "used_ns": 1793862611063746437
+    }
+  ]
+}

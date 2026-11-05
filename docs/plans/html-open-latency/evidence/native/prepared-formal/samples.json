@@ -1,0 +1,402 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 291.92335717380047,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 20.130959999999998,
+      "cache_lookup": 92.985595,
+      "cache_hit": true,
+      "layout": 92.989436,
+      "first_tile": 93.947877,
+      "first_decode": 177.625009,
+      "first_paint": 270.92244700000003,
+      "viewport_paint": 270.92677799999996
+    }
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 351.3995569664985,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 10.863353,
+      "cache_lookup": 100.899383,
+      "cache_hit": true,
+      "layout": 100.906995,
+      "first_tile": 101.843157,
+      "first_decode": 222.843886,
+      "first_paint": 335.21313000000004,
+      "viewport_paint": 335.216063
+    }
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 343.10072916559875,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 94.39228,
+      "cache_lookup": 102.338406,
+      "cache_hit": true,
+      "layout": 102.344622,
+      "first_tile": 102.838963,
+      "first_decode": 222.20615899999999,
+      "first_paint": 325.38218,
+      "viewport_paint": 325.386929
+    }
+  },
+  {
+    "cycle": 3,
+    "wall_ms": 362.1245538815856,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.946812,
+      "cache_lookup": 111.398441,
+      "cache_hit": true,
+      "layout": 111.401864,
+      "first_tile": 112.157972,
+      "first_decode": 251.424322,
+      "first_paint": 344.64088300000003,
+      "viewport_paint": 344.644725
+    }
+  },
+  {
+    "cycle": 4,
+    "wall_ms": 210.6838459149003,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 10.341146,
+      "cache_lookup": 11.65627,
+      "cache_hit": true,
+      "layout": 11.661508,
+      "first_tile": 12.258726,
+      "first_decode": 97.82682700000001,
+      "first_paint": 197.265466,
+      "viewport_paint": 197.26826
+    }
+  },
+  {
+    "cycle": 5,
+    "wall_ms": 265.24694892577827,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.280031,
+      "cache_lookup": 84.95272299999999,
+      "cache_hit": true,
+      "layout": 84.956495,
+      "first_tile": 85.34090499999999,
+      "first_decode": 163.132246,
+      "first_paint": 250.628264,
+      "viewport_paint": 250.688118
+    }
+  },
+  {
+    "cycle": 6,
+    "wall_ms": 470.7622828427702,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 12.036977,
+      "cache_lookup": 151.670067,
+      "cache_hit": true,
+      "layout": 151.673001,
+      "first_tile": 153.534567,
+      "first_decode": 277.501623,
+      "first_paint": 448.68126600000005,
+      "viewport_paint": 448.686993
+    }
+  },
+  {
+    "cycle": 7,
+    "wall_ms": 363.2308500818908,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.094543,
+      "cache_lookup": 168.61448900000002,
+      "cache_hit": true,
+      "layout": 168.616933,
+      "first_tile": 170.02327,
+      "first_decode": 249.80734099999998,
+      "first_paint": 341.04199800000004,
+      "viewport_paint": 341.046328
+    }
+  },
+  {
+    "cycle": 8,
+    "wall_ms": 240.63765513710678,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.109706,
+      "cache_lookup": 11.626237,
+      "cache_hit": true,
+      "layout": 11.632872,
+      "first_tile": 12.295114,
+      "first_decode": 100.054784,
+      "first_paint": 211.195299,
+      "viewport_paint": 211.201096
+    }
+  },
+  {
+    "cycle": 9,
+    "wall_ms": 309.97930909506977,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.463582,
+      "cache_lookup": 14.403921,
+      "cache_hit": true,
+      "layout": 14.408809999999999,
+      "first_tile": 14.735181,
+      "first_decode": 103.79956899999999,
+      "first_paint": 212.837912,
+      "viewport_paint": 212.843289
+    }
+  },
+  {
+    "cycle": 10,
+    "wall_ms": 165.30118696391582,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.955361,
+      "cache_lookup": 6.237024,
+      "cache_hit": true,
+      "layout": 6.239329,
+      "first_tile": 6.504728,
+      "first_decode": 70.70343299999999,
+      "first_paint": 141.144888,
+      "viewport_paint": 141.149149
+    }
+  },
+  {
+    "cycle": 11,
+    "wall_ms": 224.11144711077213,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.053473,
+      "cache_lookup": 69.70141100000001,
+      "cache_hit": true,
+      "layout": 69.704204,
+      "first_tile": 70.128354,
+      "first_decode": 133.482879,
+      "first_paint": 209.660034,
+      "viewport_paint": 209.663456
+    }
+  },
+  {
+    "cycle": 12,
+    "wall_ms": 209.26849986426532,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.304288,
+      "cache_lookup": 8.012825,
+      "cache_hit": true,
+      "layout": 8.030844,
+      "first_tile": 8.583084,
+      "first_decode": 79.82863,
+      "first_paint": 175.706378,
+      "viewport_paint": 175.723768
+    }
+  },
+  {
+    "cycle": 13,
+    "wall_ms": 244.837807957083,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.9020660000000005,
+      "cache_lookup": 9.633787,
+      "cache_hit": true,
+      "layout": 9.638955,
+      "first_tile": 10.712705,
+      "first_decode": 100.57426799999999,
+      "first_paint": 189.332469,
+      "viewport_paint": 189.33582099999998
+    }
+  },
+  {
+    "cycle": 14,
+    "wall_ms": 237.24591988138855,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 3.574789,
+      "cache_lookup": 4.7709019999999995,
+      "cache_hit": true,
+      "layout": 4.773207,
+      "first_tile": 67.48064600000001,
+      "first_decode": 135.276,
+      "first_paint": 216.925549,
+      "viewport_paint": 216.928832
+    }
+  },
+  {
+    "cycle": 15,
+    "wall_ms": 361.0971767921001,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.7263399999999995,
+      "cache_lookup": 98.10437800000001,
+      "cache_hit": true,
+      "layout": 98.10821899999999,
+      "first_tile": 99.334085,
+      "first_decode": 205.856092,
+      "first_paint": 313.016594,
+      "viewport_paint": 313.022321
+    }
+  },
+  {
+    "cycle": 16,
+    "wall_ms": 191.27791607752442,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.229418000000001,
+      "cache_lookup": 8.755175000000001,
+      "cache_hit": true,
+      "layout": 8.759436,
+      "first_tile": 9.011844,
+      "first_decode": 92.810639,
+      "first_paint": 170.73468,
+      "viewport_paint": 170.73845100000003
+    }
+  },
+  {
+    "cycle": 17,
+    "wall_ms": 181.32641818374395,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 3.398508,
+      "cache_lookup": 7.303439999999999,
+      "cache_hit": true,
+      "layout": 7.307212000000001,
+      "first_tile": 7.582878,
+      "first_decode": 85.04267899999999,
+      "first_paint": 151.100994,
+      "viewport_paint": 151.104836
+    }
+  },
+  {
+    "cycle": 18,
+    "wall_ms": 221.99069592170417,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.484534,
+      "cache_lookup": 68.092671,
+      "cache_hit": true,
+      "layout": 68.098538,
+      "first_tile": 68.47987499999999,
+      "first_decode": 133.43796999999998,
+      "first_paint": 206.141815,
+      "viewport_paint": 206.145726
+    }
+  },
+  {
+    "cycle": 19,
+    "wall_ms": 277.36389404162765,
+    "path": "/home/parker/Work/reports/2026-11-04-td-formal-verification.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 62.963480000000004,
+      "cache_lookup": 66.755268,
+      "cache_hit": true,
+      "layout": 66.75869,
+      "first_tile": 67.256175,
+      "first_decode": 191.072441,
+      "first_paint": 263.01430999999997,
+      "viewport_paint": 263.02380899999997
+    }
+  }
+]

@@ -1,0 +1,28 @@
+{
+  "session_summary": {
+    "project": "terminal-delight",
+    "session_date": "2026-11-05",
+    "tickets_closed": [],
+    "tickets_opened": [],
+    "files_modified": [
+      "docs/plans/html-open-latency/resources.src.html",
+      "docs/plans/html-open-latency/resources.html",
+      "docs/plans/html-open-latency/plan.md",
+      "docs/plans/html-open-latency/00-status.md",
+      "docs/plans/html-open-latency/evidence/resources.md"
+    ],
+    "decisions_made": [
+      "In response to the request for more impressive behavior, recommend exact-visible-area capture and visible-first cache reads, anchor-plus-offset passage continuity, optional hover/keyboard-selection preparation, and prepared-open p95 <=500 ms under 50 panes. All remain proposed, unmeasured additions.",
+      "Source confirms 2048-row capture bands and all-PNG cache reads before adoption; at the tested tall-page geometry 4096 captured rows cover 2240 visible rows. Exact capture offers 45.3125% fewer returned pixels, not an established elapsed-time gain.",
+      "PageDoc::land preserves fractional scroll, while adopt already carries notes and retains outgoing visible images. Anchor-relative continuity extends existing behavior."
+    ],
+    "blockers_escalated": [],
+    "next_agent_must_know": "The same combined plan remains pending approval. No product code changed. Latest resource review now has section Opening and Reading with four proposals; source evidence and acceptance limits are in the same plan directory. Recommend visible-area capture and passage continuity before qualifying hover preparation. Page checks passed with notes on every section/figure and no overflow at 968/390px.",
+    "contract_compliance": {
+      "dry_plan_used": "yes",
+      "tiered_context_used": "yes",
+      "escalations_filed": "0",
+      "side_effects_checked": "yes"
+    }
+  }
+}

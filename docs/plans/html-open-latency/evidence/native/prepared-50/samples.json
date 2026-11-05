@@ -1,0 +1,2002 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 429.9656569492072,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 30.217467000000003,
+      "cache_lookup": 47.138773,
+      "cache_hit": true,
+      "layout": 47.159446,
+      "first_tile": 47.985537,
+      "first_decode": 126.58824499999999,
+      "first_paint": 249.880299,
+      "viewport_paint": 249.886515
+    }
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 192.02539511024952,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.168723,
+      "cache_lookup": 14.739304,
+      "cache_hit": true,
+      "layout": 14.752225000000001,
+      "first_tile": 15.756552,
+      "first_decode": 92.126901,
+      "first_paint": 164.239546,
+      "viewport_paint": 164.24429500000002
+    }
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 292.62740607373416,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.321658,
+      "cache_lookup": 111.61573700000001,
+      "cache_hit": true,
+      "layout": 111.61852999999999,
+      "first_tile": 111.86325599999999,
+      "first_decode": 180.67405300000001,
+      "first_paint": 263.778772,
+      "viewport_paint": 263.78345199999995
+    }
+  },
+  {
+    "cycle": 3,
+    "wall_ms": 375.2422539982945,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.5069680000000005,
+      "cache_lookup": 79.15508799999999,
+      "cache_hit": true,
+      "layout": 79.157951,
+      "first_tile": 79.471192,
+      "first_decode": 194.103193,
+      "first_paint": 302.884115,
+      "viewport_paint": 302.89277599999997
+    }
+  },
+  {
+    "cycle": 4,
+    "wall_ms": 289.00847607292235,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.848212,
+      "cache_lookup": 16.903287,
+      "cache_hit": true,
+      "layout": 16.907546999999997,
+      "first_tile": 17.224351,
+      "first_decode": 104.243431,
+      "first_paint": 207.123477,
+      "viewport_paint": 207.128645
+    }
+  },
+  {
+    "cycle": 5,
+    "wall_ms": 393.75420985743403,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 12.005691,
+      "cache_lookup": 128.70536199999998,
+      "cache_hit": true,
+      "layout": 128.709203,
+      "first_tile": 129.150744,
+      "first_decode": 230.949358,
+      "first_paint": 335.207176,
+      "viewport_paint": 335.211995
+    }
+  },
+  {
+    "cycle": 6,
+    "wall_ms": 358.4480588324368,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.072267999999999,
+      "cache_lookup": 141.42337,
+      "cache_hit": true,
+      "layout": 141.427002,
+      "first_tile": 142.38299800000001,
+      "first_decode": 270.100166,
+      "first_paint": 339.32512599999995,
+      "viewport_paint": 339.329456
+    }
+  },
+  {
+    "cycle": 7,
+    "wall_ms": 208.27349415048957,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 55.712289999999996,
+      "cache_lookup": 62.577194000000006,
+      "cache_hit": true,
+      "layout": 62.583479999999994,
+      "first_tile": 63.15206299999999,
+      "first_decode": 124.010377,
+      "first_paint": 194.882768,
+      "viewport_paint": 194.887517
+    }
+  },
+  {
+    "cycle": 8,
+    "wall_ms": 320.95872005447745,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.89067,
+      "cache_lookup": 79.621003,
+      "cache_hit": true,
+      "layout": 79.62533300000001,
+      "first_tile": 80.182532,
+      "first_decode": 157.67468200000002,
+      "first_paint": 263.699641,
+      "viewport_paint": 263.70432
+    }
+  },
+  {
+    "cycle": 9,
+    "wall_ms": 236.92740802653134,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.561854,
+      "cache_lookup": 19.425769,
+      "cache_hit": true,
+      "layout": 19.432892,
+      "first_tile": 19.989044,
+      "first_decode": 95.736403,
+      "first_paint": 168.80196999999998,
+      "viewport_paint": 168.806231
+    }
+  },
+  {
+    "cycle": 10,
+    "wall_ms": 254.3902681209147,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.787655999999999,
+      "cache_lookup": 78.337238,
+      "cache_hit": true,
+      "layout": 78.34066,
+      "first_tile": 80.575183,
+      "first_decode": 149.14307,
+      "first_paint": 229.740602,
+      "viewport_paint": 229.745002
+    }
+  },
+  {
+    "cycle": 11,
+    "wall_ms": 186.43622286617756,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.619479999999999,
+      "cache_lookup": 14.033552,
+      "cache_hit": true,
+      "layout": 14.037393,
+      "first_tile": 14.28177,
+      "first_decode": 81.64320599999999,
+      "first_paint": 152.062603,
+      "viewport_paint": 152.06686299999998
+    }
+  },
+  {
+    "cycle": 12,
+    "wall_ms": 228.77971595153213,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.927683,
+      "cache_lookup": 70.308278,
+      "cache_hit": true,
+      "layout": 70.312049,
+      "first_tile": 70.535823,
+      "first_decode": 142.934819,
+      "first_paint": 209.076117,
+      "viewport_paint": 209.08086600000001
+    }
+  },
+  {
+    "cycle": 13,
+    "wall_ms": 220.82911897450686,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 12.466228,
+      "cache_lookup": 70.67781099999999,
+      "cache_hit": true,
+      "layout": 70.680674,
+      "first_tile": 70.967585,
+      "first_decode": 135.29697399999998,
+      "first_paint": 204.829726,
+      "viewport_paint": 204.835453
+    }
+  },
+  {
+    "cycle": 14,
+    "wall_ms": 234.08700502477586,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.854222,
+      "cache_lookup": 59.8968,
+      "cache_hit": true,
+      "layout": 59.901548999999996,
+      "first_tile": 60.206898,
+      "first_decode": 131.48528000000002,
+      "first_paint": 216.099003,
+      "viewport_paint": 216.1048
+    }
+  },
+  {
+    "cycle": 15,
+    "wall_ms": 229.4583700131625,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.534197,
+      "cache_lookup": 17.906147,
+      "cache_hit": true,
+      "layout": 17.909919,
+      "first_tile": 18.406635,
+      "first_decode": 88.267016,
+      "first_paint": 160.281602,
+      "viewport_paint": 160.284815
+    }
+  },
+  {
+    "cycle": 16,
+    "wall_ms": 217.1724741347134,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.480345,
+      "cache_lookup": 69.56327399999999,
+      "cache_hit": true,
+      "layout": 69.567604,
+      "first_tile": 71.847734,
+      "first_decode": 133.93792,
+      "first_paint": 201.962296,
+      "viewport_paint": 201.965648
+    }
+  },
+  {
+    "cycle": 17,
+    "wall_ms": 181.58276611939073,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 12.215565,
+      "cache_lookup": 82.755788,
+      "cache_hit": true,
+      "layout": 82.760607,
+      "first_tile": 83.00680000000001,
+      "first_decode": 93.968562,
+      "first_paint": 167.46191199999998,
+      "viewport_paint": 167.466591
+    }
+  },
+  {
+    "cycle": 18,
+    "wall_ms": 235.56241602636874,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.439145,
+      "cache_lookup": 14.688529,
+      "cache_hit": true,
+      "layout": 14.691812,
+      "first_tile": 15.138031999999999,
+      "first_decode": 92.868063,
+      "first_paint": 173.84805,
+      "viewport_paint": 173.853218
+    }
+  },
+  {
+    "cycle": 19,
+    "wall_ms": 266.3812208920717,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.608994,
+      "cache_lookup": 19.620627000000002,
+      "cache_hit": true,
+      "layout": 19.62398,
+      "first_tile": 19.940713,
+      "first_decode": 107.088302,
+      "first_paint": 192.677717,
+      "viewport_paint": 192.68099999999998
+    }
+  },
+  {
+    "cycle": 20,
+    "wall_ms": 202.69919722341,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.049083,
+      "cache_lookup": 11.019382,
+      "cache_hit": true,
+      "layout": 11.022245999999999,
+      "first_tile": 11.24986,
+      "first_decode": 72.917223,
+      "first_paint": 142.68108199999998,
+      "viewport_paint": 142.687159
+    }
+  },
+  {
+    "cycle": 21,
+    "wall_ms": 202.49414118006825,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.4663200000000005,
+      "cache_lookup": 10.946048999999999,
+      "cache_hit": true,
+      "layout": 10.948981999999999,
+      "first_tile": 11.199854,
+      "first_decode": 72.991326,
+      "first_paint": 143.728363,
+      "viewport_paint": 143.731226
+    }
+  },
+  {
+    "cycle": 22,
+    "wall_ms": 184.94237307459116,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.23619,
+      "cache_lookup": 11.191752,
+      "cache_hit": true,
+      "layout": 11.194965,
+      "first_tile": 11.398204999999999,
+      "first_decode": 69.876096,
+      "first_paint": 141.17117000000002,
+      "viewport_paint": 141.174592
+    }
+  },
+  {
+    "cycle": 23,
+    "wall_ms": 204.55776108428836,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.3718200000000005,
+      "cache_lookup": 12.977401,
+      "cache_hit": true,
+      "layout": 12.979776,
+      "first_tile": 13.262635999999999,
+      "first_decode": 71.603496,
+      "first_paint": 143.39647399999998,
+      "viewport_paint": 143.401642
+    }
+  },
+  {
+    "cycle": 24,
+    "wall_ms": 196.64543704129755,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.389005,
+      "cache_lookup": 11.059751,
+      "cache_hit": true,
+      "layout": 11.062615,
+      "first_tile": 11.281080000000001,
+      "first_decode": 76.002212,
+      "first_paint": 141.540634,
+      "viewport_paint": 141.543916
+    }
+  },
+  {
+    "cycle": 25,
+    "wall_ms": 206.23627305030823,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 55.149572,
+      "cache_lookup": 61.373397000000004,
+      "cache_hit": true,
+      "layout": 61.37668,
+      "first_tile": 61.797128,
+      "first_decode": 123.290375,
+      "first_paint": 192.588388,
+      "viewport_paint": 192.593138
+    }
+  },
+  {
+    "cycle": 26,
+    "wall_ms": 225.69940611720085,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.305187999999999,
+      "cache_lookup": 14.000376,
+      "cache_hit": true,
+      "layout": 14.003729,
+      "first_tile": 14.414817999999999,
+      "first_decode": 87.904047,
+      "first_paint": 159.381059,
+      "viewport_paint": 159.385948
+    }
+  },
+  {
+    "cycle": 27,
+    "wall_ms": 179.9683680292219,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.129538,
+      "cache_lookup": 13.032855,
+      "cache_hit": true,
+      "layout": 13.035719,
+      "first_tile": 13.404834,
+      "first_decode": 85.57551600000001,
+      "first_paint": 153.31465799999998,
+      "viewport_paint": 153.319966
+    }
+  },
+  {
+    "cycle": 28,
+    "wall_ms": 176.78511189296842,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.006616,
+      "cache_lookup": 13.655776,
+      "cache_hit": true,
+      "layout": 13.659547,
+      "first_tile": 13.904971999999999,
+      "first_decode": 78.400444,
+      "first_paint": 151.867951,
+      "viewport_paint": 151.871304
+    }
+  },
+  {
+    "cycle": 29,
+    "wall_ms": 224.33113190345466,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.285778,
+      "cache_lookup": 65.78629099999999,
+      "cache_hit": true,
+      "layout": 65.79111,
+      "first_tile": 66.223991,
+      "first_decode": 132.16351400000002,
+      "first_paint": 200.646263,
+      "viewport_paint": 200.651361
+    }
+  },
+  {
+    "cycle": 30,
+    "wall_ms": 208.36295909248292,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 57.212843,
+      "cache_lookup": 63.664283000000005,
+      "cache_hit": true,
+      "layout": 63.667705000000005,
+      "first_tile": 63.865218,
+      "first_decode": 124.760338,
+      "first_paint": 195.193073,
+      "viewport_paint": 195.196915
+    }
+  },
+  {
+    "cycle": 31,
+    "wall_ms": 213.50779593922198,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 10.677855,
+      "cache_lookup": 64.367871,
+      "cache_hit": true,
+      "layout": 64.37066399999999,
+      "first_tile": 64.58542800000001,
+      "first_decode": 131.823104,
+      "first_paint": 200.191033,
+      "viewport_paint": 200.205141
+    }
+  },
+  {
+    "cycle": 32,
+    "wall_ms": 229.30583404377103,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.434541,
+      "cache_lookup": 11.912870000000002,
+      "cache_hit": true,
+      "layout": 11.914825,
+      "first_tile": 12.149564,
+      "first_decode": 85.08096499999999,
+      "first_paint": 159.841037,
+      "viewport_paint": 159.844879
+    }
+  },
+  {
+    "cycle": 33,
+    "wall_ms": 184.82077703811228,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.139386,
+      "cache_lookup": 13.865022,
+      "cache_hit": true,
+      "layout": 13.871098,
+      "first_tile": 14.17966,
+      "first_decode": 86.407263,
+      "first_paint": 162.76943999999997,
+      "viewport_paint": 162.774678
+    }
+  },
+  {
+    "cycle": 34,
+    "wall_ms": 182.6037832070142,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.472744,
+      "cache_lookup": 13.344280999999999,
+      "cache_hit": true,
+      "layout": 13.347633,
+      "first_tile": 13.615407,
+      "first_decode": 80.085869,
+      "first_paint": 154.57062499999998,
+      "viewport_paint": 154.575723
+    }
+  },
+  {
+    "cycle": 35,
+    "wall_ms": 212.7375090494752,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.759234,
+      "cache_lookup": 59.532504,
+      "cache_hit": true,
+      "layout": 59.534459,
+      "first_tile": 59.832475,
+      "first_decode": 123.101033,
+      "first_paint": 193.63923,
+      "viewport_paint": 193.643909
+    }
+  },
+  {
+    "cycle": 36,
+    "wall_ms": 203.53541406802833,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.604676,
+      "cache_lookup": 12.120929,
+      "cache_hit": true,
+      "layout": 12.124839999999999,
+      "first_tile": 12.4385,
+      "first_decode": 71.126335,
+      "first_paint": 143.34590699999998,
+      "viewport_paint": 143.349678
+    }
+  },
+  {
+    "cycle": 37,
+    "wall_ms": 218.35112501867115,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.509333,
+      "cache_lookup": 64.31514000000001,
+      "cache_hit": true,
+      "layout": 64.318981,
+      "first_tile": 64.56419600000001,
+      "first_decode": 130.387852,
+      "first_paint": 199.894833,
+      "viewport_paint": 199.900001
+    }
+  },
+  {
+    "cycle": 38,
+    "wall_ms": 215.1242180261761,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.388643,
+      "cache_lookup": 66.761913,
+      "cache_hit": true,
+      "layout": 66.765754,
+      "first_tile": 67.057274,
+      "first_decode": 128.700052,
+      "first_paint": 201.173429,
+      "viewport_paint": 201.179575
+    }
+  },
+  {
+    "cycle": 39,
+    "wall_ms": 215.64230392687023,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.715427,
+      "cache_lookup": 68.408157,
+      "cache_hit": true,
+      "layout": 68.41053199999999,
+      "first_tile": 69.51934299999999,
+      "first_decode": 135.08591,
+      "first_paint": 203.79746100000003,
+      "viewport_paint": 203.803258
+    }
+  },
+  {
+    "cycle": 40,
+    "wall_ms": 151.83331002481282,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.986213999999999,
+      "cache_lookup": 10.28234,
+      "cache_hit": true,
+      "layout": 10.284226,
+      "first_tile": 10.475803,
+      "first_decode": 67.772176,
+      "first_paint": 134.58661,
+      "viewport_paint": 134.592756
+    }
+  },
+  {
+    "cycle": 41,
+    "wall_ms": 204.23083007335663,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 56.66591,
+      "cache_lookup": 64.191659,
+      "cache_hit": true,
+      "layout": 64.195431,
+      "first_tile": 64.411382,
+      "first_decode": 123.497944,
+      "first_paint": 191.931524,
+      "viewport_paint": 191.935295
+    }
+  },
+  {
+    "cycle": 42,
+    "wall_ms": 223.73977885581553,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.5159069999999994,
+      "cache_lookup": 69.331607,
+      "cache_hit": true,
+      "layout": 69.33496,
+      "first_tile": 70.00642,
+      "first_decode": 129.606321,
+      "first_paint": 201.201086,
+      "viewport_paint": 201.204997
+    }
+  },
+  {
+    "cycle": 43,
+    "wall_ms": 223.91745704226196,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.157739,
+      "cache_lookup": 68.56139,
+      "cache_hit": true,
+      "layout": 68.567048,
+      "first_tile": 68.964099,
+      "first_decode": 134.195705,
+      "first_paint": 206.82315300000002,
+      "viewport_paint": 206.827763
+    }
+  },
+  {
+    "cycle": 44,
+    "wall_ms": 217.3997370991856,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 58.844280999999995,
+      "cache_lookup": 65.35808899999999,
+      "cache_hit": true,
+      "layout": 65.360953,
+      "first_tile": 65.72440999999999,
+      "first_decode": 128.98437800000002,
+      "first_paint": 202.439314,
+      "viewport_paint": 202.443504
+    }
+  },
+  {
+    "cycle": 45,
+    "wall_ms": 207.3272718116641,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.999635,
+      "cache_lookup": 11.803567,
+      "cache_hit": true,
+      "layout": 11.80692,
+      "first_tile": 12.046897000000001,
+      "first_decode": 87.888122,
+      "first_paint": 176.37479,
+      "viewport_paint": 176.379469
+    }
+  },
+  {
+    "cycle": 46,
+    "wall_ms": 181.34571984410286,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.115503,
+      "cache_lookup": 11.786247,
+      "cache_hit": true,
+      "layout": 11.789598999999999,
+      "first_tile": 12.325216999999999,
+      "first_decode": 84.92829,
+      "first_paint": 158.477373,
+      "viewport_paint": 158.481144
+    }
+  },
+  {
+    "cycle": 47,
+    "wall_ms": 219.88897398114204,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.480351,
+      "cache_lookup": 14.062465,
+      "cache_hit": true,
+      "layout": 14.065818,
+      "first_tile": 14.383529000000001,
+      "first_decode": 87.273443,
+      "first_paint": 160.09910299999999,
+      "viewport_paint": 160.102944
+    }
+  },
+  {
+    "cycle": 48,
+    "wall_ms": 210.06703097373247,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.5442599999999995,
+      "cache_lookup": 14.825069999999998,
+      "cache_hit": true,
+      "layout": 14.833241000000001,
+      "first_tile": 15.380034,
+      "first_decode": 86.06734300000001,
+      "first_paint": 174.16701600000002,
+      "viewport_paint": 174.171765
+    }
+  },
+  {
+    "cycle": 49,
+    "wall_ms": 230.2134979981929,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.739739,
+      "cache_lookup": 64.245508,
+      "cache_hit": true,
+      "layout": 64.24886000000001,
+      "first_tile": 64.62028000000001,
+      "first_decode": 132.248791,
+      "first_paint": 212.61011599999998,
+      "viewport_paint": 212.61479599999998
+    }
+  },
+  {
+    "cycle": 50,
+    "wall_ms": 227.9956671409309,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.615082,
+      "cache_lookup": 12.102351,
+      "cache_hit": true,
+      "layout": 12.105634,
+      "first_tile": 12.496679,
+      "first_decode": 81.311805,
+      "first_paint": 164.497818,
+      "viewport_paint": 164.50305600000002
+    }
+  },
+  {
+    "cycle": 51,
+    "wall_ms": 178.36654209531844,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.115014,
+      "cache_lookup": 11.530416,
+      "cache_hit": true,
+      "layout": 11.532232,
+      "first_tile": 11.811110999999999,
+      "first_decode": 83.816407,
+      "first_paint": 153.345946,
+      "viewport_paint": 153.350834
+    }
+  },
+  {
+    "cycle": 52,
+    "wall_ms": 247.56454001180828,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.860367,
+      "cache_lookup": 13.253905,
+      "cache_hit": true,
+      "layout": 13.258723999999999,
+      "first_tile": 13.570149,
+      "first_decode": 83.693694,
+      "first_paint": 186.439991,
+      "viewport_paint": 186.443902
+    }
+  },
+  {
+    "cycle": 53,
+    "wall_ms": 246.06852722354233,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.509542999999999,
+      "cache_lookup": 16.961046,
+      "cache_hit": true,
+      "layout": 16.965307,
+      "first_tile": 17.205143999999997,
+      "first_decode": 88.469068,
+      "first_paint": 175.006586,
+      "viewport_paint": 175.010986
+    }
+  },
+  {
+    "cycle": 54,
+    "wall_ms": 219.36501911841333,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.383816999999999,
+      "cache_lookup": 69.53352,
+      "cache_hit": true,
+      "layout": 69.536313,
+      "first_tile": 69.95334,
+      "first_decode": 128.770102,
+      "first_paint": 200.637181,
+      "viewport_paint": 200.642349
+    }
+  },
+  {
+    "cycle": 55,
+    "wall_ms": 241.49988498538733,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.202387,
+      "cache_lookup": 66.986245,
+      "cache_hit": true,
+      "layout": 66.990505,
+      "first_tile": 67.81897000000001,
+      "first_decode": 135.263936,
+      "first_paint": 211.11717399999998,
+      "viewport_paint": 211.12192299999998
+    }
+  },
+  {
+    "cycle": 56,
+    "wall_ms": 199.9264699406922,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 53.446756,
+      "cache_lookup": 59.549545,
+      "cache_hit": true,
+      "layout": 59.552966999999995,
+      "first_tile": 59.912513000000004,
+      "first_decode": 121.403105,
+      "first_paint": 187.406883,
+      "viewport_paint": 187.409816
+    }
+  },
+  {
+    "cycle": 57,
+    "wall_ms": 206.0369411483407,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 56.155226,
+      "cache_lookup": 62.447426,
+      "cache_hit": true,
+      "layout": 62.449731,
+      "first_tile": 62.84964599999999,
+      "first_decode": 120.796108,
+      "first_paint": 192.71095899999997,
+      "viewport_paint": 192.71473
+    }
+  },
+  {
+    "cycle": 58,
+    "wall_ms": 199.93729516863823,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.264267,
+      "cache_lookup": 11.454149000000001,
+      "cache_hit": true,
+      "layout": 11.456942,
+      "first_tile": 11.686583,
+      "first_decode": 77.900445,
+      "first_paint": 141.758259,
+      "viewport_paint": 141.761542
+    }
+  },
+  {
+    "cycle": 59,
+    "wall_ms": 200.7678549271077,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 52.629256,
+      "cache_lookup": 58.714375,
+      "cache_hit": true,
+      "layout": 58.716749,
+      "first_tile": 58.938148000000005,
+      "first_decode": 122.052914,
+      "first_paint": 189.853306,
+      "viewport_paint": 189.857566
+    }
+  },
+  {
+    "cycle": 60,
+    "wall_ms": 207.15413196012378,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 53.005982,
+      "cache_lookup": 59.535017,
+      "cache_hit": true,
+      "layout": 59.538788000000004,
+      "first_tile": 59.776879,
+      "first_decode": 119.727107,
+      "first_paint": 192.303221,
+      "viewport_paint": 192.306992
+    }
+  },
+  {
+    "cycle": 61,
+    "wall_ms": 202.95893610455096,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.179758,
+      "cache_lookup": 11.743922,
+      "cache_hit": true,
+      "layout": 11.746786,
+      "first_tile": 12.125888,
+      "first_decode": 69.526326,
+      "first_paint": 143.797713,
+      "viewport_paint": 143.801415
+    }
+  },
+  {
+    "cycle": 62,
+    "wall_ms": 216.43535792827606,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.581765,
+      "cache_lookup": 67.243612,
+      "cache_hit": true,
+      "layout": 67.247383,
+      "first_tile": 68.05762,
+      "first_decode": 134.47332500000002,
+      "first_paint": 198.48500099999998,
+      "viewport_paint": 198.48982
+    }
+  },
+  {
+    "cycle": 63,
+    "wall_ms": 200.839163037017,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.091268,
+      "cache_lookup": 11.959804,
+      "cache_hit": true,
+      "layout": 11.962667999999999,
+      "first_tile": 12.183508,
+      "first_decode": 72.22906900000001,
+      "first_paint": 145.136234,
+      "viewport_paint": 145.13916700000001
+    }
+  },
+  {
+    "cycle": 64,
+    "wall_ms": 209.59601597860456,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 55.298614,
+      "cache_lookup": 62.055962,
+      "cache_hit": true,
+      "layout": 62.058406000000005,
+      "first_tile": 62.303621,
+      "first_decode": 121.063602,
+      "first_paint": 193.42229799999998,
+      "viewport_paint": 193.426209
+    }
+  },
+  {
+    "cycle": 65,
+    "wall_ms": 217.93961385264993,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.750068,
+      "cache_lookup": 64.752978,
+      "cache_hit": true,
+      "layout": 64.75542200000001,
+      "first_tile": 65.152614,
+      "first_decode": 129.79342599999998,
+      "first_paint": 200.874014,
+      "viewport_paint": 200.878274
+    }
+  },
+  {
+    "cycle": 66,
+    "wall_ms": 196.15409593097866,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.873219,
+      "cache_lookup": 12.254188,
+      "cache_hit": true,
+      "layout": 12.257052,
+      "first_tile": 12.476773999999999,
+      "first_decode": 71.512352,
+      "first_paint": 138.94509499999998,
+      "viewport_paint": 138.94851699999998
+    }
+  },
+  {
+    "cycle": 67,
+    "wall_ms": 207.8675669617951,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 52.91009,
+      "cache_lookup": 59.068752,
+      "cache_hit": true,
+      "layout": 59.071197,
+      "first_tile": 59.29518,
+      "first_decode": 118.958985,
+      "first_paint": 191.055774,
+      "viewport_paint": 191.060034
+    }
+  },
+  {
+    "cycle": 68,
+    "wall_ms": 157.55091910250485,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.290736,
+      "cache_lookup": 10.952403,
+      "cache_hit": true,
+      "layout": 10.954778,
+      "first_tile": 11.174012000000001,
+      "first_decode": 24.617119,
+      "first_paint": 93.671802,
+      "viewport_paint": 93.676202
+    }
+  },
+  {
+    "cycle": 69,
+    "wall_ms": 185.46981504186988,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.257562,
+      "cache_lookup": 12.047386,
+      "cache_hit": true,
+      "layout": 12.04976,
+      "first_tile": 12.262778,
+      "first_decode": 82.52859,
+      "first_paint": 159.73019599999998,
+      "viewport_paint": 159.734526
+    }
+  },
+  {
+    "cycle": 70,
+    "wall_ms": 237.45526699349284,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 10.981876999999999,
+      "cache_lookup": 64.306549,
+      "cache_hit": true,
+      "layout": 64.309762,
+      "first_tile": 64.539681,
+      "first_decode": 136.14520199999998,
+      "first_paint": 222.764295,
+      "viewport_paint": 222.769044
+    }
+  },
+  {
+    "cycle": 71,
+    "wall_ms": 208.27746903523803,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 59.824791000000005,
+      "cache_lookup": 66.816109,
+      "cache_hit": true,
+      "layout": 66.818972,
+      "first_tile": 67.10567400000001,
+      "first_decode": 124.565686,
+      "first_paint": 194.94876299999999,
+      "viewport_paint": 194.953093
+    }
+  },
+  {
+    "cycle": 72,
+    "wall_ms": 311.2779201474041,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 8.456183000000001,
+      "cache_lookup": 124.55968,
+      "cache_hit": true,
+      "layout": 124.562055,
+      "first_tile": 125.352735,
+      "first_decode": 199.10736200000002,
+      "first_paint": 286.681823,
+      "viewport_paint": 286.686083
+    }
+  },
+  {
+    "cycle": 73,
+    "wall_ms": 220.08851007558405,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 12.711722,
+      "cache_lookup": 75.025959,
+      "cache_hit": true,
+      "layout": 75.029731,
+      "first_tile": 75.497462,
+      "first_decode": 136.200515,
+      "first_paint": 203.041349,
+      "viewport_paint": 203.044701
+    }
+  },
+  {
+    "cycle": 74,
+    "wall_ms": 212.45031617581844,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.719757000000001,
+      "cache_lookup": 66.00126300000001,
+      "cache_hit": true,
+      "layout": 66.00454599999999,
+      "first_tile": 67.574313,
+      "first_decode": 133.167211,
+      "first_paint": 200.835741,
+      "viewport_paint": 200.84007100000002
+    }
+  },
+  {
+    "cycle": 75,
+    "wall_ms": 204.72048898227513,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 55.343033,
+      "cache_lookup": 61.202772,
+      "cache_hit": true,
+      "layout": 61.205147000000004,
+      "first_tile": 61.593328,
+      "first_decode": 120.121853,
+      "first_paint": 193.100046,
+      "viewport_paint": 193.10381800000002
+    }
+  },
+  {
+    "cycle": 76,
+    "wall_ms": 202.46843504719436,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.751763,
+      "cache_lookup": 12.531181,
+      "cache_hit": true,
+      "layout": 12.534114,
+      "first_tile": 12.936264,
+      "first_decode": 74.14238900000001,
+      "first_paint": 141.127795,
+      "viewport_paint": 141.13156600000002
+    }
+  },
+  {
+    "cycle": 77,
+    "wall_ms": 206.7942360881716,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.913311,
+      "cache_lookup": 10.56967,
+      "cache_hit": true,
+      "layout": 10.572604,
+      "first_tile": 11.024690999999999,
+      "first_decode": 74.243311,
+      "first_paint": 145.00702600000002,
+      "viewport_paint": 145.00982000000002
+    }
+  },
+  {
+    "cycle": 78,
+    "wall_ms": 248.65847313776612,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.919168000000001,
+      "cache_lookup": 85.422281,
+      "cache_hit": true,
+      "layout": 85.426123,
+      "first_tile": 86.37352800000001,
+      "first_decode": 151.23036100000002,
+      "first_paint": 223.53038999999998,
+      "viewport_paint": 223.53325299999997
+    }
+  },
+  {
+    "cycle": 79,
+    "wall_ms": 200.19389200024307,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.413658,
+      "cache_lookup": 11.224647000000001,
+      "cache_hit": true,
+      "layout": 11.227022,
+      "first_tile": 11.595997,
+      "first_decode": 67.85933800000001,
+      "first_paint": 143.62918399999998,
+      "viewport_paint": 143.633025
+    }
+  },
+  {
+    "cycle": 80,
+    "wall_ms": 147.4786619655788,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.213978,
+      "cache_lookup": 7.747007999999999,
+      "cache_hit": true,
+      "layout": 7.750431000000001,
+      "first_tile": 7.976369000000001,
+      "first_decode": 68.231386,
+      "first_paint": 130.199836,
+      "viewport_paint": 130.203677
+    }
+  },
+  {
+    "cycle": 81,
+    "wall_ms": 213.41413306072354,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 57.647398,
+      "cache_lookup": 63.798937,
+      "cache_hit": true,
+      "layout": 63.801311,
+      "first_tile": 64.06706,
+      "first_decode": 125.51148500000001,
+      "first_paint": 199.59974599999998,
+      "viewport_paint": 199.60414600000001
+    }
+  },
+  {
+    "cycle": 82,
+    "wall_ms": 211.38159395195544,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.932931,
+      "cache_lookup": 62.845873999999995,
+      "cache_hit": true,
+      "layout": 62.854884,
+      "first_tile": 63.05414300000001,
+      "first_decode": 121.155025,
+      "first_paint": 191.32696900000002,
+      "viewport_paint": 191.330252
+    }
+  },
+  {
+    "cycle": 83,
+    "wall_ms": 203.53045198135078,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.733953,
+      "cache_lookup": 11.715216999999999,
+      "cache_hit": true,
+      "layout": 11.7185,
+      "first_tile": 12.029715,
+      "first_decode": 74.298485,
+      "first_paint": 144.029517,
+      "viewport_paint": 144.033289
+    }
+  },
+  {
+    "cycle": 84,
+    "wall_ms": 201.7538109794259,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.6863909999999995,
+      "cache_lookup": 12.361673999999999,
+      "cache_hit": true,
+      "layout": 12.365376000000001,
+      "first_tile": 12.584051,
+      "first_decode": 74.98007299999999,
+      "first_paint": 142.73918799999998,
+      "viewport_paint": 142.74254
+    }
+  },
+  {
+    "cycle": 85,
+    "wall_ms": 206.8343940190971,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.65608,
+      "cache_lookup": 11.601794,
+      "cache_hit": true,
+      "layout": 11.604237999999999,
+      "first_tile": 11.998217,
+      "first_decode": 76.131906,
+      "first_paint": 147.32906,
+      "viewport_paint": 147.334787
+    }
+  },
+  {
+    "cycle": 86,
+    "wall_ms": 195.5461900215596,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.189114,
+      "cache_lookup": 13.238470000000001,
+      "cache_hit": true,
+      "layout": 13.242311999999998,
+      "first_tile": 13.478028,
+      "first_decode": 79.198875,
+      "first_paint": 149.872774,
+      "viewport_paint": 149.87521800000002
+    }
+  },
+  {
+    "cycle": 87,
+    "wall_ms": 204.96877608820796,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.231859999999999,
+      "cache_lookup": 10.837863,
+      "cache_hit": true,
+      "layout": 10.840238000000001,
+      "first_tile": 11.078189,
+      "first_decode": 72.16963299999999,
+      "first_paint": 145.34506,
+      "viewport_paint": 145.348762
+    }
+  },
+  {
+    "cycle": 88,
+    "wall_ms": 200.29537193477154,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.361626,
+      "cache_lookup": 10.86594,
+      "cache_hit": true,
+      "layout": 10.868803,
+      "first_tile": 11.110107,
+      "first_decode": 70.331882,
+      "first_paint": 142.90583,
+      "viewport_paint": 142.909602
+    }
+  },
+  {
+    "cycle": 89,
+    "wall_ms": 208.329709013924,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.263427999999999,
+      "cache_lookup": 11.070576,
+      "cache_hit": true,
+      "layout": 11.072462,
+      "first_tile": 11.379836000000001,
+      "first_decode": 74.047892,
+      "first_paint": 146.45470899999998,
+      "viewport_paint": 146.457572
+    }
+  },
+  {
+    "cycle": 90,
+    "wall_ms": 209.17339995503426,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.931727,
+      "cache_lookup": 65.341117,
+      "cache_hit": true,
+      "layout": 65.34398,
+      "first_tile": 65.74340600000001,
+      "first_decode": 126.34868099999998,
+      "first_paint": 196.974877,
+      "viewport_paint": 196.97976500000001
+    }
+  },
+  {
+    "cycle": 91,
+    "wall_ms": 205.1188659388572,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.467437,
+      "cache_lookup": 11.5066,
+      "cache_hit": true,
+      "layout": 11.509462999999998,
+      "first_tile": 11.755796,
+      "first_decode": 73.558789,
+      "first_paint": 145.04411100000002,
+      "viewport_paint": 145.048371
+    }
+  },
+  {
+    "cycle": 92,
+    "wall_ms": 203.9942010305822,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.804075,
+      "cache_lookup": 12.131196000000001,
+      "cache_hit": true,
+      "layout": 12.1335,
+      "first_tile": 12.449815,
+      "first_decode": 70.425191,
+      "first_paint": 141.42448199999998,
+      "viewport_paint": 141.430768
+    }
+  },
+  {
+    "cycle": 93,
+    "wall_ms": 216.7830979451537,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 7.121643000000001,
+      "cache_lookup": 63.967605,
+      "cache_hit": true,
+      "layout": 63.971446,
+      "first_tile": 64.493515,
+      "first_decode": 127.334499,
+      "first_paint": 196.179446,
+      "viewport_paint": 196.18370700000003
+    }
+  },
+  {
+    "cycle": 94,
+    "wall_ms": 217.68664405681193,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 5.8904,
+      "cache_lookup": 58.060514,
+      "cache_hit": true,
+      "layout": 58.062888,
+      "first_tile": 58.396384000000005,
+      "first_decode": 125.36181399999998,
+      "first_paint": 199.437783,
+      "viewport_paint": 199.44162400000002
+    }
+  },
+  {
+    "cycle": 95,
+    "wall_ms": 221.55267396010458,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.480983,
+      "cache_lookup": 58.705714,
+      "cache_hit": true,
+      "layout": 58.708088,
+      "first_tile": 59.571614000000004,
+      "first_decode": 128.859498,
+      "first_paint": 201.868631,
+      "viewport_paint": 201.871914
+    }
+  },
+  {
+    "cycle": 96,
+    "wall_ms": 218.57021399773657,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 9.985652,
+      "cache_lookup": 65.990996,
+      "cache_hit": true,
+      "layout": 65.99392900000001,
+      "first_tile": 66.37240299999999,
+      "first_decode": 127.52055800000001,
+      "first_paint": 205.37714100000002,
+      "viewport_paint": 205.382868
+    }
+  },
+  {
+    "cycle": 97,
+    "wall_ms": 209.63435620069504,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 6.6735370000000005,
+      "cache_lookup": 58.110310999999996,
+      "cache_hit": true,
+      "layout": 58.112755,
+      "first_tile": 58.389818000000005,
+      "first_decode": 119.136382,
+      "first_paint": 190.812861,
+      "viewport_paint": 190.81768
+    }
+  },
+  {
+    "cycle": 98,
+    "wall_ms": 218.78700307570398,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 58.208718,
+      "cache_lookup": 65.380089,
+      "cache_hit": true,
+      "layout": 65.38393,
+      "first_tile": 65.616085,
+      "first_decode": 136.137587,
+      "first_paint": 203.824345,
+      "viewport_paint": 203.828117
+    }
+  },
+  {
+    "cycle": 99,
+    "wall_ms": 218.0924250278622,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 11.910985,
+      "cache_lookup": 69.615723,
+      "cache_hit": true,
+      "layout": 69.619005,
+      "first_tile": 69.972825,
+      "first_decode": 132.570899,
+      "first_paint": 203.23676500000002,
+      "viewport_paint": 203.240466
+    }
+  }
+]
