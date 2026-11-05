@@ -68,7 +68,8 @@ pub const EXTRACT_JS: &str = include_str!("extract.js");
 ///    address instead of as no file, for TD to keep as one.
 /// 8: every `<audio>` is reported beside the videos, saying it is a sound,
 ///    so a press on it opens the sound as a clip too.
-pub const EXTRACT_VERSION: u32 = 8;
+/// 9: viewport-sized bands and a validated local-resource inventory.
+pub const EXTRACT_VERSION: u32 = 9;
 /// With no call for this long, the browser is closed.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(300);
 /// The names looked for on PATH, in order.
@@ -106,6 +107,7 @@ struct Browser {
 }
 
 struct LivePage {
+    started: std::time::SystemTime,
     context: String,
     target: String,
     session: SessionId,
@@ -179,6 +181,28 @@ pub fn file_url(path: &Path) -> String {
         }
     }
     out
+}
+
+fn local_resource(url: &str) -> Option<PathBuf> {
+    use std::os::unix::ffi::OsStringExt;
+    let rest = url.strip_prefix("file://")?;
+    if !rest.starts_with('/') {
+        return None;
+    }
+    let bytes = rest.split(['?', '#']).next()?.as_bytes();
+    let mut decoded = Vec::new();
+    let mut i = 0;
+    while i < bytes.len() {
+        if bytes[i] == b'%' {
+            let hex = std::str::from_utf8(bytes.get(i + 1..i + 3)?).ok()?;
+            decoded.push(u8::from_str_radix(hex, 16).ok()?);
+            i += 3;
+        } else {
+            decoded.push(bytes[i]);
+            i += 1;
+        }
+    }
+    Some(PathBuf::from(OsString::from_vec(decoded)))
 }
 
 /// What `__terminalDelight.extract()` returns.
@@ -564,6 +588,7 @@ impl SnapshotEngine {
             }
         };
         let mut page = LivePage {
+            started: std::time::SystemTime::now(),
             context,
             target,
             session: SessionId(String::new()),
@@ -599,8 +624,9 @@ impl SnapshotEngine {
                 .map_err(|e| protocol(e, what))
         };
         on("Page.enable", json!({}), "enable the page")?;
+        on("Network.enable", json!({}), "enable resource observation")?;
+        cdp.watch_resources(&s);
         if !self.pref.network_allowed() {
-            on("Network.enable", json!({}), "enable the network domain")?;
             // Measured on Chromium 151: `urls` stops every http and https
             // request a page makes (images, fetch, beacons, stylesheets,
             // localhost), the newer `urlPatterns` with these patterns stops
@@ -703,6 +729,7 @@ fn launch_failure(timed_out: bool, tail: &str, otherwise: &str) -> String {
 }
 
 fn close_page(p: &LivePage) {
+    p.cdp.forget_resources(&p.session);
     let short = Duration::from_secs(2);
     let _ = p.cdp.call(
         None,
@@ -865,7 +892,47 @@ fn engine_thread(rx: mpsc::Receiver<Job>, shared: Weak<Shared>) {
 
 impl PageEngine for SnapshotEngine {
     fn name(&self) -> &'static str {
-        "snapshot"
+        match (self.pref.vulkan(), self.pref.network_allowed()) {
+            (false, false) => "snapshot",
+            (true, false) => "snapshot-vulkan",
+            (false, true) => "snapshot-network",
+            (true, true) => "snapshot-vulkan-network",
+        }
+    }
+
+    fn dependencies(&self, page: PageId) -> Option<Vec<super::engine::Dependency>> {
+        if self.pref.network_allowed() {
+            return None;
+        }
+        let live = self.live(page).ok()?;
+        let p = lock(&live);
+        // Subframes can have their own CDP sessions. Until those are observed,
+        // their dependencies are unknown and this render is not reusable.
+        let framed = Self::evaluate(
+            &p.cdp,
+            &p.session,
+            "!!document.querySelector('iframe,frame')",
+            "check subframes",
+        )
+        .ok()?;
+        if framed.as_bool()? {
+            return None;
+        }
+        let urls = p.cdp.resources(&p.session)?;
+        let mut dependencies = Vec::new();
+        for url in urls {
+            if url.starts_with("http:") || url.starts_with("https:") {
+                continue;
+            } // blocked by policy
+            let path = local_resource(&url)?;
+            if let Ok(meta) = std::fs::metadata(&path) {
+                if !meta.is_file() || meta.modified().ok()? > p.started {
+                    return None;
+                }
+            }
+            dependencies.push(super::engine::Dependency::read(path).ok()?);
+        }
+        Some(dependencies)
     }
 
     fn open(&self, req: &PageRequest) -> Result<PageLayout, EngineError> {
@@ -938,7 +1005,7 @@ impl PageEngine for SnapshotEngine {
                     json!({
                         "format": "png",
                         "optimizeForSpeed": true,
-                        "captureBeyondViewport": true,
+                        "captureBeyondViewport": band.top_dev != 0 || band.height_dev > p.geometry.height_dev(p.geometry.viewport_css_height as f32),
                         "fromSurface": true,
                         "clip": { "x": 0, "y": y, "width": p.geometry.css_width, "height": h, "scale": 1 },
                     }),

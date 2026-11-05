@@ -1,0 +1,5 @@
+*.bak
+*.lock
+evidence/*-page-qa/
+evidence/native/*/visible.png
+evidence/native/*/window.log

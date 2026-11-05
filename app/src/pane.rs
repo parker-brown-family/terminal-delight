@@ -11430,6 +11430,7 @@ impl TerminalView {
         if self.bench.face() != face {
             self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
+            self.document_visibility(self.shown.load(std::sync::atomic::Ordering::Relaxed), cx);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
             cx.notify();
@@ -11442,6 +11443,7 @@ impl TerminalView {
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
         self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
+        self.document_visibility(self.shown.load(std::sync::atomic::Ordering::Relaxed), cx);
         cx.notify();
     }
 

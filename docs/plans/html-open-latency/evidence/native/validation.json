@@ -1,0 +1,67 @@
+{
+  "base": "b081f0309d4086609a171683ff61859ea932ba33",
+  "full_suite": {
+    "exit": 0,
+    "test_threads": 4,
+    "groups": [
+      {
+        "passed": 3252,
+        "failed": 0,
+        "ignored": 12
+      },
+      {
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 4,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 8,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 0,
+        "failed": 0,
+        "ignored": 5
+      },
+      {
+        "passed": 89,
+        "failed": 0,
+        "ignored": 1
+      },
+      {
+        "passed": 1,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 2,
+        "failed": 0,
+        "ignored": 0
+      },
+      {
+        "passed": 9,
+        "failed": 0,
+        "ignored": 0
+      }
+    ],
+    "passed": 3376,
+    "ignored": 18
+  },
+  "format": "passed",
+  "clippy": "passed",
+  "native_notes_resize_save_reopen": "passed",
+  "fidelity": "fidelity.json",
+  "prior_unrelated_failure": "https://github.com/parker-brown-family/terminal-delight/issues/1373",
+  "report": "briefing, glass and browser checks passed"
+}

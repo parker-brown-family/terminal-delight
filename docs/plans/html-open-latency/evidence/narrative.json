@@ -1,0 +1,340 @@
+{
+  "file": "docs/plans/html-open-latency/brief.html",
+  "subject": "Speeding up HTML document opening in Terminal Delight based on measured renderer delays",
+  "reader": "Parker built Terminal Delight and asked for faster Alt+O and artifact opening. He knows the product, but has not seen the renderer measurements or the GPU startup failure.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.65
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.66
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "journey",
+      "probabilities": {
+        "journey": 0.83,
+        "catalogue": 0.01,
+        "argument": 0.04,
+        "report": 0.11,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.79
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "Opening Speed",
+      "text": "Opening a brief should feel immediate. The renderer reproduced your two-second wait, and an existing graphics option cut it substantially\u2014but made the first open worse.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.38,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.61,
+            "2": 0.29,
+            "3": 0.06
+          },
+          "confidence": 0.55
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.08
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.97
+        },
+        "role": {
+          "type": "choice",
+          "choice": "complication",
+          "probabilities": {
+            "setup": 0.06,
+            "complication": 0.49,
+            "turn": 0.15,
+            "consequence": 0.3,
+            "resolution": 0,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.4
+        }
+      },
+      "latency_ms": 959.1489599552006,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "01 The Wait",
+      "text": "A recent glass brief took 2.35 seconds to fill the visible area of the page, called its viewport. Reading the file and notes cost less than a millisecond. Capturing the page into pictures consumed most of the delay. TD already keeps its browser running between opens, saves completed page images and draws the visible area first. Vulkan, an alternative graphics mode already supported by TD, made those captures faster. \n 01 \u00b7 A Faster Capture \n\n Faster capture gets close to a fourfold improvement on this page. Medians of three; the Vulkan median hides the cold-start problem below. \nMeasured with the actual renderer, 968 \u00d7 1400 CSS pixels at 1.6 scale. Includes sequential capture/decode; excludes browser startup and native display. Method and limits .",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.55,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.38,
+            "2": 0.54,
+            "3": 0.03
+          },
+          "confidence": 0.49
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.34
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.64,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.47,
+            "1": 0.42,
+            "2": 0.1,
+            "3": 0.01
+          },
+          "confidence": 0.35
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.7
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0.02,
+            "complication": 0.19,
+            "turn": 0.56,
+            "consequence": 0.21,
+            "resolution": 0,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.49
+        }
+      },
+      "latency_ms": 227.58755111135542,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "02 The First Open",
+      "text": "Starting a fresh Vulkan browser produced a 6.2\u20138.3 second first viewport . Later opens fell to about 0.6 seconds. That penalty repeated, so simply enabling Vulkan would make some opens much worse. \n | \n | Measured page | Current | Vulkan | Gain \n | Formal verification | 2.35 s | 0.65 s | 3.6\u00d7 \n | Desktop contention | 2.13 s | 0.60 s | 3.5\u00d7 \n | Agent identity | 2.30 s | 0.83 s | 2.8\u00d7 \n | 26.5 MB chalk study | 2.66 s | 1.94 s | 1.4\u00d7 \n\nPer-page medians of three. Raw current samples , Vulkan samples and fresh-browser repeat . The large image-heavy page spends more time loading; no universal fourfold gain is established.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.08,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.19,
+            "1": 0.55,
+            "2": 0.25,
+            "3": 0.01
+          },
+          "confidence": 0.54
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.12
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.64,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.39,
+            "1": 0.58,
+            "2": 0.03,
+            "3": 0
+          },
+          "confidence": 0.58
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.7
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.23,
+            "turn": 0,
+            "consequence": 0.77,
+            "resolution": 0,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.73
+        }
+      },
+      "latency_ms": 1246.937446994707,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "03 Before the Click",
+      "text": "A completed render already reads from the cache in 1\u20136 milliseconds . Decoding and putting it on screen still take time, but this gives prepared opens a credible route toward 10\u00d7. TD knows the newest declared artifact before you open it. \n 02 \u00b7 Prepare the Next Brief \n\n Preparation can move the expensive capture ahead of opening. Proposed mechanism; its native speed and background cost are unmeasured. \n\nLimit preparation to one cancellable job for the newest handover. Keep the existing cache budget. A changed file, local asset or frame size must invalidate reuse. This trades some background work for a faster click; it needs a responsiveness and memory check.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.53,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.42,
+            "2": 0.51,
+            "3": 0.03
+          },
+          "confidence": 0.47
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.99,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.16,
+            "1": 0.69,
+            "2": 0.15,
+            "3": 0
+          },
+          "confidence": 0.69
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.94
+        },
+        "role": {
+          "type": "choice",
+          "choice": "turn",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.01,
+            "turn": 0.87,
+            "consequence": 0.03,
+            "resolution": 0.09,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.85
+        }
+      },
+      "latency_ms": 218.84781401604414,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "04 The Build",
+      "text": "I recommend one implementation pass: measure from pressing Alt+O to seeing the page, make capture cheaper without a worse first open, then prepare the newest artifact. Target 4\u00d7 for ordinary opens and 200\u2013300 ms for prepared opens . The latter is the 10\u00d7 ambition, still to be proven. \n\nThe verification includes actual pixels, note positions, keyboard navigation, edits, resized frames and cancelled opens. The graphics mode\u2019s startup must improve before it becomes the default. A large new document opened immediately remains a separate case. \n\n Approve this combined implementation plan? The technical plan names the interfaces, slices and acceptance tests. Production code, application preferences and your running window are unchanged. \n\nDifficulty 6/10: one approval under the software-factory skill . Investigation and reproducible measurements are complete. Implementation awaits that approval. \n\nEvidence: measurement summary \u00b7 source-backed probe \u00b7 continuation state \u00b7 measurement decision . \n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.74,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.04,
+            "1": 0.26,
+            "2": 0.62,
+            "3": 0.08
+          },
+          "confidence": 0.58
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.79,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.24,
+            "1": 0.73,
+            "2": 0.03,
+            "3": 0
+          },
+          "confidence": 0.73
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.85
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0,
+            "consequence": 0,
+            "resolution": 1,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 1
+        }
+      },
+      "latency_ms": 225.21984111517668,
+      "failure": null
+    }
+  ]
+}

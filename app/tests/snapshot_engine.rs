@@ -667,7 +667,7 @@ fn a_tile_is_exactly_the_band_it_was_asked_for_at_any_scale() {
         let g = Geometry { scale, ..NARROW };
         let layout = rig.open(&fixture("brief.html"), g).unwrap();
         let page = layout.page.unwrap();
-        let all = bands(g.height_dev(layout.height_css));
+        let all = layout.bands();
         for (i, band) in all.iter().enumerate() {
             let t = rig.engine.tile(page, layout.generation, *band).unwrap();
             assert_eq!(t.width_dev, (600.0 * scale).round() as u32, "scale {scale}");
@@ -689,6 +689,45 @@ fn a_tile_is_exactly_the_band_it_was_asked_for_at_any_scale() {
         rig.engine.close(page);
     }
     rig.done();
+}
+
+#[test]
+fn resource_inventory_includes_css_and_missing_images_and_detects_edits() {
+    let Some(mut rig) = Rig::new("resources", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let dir = scratch("resource-files");
+    let path = dir.join("page.html");
+    let css = dir.join("style.css");
+    std::fs::write(&css, "body { background: red }").unwrap();
+    std::fs::write(
+        &path,
+        "<link rel='stylesheet' href='style.css'><img src='missing.png'><p>Resource test</p>",
+    )
+    .unwrap();
+    let layout = rig.open(&path, NARROW).unwrap();
+    let page = layout.page.unwrap();
+    rig.engine
+        .tile(page, layout.generation, layout.bands()[0])
+        .unwrap();
+    let dependencies = rig
+        .engine
+        .dependencies(page)
+        .expect("a complete local inventory");
+    assert!(dependencies.iter().any(|d| d.path == css));
+    assert!(dependencies
+        .iter()
+        .any(|d| d.path == dir.join("missing.png") && d.hash.is_none()));
+    assert!(dependencies.iter().all(|d| d.unchanged()));
+    std::fs::write(&css, "body { background: tan }").unwrap();
+    assert!(!dependencies.iter().all(|d| d.unchanged()));
+    assert!(
+        rig.engine.dependencies(page).is_none(),
+        "resources edited during capture are not reusable"
+    );
+    rig.engine.close(page);
+    rig.done();
+    std::fs::remove_dir_all(dir).unwrap();
 }
 
 #[test]

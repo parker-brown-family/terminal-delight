@@ -27,9 +27,9 @@ use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::SystemTime;
 
-use super::engine::{
-    bands, fnv64, Band, DialogRender, Geometry, LayoutHash, PageLayout, PageVideo,
-};
+use super::engine::{fnv64, Band, DialogRender, Geometry, LayoutHash, PageLayout, PageVideo};
+
+pub use super::engine::Dependency;
 
 /// 256 MiB. Page PNGs run 0.4–5.2 MB, so that is roughly 50 to 600 renders.
 pub const CAP_BYTES: u64 = 256 << 20;
@@ -101,12 +101,25 @@ fn touch(dir: &Path) {
 }
 
 pub fn lookup(root: &Path, key: CacheKey) -> Option<Cached> {
+    let result = read_cached(root, key);
+    if result.is_none() {
+        invalidate(root, key);
+    }
+    result
+}
+
+fn read_cached(root: &Path, key: CacheKey) -> Option<Cached> {
     let dir = key.dir(root);
+    let dependencies: Vec<Dependency> =
+        serde_json::from_slice(&std::fs::read(dir.join("dependencies.json")).ok()?).ok()?;
+    if !dependencies.iter().all(Dependency::unchanged) {
+        return None;
+    }
     let text = std::fs::read(dir.join("layout.json")).ok()?;
     let mut layout: PageLayout = serde_json::from_slice(&text).ok()?;
     layout.page = None;
     let mut tiles = Vec::new();
-    for b in bands(layout.geometry.height_dev(layout.height_css)) {
+    for b in layout.bands() {
         let p = dir.join("tiles").join(tile_name(b));
         if !p.is_file() {
             return None;
@@ -131,6 +144,11 @@ pub fn lookup(root: &Path, key: CacheKey) -> Option<Cached> {
         }
     }
     Some(Cached { layout, tiles })
+}
+
+/// An incomplete or unreadable entry must be replaceable by the next render.
+pub fn invalidate(root: &Path, key: CacheKey) {
+    let _ = std::fs::remove_dir_all(key.dir(root));
 }
 
 /// A page whose `<video>` or `<audio>` plays a `data:` address carries the
@@ -272,14 +290,28 @@ fn kept_clip(root: &Path, src: &str) -> Option<PathBuf> {
 
 /// Write one render whole. Refuses a render that is missing a band: an
 /// entry that exists is always complete.
+#[cfg(test)]
 pub fn store(
     root: &Path,
     key: CacheKey,
     layout: &PageLayout,
     tiles: &[(Band, &[u8])],
 ) -> io::Result<()> {
+    store_validated(root, key, layout, tiles, &[])
+}
+
+pub fn store_validated(
+    root: &Path,
+    key: CacheKey,
+    layout: &PageLayout,
+    tiles: &[(Band, &[u8])],
+    dependencies: &[Dependency],
+) -> io::Result<()> {
+    if !dependencies.iter().all(Dependency::unchanged) {
+        return Err(io::Error::other("page resources changed during capture"));
+    }
     static N: AtomicU64 = AtomicU64::new(0);
-    for b in bands(layout.geometry.height_dev(layout.height_css)) {
+    for b in layout.bands() {
         if !tiles.iter().any(|(t, _)| *t == b) {
             return Err(io::Error::new(
                 io::ErrorKind::InvalidInput,
@@ -306,6 +338,10 @@ pub fn store(
         stored.page = None;
         let json = serde_json::to_vec(&stored).map_err(io::Error::other)?;
         std::fs::write(partial.join("layout.json"), json)?;
+        std::fs::write(
+            partial.join("dependencies.json"),
+            serde_json::to_vec(dependencies).map_err(io::Error::other)?,
+        )?;
         std::fs::write(partial.join("used"), b"")?;
         Ok(())
     };
@@ -437,7 +473,7 @@ mod tests {
         }
     }
 
-    /// A page 5,000 device rows tall: three bands.
+    /// A page 5,000 device rows tall: four viewport-sized bands.
     fn layout() -> PageLayout {
         PageLayout {
             page: None,
@@ -467,8 +503,8 @@ mod tests {
         let root = scratch("complete");
         let key = CacheKey(42);
         let l = layout();
-        let all = bands(5000);
-        assert_eq!(all.len(), 3);
+        let all = layout().bands();
+        assert_eq!(all.len(), 4);
         let png = b"png".to_vec();
         // A store missing its last band is refused, and leaves nothing.
         let two: Vec<(Band, &[u8])> = all[..2].iter().map(|b| (*b, png.as_slice())).collect();
@@ -483,7 +519,7 @@ mod tests {
         let three: Vec<(Band, &[u8])> = all.iter().map(|b| (*b, png.as_slice())).collect();
         store(&root, key, &l, &three).unwrap();
         let hit = lookup(&root, key).expect("a complete render is found");
-        assert_eq!(hit.tiles.len(), 3);
+        assert_eq!(hit.tiles.len(), 4);
         assert_eq!(hit.layout.dialogs, vec!["d-one".to_string()]);
         assert_eq!(
             hit.layout.page, None,
@@ -491,7 +527,34 @@ mod tests {
         );
         std::fs::remove_file(&hit.tiles[1].1).unwrap();
         assert!(lookup(&root, key).is_none());
+        store(&root, key, &l, &three).unwrap();
+        assert!(
+            lookup(&root, key).is_some(),
+            "an incomplete entry can be repaired"
+        );
         std::fs::remove_dir_all(&root).unwrap();
+    }
+
+    #[test]
+    fn edited_and_newly_created_dependencies_invalidate_cached_pixels() {
+        let root = scratch("dependencies");
+        std::fs::create_dir_all(&root).unwrap();
+        let asset = root.join("wallpaper.svg");
+        let missing = Dependency::read(asset.clone()).unwrap();
+        assert_eq!(missing.hash, None);
+        let l = layout();
+        let tiles: Vec<_> = l.bands().into_iter().map(|b| (b, &b"png"[..])).collect();
+        store_validated(&root, CacheKey(3), &l, &tiles, &[missing]).unwrap();
+        assert!(lookup(&root, CacheKey(3)).is_some());
+        std::fs::write(&asset, b"red").unwrap();
+        assert!(lookup(&root, CacheKey(3)).is_none());
+        let red = Dependency::read(asset.clone()).unwrap();
+        store_validated(&root, CacheKey(3), &l, &tiles, std::slice::from_ref(&red)).unwrap();
+        assert!(lookup(&root, CacheKey(3)).is_some());
+        std::fs::write(&asset, b"tan").unwrap(); // same length, different pixels
+        assert!(lookup(&root, CacheKey(3)).is_none());
+        assert!(store_validated(&root, CacheKey(4), &l, &tiles, &[red]).is_err());
+        std::fs::remove_dir_all(root).unwrap();
     }
 
     #[test]
@@ -530,7 +593,8 @@ mod tests {
         let root = scratch("sweep");
         let l = layout();
         let big = vec![0u8; 1000];
-        let tiles: Vec<(Band, &[u8])> = bands(5000)
+        let tiles: Vec<(Band, &[u8])> = layout()
+            .bands()
             .into_iter()
             .map(|b| (b, big.as_slice()))
             .collect();
@@ -713,7 +777,8 @@ mod tests {
         let file = kept_clip(&root, videos[0].src.as_deref().unwrap()).unwrap();
         l.videos = Some(videos);
         let png = b"png".to_vec();
-        let tiles: Vec<(Band, &[u8])> = bands(5000)
+        let tiles: Vec<(Band, &[u8])> = layout()
+            .bands()
             .into_iter()
             .map(|b| (b, png.as_slice()))
             .collect();

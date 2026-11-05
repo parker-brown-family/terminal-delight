@@ -7,6 +7,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Documents
+
+- Prepare the newest HTML artifact from recently visited panes before opening it,
+  using one cancellable job and the existing 256 MiB disk-cache budget. Capture
+  and load visible pixels first, validate local assets before cache reuse, and
+  release browser pages and hidden image buffers. Preserve the current passage
+  across edits when a stable section anchor remains.
+
 ### Agents
 
 - **Choose optional skills in CONFIG → Agents.** Turn on TD Skills to open a

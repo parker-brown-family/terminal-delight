@@ -298,6 +298,13 @@ pub trait Backend {
     /// starting on its own. Only a video does either.
     fn hold(&mut self) {}
 
+    /// The owning pane knows whether this document is on screen. Hidden HTML
+    /// keeps reading state and notes, but gives back its render payload.
+    fn visible(&mut self, _shown: bool, _cx: &mut Context<DocumentView>) {}
+
+    /// The native canvas submitted this frame's paint commands.
+    fn painted(&mut self) {}
+
     // ── notes ───────────────────────────────────────────────────────────────
     //
     // A brief and a Markdown file carry notes, so the page and the Markdown
