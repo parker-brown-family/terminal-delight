@@ -18,7 +18,7 @@
 - [x] Implement viewport-sized capture, visible-first cache reads, dependency validation, browser-context release, hidden-image release, recent-pane preparation, and passage continuity.
 - [x] Compare identical inputs and verify notes, links, keyboard navigation, resize and cancellation. Native note creation, automatic saving, resize and reopening passed on the isolated display.
 - [x] Complete native 50-pane measurements and the final report; pass format, Clippy and the full suite.
-- [ ] Land the single PR for 0.5.3 through dev/0.5.1; observe automatic wave installation.
+- [x] Create the single validated [implementation PR](https://github.com/parker-brown-family/terminal-delight/pull/1374) for 0.5.3 through dev/0.5.1. Its live state records landing; automatic installation is tracked in `~/.local/state/terminal-delight/wave-follow.json`.
 
 ## Context
 
