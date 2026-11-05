@@ -1,0 +1,62 @@
+{
+ "identity": "td-kitty",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/pkgs/chafa/usr/bin/chafa",
+  "test.png"
+ ],
+ "bytes_out": 19792,
+ "secs": 0.04,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 0,
+ "apc_a_T_count": 0,
+ "apc_keys": {},
+ "seq_counts": {
+  "CSI nt": 3,
+  "OSC 10": 1,
+  "OSC 11": 1,
+  "CSI nc": 1
+ },
+ "events": [
+  {
+   "t": 0.018,
+   "q": "OSC 10 ?"
+  },
+  {
+   "t": 0.019,
+   "q": "OSC 11 ?"
+  },
+  {
+   "t": 0.019,
+   "q": "18t"
+  },
+  {
+   "t": 0.019,
+   "reply": "\u001b[8;40;120t"
+  },
+  {
+   "t": 0.019,
+   "q": "14t"
+  },
+  {
+   "t": 0.019,
+   "reply": "\u001b[4;880;1200t"
+  },
+  {
+   "t": 0.019,
+   "q": "16t"
+  },
+  {
+   "t": 0.019,
+   "reply": "\u001b[6;22;10t"
+  },
+  {
+   "t": 0.019,
+   "q": "DA1"
+  },
+  {
+   "t": 0.019,
+   "reply": "\u001b[?6c"
+  }
+ ],
+ "text": "\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n\n"
+}
