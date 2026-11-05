@@ -30,6 +30,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Documents
 
+- **A brief's next round is a new page.** Agents now answer your notes with a
+  new brief under a new title, instead of the same one slightly altered. A
+  closed Last time strip above the title holds what you said and what came of
+  it, the title and first line take a note, decisions stay short, and a page
+  short on drawings is refused.
 - **The glow pane reads from the keyboard.** A page or Markdown file you open
   there now opens centred on the active pane, 5% in from the top and bottom and
   10% from the sides, and takes the same keys as the reader: scrolling, Tab, Enter

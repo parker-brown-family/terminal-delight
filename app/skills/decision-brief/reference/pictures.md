@@ -217,9 +217,11 @@ paragraphs should be cut instead. If a figure needs three paragraphs of setup be
 sense, the picture is wrong — redraw it rather than propping it up.
 
 **When you are unsure whether to draw one more, draw it.** Nobody has ever complained that a
-brief had too many pictures; the complaint is always the other way. There is no count to hit
-and nothing checks this — it is a standing request, and the honest test is whether a reader
-skimming only the figures and their captions would come away with the argument.
+brief had too many pictures; the complaint is always the other way. Parker, 2026-11-05: *"In
+general briefs shoudl have more imagery!!"* `brief.py check` refuses a page with more than about
+150 words of prose per drawing, and a figure that is only a table does not count. That is a
+floor, and the exemplar above runs at 54. The real test is whether a reader skimming only the
+figures and their captions would come away with the argument.
 
 A figure the reader cannot argue with is decoration. The first grill question in the exemplar
 is *"do the pictures match what you had in your head?"*, and it works because every picture

@@ -54,15 +54,15 @@ python3 ~/.claude/skills/briefing/scripts/brief.py doctor
 
 | Command | Does |
 |---|---|
-| `new SOURCE --id ID --purpose P [--title T]` | Writes a starting `.md` or `.src.html` with every marker in place. Never overwrites |
+| `new SOURCE --id ID --purpose P [--title T] [--follows BRIEF]` | Writes a starting `.md` or `.src.html` with every marker in place. Never overwrites. `--follows` starts the next round on a new page, with what the reader said behind a closed Last time strip |
 | `adopt PAGE --purpose P [--id ID]` | Makes a finished glass page commentable. It writes `PAGE.src.html`, anchors every section, figure and decision, and rebuilds the page with notes, the copy map and Terminal Delight's send-back. It keeps the page's own CSS, scripts and wallpaper, and leaves the original as `.pre-adopt.bak`. No brief is read-only |
 | `html SOURCE OUTPUT [--id ID --purpose P]` | Assembles a self-contained, commentable page; a source from `new` names itself, so the flags are optional. On a rebuild it keeps the reader's notes, agreements and wallpaper byte for byte and backs up the old page |
-| `check DOCUMENT` | Checks anchors, leftover `TODO(brief)` passages and every local link, image, `file://` URL and fragment, listing every problem at once. Reports `wallpaper` and `edited_since_build` for a built page |
+| `check DOCUMENT` | Checks anchors, leftover `TODO(brief)` passages and every local link, image, `file://` URL and fragment, listing every problem at once. Refuses an HTML page whose title and first line take no note, a decision over 40 words, or more than about 150 words of prose per drawing. Reports `wallpaper` and `edited_since_build` for a built page |
 | `feedback DOCUMENT` | Prints a page's saved notes, or a blank Markdown comment file, as JSON |
 | `resolve DOCUMENT MAP` | Places returned comments against the current document. `MAP` is the JSON file, Copy map text, or `-` for stdin. Exit 2 means some need review |
 | `doctor` | Says which commands work on this machine and why the rest don't |
 | `orient BRIEF [--calls LEDGER] [--json]` | Prints the standing orders: what is approved, what is only recommended, the reader's notes and the open calls, following the briefs it derives from |
-| `call LEDGER --title … --chose … --because … --uncertainty L --taste L [--posture P]` | Records a decision nobody made, with its evidence, and applies the policy. Exit 3 means stop and ask |
+| `call LEDGER --title … --chose … --because … --uncertainty L --taste L [--posture P] [--see ANCHOR]` | Records a decision nobody made, with its evidence, and applies the policy. Exit 3 means stop and ask. Each field has a word limit, and `--see` links the row to the section holding the reasoning |
 | `calls LEDGER [--html] [--sync BRIEF]` | Lists the calls and whether the work has settled (exit 2 until it has), prints them as a stampable brief section, or takes a brief's CONCUR stamps back |
 | `verdict LEDGER CALL concurred\|overturned\|superseded [--note …]` | Records the person's answer given anywhere else |
 

@@ -41,6 +41,11 @@ KIT_FILES = [KIT / 'assets/base.css', KIT / 'assets/notes.css', KIT / 'assets/no
              KIT / 'reference/notes-markup.html', KIT / 'scripts/brief-wall', LOOK / 'assets/sections.js']
 # A scaffold's unwritten passages. `check` refuses a brief that still carries one.
 UNWRITTEN = 'TODO(brief)'
+# A card holds the question and the recommendation; anything longer belongs in a section it links to.
+DECISION_WORDS = 40
+# Past this much prose a brief owes the reader another drawing. The brief that set the standard runs at 54.
+PROSE_PER_DRAWING = 150
+CALL_WORDS = {'title': 12, 'chose': 15, 'because': 25}
 # What notes.js gives a CONCUR stamp: `.ask`, `.grill-q`, and `.q` inside a `.grill` but not inside an `.ask`.
 DECISION_CLASSES = {'ask', 'grill-q'}
 # Where the readings behind a judgement call come from. An agent fills it today; a System 1 model may later.
@@ -80,6 +85,7 @@ class Page(HTMLParser):
     def __init__(self, text):
         super().__init__()
         self.ids, self.targets, self.links, self.headings, self.figures = [], [], [], [], []
+        self.opening = False
         self.feed(text)
 
     def handle_starttag(self, tag, attributes):
@@ -91,6 +97,7 @@ class Page(HTMLParser):
             if not anchor or attrs.get('id') != anchor or not SAFE_ID.fullmatch(anchor):
                 raise Refusal('a data-brief-anchor must equal its explicit, lowercase id')
             self.targets.append(anchor)
+            self.opening = self.opening or tag == 'h1' or bool({'opening', 'lede'} & set((attrs.get('class') or '').split()))
         if tag == 'h2':
             self.headings.append(attrs.get('data-brief-anchor'))
         if tag == 'figure':
@@ -132,7 +139,8 @@ class Decisions(HTMLParser):
         index = None
         # notes.js: '.grill .q:not(.ask .q), .grill-q, .ask' — only an .ask ancestor excludes a .q.
         if classes & DECISION_CLASSES or ('q' in classes and in_grill and not in_ask):
-            self.found.append({'anchor': attrs.get('data-brief-anchor'), 'title': '', 'tag': tag})
+            self.found.append({'anchor': attrs.get('data-brief-anchor'), 'title': '', 'tag': tag, 'words': 0,
+                               'generated': 'data-call' in attrs})
             index = len(self.found) - 1
         self.stack.append((tag, 'grill' in classes, index, 'ask' in classes))
         owner = self.owner()
@@ -155,6 +163,9 @@ class Decisions(HTMLParser):
     def handle_data(self, data):
         if self.capture:
             self.found[self.capture[0]]['title'] += data
+        owner = self.owner()
+        if owner is not None and not any(tag == 'figure' for tag, _, _, _ in self.stack):
+            self.found[owner]['words'] += len(data.split())
 
     def decisions(self):
         return [{**found, 'title': ' '.join(found['title'].split())} for found in self.found]
@@ -166,6 +177,46 @@ def unanchored_decisions(text):
 
 UNANCHORED = ('every decision a reader can stamp (.ask, .grill-q, or .q inside a .grill) needs id="x" '
               'data-brief-anchor="x"; without one it takes no note and no CONCUR. Unanchored: ')
+
+
+class Imagery(HTMLParser):
+    """How much prose a page carries and how many drawings carry it. A figure that is only a table is prose in a box."""
+    HIDDEN = {'script', 'style', 'nav', 'dialog'}
+    PICTURES = {'svg', 'img', 'video', 'canvas'}
+
+    def __init__(self, text):
+        super().__init__()
+        self.prose = self.drawings = self.hidden = self.held = 0
+        self.figure = None
+        self.feed(text)
+
+    def handle_starttag(self, tag, attributes):
+        if tag in self.HIDDEN:
+            self.hidden += 1
+        elif tag == 'figure' and self.figure is None:
+            self.figure, self.held = {'picture': False, 'table': False}, 0
+        elif self.figure is not None and tag in self.PICTURES:
+            self.figure['picture'] = True
+        elif self.figure is not None and tag == 'table':
+            self.figure['table'] = True
+
+    def handle_endtag(self, tag):
+        if tag in self.HIDDEN:
+            self.hidden -= 1
+        elif tag == 'figure' and self.figure is not None:
+            if self.figure['picture'] or not self.figure['table']:
+                self.drawings += 1
+            else:
+                self.prose += self.held
+            self.figure = None
+
+    def handle_data(self, data):
+        if self.hidden:
+            return
+        if self.figure is None:
+            self.prose += len(data.split())
+        else:
+            self.held += len(data.split())
 
 
 def heading_slug(heading):
@@ -371,6 +422,9 @@ def check(path):
         loose = unanchored_decisions(CONTENT.search(text)[1])
         if loose:
             raise Refusal(UNANCHORED + '; '.join(d['title'] or '(untitled ' + d['tag'] + ')' for d in loose))
+        if not page.opening:
+            raise Refusal('the title and first line take no note: wrap them in <div class="opening" id="top" '
+                          'data-brief-anchor="top">, because that line is where a reader says whether this is on track')
         notes(text)
         # Only a built page has a recorded revision to compare; Markdown leaves this undeclared.
         result['edited_since_build'] = revision != meta['revision']
@@ -383,6 +437,17 @@ def check(path):
         result['comment_targets'] = len(set(Page(region).ids + block_ids(region)))
     if UNWRITTEN in region:
         raise Refusal(f'unwritten scaffold passage: replace every {UNWRITTEN} before delivery')
+    if path.suffix == '.html':
+        long = [d for d in Decisions(region).decisions() if d['words'] > DECISION_WORDS and not d['generated']]
+        if long:
+            raise Refusal(f'decisions over {DECISION_WORDS} words: ' + '; '.join(f"{d['anchor']} ({d['words']})" for d in long) +
+                          '. Keep the question and the recommendation on the card, move the reasoning to a section, and link to it')
+        seen = Imagery(region)
+        result['prose_words'], result['drawings'] = seen.prose, seen.drawings
+        owed = seen.prose // PROSE_PER_DRAWING
+        if seen.drawings < owed:
+            raise Refusal(f'{seen.prose} words of prose and {seen.drawings} drawings: draw at least {owed}, about one per '
+                          f'{PROSE_PER_DRAWING} words, or cut the prose. A figure that is only a table is not a drawing')
     for parent in meta.get('derives_from') or []:
         if not (path.parent / parent).is_file():
             raise Refusal(f'derives_from names {parent}, which is not there; fix the path or drop it')
@@ -655,7 +720,7 @@ def build(source, output, identity=None, purpose=None, no_wall=False, discard_ed
 
 LOOK_MARKS = ('decision-brief — glass over an Omarchy wallpaper', 'fancy-pants-brief — the rail of gel buttons')
 HEAD_METAS = re.compile(r'<meta\b[^>]*(?:charset|name=["\']?(?:viewport|color-scheme))[^>]*>\s*', re.I)
-START_TAG = re.compile(r'<(h2|figure|div|section|aside|p|li)\b([^>]*)>', re.I)
+START_TAG = re.compile(r'<(h1|h2|figure|div|section|aside|p|li)\b([^>]*)>', re.I)
 
 
 def anchor_slug(words, prefix, taken):
@@ -675,11 +740,18 @@ def stamp_anchors(region):
 
     An existing lowercase id is kept as the anchor; an element without one is named from its words."""
     taken = set(re.findall(r'\bid=["\']([^"\']+)["\']', region))
-    out, at, made = [], 0, []
+    out, at, made, opened = [], 0, [], False
     for m in START_TAG.finditer(region):
         tag, attrs = m[1].lower(), m[2]
         classes = (re.search(r'\bclass=["\']([^"\']*)["\']', attrs) or [None, ''])[1].split()
-        if tag not in ('h2', 'figure') and not DECISION_CLASSES & set(classes):
+        if tag == 'h1' and not opened:
+            opened = True
+            if 'data-brief-anchor' not in attrs and not re.search(r'\bid=', attrs):
+                out.append(region[at:m.end() - 1] + ' id="top" data-brief-anchor="top"')
+                at = m.end() - 1
+                made.append('top')
+                continue
+        if tag not in ('h1', 'h2', 'figure') and not DECISION_CLASSES & set(classes):
             continue
         if 'data-brief-anchor' in attrs:
             continue
@@ -1024,6 +1096,8 @@ def call_fingerprint(call):
     """What a reader judged when they stamped a call's row: its words and its evidence's bytes."""
     seen = {k: call.get(k) for k in ('id', 'title', 'context', 'chose', 'because', 'passed_over', 'undo', 'door')}
     seen['evidence'] = [e['sha256'] for e in call.get('evidence') or []]
+    if call.get('see'):
+        seen['see'] = call['see']
     return digest(json.dumps(seen, ensure_ascii=False, sort_keys=True))
 
 
@@ -1081,11 +1155,11 @@ def row_problem(call, row, base, where):
     tries += [(status, moved) for status in ('overturned', 'superseded') for moved in ('changed', 'missing')]
     for status, moved in tries:
         try:
-            candidate = render_row(call, base, where, status, None if moved else held, moved)
+            candidates = [render_row(call, base, where, status, None if moved else held, moved, full) for full in (False, True)]
         except Refusal as exc:
             refused.append(str(exc))
             continue
-        if Content(flat(candidate), keep_nav=True).parts == shown.parts:
+        if any(Content(flat(candidate), keep_nav=True).parts == shown.parts for candidate in candidates):
             return None
     if len(refused) == 3:
         return 'its evidence changed or went missing since it was recorded'
@@ -1127,11 +1201,16 @@ def brief_pointer(brief, relative_to):
 
 
 def record_call(ledger, title, chose, because, uncertainty, taste, posture=None, context=None, passed_over=(),
-                undo=None, door=None, evidence=(), conflicts=(), under=None, call_id=None, filled_by='agent', now=None):
+                undo=None, door=None, evidence=(), conflicts=(), under=None, call_id=None, filled_by='agent', now=None, see=None):
     """Write down a decision nobody made, apply the policy, and say whether to carry on."""
     for name, value in (('title', title), ('chose', chose), ('because', because)):
         if not (value or '').strip():
             raise Refusal(f'a call needs --{name}: what was decided, what was chosen and why, in plain words')
+        if len(value.split()) > CALL_WORDS[name]:
+            raise Refusal(f'--{name} runs to {len(value.split())} words and the limit is {CALL_WORDS[name]}: say it shorter, '
+                          'and put any reasoning in a section of the brief, named with --see')
+    if see is not None and not SAFE_ID.fullmatch(see):
+        raise Refusal('--see names a section by its lowercase id, such as sec-footer')
     for name, level in (('uncertainty', uncertainty), ('taste', taste)):
         if level not in LEVELS:
             raise Refusal(f'--{name} is one of {", ".join(LEVELS)}; the slot {SLOT} supplies it')
@@ -1141,11 +1220,11 @@ def record_call(ledger, title, chose, because, uncertainty, taste, posture=None,
         raise Refusal('--door is two-way (cheap to undo) or one-way (undoing it needs the person)')
     with ledger_lock(ledger):
         return _record_call(ledger, title, chose, because, uncertainty, taste, posture, context, passed_over, undo, door,
-                            evidence, conflicts, under, call_id, filled_by, now)
+                            evidence, conflicts, under, call_id, filled_by, now, see)
 
 
 def _record_call(ledger, title, chose, because, uncertainty, taste, posture, context, passed_over, undo, door,
-                 evidence, conflicts, under, call_id, filled_by, now):
+                 evidence, conflicts, under, call_id, filled_by, now, see=None):
     before = ledger.read_bytes() if ledger.exists() else None
     data = load_ledger(ledger, create=True)
     call_id = call_id or 'call-' + re.sub(r'[^a-z0-9]+', '-', title.lower()).strip('-')[:48].rstrip('-')
@@ -1170,6 +1249,8 @@ def _record_call(ledger, title, chose, because, uncertainty, taste, posture, con
                            'posture': posture or 'standard', 'posture_declared': posture is not None,
                            'outcome': outcome, 'reasons': reasons},
              'status': 'open' if outcome == 'carry-on' else 'asked', 'verdict': None}
+    if see:
+        entry['see'] = see
     data['calls'].append(entry)
     save_ledger(ledger, data, before)
     return {'ledger': str(ledger), 'id': call_id, 'outcome': outcome, 'status': entry['status'], 'reasons': reasons,
@@ -1303,24 +1384,29 @@ def is_routine(call, status=None):
     return heft(call) == 0 and not call.get('evidence') and (status or call['status']) != 'asked'
 
 
-def render_row(call, base, where, status=None, recorded=None, moved=None):
+def render_row(call, base, where, status=None, recorded=None, moved=None, full=False):
     """One call's stampable row, exactly as `calls --html` prints it; `status` overrides the ledger's.
 
+    A row says what was chosen and why, and links to the section holding any more. The ledger keeps the rest.
+    `full` is the longer row earlier briefs printed, kept so they still match their ledgers.
     `recorded` maps an evidence hash to bytes a page already carries, so a row printed before its evidence
     moved can still be reproduced, and marks a comparison, where a link renders whatever its file holds now."""
     status = status or call['status']
     e = html_escape
     routine = is_routine(call, status)
     facts = [('Chose', call['chose']), ('Because', call['because'])]
-    if call.get('context') and not routine:
-        facts.insert(0, ('Context', call['context']))
-    if call.get('passed_over') and not routine:
-        facts.append(('Passed over', '; '.join(call['passed_over'])))
-    if call.get('undo') and not routine:
-        facts.append(('Undo', call['undo'] + (' (one-way door)' if call.get('door') == 'one-way' else '')))
     j = call['judgement']
-    facts.append(('Judged', f"uncertainty {j['uncertainty']} · your taste {j['taste']} · {j['posture']} posture"
-                  f"{'' if j.get('posture_declared') else ' (undeclared, so standard)'} · read by {j['filled_by']} in {j['slot']}"))
+    if full:
+        if call.get('context') and not routine:
+            facts.insert(0, ('Context', call['context']))
+        if call.get('passed_over') and not routine:
+            facts.append(('Passed over', '; '.join(call['passed_over'])))
+        if call.get('undo') and not routine:
+            facts.append(('Undo', call['undo'] + (' (one-way door)' if call.get('door') == 'one-way' else '')))
+        facts.append(('Judged', f"uncertainty {j['uncertainty']} · your taste {j['taste']} · {j['posture']} posture"
+                      f"{'' if j.get('posture_declared') else ' (undeclared, so standard)'} · read by {j['filled_by']} in {j['slot']}"))
+    elif call.get('door') == 'one-way' and call.get('undo'):
+        facts.append(('Undo', call['undo'] + ' (one-way door)'))
     figures = []
     for n, item in enumerate(call.get('evidence') or [], 1):
         source = base / item['href']
@@ -1364,8 +1450,9 @@ def render_row(call, base, where, status=None, recorded=None, moved=None):
     else:
         stance = f'<p class="rec"><b>{e(status.capitalize())}.</b></p>'
     dl = ''.join(f'<dt>{e(k)}</dt><dd>{e(v)}</dd>' for k, v in facts)
+    more = f'<p><a href="#{e(call["see"])}">The reasoning</a></p>' if call.get('see') and not full else ''
     return (f'<div class="ask call" id="{call["id"]}" data-brief-anchor="{call["id"]}" data-call="{call_fingerprint(call)}">'
-            f'<h3>{e(call["title"])}</h3><dl class="facts">{dl}</dl>{"".join(figures)}{stance}</div>')
+            f'<h3>{e(call["title"])}</h3><dl class="facts">{dl}</dl>{more}{"".join(figures)}{stance}</div>')
 
 
 def render_calls(ledger, relative_to=None, number=None, every=False):
@@ -1379,13 +1466,8 @@ def render_calls(ledger, relative_to=None, number=None, every=False):
     rows = [render_row(call, base, where) for call in shown]
     e = html_escape
     asked = sum(c['status'] == 'asked' for c in shown)
-    routine = sum(is_routine(c) for c in shown)
-    lead = ('Nobody had decided these. I decided them and kept working' +
-            (f', except {asked} I stopped to ask you about' if asked else '') +
-            '. Stamp CONCUR on each one you agree with; a note on one is answered before the work settles.' +
-            ((' The last one was routine, with both readings low, and shows' if routine == 1 else
-              f' The last {routine} were routine, with both readings low, and show') + ' only what I chose and why.'
-             if routine else ''))
+    lead = ('Nobody had decided these, so I did and kept working' +
+            (f', except {asked} I stopped to ask you about' if asked else '') + '. Stamp the ones you agree with.')
     number = f'<span class="n">{e(number)}</span> ' if number else ''
     return (f'<section class="pane"><h2 id="sec-calls" data-brief-anchor="sec-calls">{number}Judgement calls</h2>\n'
             f'<p>{lead}</p>\n<div class="grill">\n' + '\n'.join(rows) + '\n</div></section>\n') if rows else ''
@@ -1607,7 +1689,7 @@ HTML_SCAFFOLD = '''<!doctype html>
 svg{display:block;width:100%;height:auto}.small{font-size:13px;color:var(--dim)}
 </style></head><body>
 <!--brief-content-->
-<header class="top"><div class="wrap"><div class="eyebrow">Briefing · {purpose} · HTML</div><h1>{title}</h1><p class="lede">TODO(brief): two sentences on why this brief exists, for this reader.</p><nav class="sections"></nav></div></header>
+<header class="top"><div class="wrap">{last_time}<div class="eyebrow">Briefing · {purpose} · HTML</div><div class="opening" id="top" data-brief-anchor="top"><h1>{title}</h1> <p class="lede">TODO(brief): where this stands, in a line or two. It is what the reader reacts to first, so say the thing they would argue with.</p></div><nav class="sections"></nav></div></header>
 <main class="wrap">
 <!-- The reader must be able to answer: {question}
      Each section answers the question the one before it raised. Give every h2 and figure an id equal to its
@@ -1645,9 +1727,43 @@ TODO(brief): the consequence, the open question or the ask.
 '''
 
 
-def scaffold(path, identity, purpose, title=None, derives_from=(), calls=None):
+def last_time(path, previous):
+    """The strip above a next-round brief's title: what the reader said last round and what came of each, closed."""
+    data, anchors = feedback(previous), inspect(previous)[3]
+    href = quote(os.path.relpath(previous.resolve(), path.resolve().parent))
+    e = html_escape
+    rows = []
+    for said in data['comments'] + data.get('pictures', []):
+        where = said.get('title') or said['target']
+        place = f'<a href="{href}#{e(said["target"])}">{e(where)}</a>' if said['target'] in anchors else e(where)
+        words = said.get('label') or said['text'] or 'Concurred'
+        rows.append(f'<tr><td>{place}</td><td>{e(words)}</td><td>{UNWRITTEN}: what came of it</td></tr>')
+    rows.append(f'<tr><td>Outside the notes</td><td>{UNWRITTEN}: anything said in the prompt, or delete this row</td>'
+                f'<td>{UNWRITTEN}: what came of it</td></tr>')
+    count = len(data['comments'])
+    return (f'<div class="last-time-strip" id="last-time" data-brief-anchor="last-time"><button class="last-time" type="button" '
+            f'data-dlg="d-last-time"><b>Last time</b> {count} note{"" if count == 1 else "s"} · {UNWRITTEN}: what came of them, in a few words'
+            f'</button></div>\n<dialog id="d-last-time"><div class="dlg-head"><h3>Last time</h3><button class="x" type="button" '
+            f'data-close aria-label="Close">✕</button></div><div class="dlg-body"><table><thead><tr><th>Where</th><th>You said</th>'
+            f'<th>What came of it</th></tr></thead><tbody>' + ''.join(rows) + '</tbody></table></div></dialog>\n')
+
+
+def scaffold(path, identity, purpose, title=None, derives_from=(), calls=None, follows=None):
     """Write a starting source with every required marker; never overwrite."""
     extras = {}
+    strip = ''
+    if follows:
+        if path.suffix != '.html':
+            raise Refusal('--follows builds the Last time strip of an HTML brief; a Markdown brief links its predecessor by hand')
+        if not follows.is_file():
+            raise Refusal(f'--follows names {follows}, which is not there')
+        if identity == inspect(follows)[1]['id']:
+            raise Refusal('a new round is a new brief: give it its own --id')
+        before = re.search(r'<title>(.*?)</title>', read(follows), re.S | re.I)
+        if not title or (before and title.strip().casefold() == before[1].strip().casefold()):
+            raise Refusal('a new round needs a --title of its own, naming the issue this round resolves')
+        strip = last_time(path, follows)
+        derives_from = [*derives_from, follows]
     if derives_from:
         missing = [str(p) for p in derives_from if not Path(p).is_file()]
         if missing:
@@ -1669,7 +1785,8 @@ def scaffold(path, identity, purpose, title=None, derives_from=(), calls=None):
         steps = [f'python3 {Path(__file__).resolve()} check {path}']
     elif path.suffix == '.html':
         meta = json.dumps({'id': identity, 'purpose': purpose, **extras}, ensure_ascii=False).replace('--', '\\u002d\\u002d')
-        body = HTML_SCAFFOLD.replace('{meta}', meta).replace('{title}', html_escape(title)).replace('{purpose}', html_escape(purpose))
+        body = (HTML_SCAFFOLD.replace('{last_time}', strip).replace('{meta}', meta).replace('{title}', html_escape(title))
+                .replace('{purpose}', html_escape(purpose)))
         output = path.with_name(path.name.removesuffix('.src.html') + '.html') if path.name.endswith('.src.html') else path.with_suffix('.out.html')
         steps = [f'python3 {Path(__file__).resolve()} html {path} {output}',
                  f'python3 {Path(__file__).resolve()} check {output}']
@@ -1741,6 +1858,8 @@ def main():
     p.add_argument('--derives-from', type=Path, action='append', default=[], metavar='BRIEF',
                    help='a brief this one builds on; orient reads what it approved too (repeatable)')
     p.add_argument('--calls', type=Path, metavar='LEDGER', help='the NAME.calls.json ledger this brief shows')
+    p.add_argument('--follows', type=Path, metavar='BRIEF',
+                   help='the brief the reader last commented on: starts a new page, with what they said behind a closed strip')
     p = commands.add_parser('adopt', help='make a finished glass page commentable: write its .src.html and rebuild it with notes')
     p.add_argument('page', type=Path)
     p.add_argument('--id', help='defaults to the page\'s file name')
@@ -1783,6 +1902,7 @@ def main():
     p.add_argument('--under', type=Path, metavar='BRIEF', help='the approved brief the work runs under')
     p.add_argument('--id')
     p.add_argument('--filled-by', default='agent', help='who read the slot')
+    p.add_argument('--see', metavar='ANCHOR', help='the section of the brief that holds the reasoning; the row links to it')
     p = commands.add_parser('calls', help='list calls and whether the work has settled (exit 2: not yet); --html renders them')
     p.add_argument('ledger', type=Path)
     p.add_argument('--html', action='store_true', help='print the brief section of open and asked calls')
@@ -1809,7 +1929,7 @@ def main():
         if args.command == 'call':
             result = record_call(args.ledger, args.title, args.chose, args.because, args.uncertainty, args.taste,
                                  args.posture, args.context, args.passed_over, args.undo, args.door, args.evidence,
-                                 args.conflicts, args.under, args.id, args.filled_by)
+                                 args.conflicts, args.under, args.id, args.filled_by, see=args.see)
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 3 if result['outcome'] == 'stop' else 0
         if args.command == 'calls':
@@ -1824,7 +1944,7 @@ def main():
             print(json.dumps(result, ensure_ascii=False, indent=2))
             return 0
         if args.command == 'new':
-            result = scaffold(args.source, args.id, args.purpose, args.title, args.derives_from, args.calls)
+            result = scaffold(args.source, args.id, args.purpose, args.title, args.derives_from, args.calls, args.follows)
         elif args.command == 'adopt':
             result = adopt(args.page, args.id, args.purpose)
         elif args.command == 'html':
