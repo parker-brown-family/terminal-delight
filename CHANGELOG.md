@@ -9,6 +9,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Terminals
 
+- **TERMINIMALIST's relationship row reads as a sentence.** It says
+  *+ Actor → Choose verb → Choose target*, where its arrows had been spelled
+  out as the word "right".
 - **Inactive brightness reaches the active pane.** Above its shipped 78% the
   gauge also lifts text and letter glow, so 100% looks like the pane you're in.
   The default look is unchanged.
