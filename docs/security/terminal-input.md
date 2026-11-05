@@ -58,13 +58,12 @@ else is the terminal answering its own program (#2, #3), a pointer gesture the p
 another agent sent. Fresh-shell setup through #1, #8 and #10 can start without a keystroke. #10
 starts only along a line a person drew, for that pair of panes.
 
-Since the Skills Manager revision of 2026-11-05, a new window can attach to a host that predates
-the skills bridge. For a freshly spawned plain Bash shell, `make_pane_host_spawned` checks the
-child environment and queues TD's own `activate.bash` through `run_line` when needed. This happens
-before the new pane is returned for use. `bootstrap_shell` refuses an adopted pane, a resume
-recipe or another shell program. The script defines command functions while retaining personal
-aliases and functions. It edits no shell startup file or provider configuration. There is no
-timer, MCP verb or agent-provided setup string, and this path never targets a running agent.
+The skills bridge reaches a shell through the environment its host spawns it with, and no window
+types setup into a shell. A window attached to a host that predates the bridge therefore gets
+shells without it until that host restarts. `activate.bash` stays on disk for a person who wants
+those shells covered from their own startup file. It defines command functions while retaining
+personal aliases and functions. TD edits no shell startup file or provider configuration, and
+nothing in TD runs the script.
 
 **`mcp.rs` and `plugins.rs` reach none of them but #10, and `mcp.rs` reaches that only by asking
 the window.** `prompt_agent` carries no bytes: it names a pane and some words, and the window

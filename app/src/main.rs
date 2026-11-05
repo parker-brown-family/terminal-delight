@@ -6307,16 +6307,7 @@ fn make_pane_host_spawned(
             info.pane
         );
     }
-    let bootstrap = skills::bootstrap_shell(
-        info.shell_pid,
-        started == hostctl::Started::Freshly,
-        restore.resume.as_deref(),
-    );
-    let pane = make_pane_attached(&info, restore, ctx, window, cx)?;
-    if let Some(line) = bootstrap {
-        pane.update(cx, |view, cx| view.run_line(line, cx));
-    }
-    Ok(pane)
+    make_pane_attached(&info, restore, ctx, window, cx)
 }
 
 /// A pane for a host terminal, falling back rather than leaving a hole.
