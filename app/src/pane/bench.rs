@@ -3349,6 +3349,10 @@ impl TerminalView {
     /// Which image type the clipboard is offering, if any.
     pub(super) fn clipboard_image_mime(&self) -> Option<&'static str> {
         use std::process::Command;
+        // A test's clipboard is gpui's; wl-paste would answer for the person's.
+        if cfg!(test) {
+            return None;
+        }
         std::env::var_os("WAYLAND_DISPLAY")?;
         let listed = Command::new("wl-paste").arg("--list-types").output().ok()?;
         if !listed.status.success() {
