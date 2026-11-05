@@ -30,6 +30,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Documents
 
+- **The glow pane reads from the keyboard.** A page or Markdown file you open
+  there now opens centred on the active pane, 5% in from the top and bottom and
+  10% from the sides, and takes the same keys as the reader: scrolling, Tab, Enter
+  for a note, Ctrl+Shift+Enter to send. Nothing reaches the shell until you close
+  it, and Terminal Delight's own chords keep working. Squares an agent opens stay
+  small and leave your typing alone.
+- **Reading keeps tab chords and stops pastes.** Ctrl+PgUp and Ctrl+PgDn switch
+  tabs while a document is read, and a paste no longer lands in the shell behind it.
 - **Choose the glow pane or fullscreen reader.** GAUGES → FLOATING DOCUMENT
   gains a mode toggle. Fullscreen remains the default; the saved choice applies
   across the window and can switch an open brief while keeping its view and notes.
