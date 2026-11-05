@@ -7,6 +7,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Omarchy
+
+- **Super+C copies on a stock Omarchy.** Omarchy sends Super+C to a window it
+  doesn't count as a terminal as Ctrl+C, which interrupted the agent in the pane
+  unless you had added a line to `hyprland.lua`. Terminal Delight now tags its
+  own windows as terminals on Omarchy, so Super+C copies and Super+V pastes with
+  no setup, and the line can go.
+
 ## [0.5.1] — 2026-11-04
 
 ### Install
