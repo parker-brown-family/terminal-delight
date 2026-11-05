@@ -142,7 +142,7 @@ theme, programs included. The 0.5 releases also brought:
 
 Stable releases, and previews of the next one, are on the
 [releases page](https://github.com/parker-brown-family/terminal-delight/releases).
-0.5.1 is the latest stable. What changed, release by release, is
+0.5.2 is the latest stable. What changed, release by release, is
 in [CHANGELOG.md](CHANGELOG.md), and the plain-language notes are in
 [docs/release-notes/](docs/release-notes/).
 
@@ -367,8 +367,8 @@ your scrollback, typed input, titles, directories, commands or a screenshot. See
 The open work for 1.0 is on the
 [1.0 milestone](https://github.com/parker-brown-family/terminal-delight/milestone/1):
 a Flatpak alongside the AppImage, a 20-pane stress proof, and a same-box
-keystroke-latency comparison against Alacritty, among others. The 0.5.1 work is on
-[its own milestone](https://github.com/parker-brown-family/terminal-delight/milestone/3).
+keystroke-latency comparison against Alacritty, among others. The 0.5.3 work is on
+[its own milestone](https://github.com/parker-brown-family/terminal-delight/milestone/5).
 The original gated build plan, and the risk gates that shaped the first release,
 are in [docs/PLAN.md](docs/PLAN.md).
 

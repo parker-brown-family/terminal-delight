@@ -7,27 +7,6 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
-### Terminals
-
-- **TERMINIMALIST's relationship row reads as a sentence.** It says
-  *+ Actor → Choose verb → Choose target*, where its arrows had been spelled
-  out as the word "right".
-- **Inactive brightness reaches the active pane.** Above its shipped 78% the
-  gauge also lifts text and letter glow, so 100% looks like the pane you're in.
-  The default look is unchanged.
-- **See your desktop through a terminal.** GAUGES gains **opacity** under ACTIVE
-  TERMINALS and INACTIVE TERMINALS. The field goes see-through while the letters
-  stay solid, on the CRT too. Both start at 100%, and a fullscreen window stays
-  solid.
-
-### Omarchy
-
-- **Super+C copies on a stock Omarchy.** Omarchy sends Super+C to a window it
-  doesn't count as a terminal as Ctrl+C, which interrupted the agent in the pane
-  unless you had added a line to `hyprland.lua`. Terminal Delight now tags its
-  own windows as terminals on Omarchy, so Super+C copies and Super+V pastes with
-  no setup, and the line can go.
-
 ### Documents
 
 - **The glow pane reads from the keyboard.** A page or Markdown file you open
@@ -38,15 +17,59 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   small and leave your typing alone.
 - **Reading keeps tab chords and stops pastes.** Ctrl+PgUp and Ctrl+PgDn switch
   tabs while a document is read, and a paste no longer lands in the shell behind it.
-- **Choose the glow pane or fullscreen reader.** GAUGES → FLOATING DOCUMENT
-  gains a mode toggle. Fullscreen remains the default; the saved choice applies
-  across the window and can switch an open brief while keeping its view and notes.
-- **A pasted picture stays on its section in the agent's prompt.** ↪ sent each
-  picture under its section, but Claude Code lifted the path out of the paste
-  and attached the picture at the top, so nothing said which picture was on
-  which section. The map now keeps the path in brackets, the agent opens each
-  picture from the section it was pasted on, and the notes bar counts the
-  pictures that went.
+
+## [0.5.2] — 2026-11-05
+
+### Omarchy
+
+- **Super+C copies, with nothing to set up.** Omarchy turns Super+C into Ctrl+C
+  for any window it doesn't count as a terminal, so on a stock install the press
+  interrupted the agent in the pane. Terminal Delight now marks its own windows
+  as terminals, about a second after each one opens, so Super+C copies and
+  Super+V pastes.
+
+### Terminals
+
+- **See your desktop through a terminal.** ACTIVE TERMINALS and INACTIVE
+  TERMINALS in GAUGES each gain an **opacity** slider. Below 100% the field goes
+  see-through to the desktop, on the tube too, while the letters, cursor and
+  bezel stay solid. A fullscreen window stays solid.
+- **An unfocused pane can match the one you're in.** Above its default 78%,
+  inactive brightness now lifts text and letter glow as well, so at 100% the two
+  panes look the same. At 78% and below, nothing changes.
+- **Scroll mode works in Codex.** Alt+[ opened it, but the arrows and paging
+  keys did nothing, because the scrolling went to the top row, which Codex keeps
+  for its pinned prompt header. It now goes to the row below.
+
+### Documents
+
+- **Briefs open where you like them.** FLOATING DOCUMENT in GAUGES gains a
+  toggle between **reader mode**, the fullscreen default, and the **glow pane**.
+  Alt+O follows your choice across the window, and switching an open brief keeps
+  your place and your notes. A document an agent opens still opens small.
+- **A pasted picture stays on its section.** When ↪ sent your notes to an agent,
+  Claude Code lifted each picture out and attached it at the top, so nothing said
+  which section it belonged to. Each picture now arrives on the section you
+  pasted it on, and the notes bar counts how many went.
+
+### Threshing Floor
+
+- **TERMINIMALIST's relationship row reads as a sentence:** *+ Actor → Choose
+  verb → Choose target*. Its arrows had been spelled out as the word "right".
+
+### Languages
+
+- **The rest of the app is translated.** The remaining controls and status
+  messages follow your language in all nine, including the short action labels
+  in text-control skins and the launcher's model and dial states. (#1228, #1068)
+
+### Upgrading from 0.5.1
+
+- **Your windows look the same.** Opacity starts at 100%, and briefs open
+  fullscreen until you choose otherwise.
+- **The Super+C line can go.** If you added
+  `o.window("terminal-delight", { tag = "+terminal" })` to `hyprland.lua`, delete
+  it or keep it. It does no harm either way.
 
 ## [0.5.1] — 2026-11-04
 
