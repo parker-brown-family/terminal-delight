@@ -262,8 +262,8 @@ impl TerminalView {
 
     /// Open a document a PERSON asked for: an Alt+click on its path, the
     /// artifact chip or rail, a link on the bench. A page or a Markdown file
-    /// is opened to be read: it comes up large in the FOCUS frame and takes
-    /// the keyboard there, and closes with it. Parker, 2026-11-02: *"If we
+    /// is opened to be read: the workspace chooses the fullscreen reader or
+    /// glow pane from the saved gauge preference. Parker, 2026-11-02: *"If we
     /// open an artifact, we intend to read it."* Anything else opens in the
     /// square as [`Self::open_float`] opens it. An agent opening its own
     /// deliverable (`open_document`) keeps the small square beside the
@@ -282,7 +282,7 @@ impl TerminalView {
             if let Some(float) = self.float.as_mut() {
                 float.to_read = true;
             }
-            cx.emit(OpenFocusRead);
+            cx.emit(OpenDocumentRead);
         }
         Ok(())
     }
@@ -291,6 +291,27 @@ impl TerminalView {
     /// ([`Self::open_to_read`]).
     pub(crate) fn float_to_read(&self) -> bool {
         self.float.as_ref().is_some_and(|f| f.to_read)
+    }
+
+    /// Move the same readable view between the square and reading frame.
+    /// Clear frame ownership before closing it, so the document stays open.
+    pub(crate) fn set_float_to_read(&mut self, on: bool, cx: &mut Context<Self>) -> bool {
+        let Some(top) = self.float.as_mut() else {
+            return false;
+        };
+        let doc = if top.view.read(cx).target().kind.reads() {
+            top
+        } else if let Some(below) = top.below.as_mut() {
+            below
+        } else {
+            return false;
+        };
+        if !doc.view.read(cx).target().kind.reads() {
+            return false;
+        }
+        doc.to_read = on;
+        cx.notify();
+        true
     }
 
     /// Open a video or a sound as a clip: in a glowing box of its own, above
@@ -471,17 +492,22 @@ impl TerminalView {
             };
             strip = strip
                 .child(button(
-                    sk.control("−", "zoom out").into(),
+                    sk.control("−", crate::lang::current().strings().parts.ctl_zoom_out)
+                        .into(),
                     FloatHit::ZoomOut,
                 ))
                 .child(button(now, FloatHit::ZoomFit))
-                .child(button(sk.control("+", "zoom in").into(), FloatHit::ZoomIn))
+                .child(button(
+                    sk.control("+", crate::lang::current().strings().parts.ctl_zoom_in)
+                        .into(),
+                    FloatHit::ZoomIn,
+                ))
                 .child(div().w(px(4.)));
         }
         strip = strip
             .child(button(s.float_split.into(), FloatHit::Split))
             .child(button(s.float_desktop.into(), FloatHit::Desktop))
-            .child(button("✕ esc".into(), FloatHit::Close));
+            .child(button("✕ Esc".into(), FloatHit::Close));
         div()
             .absolute()
             .left(px(r.x))
@@ -616,6 +642,7 @@ impl TerminalView {
             cx.emit(SendNotesBeside {
                 map: ev.map.clone(),
                 unsaved: ev.unsaved,
+                pictures: ev.pictures,
                 seat,
             })
         })

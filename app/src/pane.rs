@@ -577,6 +577,7 @@ pub(crate) struct DocFace {
 pub struct SendNotesBeside {
     pub map: String,
     pub unsaved: usize,
+    pub pictures: Option<usize>,
     pub seat: crate::docopen::DocSeat,
 }
 
@@ -2637,6 +2638,21 @@ fn terminal_background(th: &Theme) -> Hsla {
         .unwrap_or_else(|| graded(th.bg, &th.grade, Channel::Bg))
 }
 
+/// What the pane's field is painted with. Below full opacity it replaces what
+/// the window drew underneath, so the desktop shows through it and not the
+/// chrome; letters are painted over it afterwards and stay solid. Parker,
+/// 2026-11-04: *"active and inactive terminal OPACITY! just like we added for
+/// the glowpane docs!"* Nothing stands behind a fullscreen window to see.
+fn field_fill(th: &Theme, focused: bool, fullscreen: bool) -> gpui::Background {
+    let field = terminal_background(th);
+    let opacity = th.grade.opacity_for_focus(focused);
+    if opacity < 1.0 && !fullscreen {
+        gpui::Background::desktop_cutout(field.alpha(field.a * opacity), 0.)
+    } else {
+        field.into()
+    }
+}
+
 /// Apply the monitor-OSD [`Grade`](crate::theme::Grade) to one final cell colour,
 /// in HSLA, at paint time — the last step before a cell is committed so the whole
 /// composited display is graded uniformly (text and background still take their
@@ -4124,6 +4140,11 @@ const SHOW_FOCUS_GLYPH: bool = false;
 /// always centred in the window.
 pub struct OpenFocusRead;
 impl gpui::EventEmitter<OpenFocusRead> for TerminalView {}
+
+/// A person opened a readable document; the workspace chooses its saved mode.
+/// Explicit Alt+R still uses OpenFocusRead regardless of that preference.
+pub struct OpenDocumentRead;
+impl gpui::EventEmitter<OpenDocumentRead> for TerminalView {}
 
 /// Esc was pressed while this pane is the one being focus-read — close the
 /// modal. Routed through the pane (not the workspace) because the mirrored pane
@@ -11146,16 +11167,16 @@ fn erase_run_keys(
 
 /// One synthetic wheel notch, encoded the way the running app asked for its
 /// mouse reports: SGR when it negotiated 1006, otherwise the legacy X10 form.
-/// Row and column are reported as 1,1 — the app scrolls its own view, so where
-/// the pointer happens to sit is irrelevant. Used by the agent prompt seek (see
-/// [`TerminalView::seek_agent_prompt`]), which scrolls a full-screen TUI that
-/// keeps its scrollback to itself.
+/// Target column 1, row 2: Codex reserves the first row for a pinned prompt
+/// header and ignores wheel reports outside the transcript body. Scroll mode
+/// and [`TerminalView::seek_agent_prompt`] use this to scroll a full-screen TUI
+/// that keeps its scrollback to itself.
 fn wheel_step_bytes(up: bool, sgr: bool) -> Vec<u8> {
     let button: u8 = if up { 64 } else { 65 };
     if sgr {
-        format!("\u{1b}[<{button};1;1M").into_bytes()
+        format!("\u{1b}[<{button};1;2M").into_bytes()
     } else {
-        vec![0x1b, b'[', b'M', 32 + button, 33, 33]
+        vec![0x1b, b'[', b'M', 32 + button, 33, 34]
     }
 }
 
@@ -11382,6 +11403,7 @@ impl Render for TerminalView {
             .letter_glow_for_focus(focused_now, th.terminal_light);
         // INACTIVE TERMINALS blur, in logical px: at 100% a little past the
         // frosted backdrop behind a TERMINIMALIST popup (7px, `Skin::popup`).
+        let pwords = crate::lang::current().strings().parts;
         let inactive_blur = if focused_now {
             0.0
         } else {
@@ -12155,7 +12177,7 @@ impl Render for TerminalView {
                                         .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
                                             d.font_family(f)
                                         })
-                                        .child(sk.control("\u{f04b2}", "asleep")),
+                                        .child(sk.control("\u{f04b2}", pwords.ctl_asleep)),
                                 )
                                 .child(crate::lang::fill(
                                     parts.sleep_card_since,
@@ -12270,7 +12292,7 @@ impl Render for TerminalView {
                         .gap_2()
                         .px(px(12.))
                         .py(px(6.))
-                        .child(div().w(px(22.)).child(sk.control("👤", "turns")))
+                        .child(div().w(px(22.)).child(sk.control("👤", pwords.ctl_turns)))
                         .child(
                             crate::lang::current()
                                 .strings()
@@ -12394,21 +12416,15 @@ impl Render for TerminalView {
                 ));
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
-                menu = menu.child(
-                    item(
-                        "👓",
-                        crate::lang::current().strings().parts.pane_overflow_focus,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenFocusRead);
-                            cx.notify();
-                        }),
-                    ),
-                );
+                menu = menu.child(item("👓", pwords.pane_overflow_focus).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenFocusRead);
+                        cx.notify();
+                    }),
+                ));
             }
             if !ui_close {
                 menu = menu.child(item("×", uis.cfg_close).on_mouse_down(
@@ -12687,7 +12703,7 @@ impl Render for TerminalView {
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
-                            .child(sk.control("\u{ff0b}", "add")),
+                            .child(sk.control("\u{ff0b}", pwords.ctl_add)),
                     )
                     .child(
                         div()
@@ -12960,7 +12976,7 @@ impl Render for TerminalView {
                                         .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
-                                        .child(sk.control("👤", "turns")),
+                                        .child(sk.control("👤", pwords.ctl_turns)),
                                 )
                                 .child(step("▲", false, cx))
                                 .child(step("▼", true, cx)),
@@ -12980,7 +12996,7 @@ impl Render for TerminalView {
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
-                                .child(sk.control("👓", "focus"))
+                                .child(sk.control("👓", pwords.pane_overflow_focus))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -13001,7 +13017,7 @@ impl Render for TerminalView {
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child(sk.control("🎨", "look"))
+                                .child(sk.control("🎨", pwords.ctl_look))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -13044,7 +13060,7 @@ impl Render for TerminalView {
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child(sk.control("⋯", "menu"))
+                                .child(sk.control("⋯", pwords.ctl_menu))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
@@ -13116,7 +13132,7 @@ impl Render for TerminalView {
                                 .text_size(sk.text_px(hicon * 1.36))
                                 .line_height(px(hicon * 1.36))
                                 .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                                .child(sk.control("×", "close"))
+                                .child(sk.control("×", pwords.ctl_close))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -13474,7 +13490,7 @@ impl Render for TerminalView {
             // / contrast / colour sliders dim the whole pane like a dimmer light —
             // crucially the flat/paper themes, whose bright background is the bulk of
             // what you see. Neutral grade short-circuits, so the default is unchanged.
-            .bg(terminal_background(&th))
+            .bg(field_fill(&th, focused_now, window.is_fullscreen()))
             .relative()
             .flex()
             .flex_col()
@@ -13911,8 +13927,8 @@ mod tests {
         let pane = cut(include_str!("pane.rs"));
         let main = cut(include_str!("main.rs"));
         for (src, glyph, file) in [
-            (pane, ".control(\"\\u{ff0b}\",", "pane.rs"),
-            (main, ".control(\"\\u{f06a9}\",", "main.rs"),
+            (pane, "\"\\u{ff0b}\"", "pane.rs"),
+            (main, "\"\\u{f06a9}\"", "main.rs"),
         ] {
             let at = src
                 .find(glyph)
@@ -17137,17 +17153,17 @@ mod tests {
     /// they must never be cursor keys, which agents read as history recall.
     #[test]
     fn a_synthetic_wheel_notch_is_a_mouse_report_not_a_cursor_key() {
-        // SGR (1006): button 64 = wheel up, 65 = wheel down, at cell 1,1.
-        assert_eq!(wheel_step_bytes(true, true), b"\x1b[<64;1;1M".to_vec());
-        assert_eq!(wheel_step_bytes(false, true), b"\x1b[<65;1;1M".to_vec());
+        // SGR (1006): button 64 = wheel up, 65 = wheel down, at cell 1,2.
+        assert_eq!(wheel_step_bytes(true, true), b"\x1b[<64;1;2M".to_vec());
+        assert_eq!(wheel_step_bytes(false, true), b"\x1b[<65;1;2M".to_vec());
         // legacy X10: ESC [ M <32+button> <col+32> <row+32>
         assert_eq!(
             wheel_step_bytes(true, false),
-            vec![0x1b, b'[', b'M', 96, 33, 33]
+            vec![0x1b, b'[', b'M', 96, 33, 34]
         );
         assert_eq!(
             wheel_step_bytes(false, false),
-            vec![0x1b, b'[', b'M', 97, 33, 33]
+            vec![0x1b, b'[', b'M', 97, 33, 34]
         );
         for bytes in [
             wheel_step_bytes(true, true),
@@ -19328,6 +19344,49 @@ mod harness;
 mod housekeeping_tests;
 #[cfg(test)]
 mod rest_tests;
+
+#[cfg(test)]
+mod field_opacity {
+    use super::*;
+
+    fn wearing(active: Option<f32>, inactive: Option<f32>) -> Theme {
+        let mut th = crate::theme::parse(crate::theme::builtin_toml("deco").unwrap()).unwrap();
+        th.grade.active_opacity = active;
+        th.grade.inactive_opacity = inactive;
+        th
+    }
+
+    /// Unset, and at full, the field is the ordinary solid quad it always was.
+    #[test]
+    fn a_full_field_is_painted_as_it_always_was() {
+        for th in [wearing(None, None), wearing(Some(1.0), Some(1.0))] {
+            for focused in [true, false] {
+                let fill = field_fill(&th, focused, false);
+                assert!(!fill.is_desktop_cutout());
+                assert_eq!(fill, terminal_background(&th).into());
+            }
+        }
+    }
+
+    /// Each dial answers for its own focus, and only the field's alpha moves.
+    #[test]
+    fn a_field_below_full_lets_the_desktop_through_by_its_own_focus() {
+        let th = wearing(None, Some(0.4));
+        assert!(!field_fill(&th, true, false).is_desktop_cutout());
+        assert!(field_fill(&th, false, false).is_desktop_cutout());
+        let th = wearing(Some(0.7), None);
+        assert!(field_fill(&th, true, false).is_desktop_cutout());
+        assert!(!field_fill(&th, false, false).is_desktop_cutout());
+    }
+
+    /// Nothing stands behind a fullscreen window, so it stays solid.
+    #[test]
+    fn a_fullscreen_field_stays_solid() {
+        let th = wearing(Some(0.2), Some(0.2));
+        assert!(!field_fill(&th, true, true).is_desktop_cutout());
+        assert!(!field_fill(&th, false, true).is_desktop_cutout());
+    }
+}
 
 #[cfg(test)]
 mod default_legibility {

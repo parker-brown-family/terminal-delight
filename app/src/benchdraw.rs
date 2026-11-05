@@ -519,7 +519,7 @@ pub fn add_note_row(sk: &Skin, th: &Theme) -> Div {
                 .flex_none()
                 .text_size(px(sk.pt(Step::Small)))
                 .text_color(mine)
-                .child(sk.control("\u{2b}", "add")),
+                .child(sk.control("\u{2b}", crate::lang::current().strings().parts.ctl_add)),
         )
         .child(
             div()
@@ -4106,7 +4106,11 @@ pub fn rail_handle(open: bool, sk: &Skin, th: &Theme) -> Div {
             .justify_center()
             .text_size(sk.text_px(10.))
             .text_color(sk.ink.ink_dim)
-            .child(if open { "hide" } else { "show" });
+            .child(if open {
+                crate::lang::current().strings().parts.ctl_hide
+            } else {
+                crate::lang::current().strings().parts.ctl_show
+            });
     }
     div()
         .w(px(20.))

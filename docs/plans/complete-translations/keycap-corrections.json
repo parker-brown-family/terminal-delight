@@ -1,0 +1,86 @@
+[
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1126,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1242,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1248,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1251,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1262,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang.rs",
+    "line_before": 1281,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/chrome.rs",
+    "line_before": 2747,
+    "from": "Strg",
+    "to": "Ctrl",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/chrome.rs",
+    "line_before": 3304,
+    "from": "Échap",
+    "to": "Esc",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/chrome.rs",
+    "line_before": 3408,
+    "from": "Échap",
+    "to": "Esc",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/help.rs",
+    "line_before": 257,
+    "from": "RePág",
+    "to": "PgUp",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/help.rs",
+    "line_before": 354,
+    "from": "Bild↑",
+    "to": "PgUp",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  },
+  {
+    "file": "app/src/lang/help.rs",
+    "line_before": 451,
+    "from": "PgPréc",
+    "to": "PgUp",
+    "reason": "Physical key names stay canonical; surrounding text keeps its translation."
+  }
+]

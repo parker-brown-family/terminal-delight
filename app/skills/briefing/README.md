@@ -55,6 +55,7 @@ python3 ~/.claude/skills/briefing/scripts/brief.py doctor
 | Command | Does |
 |---|---|
 | `new SOURCE --id ID --purpose P [--title T]` | Writes a starting `.md` or `.src.html` with every marker in place. Never overwrites |
+| `adopt PAGE --purpose P [--id ID]` | Makes a finished glass page commentable. It writes `PAGE.src.html`, anchors every section, figure and decision, and rebuilds the page with notes, the copy map and Terminal Delight's send-back. It keeps the page's own CSS, scripts and wallpaper, and leaves the original as `.pre-adopt.bak`. No brief is read-only |
 | `html SOURCE OUTPUT [--id ID --purpose P]` | Assembles a self-contained, commentable page; a source from `new` names itself, so the flags are optional. On a rebuild it keeps the reader's notes, agreements and wallpaper byte for byte and backs up the old page |
 | `check DOCUMENT` | Checks anchors, leftover `TODO(brief)` passages and every local link, image, `file://` URL and fragment, listing every problem at once. Reports `wallpaper` and `edited_since_build` for a built page |
 | `feedback DOCUMENT` | Prints a page's saved notes, or a blank Markdown comment file, as JSON |
@@ -82,7 +83,7 @@ The second command prints the closing brief's section of calls, one row each wit
 
 Markdown and HTML share one handoff format, not one renderer. A map names the brief, the revision the reader saw, the passage, and the reader's words; see the [feedback contract](reference/feedback.md).
 
-In an HTML brief opened in an ordinary browser, notes are kept in that browser's storage, and **Copy map** is how they leave. Paste the text to the agent; `resolve` reads it as it is. An HTML brief opened in Terminal Delight can have its notes saved into the file itself, and `feedback` exports them. A Markdown brief takes comments in an adjacent `name.feedback.json`, which `feedback` creates blank.
+In an HTML brief opened in an ordinary browser, notes are kept in that browser's storage, and **Copy map** is how they leave. Paste the text to the agent; `resolve` reads it as it is. An HTML brief opened in Terminal Delight can have its notes saved into the file itself, and `feedback` exports them, along with any picture the reader pasted onto a passage. A Markdown brief takes comments in an adjacent `name.feedback.json`, which `feedback` creates blank.
 
 A comment whose passage was removed stays in the results, marked unresolved. A comment written on an older version is marked for review, never quietly applied to the new wording. An empty comment is never read as agreement.
 

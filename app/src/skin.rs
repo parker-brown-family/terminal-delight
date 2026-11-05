@@ -958,8 +958,12 @@ impl Skin {
     /// Only native labels pass here. Never use this on terminal cells, user
     /// titles, authored documents, code or workbench prose.
     pub fn control_text(&self, label: &str) -> String {
+        self.control_text_in(label, crate::lang::current())
+    }
+
+    pub fn control_text_in(&self, label: &str, l: crate::lang::Lang) -> String {
         if self.text_controls() {
-            words::label(label)
+            words::label_in(label, l)
         } else {
             label.to_string()
         }
@@ -3709,7 +3713,10 @@ mod tests {
         assert!(minimal.unknown.is_empty());
         let sk = minimal.bake(&th, 1.);
         assert!(sk.text_controls());
-        assert_eq!(sk.control_text("🎨"), "look");
+        assert_eq!(
+            sk.control_text_in("🎨", crate::lang::Lang::De),
+            crate::lang::Lang::De.strings().parts.ctl_look
+        );
         assert_eq!(sk.control_text("0%"), "0%");
         assert_eq!(sk.control_text("unavailable"), "unavailable");
         let projected = sk.chrome_theme(&th);

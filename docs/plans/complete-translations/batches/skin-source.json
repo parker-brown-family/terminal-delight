@@ -1,0 +1,240 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "entries": [
+    {
+      "key": "ctl_about",
+      "en": "about",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_active",
+      "en": "active",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_adopt",
+      "en": "adopt",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_anchor",
+      "en": "anchor",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_available",
+      "en": "available",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_awake",
+      "en": "awake",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_beside",
+      "en": "beside",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_comment",
+      "en": "comment",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_copy",
+      "en": "copy",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_display",
+      "en": "display",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_effects",
+      "en": "effects",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_find",
+      "en": "find",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_images",
+      "en": "images",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_language",
+      "en": "language",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_launch",
+      "en": "launch",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_left",
+      "en": "left",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_lookup",
+      "en": "lookup",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_maximize",
+      "en": "maximize",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_new",
+      "en": "new",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_next",
+      "en": "next",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_notes",
+      "en": "notes",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_open",
+      "en": "open",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_paused",
+      "en": "paused",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_plugins",
+      "en": "plugins",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_previous",
+      "en": "previous",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_refresh",
+      "en": "refresh",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_remove",
+      "en": "remove",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_reset",
+      "en": "reset",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_rest",
+      "en": "rest",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_selected",
+      "en": "selected",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_send",
+      "en": "send",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_settings",
+      "en": "settings",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_sleep",
+      "en": "sleep",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_total",
+      "en": "total",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_up",
+      "en": "up",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_usage",
+      "en": "usage",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_window",
+      "en": "window",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14
+    },
+    {
+      "key": "ctl_add_project",
+      "en": "ADD PROJECT",
+      "context": "Compact native text-control label in top/bottom bar. All-caps header; keep short.",
+      "width_cells": 16
+    },
+    {
+      "key": "ctl_config",
+      "en": "CONFIG",
+      "context": "Compact native text-control label in top/bottom bar. All-caps header; keep short.",
+      "width_cells": 16
+    }
+  ]
+}

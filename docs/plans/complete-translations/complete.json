@@ -1,0 +1,3121 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "entries": [
+    {
+      "key": "ctl_add",
+      "en": "add",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "add",
+        "es": "añadir",
+        "de": "hinzufügen",
+        "fr": "ajouter",
+        "ru": "добавить",
+        "zh": "添加",
+        "ja": "追加",
+        "ko": "추가",
+        "hi": "जोड़ें"
+      }
+    },
+    {
+      "key": "ctl_hide",
+      "en": "hide",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "hide",
+        "es": "ocultar",
+        "de": "ausblenden",
+        "fr": "masquer",
+        "ru": "скрыть",
+        "zh": "隐藏",
+        "ja": "非表示",
+        "ko": "숨기기",
+        "hi": "छिपाएँ"
+      }
+    },
+    {
+      "key": "ctl_show",
+      "en": "show",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "show",
+        "es": "mostrar",
+        "de": "einblenden",
+        "fr": "afficher",
+        "ru": "показать",
+        "zh": "显示",
+        "ja": "表示",
+        "ko": "표시",
+        "hi": "दिखाएँ"
+      }
+    },
+    {
+      "key": "ctl_warning",
+      "en": "warning",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "warning",
+        "es": "advertencia",
+        "de": "Warnung",
+        "fr": "avertissement",
+        "ru": "предупреждение",
+        "zh": "警告",
+        "ja": "警告",
+        "ko": "경고",
+        "hi": "चेतावनी"
+      }
+    },
+    {
+      "key": "ctl_locked",
+      "en": "locked",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "locked",
+        "es": "bloqueado",
+        "de": "gesperrt",
+        "fr": "verrouillé",
+        "ru": "заблокировано",
+        "zh": "已锁定",
+        "ja": "ロック中",
+        "ko": "잠김",
+        "hi": "लॉक है"
+      }
+    },
+    {
+      "key": "ctl_agents",
+      "en": "agents",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "agents",
+        "es": "agentes",
+        "de": "Agenten",
+        "fr": "agents",
+        "ru": "агенты",
+        "zh": "智能体",
+        "ja": "エージェント",
+        "ko": "에이전트",
+        "hi": "एजेंट"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: agents is the standard French plural of agent."
+    },
+    {
+      "key": "ctl_current",
+      "en": "current",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "current",
+        "es": "actual",
+        "de": "aktuell",
+        "fr": "actuel",
+        "ru": "текущее",
+        "zh": "当前",
+        "ja": "現在",
+        "ko": "현재",
+        "hi": "वर्तमान"
+      }
+    },
+    {
+      "key": "ctl_close",
+      "en": "close",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "close",
+        "es": "cerrar",
+        "de": "schließen",
+        "fr": "fermer",
+        "ru": "закрыть",
+        "zh": "关闭",
+        "ja": "閉じる",
+        "ko": "닫기",
+        "hi": "बंद करें"
+      }
+    },
+    {
+      "key": "ctl_on",
+      "en": "on",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "on",
+        "es": "activado",
+        "de": "an",
+        "fr": "activé",
+        "ru": "включено",
+        "zh": "开启",
+        "ja": "オン",
+        "ko": "켜짐",
+        "hi": "चालू"
+      }
+    },
+    {
+      "key": "ctl_off",
+      "en": "off",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "off",
+        "es": "desactivado",
+        "de": "aus",
+        "fr": "désactivé",
+        "ru": "выключено",
+        "zh": "关闭",
+        "ja": "オフ",
+        "ko": "꺼짐",
+        "hi": "बंद"
+      }
+    },
+    {
+      "key": "ctl_done",
+      "en": "done",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "done",
+        "es": "hecho",
+        "de": "fertig",
+        "fr": "terminé",
+        "ru": "готово",
+        "zh": "完成",
+        "ja": "完了",
+        "ko": "완료",
+        "hi": "पूर्ण"
+      }
+    },
+    {
+      "key": "ctl_blocked",
+      "en": "blocked",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "blocked",
+        "es": "bloqueado",
+        "de": "blockiert",
+        "fr": "bloqué",
+        "ru": "заблокировано",
+        "zh": "受阻",
+        "ja": "ブロック中",
+        "ko": "차단됨",
+        "hi": "अवरुद्ध"
+      }
+    },
+    {
+      "key": "ctl_pinned",
+      "en": "pinned",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "pinned",
+        "es": "fijado",
+        "de": "angeheftet",
+        "fr": "épinglé",
+        "ru": "закреплено",
+        "zh": "已固定",
+        "ja": "ピン留め済み",
+        "ko": "고정됨",
+        "hi": "पिन किया गया"
+      }
+    },
+    {
+      "key": "ctl_pace",
+      "en": "pace",
+      "context": "Compact word replacing an icon in text-control skins. Opens token-usage pace.",
+      "width_cells": 14,
+      "translations": {
+        "en": "pace",
+        "es": "ritmo",
+        "de": "Tempo",
+        "fr": "rythme",
+        "ru": "темп",
+        "zh": "消耗速率",
+        "ja": "消費ペース",
+        "ko": "사용 속도",
+        "hi": "खपत दर"
+      }
+    },
+    {
+      "key": "ctl_delete",
+      "en": "delete",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "delete",
+        "es": "eliminar",
+        "de": "löschen",
+        "fr": "supprimer",
+        "ru": "удалить",
+        "zh": "删除",
+        "ja": "削除",
+        "ko": "삭제",
+        "hi": "हटाएँ"
+      }
+    },
+    {
+      "key": "ctl_size",
+      "en": "size",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "size",
+        "es": "tamaño",
+        "de": "Größe",
+        "fr": "taille",
+        "ru": "размер",
+        "zh": "大小",
+        "ja": "サイズ",
+        "ko": "크기",
+        "hi": "आकार"
+      }
+    },
+    {
+      "key": "ctl_look",
+      "en": "look",
+      "context": "Compact word replacing an icon in text-control skins. Opens appearance settings.",
+      "width_cells": 14,
+      "translations": {
+        "en": "look",
+        "es": "apariencia",
+        "de": "Aussehen",
+        "fr": "apparence",
+        "ru": "вид",
+        "zh": "外观",
+        "ja": "外観",
+        "ko": "모양",
+        "hi": "दिखावट"
+      }
+    },
+    {
+      "key": "ctl_recover",
+      "en": "recover",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "recover",
+        "es": "recuperar",
+        "de": "wiederherstellen",
+        "fr": "récupérer",
+        "ru": "восстановить",
+        "zh": "恢复",
+        "ja": "復元",
+        "ko": "복구",
+        "hi": "बहाल करें"
+      }
+    },
+    {
+      "key": "ctl_notices",
+      "en": "notices",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "notices",
+        "es": "avisos",
+        "de": "Hinweise",
+        "fr": "notifications",
+        "ru": "уведомления",
+        "zh": "通知",
+        "ja": "通知",
+        "ko": "알림",
+        "hi": "सूचनाएँ"
+      }
+    },
+    {
+      "key": "ctl_report",
+      "en": "report",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "report",
+        "es": "informe",
+        "de": "Bericht",
+        "fr": "rapport",
+        "ru": "отчёт",
+        "zh": "报告",
+        "ja": "レポート",
+        "ko": "보고서",
+        "hi": "रिपोर्ट"
+      }
+    },
+    {
+      "key": "ctl_artifacts",
+      "en": "artifacts",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "artifacts",
+        "es": "artefactos",
+        "de": "Artefakte",
+        "fr": "artefacts",
+        "ru": "артефакты",
+        "zh": "产物",
+        "ja": "成果物",
+        "ko": "아티팩트",
+        "hi": "आर्टिफ़ैक्ट"
+      }
+    },
+    {
+      "key": "ctl_more",
+      "en": "more",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "more",
+        "es": "más",
+        "de": "mehr",
+        "fr": "plus",
+        "ru": "ещё",
+        "zh": "更多",
+        "ja": "その他",
+        "ko": "더 보기",
+        "hi": "और"
+      }
+    },
+    {
+      "key": "ctl_download",
+      "en": "download",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "download",
+        "es": "descargar",
+        "de": "herunterladen",
+        "fr": "télécharger",
+        "ru": "скачать",
+        "zh": "下载",
+        "ja": "ダウンロード",
+        "ko": "다운로드",
+        "hi": "डाउनलोड"
+      }
+    },
+    {
+      "key": "ctl_right",
+      "en": "right",
+      "context": "Compact word replacing an icon in text-control skins. Direction arrow, not the word correct.",
+      "width_cells": 14,
+      "translations": {
+        "en": "right",
+        "es": "derecha",
+        "de": "rechts",
+        "fr": "droite",
+        "ru": "вправо",
+        "zh": "向右",
+        "ja": "右へ",
+        "ko": "오른쪽",
+        "hi": "दाएँ"
+      }
+    },
+    {
+      "key": "ctl_down",
+      "en": "down",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "down",
+        "es": "abajo",
+        "de": "unten",
+        "fr": "bas",
+        "ru": "вниз",
+        "zh": "向下",
+        "ja": "下へ",
+        "ko": "아래",
+        "hi": "नीचे"
+      }
+    },
+    {
+      "key": "ctl_light",
+      "en": "light",
+      "context": "Compact word replacing an icon in text-control skins. Image brightness.",
+      "width_cells": 14,
+      "translations": {
+        "en": "light",
+        "es": "brillo",
+        "de": "Helligkeit",
+        "fr": "luminosité",
+        "ru": "яркость",
+        "zh": "亮度",
+        "ja": "明るさ",
+        "ko": "밝기",
+        "hi": "चमक"
+      }
+    },
+    {
+      "key": "ctl_score",
+      "en": "score",
+      "context": "Compact word replacing an icon in text-control skins. Theme contrast score.",
+      "width_cells": 14,
+      "translations": {
+        "en": "score",
+        "es": "puntuación",
+        "de": "Punktzahl",
+        "fr": "score",
+        "ru": "оценка",
+        "zh": "评分",
+        "ja": "スコア",
+        "ko": "점수",
+        "hi": "स्कोर"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: score is an established French word for a numerical score."
+    },
+    {
+      "key": "ctl_asleep",
+      "en": "asleep",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "asleep",
+        "es": "dormido",
+        "de": "schlafend",
+        "fr": "en veille",
+        "ru": "спит",
+        "zh": "休眠",
+        "ja": "スリープ",
+        "ko": "휴면",
+        "hi": "सुप्त"
+      }
+    },
+    {
+      "key": "ctl_turns",
+      "en": "turns",
+      "context": "Compact word replacing an icon in text-control skins. Human messages in agent conversation.",
+      "width_cells": 14,
+      "translations": {
+        "en": "turns",
+        "es": "turnos",
+        "de": "Eingaben",
+        "fr": "interventions",
+        "ru": "реплики",
+        "zh": "用户消息",
+        "ja": "ユーザー発言",
+        "ko": "사용자 메시지",
+        "hi": "यूज़र संदेश"
+      }
+    },
+    {
+      "key": "ctl_menu",
+      "en": "menu",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "menu",
+        "es": "menú",
+        "de": "Menü",
+        "fr": "menu",
+        "ru": "меню",
+        "zh": "菜单",
+        "ja": "メニュー",
+        "ko": "메뉴",
+        "hi": "मेनू"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: menu is the standard French UI word."
+    },
+    {
+      "key": "ctl_zoom_out",
+      "en": "zoom out",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "zoom out",
+        "es": "alejar",
+        "de": "verkleinern",
+        "fr": "dézoomer",
+        "ru": "уменьшить",
+        "zh": "缩小",
+        "ja": "縮小",
+        "ko": "축소",
+        "hi": "छोटा करें"
+      }
+    },
+    {
+      "key": "ctl_zoom_in",
+      "en": "zoom in",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "zoom in",
+        "es": "acercar",
+        "de": "vergrößern",
+        "fr": "zoomer",
+        "ru": "увеличить",
+        "zh": "放大",
+        "ja": "拡大",
+        "ko": "확대",
+        "hi": "बड़ा करें"
+      }
+    },
+    {
+      "key": "ctl_fold",
+      "en": "fold",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "fold",
+        "es": "plegar",
+        "de": "einklappen",
+        "fr": "replier",
+        "ru": "свернуть",
+        "zh": "折叠",
+        "ja": "折りたたむ",
+        "ko": "접기",
+        "hi": "समेटें"
+      }
+    },
+    {
+      "key": "ctl_unfold",
+      "en": "unfold",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "unfold",
+        "es": "desplegar",
+        "de": "ausklappen",
+        "fr": "déplier",
+        "ru": "развернуть",
+        "zh": "展开",
+        "ja": "展開",
+        "ko": "펼치기",
+        "hi": "फैलाएँ"
+      }
+    },
+    {
+      "key": "ctl_custom",
+      "en": "custom",
+      "context": "Compact word replacing an icon in text-control skins. ",
+      "width_cells": 14,
+      "translations": {
+        "en": "custom",
+        "es": "personalizado",
+        "de": "individuell",
+        "fr": "personnalisé",
+        "ru": "свой",
+        "zh": "自定义",
+        "ja": "カスタム",
+        "ko": "사용자 지정",
+        "hi": "कस्टम"
+      }
+    },
+    {
+      "key": "ctl_tabs",
+      "en": "TABS",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "TABS",
+        "es": "PESTAÑAS",
+        "de": "TABS",
+        "fr": "ONGLETS",
+        "ru": "ВКЛАДКИ",
+        "zh": "标签页",
+        "ja": "タブ",
+        "ko": "탭",
+        "hi": "टैब"
+      },
+      "same_as_english": [
+        "de"
+      ],
+      "cognate_reason": "de: TABS is the uppercase plural of Tab required by the glossary."
+    },
+    {
+      "key": "ctl_split_right",
+      "en": "split right",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "split right",
+        "es": "dividir a la derecha",
+        "de": "rechts teilen",
+        "fr": "scinder à droite",
+        "ru": "разделить вправо",
+        "zh": "向右拆分",
+        "ja": "右に分割",
+        "ko": "오른쪽으로 분할",
+        "hi": "दाईं ओर बाँटें"
+      }
+    },
+    {
+      "key": "ctl_split_down",
+      "en": "split down",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "split down",
+        "es": "dividir hacia abajo",
+        "de": "unten teilen",
+        "fr": "scinder en bas",
+        "ru": "разделить вниз",
+        "zh": "向下拆分",
+        "ja": "下に分割",
+        "ko": "아래로 분할",
+        "hi": "नीचे बाँटें"
+      }
+    },
+    {
+      "key": "ctl_custom_file",
+      "en": "custom file",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "custom file",
+        "es": "archivo propio",
+        "de": "eigene Datei",
+        "fr": "fichier personnalisé",
+        "ru": "свой файл",
+        "zh": "自定义文件",
+        "ja": "カスタムファイル",
+        "ko": "사용자 지정 파일",
+        "hi": "कस्टम फ़ाइल"
+      }
+    },
+    {
+      "key": "ctl_spine",
+      "en": "SPINE",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "SPINE",
+        "es": "BARRA LATERAL",
+        "de": "SEITENLEISTE",
+        "fr": "BARRE LATÉRALE",
+        "ru": "БОКОВАЯ ПАНЕЛЬ",
+        "zh": "侧栏",
+        "ja": "サイドバー",
+        "ko": "사이드바",
+        "hi": "साइडबार"
+      }
+    },
+    {
+      "key": "ctl_download_cdx",
+      "en": "download .cdx",
+      "context": "Compact label in window chrome; keep .cdx unchanged.",
+      "width_cells": 20,
+      "translations": {
+        "en": "download .cdx",
+        "es": "descargar .cdx",
+        "de": ".cdx herunterladen",
+        "fr": "télécharger .cdx",
+        "ru": "скачать .cdx",
+        "zh": "下载 .cdx",
+        "ja": ".cdxをダウンロード",
+        "ko": ".cdx 다운로드",
+        "hi": ".cdx डाउनलोड"
+      }
+    },
+    {
+      "key": "model_default",
+      "en": "Agent default",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Agent default",
+        "es": "Predeterminado del agente",
+        "de": "Agentenstandard",
+        "fr": "Choix par défaut de l’agent",
+        "ru": "По умолчанию у агента",
+        "zh": "智能体默认",
+        "ja": "エージェントの既定値",
+        "ko": "에이전트 기본값",
+        "hi": "एजेंट का डिफ़ॉल्ट"
+      }
+    },
+    {
+      "key": "model_loading",
+      "en": "Loading models…",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Loading models…",
+        "es": "Cargando modelos…",
+        "de": "Modelle werden geladen…",
+        "fr": "Chargement des modèles…",
+        "ru": "Загрузка моделей…",
+        "zh": "正在加载模型…",
+        "ja": "モデルを読み込み中…",
+        "ko": "모델 불러오는 중…",
+        "hi": "मॉडल लोड हो रहे हैं…"
+      }
+    },
+    {
+      "key": "model_ready",
+      "en": "Installed agent catalog",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Installed agent catalog",
+        "es": "Catálogo del agente instalado",
+        "de": "Katalog des installierten Agenten",
+        "fr": "Catalogue de l’agent installé",
+        "ru": "Каталог установленного агента",
+        "zh": "已安装智能体的模型目录",
+        "ja": "インストール済みエージェントのカタログ",
+        "ko": "설치된 에이전트의 카탈로그",
+        "hi": "इंस्टॉल किए गए एजेंट का कैटलॉग"
+      }
+    },
+    {
+      "key": "model_unavailable",
+      "en": "Models unavailable · {reason}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Models unavailable · {reason}",
+        "es": "Modelos no disponibles · {reason}",
+        "de": "Modelle nicht verfügbar · {reason}",
+        "fr": "Modèles indisponibles · {reason}",
+        "ru": "Модели недоступны · {reason}",
+        "zh": "模型不可用 · {reason}",
+        "ja": "モデルを利用できません · {reason}",
+        "ko": "모델을 사용할 수 없음 · {reason}",
+        "hi": "मॉडल उपलब्ध नहीं · {reason}"
+      }
+    },
+    {
+      "key": "model_version_unknown",
+      "en": "{model} · version unknown",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "{model} · version unknown",
+        "es": "{model} · versión desconocida",
+        "de": "{model} · Version unbekannt",
+        "fr": "{model} · version inconnue",
+        "ru": "{model} · версия неизвестна",
+        "zh": "{model} · 版本未知",
+        "ja": "{model} · バージョン不明",
+        "ko": "{model} · 버전 알 수 없음",
+        "hi": "{model} · संस्करण अज्ञात"
+      }
+    },
+    {
+      "key": "model_recommended",
+      "en": "Recommended · {model}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Recommended · {model}",
+        "es": "Recomendado · {model}",
+        "de": "Empfohlen · {model}",
+        "fr": "Recommandé · {model}",
+        "ru": "Рекомендуется · {model}",
+        "zh": "推荐 · {model}",
+        "ja": "推奨 · {model}",
+        "ko": "권장 · {model}",
+        "hi": "अनुशंसित · {model}"
+      }
+    },
+    {
+      "key": "model_retry",
+      "en": "{status} · retry",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "{status} · retry",
+        "es": "{status} · reintentar",
+        "de": "{status} · erneut versuchen",
+        "fr": "{status} · réessayer",
+        "ru": "{status} · повторить",
+        "zh": "{status} · 重试",
+        "ja": "{status} · 再試行",
+        "ko": "{status} · 다시 시도",
+        "hi": "{status} · पुनः प्रयास करें"
+      }
+    },
+    {
+      "key": "model_no_choices",
+      "en": "No reported choices · retry",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "No reported choices · retry",
+        "es": "No se han comunicado opciones · reintentar",
+        "de": "Keine Optionen gemeldet · erneut versuchen",
+        "fr": "Aucun choix signalé · réessayer",
+        "ru": "Агент не сообщил о вариантах · повторить",
+        "zh": "未报告任何选项 · 重试",
+        "ja": "選択肢の報告なし · 再試行",
+        "ko": "보고된 선택지 없음 · 다시 시도",
+        "hi": "कोई विकल्प नहीं बताया गया · पुनः प्रयास करें"
+      }
+    },
+    {
+      "key": "model_requested_running",
+      "en": "{requested} requested · running {running}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "{requested} requested · running {running}",
+        "es": "Solicitado: {requested} · en uso: {running}",
+        "de": "Angefordert: {requested} · läuft: {running}",
+        "fr": "Demandé : {requested} · utilisé : {running}",
+        "ru": "Запрошено: {requested} · используется: {running}",
+        "zh": "已请求 {requested} · 正在运行 {running}",
+        "ja": "要求: {requested} · 実行中: {running}",
+        "ko": "요청: {requested} · 실행 중: {running}",
+        "hi": "माँगा गया: {requested} · उपयोग में: {running}"
+      }
+    },
+    {
+      "key": "model_selected_unavailable",
+      "en": "Selected model unavailable · {status}",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "Selected model unavailable · {status}",
+        "es": "Modelo seleccionado no disponible · {status}",
+        "de": "Gewähltes Modell nicht verfügbar · {status}",
+        "fr": "Modèle sélectionné indisponible · {status}",
+        "ru": "Выбранная модель недоступна · {status}",
+        "zh": "所选模型不可用 · {status}",
+        "ja": "選択したモデルを利用できません · {status}",
+        "ko": "선택한 모델을 사용할 수 없음 · {status}",
+        "hi": "चुना गया मॉडल उपलब्ध नहीं · {status}"
+      }
+    },
+    {
+      "key": "model_choice_unavailable",
+      "en": "{choice} · unavailable",
+      "context": "Launcher or workbench model/effort dial. Model names are data; preserve placeholders.",
+      "width_cells": 60,
+      "translations": {
+        "en": "{choice} · unavailable",
+        "es": "{choice} · no disponible",
+        "de": "{choice} · nicht verfügbar",
+        "fr": "{choice} · indisponible",
+        "ru": "{choice} · недоступно",
+        "zh": "{choice} · 不可用",
+        "ja": "{choice} · 利用不可",
+        "ko": "{choice} · 사용 불가",
+        "hi": "{choice} · उपलब्ध नहीं"
+      }
+    },
+    {
+      "key": "model_error_1",
+      "en": "running executable not identified",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "running executable not identified",
+        "es": "ejecutable en ejecución sin identificar",
+        "de": "ausgeführte Programmdatei nicht identifiziert",
+        "fr": "exécutable en cours non identifié",
+        "ru": "исполняемый файл запущенного процесса не определён",
+        "zh": "未识别出正在运行的可执行文件",
+        "ja": "実行中の実行ファイルが未特定",
+        "ko": "실행 중인 실행 파일이 식별되지 않음",
+        "hi": "चल रही निष्पादन योग्य फ़ाइल की पहचान नहीं हुई"
+      }
+    },
+    {
+      "key": "model_error_2",
+      "en": "running profile unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "running profile unavailable",
+        "es": "perfil en uso no disponible",
+        "de": "Profil des laufenden Agenten nicht verfügbar",
+        "fr": "profil en cours indisponible",
+        "ru": "профиль запущенного агента недоступен",
+        "zh": "当前运行配置不可用",
+        "ja": "実行中のプロファイルが利用不可",
+        "ko": "실행 중인 프로필을 사용할 수 없음",
+        "hi": "सक्रिय प्रोफ़ाइल उपलब्ध नहीं"
+      }
+    },
+    {
+      "key": "model_error_3",
+      "en": "agent rejected catalog request",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "agent rejected catalog request",
+        "es": "el agente rechazó la solicitud del catálogo",
+        "de": "Agent hat die Kataloganfrage abgelehnt",
+        "fr": "l’agent a refusé la demande de catalogue",
+        "ru": "агент отклонил запрос каталога",
+        "zh": "智能体拒绝了模型目录请求",
+        "ja": "エージェントがカタログ要求を拒否しました",
+        "ko": "에이전트가 카탈로그 요청을 거부함",
+        "hi": "एजेंट ने कैटलॉग का अनुरोध अस्वीकार कर दिया"
+      }
+    },
+    {
+      "key": "model_error_4",
+      "en": "missing catalog response",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "missing catalog response",
+        "es": "falta la respuesta a la solicitud del catálogo",
+        "de": "Antwort auf die Kataloganfrage fehlt",
+        "fr": "réponse à la demande de catalogue absente",
+        "ru": "ответ на запрос каталога отсутствует",
+        "zh": "缺少模型目录响应",
+        "ja": "カタログの応答がありません",
+        "ko": "카탈로그 응답이 없음",
+        "hi": "कैटलॉग का उत्तर नहीं मिला"
+      }
+    },
+    {
+      "key": "model_error_5",
+      "en": "repeated catalog cursor",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "repeated catalog cursor",
+        "es": "cursor de paginación del catálogo repetido",
+        "de": "wiederholter Seitencursor im Katalog",
+        "fr": "curseur de pagination du catalogue répété",
+        "ru": "курсор пагинации каталога повторился",
+        "zh": "模型目录分页游标重复",
+        "ja": "カタログのページングカーソルが重複",
+        "ko": "카탈로그 페이지 커서가 반복됨",
+        "hi": "कैटलॉग का पेजिनेशन कर्सर दोहराया गया"
+      }
+    },
+    {
+      "key": "model_error_6",
+      "en": "too many catalog pages",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "too many catalog pages",
+        "es": "demasiadas páginas de catálogo",
+        "de": "zu viele Katalogseiten",
+        "fr": "trop de pages de catalogue",
+        "ru": "слишком много страниц каталога",
+        "zh": "模型目录页数过多",
+        "ja": "カタログのページ数が多すぎます",
+        "ko": "카탈로그 페이지가 너무 많음",
+        "hi": "कैटलॉग में बहुत अधिक पृष्ठ"
+      }
+    },
+    {
+      "key": "model_error_7",
+      "en": "agent returned no visible models",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "agent returned no visible models",
+        "es": "el agente no devolvió modelos visibles",
+        "de": "Agent hat keine sichtbaren Modelle zurückgegeben",
+        "fr": "l’agent n’a renvoyé aucun modèle visible",
+        "ru": "агент не вернул ни одной видимой модели",
+        "zh": "智能体未返回任何可见模型",
+        "ja": "エージェントが表示対象のモデルを返しませんでした",
+        "ko": "에이전트가 표시 가능한 모델을 반환하지 않음",
+        "hi": "एजेंट ने कोई दृश्यमान मॉडल नहीं लौटाया"
+      }
+    },
+    {
+      "key": "model_error_8",
+      "en": "invalid catalog choice",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "invalid catalog choice",
+        "es": "opción de catálogo no válida",
+        "de": "ungültige Katalogauswahl",
+        "fr": "choix de catalogue invalide",
+        "ru": "некорректный вариант выбора в каталоге",
+        "zh": "模型目录选项无效",
+        "ja": "カタログの選択肢が無効",
+        "ko": "카탈로그 선택 항목이 유효하지 않음",
+        "hi": "कैटलॉग का विकल्प अमान्य"
+      }
+    },
+    {
+      "key": "model_error_9",
+      "en": "invalid effort list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "invalid effort list",
+        "es": "lista de niveles de esfuerzo de razonamiento no válida",
+        "de": "ungültige Liste der Stufen für den Denkaufwand",
+        "fr": "liste des niveaux d’effort de raisonnement invalide",
+        "ru": "некорректный список уровней рассуждения",
+        "zh": "推理强度列表无效",
+        "ja": "推論強度の一覧が無効",
+        "ko": "추론 강도 목록이 유효하지 않음",
+        "hi": "तर्क-प्रयास के स्तरों की सूची अमान्य"
+      }
+    },
+    {
+      "key": "model_error_10",
+      "en": "missing Codex model list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "missing Codex model list",
+        "es": "falta la lista de modelos de Codex",
+        "de": "Modellliste von Codex fehlt",
+        "fr": "liste des modèles de Codex absente",
+        "ru": "список моделей Codex отсутствует",
+        "zh": "缺少 Codex 模型列表",
+        "ja": "Codex のモデル一覧がありません",
+        "ko": "Codex 모델 목록이 없음",
+        "hi": "Codex की मॉडल सूची मौजूद नहीं"
+      }
+    },
+    {
+      "key": "model_error_11",
+      "en": "missing model ID",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "missing model ID",
+        "es": "falta el ID del modelo",
+        "de": "Modell-ID fehlt",
+        "fr": "ID du modèle absent",
+        "ru": "ID модели отсутствует",
+        "zh": "缺少模型 ID",
+        "ja": "モデル ID がありません",
+        "ko": "모델 ID가 없음",
+        "hi": "मॉडल ID मौजूद नहीं"
+      }
+    },
+    {
+      "key": "model_error_12",
+      "en": "invalid effort level",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "invalid effort level",
+        "es": "nivel de esfuerzo de razonamiento no válido",
+        "de": "ungültige Stufe für den Denkaufwand",
+        "fr": "niveau d’effort de raisonnement invalide",
+        "ru": "некорректный уровень рассуждения",
+        "zh": "推理强度级别无效",
+        "ja": "推論強度のレベルが無効",
+        "ko": "추론 강도 수준이 유효하지 않음",
+        "hi": "तर्क-प्रयास का स्तर अमान्य"
+      }
+    },
+    {
+      "key": "model_error_13",
+      "en": "missing Claude model list",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "missing Claude model list",
+        "es": "falta la lista de modelos de Claude",
+        "de": "Modellliste von Claude fehlt",
+        "fr": "liste des modèles de Claude absente",
+        "ru": "список моделей Claude отсутствует",
+        "zh": "缺少 Claude 模型列表",
+        "ja": "Claude のモデル一覧がありません",
+        "ko": "Claude 모델 목록이 없음",
+        "hi": "Claude की मॉडल सूची मौजूद नहीं"
+      }
+    },
+    {
+      "key": "model_error_14",
+      "en": "agent input unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "agent input unavailable",
+        "es": "entrada del agente no disponible",
+        "de": "Agenteneingabe nicht verfügbar",
+        "fr": "entrée de l’agent indisponible",
+        "ru": "ввод агента недоступен",
+        "zh": "智能体输入不可用",
+        "ja": "エージェントの入力が利用不可",
+        "ko": "에이전트 입력을 사용할 수 없음",
+        "hi": "एजेंट का इनपुट उपलब्ध नहीं"
+      }
+    },
+    {
+      "key": "model_error_15",
+      "en": "agent output unavailable",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "agent output unavailable",
+        "es": "salida del agente no disponible",
+        "de": "Agentenausgabe nicht verfügbar",
+        "fr": "sortie de l’agent indisponible",
+        "ru": "вывод агента недоступен",
+        "zh": "智能体输出不可用",
+        "ja": "エージェントの出力が利用不可",
+        "ko": "에이전트 출력을 사용할 수 없음",
+        "hi": "एजेंट का आउटपुट उपलब्ध नहीं"
+      }
+    },
+    {
+      "key": "model_error_16",
+      "en": "missing catalog result",
+      "context": "Reason displayed when model discovery fails. Preserve Codex / Claude brand names.",
+      "width_cells": 70,
+      "translations": {
+        "en": "missing catalog result",
+        "es": "falta el resultado del catálogo",
+        "de": "Katalogergebnis fehlt",
+        "fr": "résultat du catalogue absent",
+        "ru": "результат запроса каталога отсутствует",
+        "zh": "缺少模型目录结果",
+        "ja": "カタログの結果がありません",
+        "ko": "카탈로그 결과가 없음",
+        "hi": "कैटलॉग का परिणाम मौजूद नहीं"
+      }
+    },
+    {
+      "key": "model_output_limit",
+      "en": "{source} output exceeded limit",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "{source} output exceeded limit",
+        "es": "la salida de {source} superó el límite",
+        "de": "Ausgabe von {source} hat das Limit überschritten",
+        "fr": "la sortie de {source} a dépassé la limite",
+        "ru": "вывод {source} превысил лимит",
+        "zh": "{source} 输出超出限制",
+        "ja": "{source} の出力が上限を超えました",
+        "ko": "{source} 출력이 제한을 초과함",
+        "hi": "{source} का आउटपुट सीमा से अधिक हो गया"
+      }
+    },
+    {
+      "key": "model_invalid_json",
+      "en": "invalid {source} JSON",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "invalid {source} JSON",
+        "es": "JSON de {source} no válido",
+        "de": "ungültiges JSON von {source}",
+        "fr": "JSON de {source} invalide",
+        "ru": "некорректный JSON от {source}",
+        "zh": "{source} 的 JSON 无效",
+        "ja": "{source} の JSON が無効",
+        "ko": "{source}의 JSON이 유효하지 않음",
+        "hi": "{source} का JSON अमान्य"
+      }
+    },
+    {
+      "key": "model_read_error",
+      "en": "cannot read agent {source}",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "cannot read agent {source}",
+        "es": "no se puede leer {source} del agente",
+        "de": "{source} des Agenten kann nicht gelesen werden",
+        "fr": "impossible de lire {source} de l’agent",
+        "ru": "не удаётся прочитать {source} агента",
+        "zh": "无法读取智能体的 {source}",
+        "ja": "エージェントの {source} を読み取れません",
+        "ko": "에이전트의 {source} 읽기 불가",
+        "hi": "एजेंट के {source} को पढ़ा नहीं जा सकता"
+      }
+    },
+    {
+      "key": "model_input_closed",
+      "en": "{source} input already closed",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "{source} input already closed",
+        "es": "la entrada de {source} ya está cerrada",
+        "de": "Eingabe von {source} bereits geschlossen",
+        "fr": "l’entrée de {source} est déjà fermée",
+        "ru": "ввод {source} уже закрыт",
+        "zh": "{source} 输入已关闭",
+        "ja": "{source} の入力はすでに閉じられています",
+        "ko": "{source} 입력이 이미 닫힘",
+        "hi": "{source} का इनपुट पहले ही बंद हो चुका है"
+      }
+    },
+    {
+      "key": "model_request_error",
+      "en": "cannot request agent {source}",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "cannot request agent {source}",
+        "es": "no se puede solicitar {source} al agente",
+        "de": "{source} kann beim Agenten nicht angefordert werden",
+        "fr": "impossible de demander {source} à l’agent",
+        "ru": "не удаётся запросить {source} у агента",
+        "zh": "无法向智能体请求 {source}",
+        "ja": "エージェントに {source} を要求できません",
+        "ko": "에이전트에 {source} 요청 불가",
+        "hi": "एजेंट से {source} का अनुरोध नहीं किया जा सकता"
+      }
+    },
+    {
+      "key": "model_flush_error",
+      "en": "cannot flush {source} request",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "cannot flush {source} request",
+        "es": "no se puede enviar la solicitud de {source} desde el búfer",
+        "de": "{source}-Anfrage kann nicht aus dem Puffer gesendet werden",
+        "fr": "impossible de transmettre la requête {source} mise en tampon",
+        "ru": "не удаётся отправить из буфера запрос {source}",
+        "zh": "无法刷新 {source} 请求的缓冲区",
+        "ja": "{source} の要求をフラッシュできません",
+        "ko": "{source} 요청을 버퍼에서 내보낼 수 없음",
+        "hi": "{source} का अनुरोध बफ़र से भेजा नहीं जा सकता"
+      }
+    },
+    {
+      "key": "model_timeout",
+      "en": "{source} request timed out",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "{source} request timed out",
+        "es": "se agotó el tiempo de espera de la solicitud de {source}",
+        "de": "Zeitüberschreitung bei der {source}-Anfrage",
+        "fr": "délai d’attente dépassé pour la requête {source}",
+        "ru": "время ожидания ответа на запрос {source} истекло",
+        "zh": "{source} 请求超时",
+        "ja": "{source} の要求がタイムアウトしました",
+        "ko": "{source} 요청 시간이 초과됨",
+        "hi": "{source} के अनुरोध की प्रतीक्षा का समय समाप्त हो गया"
+      }
+    },
+    {
+      "key": "model_connection_closed",
+      "en": "agent closed {source} connection",
+      "context": "Model-discovery transport failure. {source} is a diagnostic subsystem name; preserve it.",
+      "width_cells": 70,
+      "translations": {
+        "en": "agent closed {source} connection",
+        "es": "el agente cerró la conexión de {source}",
+        "de": "Agent hat die {source}-Verbindung geschlossen",
+        "fr": "l’agent a fermé la connexion {source}",
+        "ru": "агент закрыл соединение {source}",
+        "zh": "智能体关闭了 {source} 连接",
+        "ja": "エージェントが {source} の接続を閉じました",
+        "ko": "에이전트가 {source} 연결을 닫음",
+        "hi": "एजेंट ने {source} कनेक्शन बंद कर दिया"
+      }
+    },
+    {
+      "key": "effort_none",
+      "en": "none",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "none",
+        "es": "ninguno",
+        "de": "keiner",
+        "fr": "aucun",
+        "ru": "нет",
+        "zh": "无",
+        "ja": "なし",
+        "ko": "없음",
+        "hi": "कोई नहीं"
+      }
+    },
+    {
+      "key": "effort_minimal",
+      "en": "minimal",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "minimal",
+        "es": "mínimo",
+        "de": "minimal",
+        "fr": "minimal",
+        "ru": "минимальный",
+        "zh": "最低",
+        "ja": "最小",
+        "ko": "최소",
+        "hi": "न्यूनतम"
+      },
+      "same_as_english": [
+        "de",
+        "fr"
+      ],
+      "cognate_reason": "de/fr: minimal is the native adjective for the lowest reasoning-effort tier in both languages."
+    },
+    {
+      "key": "effort_low",
+      "en": "low",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "low",
+        "es": "bajo",
+        "de": "niedrig",
+        "fr": "faible",
+        "ru": "низкий",
+        "zh": "低",
+        "ja": "低",
+        "ko": "낮음",
+        "hi": "कम"
+      }
+    },
+    {
+      "key": "effort_medium",
+      "en": "medium",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "medium",
+        "es": "medio",
+        "de": "mittel",
+        "fr": "moyen",
+        "ru": "средний",
+        "zh": "中",
+        "ja": "中",
+        "ko": "중간",
+        "hi": "मध्यम"
+      }
+    },
+    {
+      "key": "effort_high",
+      "en": "high",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "high",
+        "es": "alto",
+        "de": "hoch",
+        "fr": "élevé",
+        "ru": "высокий",
+        "zh": "高",
+        "ja": "高",
+        "ko": "높음",
+        "hi": "उच्च"
+      }
+    },
+    {
+      "key": "effort_xhigh",
+      "en": "extra high",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "extra high",
+        "es": "muy alto",
+        "de": "sehr hoch",
+        "fr": "très élevé",
+        "ru": "очень высокий",
+        "zh": "超高",
+        "ja": "超高",
+        "ko": "매우 높음",
+        "hi": "अति उच्च"
+      }
+    },
+    {
+      "key": "effort_max",
+      "en": "maximum",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "maximum",
+        "es": "máximo",
+        "de": "maximal",
+        "fr": "maximum",
+        "ru": "максимальный",
+        "zh": "最高",
+        "ja": "最大",
+        "ko": "최대",
+        "hi": "अधिकतम"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: maximum is the standard French word for the maximum level."
+    },
+    {
+      "key": "effort_ultra",
+      "en": "ultra",
+      "context": "Human caption for reasoning effort; code still sends the original effort identifier.",
+      "width_cells": 15,
+      "translations": {
+        "en": "ultra",
+        "es": "ultra",
+        "de": "ultra",
+        "fr": "ultra",
+        "ru": "ультра",
+        "zh": "极致",
+        "ja": "ウルトラ",
+        "ko": "울트라",
+        "hi": "अल्ट्रा"
+      },
+      "same_as_english": [
+        "es",
+        "de",
+        "fr"
+      ],
+      "cognate_reason": "es/de/fr: ultra is a shared, established intensifier used as a tier label."
+    },
+    {
+      "key": "archive_unavailable",
+      "en": "unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "unavailable",
+        "es": "no disponible",
+        "de": "nicht verfügbar",
+        "fr": "indisponible",
+        "ru": "недоступно",
+        "zh": "不可用",
+        "ja": "利用不可",
+        "ko": "사용 불가",
+        "hi": "अनुपलब्ध"
+      }
+    },
+    {
+      "key": "archive_date",
+      "en": "{date} (local)",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "{date} (local)",
+        "es": "{date} (hora local)",
+        "de": "{date} (Ortszeit)",
+        "fr": "{date} (heure locale)",
+        "ru": "{date} (местное время)",
+        "zh": "{date}（本地时间）",
+        "ja": "{date}（ローカル時刻）",
+        "ko": "{date} (로컬 시간)",
+        "hi": "{date} (स्थानीय समय)"
+      }
+    },
+    {
+      "key": "archive_pending",
+      "en": "Some revision captures are still pending. Reopen the archive to refresh.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Some revision captures are still pending. Reopen the archive to refresh.",
+        "es": "Algunas capturas de revisiones siguen pendientes. Reabre el archivo para actualizarlo.",
+        "de": "Einige Revisionen warten noch auf Erfassung. Archiv zum Aktualisieren erneut öffnen.",
+        "fr": "Certains instantanés de révisions sont encore en attente. Rouvrez l’archive pour l’actualiser.",
+        "ru": "Некоторые версии ещё ожидают фиксации. Чтобы обновить данные, откройте архив заново.",
+        "zh": "部分修订快照仍待完成。重新打开归档即可刷新。",
+        "ja": "一部のリビジョンはスナップショットの取得待ちです。アーカイブを開き直すと更新されます。",
+        "ko": "일부 리비전 스냅샷이 아직 대기 중입니다. 새로 고치려면 아카이브를 다시 여세요.",
+        "hi": "कुछ संस्करणों के स्नैपशॉट अभी लंबित हैं। ताज़ा करने के लिए आर्काइव फिर से खोलें।"
+      }
+    },
+    {
+      "key": "archive_conversation_unavailable",
+      "en": "Conversation unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Conversation unavailable",
+        "es": "Conversación no disponible",
+        "de": "Unterhaltung nicht verfügbar",
+        "fr": "Conversation indisponible",
+        "ru": "Диалог недоступен",
+        "zh": "对话不可用",
+        "ja": "会話を利用できません",
+        "ko": "대화를 사용할 수 없음",
+        "hi": "बातचीत अनुपलब्ध"
+      }
+    },
+    {
+      "key": "archive_name_invalid",
+      "en": "Saved revision name is invalid.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Saved revision name is invalid.",
+        "es": "El nombre de la revisión guardada no es válido.",
+        "de": "Der Name der gespeicherten Revision ist ungültig.",
+        "fr": "Le nom de la révision enregistrée est invalide.",
+        "ru": "Недопустимое имя сохранённой версии.",
+        "zh": "已保存的修订版本名称无效。",
+        "ja": "保存済みリビジョンの名前が無効です。",
+        "ko": "저장된 리비전 이름이 유효하지 않습니다.",
+        "hi": "सहेजे गए संस्करण का नाम अमान्य है।"
+      }
+    },
+    {
+      "key": "archive_revision_unavailable",
+      "en": "Saved revision unavailable: {reason}",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Saved revision unavailable: {reason}",
+        "es": "Revisión guardada no disponible: {reason}",
+        "de": "Gespeicherte Revision nicht verfügbar: {reason}",
+        "fr": "Révision enregistrée indisponible : {reason}",
+        "ru": "Сохранённая версия недоступна: {reason}",
+        "zh": "已保存的修订版本不可用：{reason}",
+        "ja": "保存済みリビジョンを利用できません: {reason}",
+        "ko": "저장된 리비전을 사용할 수 없음: {reason}",
+        "hi": "सहेजा गया संस्करण अनुपलब्ध: {reason}"
+      }
+    },
+    {
+      "key": "archive_hash_changed",
+      "en": "Saved revision changed; its content hash no longer matches.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Saved revision changed; its content hash no longer matches.",
+        "es": "La revisión guardada ha cambiado; su hash de contenido ya no coincide.",
+        "de": "Die gespeicherte Revision wurde geändert; ihr Inhalts-Hash stimmt nicht mehr überein.",
+        "fr": "La révision enregistrée a changé ; son empreinte de contenu ne correspond plus.",
+        "ru": "Сохранённая версия изменилась; хеш её содержимого больше не совпадает.",
+        "zh": "已保存的修订版本已更改；其内容哈希不再匹配。",
+        "ja": "保存済みリビジョンが変更され、内容のハッシュが一致しなくなりました。",
+        "ko": "저장된 리비전이 변경되어 콘텐츠 해시가 더 이상 일치하지 않습니다.",
+        "hi": "सहेजा गया संस्करण बदल गया है; उसकी सामग्री का हैश अब मेल नहीं खाता।"
+      }
+    },
+    {
+      "key": "archive_current_exists",
+      "en": "Current file exists; bytes may have changed.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Current file exists; bytes may have changed.",
+        "es": "El archivo actual existe; sus bytes pueden haber cambiado.",
+        "de": "Die aktuelle Datei existiert; ihre Bytes könnten sich geändert haben.",
+        "fr": "Le fichier actuel existe ; ses octets ont peut-être changé.",
+        "ru": "Текущий файл существует; его байты могли измениться.",
+        "zh": "当前文件存在；其字节内容可能已更改。",
+        "ja": "現在のファイルは存在します。バイト列は変わっている可能性があります。",
+        "ko": "현재 파일이 존재합니다. 바이트는 변경되었을 수 있습니다.",
+        "hi": "मौजूदा फ़ाइल मौजूद है; उसके बाइट्स बदल गए हो सकते हैं।"
+      }
+    },
+    {
+      "key": "archive_current_unavailable",
+      "en": "Current file unavailable.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Current file unavailable.",
+        "es": "Archivo actual no disponible.",
+        "de": "Aktuelle Datei nicht verfügbar.",
+        "fr": "Fichier actuel indisponible.",
+        "ru": "Текущий файл недоступен.",
+        "zh": "当前文件不可用。",
+        "ja": "現在のファイルを利用できません。",
+        "ko": "현재 파일을 사용할 수 없습니다.",
+        "hi": "मौजूदा फ़ाइल अनुपलब्ध है।"
+      }
+    },
+    {
+      "key": "archive_remote_unchecked",
+      "en": "Remote link; availability not checked.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Remote link; availability not checked.",
+        "es": "Enlace remoto; disponibilidad no comprobada.",
+        "de": "Remote-Link; Verfügbarkeit nicht geprüft.",
+        "fr": "Lien distant ; disponibilité non vérifiée.",
+        "ru": "Ссылка на удалённый ресурс; доступность не проверялась.",
+        "zh": "远程链接；尚未检查可用性。",
+        "ja": "リモートリンクです。利用可否は確認していません。",
+        "ko": "원격 링크입니다. 사용 가능 여부는 확인하지 않았습니다.",
+        "hi": "दूरस्थ लिंक; उपलब्धता की जाँच नहीं की गई है।"
+      }
+    },
+    {
+      "key": "archive_open_revision",
+      "en": "Open captured revision",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Open captured revision",
+        "es": "Abrir revisión capturada",
+        "de": "Erfasste Revision öffnen",
+        "fr": "Ouvrir l’instantané de la révision",
+        "ru": "Открыть зафиксированную версию",
+        "zh": "打开修订快照",
+        "ja": "リビジョンのスナップショットを開く",
+        "ko": "리비전 스냅샷 열기",
+        "hi": "संस्करण का स्नैपशॉट खोलें"
+      }
+    },
+    {
+      "key": "archive_copy_unavailable",
+      "en": "Captured copy unavailable",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Captured copy unavailable",
+        "es": "Copia capturada no disponible",
+        "de": "Erfasste Kopie nicht verfügbar",
+        "fr": "Instantané indisponible",
+        "ru": "Зафиксированная копия недоступна",
+        "zh": "快照副本不可用",
+        "ja": "スナップショットを利用できません",
+        "ko": "스냅샷 사본을 사용할 수 없음",
+        "hi": "स्नैपशॉट अनुपलब्ध"
+      }
+    },
+    {
+      "key": "archive_no_record",
+      "en": "Revision unavailable: this handover has no capture record.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Revision unavailable: this handover has no capture record.",
+        "es": "Revisión no disponible: esta entrega no tiene registro de captura.",
+        "de": "Revision nicht verfügbar: Diese Übergabe enthält keinen Erfassungsdatensatz.",
+        "fr": "Révision indisponible : aucun enregistrement de capture pour cette remise.",
+        "ru": "Версия недоступна: для этой передачи нет записи о фиксации.",
+        "zh": "修订版本不可用：此次交付没有快照记录。",
+        "ja": "リビジョンを利用できません。この受け渡しにはスナップショットの取得記録がありません。",
+        "ko": "리비전을 사용할 수 없음: 이 전달 건에는 스냅샷 기록이 없습니다.",
+        "hi": "संस्करण अनुपलब्ध: इस हस्तांतरण का कोई स्नैपशॉट रिकॉर्ड नहीं है।"
+      }
+    },
+    {
+      "key": "archive_open_target",
+      "en": "Open current target",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Open current target",
+        "es": "Abrir destino actual",
+        "de": "Aktuelles Ziel öffnen",
+        "fr": "Ouvrir la cible actuelle",
+        "ru": "Открыть текущий целевой объект",
+        "zh": "打开当前目标",
+        "ja": "現在の参照先を開く",
+        "ko": "현재 대상 열기",
+        "hi": "मौजूदा लक्ष्य खोलें"
+      }
+    },
+    {
+      "key": "archive_cannot_open",
+      "en": "Target cannot be opened",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Target cannot be opened",
+        "es": "No se puede abrir el destino",
+        "de": "Ziel kann nicht geöffnet werden",
+        "fr": "Impossible d’ouvrir la cible",
+        "ru": "Невозможно открыть целевой объект",
+        "zh": "无法打开目标",
+        "ja": "参照先を開けません",
+        "ko": "대상을 열 수 없음",
+        "hi": "लक्ष्य खोला नहीं जा सकता"
+      }
+    },
+    {
+      "key": "archive_source_revision",
+      "en": "Source and revision",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Source and revision",
+        "es": "Origen y revisión",
+        "de": "Quelle und Revision",
+        "fr": "Source et révision",
+        "ru": "Источник и версия",
+        "zh": "来源与修订版本",
+        "ja": "ソースとリビジョン",
+        "ko": "출처 및 리비전",
+        "hi": "स्रोत और संस्करण"
+      }
+    },
+    {
+      "key": "archive_origin",
+      "en": "Origin",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Origin",
+        "es": "Origen",
+        "de": "Herkunft",
+        "fr": "Origine",
+        "ru": "Источник",
+        "zh": "来源",
+        "ja": "出所",
+        "ko": "출처",
+        "hi": "स्रोत"
+      }
+    },
+    {
+      "key": "archive_target",
+      "en": "Target",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Target",
+        "es": "Destino",
+        "de": "Ziel",
+        "fr": "Cible",
+        "ru": "Целевой объект",
+        "zh": "目标",
+        "ja": "参照先",
+        "ko": "대상",
+        "hi": "लक्ष्य"
+      }
+    },
+    {
+      "key": "archive_identity",
+      "en": "Artifact identity",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Artifact identity",
+        "es": "Identidad del artefacto",
+        "de": "Artefaktidentität",
+        "fr": "Identité de l’artefact",
+        "ru": "Идентификационные данные артефакта",
+        "zh": "产物标识",
+        "ja": "成果物の識別情報",
+        "ko": "아티팩트 식별 정보",
+        "hi": "आर्टिफ़ैक्ट की पहचान"
+      }
+    },
+    {
+      "key": "archive_hash",
+      "en": "Revision SHA-256",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Revision SHA-256",
+        "es": "SHA-256 de la revisión",
+        "de": "SHA-256 der Revision",
+        "fr": "SHA-256 de la révision",
+        "ru": "SHA-256 версии",
+        "zh": "修订版本 SHA-256",
+        "ja": "リビジョンの SHA-256",
+        "ko": "리비전 SHA-256",
+        "hi": "संस्करण का SHA-256"
+      }
+    },
+    {
+      "key": "archive_handed",
+      "en": "Handed over",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Handed over",
+        "es": "Entregado",
+        "de": "Übergeben",
+        "fr": "Remis",
+        "ru": "Передано",
+        "zh": "已交付",
+        "ja": "受け渡し済み",
+        "ko": "전달됨",
+        "hi": "सौंपा गया"
+      }
+    },
+    {
+      "key": "archive_captured",
+      "en": "Captured",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Captured",
+        "es": "Capturado",
+        "de": "Erfasst",
+        "fr": "Instantané créé",
+        "ru": "Зафиксировано",
+        "zh": "已生成快照",
+        "ja": "スナップショット取得済み",
+        "ko": "스냅샷 저장됨",
+        "hi": "स्नैपशॉट लिया गया"
+      }
+    },
+    {
+      "key": "archive_incomplete",
+      "en": "Some records could not be read. This archive is incomplete.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Some records could not be read. This archive is incomplete.",
+        "es": "No se pudieron leer algunos registros. Este archivo está incompleto.",
+        "de": "Einige Datensätze konnten nicht gelesen werden. Dieses Archiv ist unvollständig.",
+        "fr": "Certains enregistrements n’ont pas pu être lus. Cette archive est incomplète.",
+        "ru": "Некоторые записи не удалось прочитать. Этот архив неполон.",
+        "zh": "部分记录无法读取。此归档不完整。",
+        "ja": "一部の記録を読み取れませんでした。このアーカイブは不完全です。",
+        "ko": "일부 기록을 읽을 수 없었습니다. 이 아카이브는 불완전합니다.",
+        "hi": "कुछ रिकॉर्ड पढ़े नहीं जा सके। यह आर्काइव अधूरा है।"
+      }
+    },
+    {
+      "key": "archive_title",
+      "en": "Artifact archive",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Artifact archive",
+        "es": "Archivo de artefactos",
+        "de": "Artefaktarchiv",
+        "fr": "Archive des artefacts",
+        "ru": "Архив артефактов",
+        "zh": "产物归档",
+        "ja": "成果物アーカイブ",
+        "ko": "아티팩트 아카이브",
+        "hi": "आर्टिफ़ैक्ट आर्काइव"
+      }
+    },
+    {
+      "key": "archive_intro",
+      "en": "Documents handed over in TD, including closed conversations. A captured revision preserves the file’s bytes at capture time. Linked images and other external resources are not copied.",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Documents handed over in TD, including closed conversations. A captured revision preserves the file’s bytes at capture time. Linked images and other external resources are not copied.",
+        "es": "Documentos entregados en TD, incluidos los de conversaciones cerradas. Una revisión capturada conserva los bytes del archivo en el momento de la captura. Las imágenes enlazadas y otros recursos externos no se copian.",
+        "de": "In TD übergebene Dokumente, auch aus geschlossenen Unterhaltungen. Eine erfasste Revision bewahrt die Bytes der Datei zum Zeitpunkt der Erfassung. Verlinkte Bilder und andere externe Ressourcen werden nicht kopiert.",
+        "fr": "Documents remis dans TD, y compris ceux des conversations fermées. Un instantané de révision conserve les octets du fichier au moment de la capture. Les images liées et les autres ressources externes ne sont pas copiées.",
+        "ru": "Документы, переданные в TD, в том числе в закрытых диалогах. Зафиксированная версия сохраняет байты файла на момент фиксации. Изображения по ссылкам и другие внешние ресурсы не копируются.",
+        "zh": "在 TD 中交付的文档，包括已关闭对话中的文档。修订快照会保留创建快照时文件的字节内容。链接的图片和其他外部资源不会被复制。",
+        "ja": "TD で受け渡されたドキュメント（終了した会話の分を含む）。リビジョンのスナップショットは、取得時点のファイルのバイト列を保持します。リンク先の画像やその他の外部リソースはコピーされません。",
+        "ko": "TD에서 전달된 문서로, 종료된 대화의 문서도 포함합니다. 리비전 스냅샷은 생성 시점의 파일 바이트를 보존합니다. 링크된 이미지와 기타 외부 리소스는 복사하지 않습니다.",
+        "hi": "TD में सौंपे गए दस्तावेज़, बंद की गई बातचीत के दस्तावेज़ों सहित। संस्करण का स्नैपशॉट बनाते समय फ़ाइल में जो बाइट्स थे, वे उसमें सुरक्षित रहते हैं। लिंक की गई छवियाँ और अन्य बाहरी संसाधन कॉपी नहीं किए जाते।"
+      }
+    },
+    {
+      "key": "archive_find",
+      "en": "Find a title, path or conversation",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Find a title, path or conversation",
+        "es": "Buscar un título, una ruta o una conversación",
+        "de": "Titel, Pfad oder Unterhaltung suchen",
+        "fr": "Rechercher un titre, un chemin ou une conversation",
+        "ru": "Поиск по названию, пути или диалогу",
+        "zh": "查找标题、路径或对话",
+        "ja": "タイトル、パス、会話を検索",
+        "ko": "제목, 경로 또는 대화 찾기",
+        "hi": "शीर्षक, पथ या बातचीत खोजें"
+      }
+    },
+    {
+      "key": "archive_search",
+      "en": "Search saved artifacts",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "Search saved artifacts",
+        "es": "Buscar artefactos guardados",
+        "de": "Gespeicherte Artefakte durchsuchen",
+        "fr": "Rechercher dans les artefacts enregistrés",
+        "ru": "Поиск сохранённых артефактов",
+        "zh": "搜索已保存的产物",
+        "ja": "保存済みの成果物を検索",
+        "ko": "저장된 아티팩트 검색",
+        "hi": "सहेजे गए आर्टिफ़ैक्ट खोजें"
+      }
+    },
+    {
+      "key": "archive_count_filtered",
+      "en": "{n} of {total} archive entries",
+      "context": "Artifact archive page shown to a person; generated HTML, not the MCP report. Keep SHA-256 and TD.",
+      "width_cells": 100,
+      "translations": {
+        "en": "{n} of {total} archive entries",
+        "es": "Entradas del archivo: {n} de {total}",
+        "de": "Archiveinträge: {n} von {total}",
+        "fr": "Entrées de l’archive : {n} sur {total}",
+        "ru": "Записей в архиве: {n} из {total}",
+        "zh": "归档条目：{n} 个，共 {total} 个",
+        "ja": "アーカイブ項目: {total} 件中 {n} 件",
+        "ko": "아카이브 항목: 전체 {total}개 중 {n}개",
+        "hi": "आर्काइव प्रविष्टियाँ: कुल {total} में से {n}"
+      }
+    },
+    {
+      "key": "archive_count",
+      "en": {
+        "one": "{n} archive entry",
+        "few": "{n} archive entries",
+        "many": "{n} archive entries",
+        "other": "{n} archive entries"
+      },
+      "context": "Count of archived artifacts. Four plural forms required; Russian one/few/many must be natural.",
+      "translations": {
+        "en": {
+          "one": "{n} archive entry",
+          "few": "{n} archive entries",
+          "many": "{n} archive entries",
+          "other": "{n} archive entries"
+        },
+        "es": {
+          "one": "{n} entrada en el archivo",
+          "few": "{n} entradas en el archivo",
+          "many": "{n} entradas en el archivo",
+          "other": "{n} entradas en el archivo"
+        },
+        "de": {
+          "one": "{n} Archiveintrag",
+          "few": "{n} Archiveinträge",
+          "many": "{n} Archiveinträge",
+          "other": "{n} Archiveinträge"
+        },
+        "fr": {
+          "one": "{n} entrée d’archive",
+          "few": "{n} entrées d’archive",
+          "many": "{n} entrées d’archive",
+          "other": "{n} entrées d’archive"
+        },
+        "ru": {
+          "one": "{n} запись в архиве",
+          "few": "{n} записи в архиве",
+          "many": "{n} записей в архиве",
+          "other": "{n} записи в архиве"
+        },
+        "zh": {
+          "one": "{n} 个归档条目",
+          "few": "{n} 个归档条目",
+          "many": "{n} 个归档条目",
+          "other": "{n} 个归档条目"
+        },
+        "ja": {
+          "one": "{n} 件のアーカイブ項目",
+          "few": "{n} 件のアーカイブ項目",
+          "many": "{n} 件のアーカイブ項目",
+          "other": "{n} 件のアーカイブ項目"
+        },
+        "ko": {
+          "one": "아카이브 항목 {n}개",
+          "few": "아카이브 항목 {n}개",
+          "many": "아카이브 항목 {n}개",
+          "other": "아카이브 항목 {n}개"
+        },
+        "hi": {
+          "one": "आर्काइव में {n} प्रविष्टि",
+          "few": "आर्काइव में {n} प्रविष्टियाँ",
+          "many": "आर्काइव में {n} प्रविष्टियाँ",
+          "other": "आर्काइव में {n} प्रविष्टियाँ"
+        }
+      }
+    },
+    {
+      "key": "help_footer",
+      "en": "Type to filter · Tab switches {shortcuts} / {features} · ↑ ↓ PgUp PgDn scroll · Esc clears, then closes",
+      "context": "Help footer. Preserve Tab, PgUp, PgDn, Esc. {shortcuts}/{features} are already translated tab names.",
+      "width_cells": 120,
+      "translations": {
+        "en": "Type to filter · Tab switches {shortcuts} / {features} · ↑ ↓ PgUp PgDn scroll · Esc clears, then closes",
+        "es": "Escribe para filtrar · Tab alterna {shortcuts} / {features} · ↑ ↓ PgUp PgDn desplazan · Esc borra y luego cierra",
+        "de": "Tippen zum Filtern · Tab: {shortcuts} / {features} wechseln · ↑ ↓ PgUp PgDn scrollen · Esc: leeren, dann schließen",
+        "fr": "Tapez pour filtrer · Tab alterne {shortcuts} / {features} · ↑ ↓ PgUp PgDn : défiler · Esc efface, puis ferme",
+        "ru": "Фильтр при вводе · Tab переключает {shortcuts} / {features} · ↑ ↓ PgUp PgDn — прокрутка · Esc очищает, затем закрывает",
+        "zh": "输入以筛选 · Tab 切换 {shortcuts} / {features} · ↑ ↓ PgUp PgDn 滚动 · Esc 先清空，再关闭",
+        "ja": "入力で絞り込み · Tab: {shortcuts} / {features} を切替 · ↑ ↓ PgUp PgDn: スクロール · Esc: 消去、次に閉じる",
+        "ko": "입력하여 필터링 · Tab: {shortcuts} / {features} 전환 · ↑ ↓ PgUp PgDn: 스크롤 · Esc: 지우기, 그다음 닫기",
+        "hi": "फ़िल्टर करने के लिए टाइप करें · Tab: {shortcuts} / {features} बदलें · ↑ ↓ PgUp PgDn: स्क्रॉल · Esc: साफ़ करें, फिर बंद करें"
+      }
+    },
+    {
+      "key": "help_marks_off",
+      "en": "Alt+1 … 4 (marks off)",
+      "context": "Help key column; translate only marks off. Preserve Alt+1.",
+      "width_cells": 120,
+      "translations": {
+        "en": "Alt+1 … 4 (marks off)",
+        "es": "Alt+1 … 4 (marcas desactivadas)",
+        "de": "Alt+1 … 4 (Markierungen aus)",
+        "fr": "Alt+1 … 4 (repères désactivés)",
+        "ru": "Alt+1 … 4 (метки выкл.)",
+        "zh": "Alt+1 … 4 (标记关闭)",
+        "ja": "Alt+1 … 4 (マーク: オフ)",
+        "ko": "Alt+1 … 4 (표식 꺼짐)",
+        "hi": "Alt+1 … 4 (चिह्न बंद)"
+      }
+    },
+    {
+      "key": "help_needs_me",
+      "en": "NEEDS ME",
+      "context": "Feature name in help; matches the attention rail meaning.",
+      "width_cells": 120,
+      "translations": {
+        "en": "NEEDS ME",
+        "es": "REQUIERE MI ATENCIÓN",
+        "de": "BRAUCHT MICH",
+        "fr": "BESOIN DE MOI",
+        "ru": "НУЖНО МОЁ ВНИМАНИЕ",
+        "zh": "需要我处理",
+        "ja": "自分の対応が必要",
+        "ko": "내 대응 필요",
+        "hi": "मेरा ध्यान चाहिए"
+      }
+    },
+    {
+      "key": "model_selected_effort",
+      "en": "Selected effort unavailable; choose Agent default or a reported effort",
+      "context": "Launcher validation. Agent default is a translated label; match model_default from previous batch.",
+      "translations": {
+        "en": "Selected effort unavailable; choose Agent default or a reported effort",
+        "es": "El nivel de esfuerzo seleccionado no está disponible; elige «Predeterminado del agente» o un nivel de esfuerzo indicado por el agente",
+        "de": "Gewählter Denkaufwand nicht verfügbar; „Agentenstandard“ oder eine gemeldete Stufe wählen",
+        "fr": "Le niveau d’effort sélectionné est indisponible ; choisissez « Choix par défaut de l’agent » ou un niveau d’effort indiqué par l’agent",
+        "ru": "Выбранный уровень рассуждения недоступен; выберите «По умолчанию у агента» или уровень, о котором сообщил агент",
+        "zh": "所选推理强度不可用；请选择“智能体默认”或智能体报告的推理强度",
+        "ja": "選択した推論強度は利用できません。「エージェントの既定値」またはエージェントが報告した推論強度を選択してください",
+        "ko": "선택한 추론 강도를 사용할 수 없습니다. ‘에이전트 기본값’ 또는 에이전트가 보고한 추론 강도를 선택하세요",
+        "hi": "चुना गया तर्क-प्रयास स्तर उपलब्ध नहीं है; “एजेंट का डिफ़ॉल्ट” या एजेंट द्वारा बताया गया स्तर चुनें"
+      }
+    },
+    {
+      "key": "ctl_gauges",
+      "en": "gauges",
+      "context": "Compact tab label for gauges and CRT controls.",
+      "translations": {
+        "en": "gauges",
+        "es": "indicadores",
+        "de": "Messanzeigen",
+        "fr": "jauges",
+        "ru": "индикаторы",
+        "zh": "仪表",
+        "ja": "メーター",
+        "ko": "게이지",
+        "hi": "गेज"
+      }
+    },
+    {
+      "key": "archive_open_error",
+      "en": "Artifact archive could not be opened: {reason}",
+      "context": "App notice when archive page cannot open.",
+      "translations": {
+        "en": "Artifact archive could not be opened: {reason}",
+        "es": "No se pudo abrir el archivo de artefactos: {reason}",
+        "de": "Das Artefaktarchiv konnte nicht geöffnet werden: {reason}",
+        "fr": "Impossible d’ouvrir l’archive des artefacts : {reason}",
+        "ru": "Не удалось открыть архив артефактов: {reason}",
+        "zh": "无法打开产物归档：{reason}",
+        "ja": "成果物アーカイブを開けませんでした: {reason}",
+        "ko": "아티팩트 아카이브를 열 수 없었습니다: {reason}",
+        "hi": "आर्टिफ़ैक्ट आर्काइव खोला नहीं जा सका: {reason}"
+      }
+    },
+    {
+      "key": "archive_file_limit",
+      "en": "not a regular file within the capture limit",
+      "context": "Archive capture diagnostic shown to humans.",
+      "translations": {
+        "en": "not a regular file within the capture limit",
+        "es": "no es un archivo normal o supera el límite de captura",
+        "de": "keine reguläre Datei oder Erfassungsgrenze überschritten",
+        "fr": "ce n’est pas un fichier ordinaire ou la limite de capture est dépassée",
+        "ru": "не обычный файл или превышен лимит фиксации",
+        "zh": "不是常规文件，或超出快照生成限制",
+        "ja": "通常ファイルではないか、スナップショットの取得上限を超えています",
+        "ko": "일반 파일이 아니거나 스냅샷 캡처 한도를 초과함",
+        "hi": "सामान्य फ़ाइल नहीं है या स्नैपशॉट की सीमा से अधिक है"
+      }
+    },
+    {
+      "key": "archive_file_changed",
+      "en": "file changed during capture",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "file changed during capture",
+        "es": "el archivo cambió durante la captura",
+        "de": "Datei während der Erfassung geändert",
+        "fr": "le fichier a changé pendant la capture",
+        "ru": "файл изменился во время фиксации",
+        "zh": "生成快照期间文件发生了变化",
+        "ja": "スナップショットの取得中にファイルが変更されました",
+        "ko": "스냅샷 캡처 중 파일이 변경됨",
+        "hi": "स्नैपशॉट लेते समय फ़ाइल बदल गई"
+      }
+    },
+    {
+      "key": "archive_remote",
+      "en": "Remote link; no local bytes captured.",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "Remote link; no local bytes captured.",
+        "es": "Enlace remoto; no se capturaron bytes locales.",
+        "de": "Remote-Link; keine lokalen Bytes erfasst.",
+        "fr": "Lien distant ; aucun octet local capturé.",
+        "ru": "Ссылка на удалённый ресурс; локальные байты не зафиксированы.",
+        "zh": "远程链接；未捕获本地字节内容。",
+        "ja": "リモートリンクです。ローカルのバイト列は取得されていません。",
+        "ko": "원격 링크입니다. 로컬 바이트는 캡처되지 않았습니다.",
+        "hi": "दूरस्थ लिंक; स्थानीय बाइट्स कैप्चर नहीं किए गए।"
+      }
+    },
+    {
+      "key": "archive_local_missing",
+      "en": "Local revision unavailable: {reason}",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "Local revision unavailable: {reason}",
+        "es": "Revisión local no disponible: {reason}",
+        "de": "Lokale Revision nicht verfügbar: {reason}",
+        "fr": "Révision locale indisponible : {reason}",
+        "ru": "Локальная версия недоступна: {reason}",
+        "zh": "本地修订版本不可用：{reason}",
+        "ja": "ローカルのリビジョンを利用できません: {reason}",
+        "ko": "로컬 리비전을 사용할 수 없음: {reason}",
+        "hi": "स्थानीय संस्करण अनुपलब्ध: {reason}"
+      }
+    },
+    {
+      "key": "archive_saved_hash",
+      "en": "saved revision failed its content hash",
+      "context": "Archive capture diagnostic.",
+      "translations": {
+        "en": "saved revision failed its content hash",
+        "es": "la revisión guardada no superó la comprobación del hash de contenido",
+        "de": "gespeicherte Revision hat die Inhalts-Hash-Prüfung nicht bestanden",
+        "fr": "la révision enregistrée a échoué à la vérification de l’empreinte du contenu",
+        "ru": "сохранённая версия не прошла проверку хеша содержимого",
+        "zh": "已保存的修订版本未通过内容哈希校验",
+        "ja": "保存済みリビジョンが内容のハッシュ検証に失敗しました",
+        "ko": "저장된 리비전이 콘텐츠 해시 검증을 통과하지 못함",
+        "hi": "सहेजा गया संस्करण सामग्री के हैश की जाँच में विफल रहा"
+      }
+    },
+    {
+      "key": "archive_save_failed",
+      "en": "Revision measured; snapshot could not be saved: {reason}",
+      "context": "Archive capture diagnostic. Bytes measured, persistence unavailable.",
+      "translations": {
+        "en": "Revision measured; snapshot could not be saved: {reason}",
+        "es": "Medición de la revisión completada; no se pudo guardar la instantánea: {reason}",
+        "de": "Messung der Revision abgeschlossen; Snapshot konnte nicht gespeichert werden: {reason}",
+        "fr": "Mesure de la révision effectuée ; l’instantané n’a pas pu être enregistré : {reason}",
+        "ru": "Измерение версии завершено; не удалось сохранить снимок: {reason}",
+        "zh": "修订版本的字节测量已完成；无法保存快照：{reason}",
+        "ja": "リビジョンの計測は完了しましたが、スナップショットを保存できませんでした: {reason}",
+        "ko": "리비전 측정은 완료했지만 스냅샷을 저장할 수 없었습니다: {reason}",
+        "hi": "संस्करण का मापन पूरा हुआ; स्नैपशॉट सहेजा नहीं जा सका: {reason}"
+      }
+    },
+    {
+      "key": "archive_not_regular",
+      "en": "not a regular record",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "not a regular record",
+        "es": "no es un registro normal",
+        "de": "kein regulärer Datensatz",
+        "fr": "ce n’est pas un enregistrement ordinaire",
+        "ru": "не обычная запись",
+        "zh": "不是常规记录",
+        "ja": "通常の記録ではありません",
+        "ko": "일반 기록이 아님",
+        "hi": "सामान्य रिकॉर्ड नहीं है"
+      }
+    },
+    {
+      "key": "archive_scan_limit",
+      "en": "record exceeds archive scan limit",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "record exceeds archive scan limit",
+        "es": "el registro supera el límite de exploración del archivo de artefactos",
+        "de": "Datensatz überschreitet die Scan-Grenze des Archivs",
+        "fr": "l’enregistrement dépasse la limite d’analyse de l’archive",
+        "ru": "запись превышает лимит сканирования архива",
+        "zh": "记录超出归档扫描上限",
+        "ja": "記録がアーカイブのスキャン上限を超えています",
+        "ko": "기록이 아카이브 스캔 한도를 초과함",
+        "hi": "रिकॉर्ड आर्काइव की स्कैन सीमा से अधिक है"
+      }
+    },
+    {
+      "key": "archive_line_unreadable",
+      "en": "{path}: line {n} could not be read",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "{path}: line {n} could not be read",
+        "es": "{path}: no se pudo leer la línea {n}",
+        "de": "{path}: Zeile {n} konnte nicht gelesen werden",
+        "fr": "{path} : la ligne {n} n’a pas pu être lue",
+        "ru": "{path}: не удалось прочитать строку {n}",
+        "zh": "{path}：无法读取第 {n} 行",
+        "ja": "{path}: {n} 行目を読み取れませんでした",
+        "ko": "{path}: {n}번째 줄을 읽을 수 없었습니다",
+        "hi": "{path}: पंक्ति {n} पढ़ी नहीं जा सकी"
+      }
+    },
+    {
+      "key": "archive_path_unreadable",
+      "en": "Could not read {path}: {reason}",
+      "context": "Archive diagnostic.",
+      "translations": {
+        "en": "Could not read {path}: {reason}",
+        "es": "No se pudo leer {path}: {reason}",
+        "de": "{path} konnte nicht gelesen werden: {reason}",
+        "fr": "Impossible de lire {path} : {reason}",
+        "ru": "Не удалось прочитать {path}: {reason}",
+        "zh": "无法读取 {path}：{reason}",
+        "ja": "{path} を読み取れませんでした: {reason}",
+        "ko": "{path} 읽기에 실패했습니다: {reason}",
+        "hi": "{path} पढ़ा नहीं जा सका: {reason}"
+      }
+    },
+    {
+      "key": "update_commit_unknown",
+      "en": "commit unknown",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "commit unknown",
+        "es": "commit desconocido",
+        "de": "Commit unbekannt",
+        "fr": "commit inconnu",
+        "ru": "коммит неизвестен",
+        "zh": "提交未知",
+        "ja": "コミット不明",
+        "ko": "커밋 알 수 없음",
+        "hi": "कमिट अज्ञात"
+      }
+    },
+    {
+      "key": "update_launcher",
+      "en": "launcher build · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "launcher build · {path}",
+        "es": "compilación del lanzador · {path}",
+        "de": "Launcher-Build · {path}",
+        "fr": "build du lanceur · {path}",
+        "ru": "сборка лаунчера · {path}",
+        "zh": "启动器构建 · {path}",
+        "ja": "ランチャービルド · {path}",
+        "ko": "런처 빌드 · {path}",
+        "hi": "लॉन्चर बिल्ड · {path}"
+      }
+    },
+    {
+      "key": "update_source",
+      "en": "source checkout · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "source checkout · {path}",
+        "es": "copia de trabajo del código fuente · {path}",
+        "de": "Arbeitskopie des Quellcodes · {path}",
+        "fr": "copie de travail du code source · {path}",
+        "ru": "рабочая копия исходников · {path}",
+        "zh": "源码工作副本 · {path}",
+        "ja": "ソースの作業コピー · {path}",
+        "ko": "소스 작업 사본 · {path}",
+        "hi": "सोर्स कोड की वर्किंग कॉपी · {path}"
+      }
+    },
+    {
+      "key": "update_package",
+      "en": "system package · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "system package · {path}",
+        "es": "paquete del sistema · {path}",
+        "de": "Systempaket · {path}",
+        "fr": "paquet système · {path}",
+        "ru": "системный пакет · {path}",
+        "zh": "系统软件包 · {path}",
+        "ja": "システムパッケージ · {path}",
+        "ko": "시스템 패키지 · {path}",
+        "hi": "सिस्टम पैकेज · {path}"
+      }
+    },
+    {
+      "key": "update_unknown",
+      "en": "unrecognised · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "unrecognised · {path}",
+        "es": "no reconocido · {path}",
+        "de": "nicht erkannt · {path}",
+        "fr": "non reconnu · {path}",
+        "ru": "не распознано · {path}",
+        "zh": "未识别 · {path}",
+        "ja": "未認識 · {path}",
+        "ko": "인식되지 않음 · {path}",
+        "hi": "पहचाना नहीं गया · {path}"
+      }
+    },
+    {
+      "key": "update_refuse_source",
+      "en": "TD never pulls or rebuilds a checkout. To update it yourself:\n{commands}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "TD never pulls or rebuilds a checkout. To update it yourself:\n{commands}",
+        "es": "TD nunca hace pull ni recompila una copia de trabajo. Para actualizarla por tu cuenta:\n{commands}",
+        "de": "TD führt für Arbeitskopien nie einen Pull oder eine Neukompilierung aus. So aktualisierst du diese Kopie selbst:\n{commands}",
+        "fr": "TD n’effectue jamais de pull ni de recompilation d’une copie de travail. Pour la mettre à jour vous-même :\n{commands}",
+        "ru": "TD никогда не выполняет pull и не пересобирает рабочую копию. Чтобы обновить её самостоятельно:\n{commands}",
+        "zh": "TD 从不对源码工作副本执行 pull 或重新构建。如需自行更新：\n{commands}",
+        "ja": "TD は作業コピーに対して pull や再ビルドを一切行いません。自分で更新するには:\n{commands}",
+        "ko": "TD는 작업 사본에서 pull이나 재빌드를 절대 수행하지 않습니다. 직접 업데이트하려면:\n{commands}",
+        "hi": "TD किसी वर्किंग कॉपी पर कभी pull या रीबिल्ड नहीं करता। इसे खुद अपडेट करने के लिए:\n{commands}"
+      }
+    },
+    {
+      "key": "update_refuse_package",
+      "en": "your package manager owns this install — update it there",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "your package manager owns this install — update it there",
+        "es": "tu gestor de paquetes administra esta instalación — actualízala desde allí",
+        "de": "dein Paketmanager verwaltet diese Installation — aktualisiere sie dort",
+        "fr": "cette installation est gérée par votre gestionnaire de paquets — effectuez la mise à jour depuis celui-ci",
+        "ru": "этой установкой управляет ваш пакетный менеджер — обновляйте её через него",
+        "zh": "此安装由你的软件包管理器管理，请通过它更新",
+        "ja": "このインストールはパッケージマネージャーが管理しています。そちらで更新してください",
+        "ko": "이 설치는 패키지 관리자가 관리합니다. 해당 패키지 관리자에서 업데이트하세요",
+        "hi": "इस इंस्टॉलेशन को आपका पैकेज मैनेजर संभालता है — वहीं से अपडेट करें"
+      }
+    },
+    {
+      "key": "update_refuse_unknown",
+      "en": "this file was not installed as an AppImage or into TD’s build library, so TD does not replace it",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this file was not installed as an AppImage or into TD’s build library, so TD does not replace it",
+        "es": "este archivo no se instaló como AppImage ni en la biblioteca de compilaciones de TD, por lo que TD no lo reemplaza",
+        "de": "diese Datei wurde weder als AppImage noch in der Build-Bibliothek von TD installiert; deshalb ersetzt TD sie nicht",
+        "fr": "ce fichier n’a été installé ni comme AppImage ni dans la bibliothèque de builds de TD ; TD ne le remplace donc pas",
+        "ru": "этот файл не был установлен ни как AppImage, ни в библиотеку сборок TD, поэтому TD его не заменяет",
+        "zh": "此文件既未作为 AppImage 安装，也未安装到 TD 的构建库中，因此 TD 不会替换它",
+        "ja": "このファイルは AppImage としても TD のビルドライブラリ内にもインストールされていないため、TD は置き換えません",
+        "ko": "이 파일은 AppImage로도 TD 빌드 라이브러리에도 설치되지 않았으므로 TD가 교체하지 않습니다",
+        "hi": "यह फ़ाइल न तो AppImage के रूप में और न ही TD की बिल्ड लाइब्रेरी में इंस्टॉल की गई थी, इसलिए TD इसे बदलता नहीं है"
+      }
+    },
+    {
+      "key": "update_no_stable",
+      "en": "no stable release has been published",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no stable release has been published",
+        "es": "no se ha publicado ninguna versión estable",
+        "de": "es wurde keine stabile Version veröffentlicht",
+        "fr": "aucune version stable n’a été publiée",
+        "ru": "стабильных выпусков не опубликовано",
+        "zh": "尚未发布稳定版本",
+        "ja": "安定版は公開されていません",
+        "ko": "공개된 안정 버전이 없음",
+        "hi": "कोई स्थिर रिलीज़ प्रकाशित नहीं की गई है"
+      }
+    },
+    {
+      "key": "update_no_dev",
+      "en": "no public dev build has been published yet",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no public dev build has been published yet",
+        "es": "todavía no se ha publicado ninguna compilación de desarrollo pública",
+        "de": "es wurde noch kein öffentlicher Entwicklungsbuild veröffentlicht",
+        "fr": "aucun build de développement public n’a encore été publié",
+        "ru": "публичных сборок разрабатываемой версии пока не опубликовано",
+        "zh": "尚未发布公开的开发构建版本",
+        "ja": "開発ビルドはまだ一般公開されていません",
+        "ko": "공개 개발 빌드가 아직 게시되지 않음",
+        "hi": "अभी तक कोई सार्वजनिक डेवलपमेंट बिल्ड प्रकाशित नहीं किया गया है"
+      }
+    },
+    {
+      "key": "update_no_image",
+      "en": "this release has no Linux AppImage",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "this release has no Linux AppImage",
+        "es": "esta versión no incluye un AppImage para Linux",
+        "de": "für diese Version gibt es kein Linux-AppImage",
+        "fr": "cette version ne contient pas d’AppImage pour Linux",
+        "ru": "в этом выпуске нет AppImage для Linux",
+        "zh": "此版本不包含 Linux AppImage",
+        "ja": "このリリースには Linux 用の AppImage がありません",
+        "ko": "이 릴리스에는 Linux용 AppImage가 없음",
+        "hi": "इस रिलीज़ में Linux के लिए AppImage नहीं है"
+      }
+    },
+    {
+      "key": "update_no_checksum",
+      "en": "no checksum was published for it, so TD cannot check the download — download it yourself from its page",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim.",
+      "translations": {
+        "en": "no checksum was published for it, so TD cannot check the download — download it yourself from its page",
+        "es": "no se publicó ninguna suma de comprobación para este archivo, así que TD no puede verificar la descarga — descárgalo por tu cuenta desde su página",
+        "de": "dafür wurde keine Prüfsumme veröffentlicht, daher kann TD den Download nicht prüfen — lade die Datei selbst von ihrer Seite herunter",
+        "fr": "aucune somme de contrôle n’a été publiée pour ce fichier, donc TD ne peut pas vérifier le téléchargement — téléchargez-le vous-même depuis sa page",
+        "ru": "для этого файла не опубликована контрольная сумма, поэтому TD не может проверить загрузку — скачайте файл самостоятельно с его страницы",
+        "zh": "未发布此文件的校验和，因此 TD 无法验证下载内容，请自行从其页面下载",
+        "ja": "このファイルのチェックサムが公開されていないため、TD はダウンロード内容を検証できません。そのページから自分でダウンロードしてください",
+        "ko": "이 파일의 체크섬이 공개되지 않아 TD가 다운로드를 검증할 수 없습니다. 해당 페이지에서 직접 다운로드하세요",
+        "hi": "इस फ़ाइल का चेकसम प्रकाशित नहीं किया गया है, इसलिए TD डाउनलोड की जाँच नहीं कर सकता — इसके पेज से खुद डाउनलोड करें"
+      }
+    },
+    {
+      "key": "ctl_about",
+      "en": "about",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "about",
+        "es": "aprox.",
+        "de": "ca.",
+        "fr": "env.",
+        "ru": "около",
+        "zh": "约",
+        "ja": "約",
+        "ko": "약",
+        "hi": "लगभग"
+      }
+    },
+    {
+      "key": "ctl_active",
+      "en": "active",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "active",
+        "es": "activo",
+        "de": "aktiv",
+        "fr": "actif",
+        "ru": "активно",
+        "zh": "活跃",
+        "ja": "アクティブ",
+        "ko": "활성",
+        "hi": "सक्रिय"
+      }
+    },
+    {
+      "key": "ctl_adopt",
+      "en": "adopt",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "adopt",
+        "es": "incorporar",
+        "de": "übernehmen",
+        "fr": "rattacher",
+        "ru": "присоединить",
+        "zh": "纳入项目",
+        "ja": "取り込む",
+        "ko": "프로젝트 편입",
+        "hi": "प्रोजेक्ट में लें"
+      }
+    },
+    {
+      "key": "ctl_anchor",
+      "en": "anchor",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "anchor",
+        "es": "anclar",
+        "de": "verankern",
+        "fr": "ancrer",
+        "ru": "закрепить",
+        "zh": "锚定",
+        "ja": "固定",
+        "ko": "고정",
+        "hi": "स्थिर करें"
+      }
+    },
+    {
+      "key": "ctl_available",
+      "en": "available",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "available",
+        "es": "disponible",
+        "de": "verfügbar",
+        "fr": "disponible",
+        "ru": "доступно",
+        "zh": "可用",
+        "ja": "利用可能",
+        "ko": "사용 가능",
+        "hi": "उपलब्ध"
+      }
+    },
+    {
+      "key": "ctl_awake",
+      "en": "awake",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "awake",
+        "es": "despierto",
+        "de": "wach",
+        "fr": "éveillé",
+        "ru": "бодрствует",
+        "zh": "醒着",
+        "ja": "起きている",
+        "ko": "깨어 있음",
+        "hi": "जागृत"
+      }
+    },
+    {
+      "key": "ctl_beside",
+      "en": "beside",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "beside",
+        "es": "al lado",
+        "de": "daneben",
+        "fr": "à côté",
+        "ru": "рядом",
+        "zh": "旁边",
+        "ja": "隣に",
+        "ko": "옆에",
+        "hi": "बगल में"
+      }
+    },
+    {
+      "key": "ctl_comment",
+      "en": "comment",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "comment",
+        "es": "comentar",
+        "de": "kommentieren",
+        "fr": "commenter",
+        "ru": "комментировать",
+        "zh": "评论",
+        "ja": "コメント",
+        "ko": "댓글",
+        "hi": "टिप्पणी करें"
+      }
+    },
+    {
+      "key": "ctl_copy",
+      "en": "copy",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "copy",
+        "es": "copiar",
+        "de": "kopieren",
+        "fr": "copier",
+        "ru": "копировать",
+        "zh": "复制",
+        "ja": "コピー",
+        "ko": "복사",
+        "hi": "कॉपी करें"
+      }
+    },
+    {
+      "key": "ctl_display",
+      "en": "display",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "display",
+        "es": "pantalla",
+        "de": "Anzeige",
+        "fr": "affichage",
+        "ru": "экран",
+        "zh": "显示",
+        "ja": "表示",
+        "ko": "화면",
+        "hi": "डिस्प्ले"
+      }
+    },
+    {
+      "key": "ctl_effects",
+      "en": "effects",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "effects",
+        "es": "efectos",
+        "de": "Effekte",
+        "fr": "effets",
+        "ru": "эффекты",
+        "zh": "特效",
+        "ja": "エフェクト",
+        "ko": "효과",
+        "hi": "प्रभाव"
+      }
+    },
+    {
+      "key": "ctl_find",
+      "en": "find",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "find",
+        "es": "buscar",
+        "de": "suchen",
+        "fr": "rechercher",
+        "ru": "найти",
+        "zh": "查找",
+        "ja": "検索",
+        "ko": "찾기",
+        "hi": "ढूँढें"
+      }
+    },
+    {
+      "key": "ctl_images",
+      "en": "images",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "images",
+        "es": "imágenes",
+        "de": "Bilder",
+        "fr": "images",
+        "ru": "изображения",
+        "zh": "图片",
+        "ja": "画像",
+        "ko": "이미지",
+        "hi": "छवियाँ"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: images is the standard French plural of image."
+    },
+    {
+      "key": "ctl_language",
+      "en": "language",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "language",
+        "es": "idioma",
+        "de": "Sprache",
+        "fr": "langue",
+        "ru": "язык",
+        "zh": "语言",
+        "ja": "言語",
+        "ko": "언어",
+        "hi": "भाषा"
+      }
+    },
+    {
+      "key": "ctl_launch",
+      "en": "launch",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "launch",
+        "es": "iniciar",
+        "de": "starten",
+        "fr": "lancer",
+        "ru": "запустить",
+        "zh": "启动",
+        "ja": "起動",
+        "ko": "실행",
+        "hi": "शुरू करें"
+      }
+    },
+    {
+      "key": "ctl_left",
+      "en": "left",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "left",
+        "es": "izquierda",
+        "de": "links",
+        "fr": "gauche",
+        "ru": "влево",
+        "zh": "向左",
+        "ja": "左へ",
+        "ko": "왼쪽",
+        "hi": "बाएँ"
+      }
+    },
+    {
+      "key": "ctl_lookup",
+      "en": "lookup",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "lookup",
+        "es": "buscar nombre",
+        "de": "Namenssuche",
+        "fr": "chercher par nom",
+        "ru": "поиск по имени",
+        "zh": "按名查找",
+        "ja": "名前検索",
+        "ko": "이름 검색",
+        "hi": "नाम खोजें"
+      }
+    },
+    {
+      "key": "ctl_maximize",
+      "en": "maximize",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "maximize",
+        "es": "maximizar",
+        "de": "maximieren",
+        "fr": "maximiser",
+        "ru": "развернуть",
+        "zh": "最大化",
+        "ja": "最大化",
+        "ko": "최대화",
+        "hi": "अधिकतम करें"
+      }
+    },
+    {
+      "key": "ctl_new",
+      "en": "new",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "new",
+        "es": "nuevo",
+        "de": "neu",
+        "fr": "nouveau",
+        "ru": "новое",
+        "zh": "新建",
+        "ja": "新規",
+        "ko": "새로 만들기",
+        "hi": "नया"
+      }
+    },
+    {
+      "key": "ctl_next",
+      "en": "next",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "next",
+        "es": "siguiente",
+        "de": "weiter",
+        "fr": "suivant",
+        "ru": "далее",
+        "zh": "下一个",
+        "ja": "次へ",
+        "ko": "다음",
+        "hi": "अगला"
+      }
+    },
+    {
+      "key": "ctl_notes",
+      "en": "notes",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "notes",
+        "es": "notas",
+        "de": "Notizen",
+        "fr": "notes",
+        "ru": "заметки",
+        "zh": "笔记",
+        "ja": "メモ",
+        "ko": "메모",
+        "hi": "नोट्स"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: notes is the standard French plural of note."
+    },
+    {
+      "key": "ctl_open",
+      "en": "open",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "open",
+        "es": "abrir",
+        "de": "öffnen",
+        "fr": "ouvrir",
+        "ru": "открыть",
+        "zh": "打开",
+        "ja": "開く",
+        "ko": "열기",
+        "hi": "खोलें"
+      }
+    },
+    {
+      "key": "ctl_paused",
+      "en": "paused",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "paused",
+        "es": "en pausa",
+        "de": "pausiert",
+        "fr": "en pause",
+        "ru": "приостановлено",
+        "zh": "已暂停",
+        "ja": "一時停止中",
+        "ko": "일시 중지됨",
+        "hi": "रुका हुआ"
+      }
+    },
+    {
+      "key": "ctl_plugins",
+      "en": "plugins",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "plugins",
+        "es": "complementos",
+        "de": "Plugins",
+        "fr": "plugins",
+        "ru": "плагины",
+        "zh": "插件",
+        "ja": "プラグイン",
+        "ko": "플러그인",
+        "hi": "प्लगइन"
+      },
+      "same_as_english": [
+        "fr"
+      ],
+      "cognate_reason": "fr: plugins is an established French term for software plugins."
+    },
+    {
+      "key": "ctl_previous",
+      "en": "previous",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "previous",
+        "es": "anterior",
+        "de": "zurück",
+        "fr": "précédent",
+        "ru": "назад",
+        "zh": "上一个",
+        "ja": "前へ",
+        "ko": "이전",
+        "hi": "पिछला"
+      }
+    },
+    {
+      "key": "ctl_refresh",
+      "en": "refresh",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "refresh",
+        "es": "actualizar",
+        "de": "aktualisieren",
+        "fr": "actualiser",
+        "ru": "обновить",
+        "zh": "刷新",
+        "ja": "更新",
+        "ko": "새로 고침",
+        "hi": "रीफ़्रेश"
+      }
+    },
+    {
+      "key": "ctl_remove",
+      "en": "remove",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "remove",
+        "es": "quitar",
+        "de": "entfernen",
+        "fr": "retirer",
+        "ru": "убрать",
+        "zh": "移除",
+        "ja": "取り除く",
+        "ko": "제거",
+        "hi": "निकालें"
+      }
+    },
+    {
+      "key": "ctl_reset",
+      "en": "reset",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "reset",
+        "es": "restablecer",
+        "de": "zurücksetzen",
+        "fr": "réinitialiser",
+        "ru": "сбросить",
+        "zh": "重置",
+        "ja": "リセット",
+        "ko": "초기화",
+        "hi": "रीसेट"
+      }
+    },
+    {
+      "key": "ctl_rest",
+      "en": "rest",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "rest",
+        "es": "descanso",
+        "de": "Pause",
+        "fr": "repos",
+        "ru": "отдых",
+        "zh": "休息",
+        "ja": "休憩",
+        "ko": "휴식",
+        "hi": "आराम"
+      }
+    },
+    {
+      "key": "ctl_selected",
+      "en": "selected",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "selected",
+        "es": "seleccionado",
+        "de": "ausgewählt",
+        "fr": "sélectionné",
+        "ru": "выбрано",
+        "zh": "已选中",
+        "ja": "選択済み",
+        "ko": "선택됨",
+        "hi": "चयनित"
+      }
+    },
+    {
+      "key": "ctl_send",
+      "en": "send",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "send",
+        "es": "enviar",
+        "de": "senden",
+        "fr": "envoyer",
+        "ru": "отправить",
+        "zh": "发送",
+        "ja": "送信",
+        "ko": "보내기",
+        "hi": "भेजें"
+      }
+    },
+    {
+      "key": "ctl_settings",
+      "en": "settings",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "settings",
+        "es": "ajustes",
+        "de": "Einstellungen",
+        "fr": "paramètres",
+        "ru": "настройки",
+        "zh": "设置",
+        "ja": "設定",
+        "ko": "설정",
+        "hi": "सेटिंग्स"
+      }
+    },
+    {
+      "key": "ctl_sleep",
+      "en": "sleep",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "sleep",
+        "es": "dormir",
+        "de": "schlafen",
+        "fr": "endormir",
+        "ru": "усыпить",
+        "zh": "休眠",
+        "ja": "スリープ",
+        "ko": "재우기",
+        "hi": "सुलाएँ"
+      }
+    },
+    {
+      "key": "ctl_total",
+      "en": "total",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "total",
+        "es": "total",
+        "de": "gesamt",
+        "fr": "total",
+        "ru": "всего",
+        "zh": "总计",
+        "ja": "合計",
+        "ko": "합계",
+        "hi": "कुल"
+      },
+      "same_as_english": [
+        "es",
+        "fr"
+      ],
+      "cognate_reason": "es/fr: total is the standard shared word for an aggregate amount."
+    },
+    {
+      "key": "ctl_up",
+      "en": "up",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "up",
+        "es": "arriba",
+        "de": "oben",
+        "fr": "haut",
+        "ru": "вверх",
+        "zh": "向上",
+        "ja": "上へ",
+        "ko": "위",
+        "hi": "ऊपर"
+      }
+    },
+    {
+      "key": "ctl_usage",
+      "en": "usage",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "usage",
+        "es": "uso",
+        "de": "Nutzung",
+        "fr": "utilisation",
+        "ru": "использование",
+        "zh": "用量",
+        "ja": "使用量",
+        "ko": "사용량",
+        "hi": "उपयोग"
+      }
+    },
+    {
+      "key": "ctl_window",
+      "en": "window",
+      "context": "Compact text-control skin word replacing an icon. Translate action/state, preserve uncertainty and keep short.",
+      "width_cells": 14,
+      "translations": {
+        "en": "window",
+        "es": "ventana",
+        "de": "Fenster",
+        "fr": "fenêtre",
+        "ru": "окно",
+        "zh": "窗口",
+        "ja": "ウィンドウ",
+        "ko": "창",
+        "hi": "विंडो"
+      }
+    },
+    {
+      "key": "ctl_add_project",
+      "en": "ADD PROJECT",
+      "context": "Compact native text-control label in top/bottom bar. All-caps header; keep short.",
+      "width_cells": 16,
+      "translations": {
+        "en": "ADD PROJECT",
+        "es": "AÑADIR PROYECTO",
+        "de": "PROJEKT ANLEGEN",
+        "fr": "AJOUTER PROJET",
+        "ru": "ДОБАВИТЬ ПРОЕКТ",
+        "zh": "添加项目",
+        "ja": "プロジェクト追加",
+        "ko": "프로젝트 추가",
+        "hi": "प्रोजेक्ट जोड़ें"
+      }
+    }
+  ]
+}

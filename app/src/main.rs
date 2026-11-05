@@ -2947,6 +2947,9 @@ struct StateFile {
     /// files → `false` (the flat reader everyone had before).
     #[serde(default)]
     focus_inherit: bool,
+    /// Unset means no choice yet: person-opened briefs use the fullscreen reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    doc_glow_pane: Option<bool>,
     /// Global "anchor terminal content to TOP" preference. Absent on old files →
     /// `false` (the classic bottom-anchored prompt). When `true`, every pane skips
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
@@ -3055,6 +3058,7 @@ impl Default for StateFile {
             // taken from. A file without the key still reads `false`, which is
             // what everyone had before the preference existed.
             focus_inherit: true,
+            doc_glow_pane: None,
             anchor_top: false,
             agent_tint: false,
             card_art: None,
@@ -5377,6 +5381,8 @@ struct Workspace {
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
     focus_inherit_theme: bool,
+    /// Window-wide document presentation, selected in FLOATING DOCUMENT gauges.
+    doc_glow_pane: Option<bool>,
     /// Global, persisted: when on, terminal content anchors to the TOP of each
     /// pane (the prompt/typing area sits near the top) instead of hugging the
     /// bottom. Published into [`pane::set_anchor_top`] each render frame so the
@@ -5506,6 +5512,21 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe_in(pane, window, |ws, pane, _ev: &OpenFocusRead, window, cx| {
         ws.open_focus_read(pane.clone(), window, cx);
     })
+    .detach();
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, _ev: &pane::OpenDocumentRead, window, cx| {
+            if ws.doc_glow_pane == Some(true) {
+                pane.update(cx, |v, cx| v.set_float_to_read(false, cx));
+                if ws.focus_read.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(pane) {
+                    ws.close_focus_read(cx);
+                }
+            } else {
+                ws.open_focus_read(pane.clone(), window, cx);
+            }
+        },
+    )
     .detach();
     // Esc inside the modal (routed up from the mirrored pane) → close it
     cx.subscribe(pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
@@ -6868,6 +6889,7 @@ impl Workspace {
             focus_inline: false,
             focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
+            doc_glow_pane: saved.doc_glow_pane,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
             lang: saved.lang,
@@ -8784,6 +8806,7 @@ impl Workspace {
             floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
+            doc_glow_pane: self.doc_glow_pane,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
             card_art: self.card_art,
@@ -9142,6 +9165,8 @@ impl Workspace {
                 .inactive_brightness
                 .map(|v| K::InactiveBrightness.to_percent(v)),
             inactive_blur: g.inactive_blur.map(|v| K::InactiveBlur.to_percent(v)),
+            active_opacity: g.active_opacity.map(|v| K::ActiveOpacity.to_percent(v)),
+            inactive_opacity: g.inactive_opacity.map(|v| K::InactiveOpacity.to_percent(v)),
             doc_brightness: g.doc_brightness.map(|v| K::DocBrightness.to_percent(v)),
             doc_contrast: g.doc_contrast.map(|v| K::DocContrast.to_percent(v)),
             doc_clear: g.doc_clear.map(|v| K::DocClear.to_percent(v)),
@@ -9227,6 +9252,12 @@ impl Workspace {
         }
         if let Some(p) = patch.inactive_blur {
             set!(K::InactiveBlur, p);
+        }
+        if let Some(p) = patch.active_opacity {
+            set!(K::ActiveOpacity, p);
+        }
+        if let Some(p) = patch.inactive_opacity {
+            set!(K::InactiveOpacity, p);
         }
         if let Some(p) = patch.doc_brightness {
             set!(K::DocBrightness, p);
@@ -10794,7 +10825,12 @@ impl Workspace {
             let id = model.id.clone();
             let selected = pref.model == id;
             model_chips = model_chips.child(
-                chip(&model.label, selected, selected && id.is_some()).on_mouse_down(
+                chip(
+                    &model.label_in(self.lang),
+                    selected,
+                    selected && id.is_some(),
+                )
+                .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                         cx.stop_propagation();
@@ -10808,23 +10844,25 @@ impl Workspace {
         }
         if pref.model.is_some() && pref.model_ix(&catalog.models).is_none() {
             model_chips = model_chips.child(chip(
-                &format!(
-                    "{} · unavailable",
-                    pref.model.as_deref().unwrap_or_default()
+                &lang::fill(
+                    self.lang.strings().parts.model_choice_unavailable,
+                    &[("choice", pref.model.as_deref().unwrap_or_default())],
                 ),
                 true,
                 true,
             ));
         }
 
-        model_chips = model_chips.child(chip(&catalog.status, false, false).on_mouse_down(
-            MouseButton::Left,
-            cx.listener(move |ws, _: &MouseDownEvent, _window, cx| {
-                model_catalog::retry(harness, std::path::Path::new("."), None);
-                ws.watch_model_catalogs(cx);
-                cx.notify();
-            }),
-        ));
+        model_chips = model_chips.child(
+            chip(&catalog.status.text(self.lang), false, false).on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _window, cx| {
+                    model_catalog::retry(harness, std::path::Path::new("."), None);
+                    ws.watch_model_catalogs(cx);
+                    cx.notify();
+                }),
+            ),
+        );
         let mut effort_chips = pills();
         for effort in std::iter::once(None)
             .chain(catalog.efforts(pref.model.as_deref()).into_iter().map(Some))
@@ -10832,7 +10870,7 @@ impl Workspace {
             let selected = pref.effort == effort;
             effort_chips = effort_chips.child(
                 chip(
-                    effort.as_deref().unwrap_or("Agent default"),
+                    &model_catalog::effort_in(effort.as_deref(), self.lang),
                     selected,
                     selected && effort.is_some(),
                 )
@@ -10853,7 +10891,14 @@ impl Workspace {
             .as_ref()
             .filter(|effort| !catalog.efforts(pref.model.as_deref()).contains(effort))
         {
-            effort_chips = effort_chips.child(chip(&format!("{effort} · unavailable"), true, true));
+            effort_chips = effort_chips.child(chip(
+                &lang::fill(
+                    self.lang.strings().parts.model_choice_unavailable,
+                    &[("choice", &model_catalog::effort_in(Some(effort), self.lang))],
+                ),
+                true,
+                true,
+            ));
         }
 
         // ONE LINE UNTIL IT IS ASKED FOR. The title carries the whole of the
@@ -10881,9 +10926,15 @@ impl Workspace {
                             .text_size(sk.text_px(8.))
                             .text_color(th.complement.alpha(0.75))
                             .child(if open {
-                                sk.control("\u{25be}", "hide")
+                                sk.control(
+                                    "\u{25be}",
+                                    crate::lang::current().strings().parts.ctl_hide,
+                                )
                             } else {
-                                sk.control("\u{25b8}", "show")
+                                sk.control(
+                                    "\u{25b8}",
+                                    crate::lang::current().strings().parts.ctl_show,
+                                )
                             }),
                     )
                     .child(
@@ -11342,9 +11393,9 @@ impl Workspace {
                         .text_size(sk.text_px(8.))
                         .text_color(th.text.alpha(0.55))
                         .child(if history_open {
-                            sk.control("\u{25be}", "hide")
+                            sk.control("\u{25be}", crate::lang::current().strings().parts.ctl_hide)
                         } else {
-                            sk.control("\u{25b8}", "show")
+                            sk.control("\u{25b8}", crate::lang::current().strings().parts.ctl_show)
                         }),
                 )
                 .child(
@@ -12437,6 +12488,7 @@ impl Workspace {
                     // English for the notes report.
                     let named = who != "agent";
                     let unsaved_n = ev.unsaved;
+                    let pictures_n = ev.pictures;
                     Said::Done(Words::said(|l| {
                         let ui = l.strings().ui;
                         let (place, chars) = match landed {
@@ -12446,12 +12498,7 @@ impl Workspace {
                             pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
                         };
                         let prompt = lang::fill(place, &[("who", &who)]);
-                        // A send saves as it goes; this counts only what a
-                        // brief that cannot be saved into kept out of the file.
-                        let unsaved = match unsaved_n {
-                            0 => String::new(),
-                            n => l.count(&ui.doc_unsaved, n),
-                        };
+                        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
                         lang::fill(
                             ui.doc_landed_in,
                             &[
@@ -13315,11 +13362,10 @@ impl Workspace {
                     .flex_row()
                     .items_center()
                     .gap_2()
-                    .child(
-                        div()
-                            .text_size(sk.text_px(18.))
-                            .child(sk.control("\u{26a0}", "warning")),
-                    )
+                    .child(div().text_size(sk.text_px(18.)).child(sk.control(
+                        "\u{26a0}",
+                        crate::lang::current().strings().parts.ctl_warning,
+                    )))
                     .child(
                         div()
                             .text_size(sk.text_px(15.))
@@ -16522,7 +16568,10 @@ impl Workspace {
             && lp.model_id.is_some()
             && (!catalog.ready || catalog.model(lp.model_id.as_deref()).is_none())
         {
-            lp.error = Some(format!("Selected model unavailable · {}", catalog.status));
+            lp.error = Some(lang::fill(
+                self.lang.strings().parts.model_selected_unavailable,
+                &[("status", &catalog.status.text(self.lang))],
+            ));
             self.agent_launcher = Some(lp);
             cx.notify();
             return;
@@ -16533,9 +16582,7 @@ impl Workspace {
             .filter(|_| lp.harness != launcher::Harness::Local)
         {
             if !catalog.efforts(lp.model_id.as_deref()).contains(effort) {
-                lp.error = Some(
-                    "Selected effort unavailable; choose Agent default or a reported effort".into(),
-                );
+                lp.error = Some(self.lang.strings().parts.model_selected_effort.into());
                 self.agent_launcher = Some(lp);
                 cx.notify();
                 return;
@@ -18001,11 +18048,10 @@ impl Workspace {
                     .text_size(sk.text_px(13.))
                     // The panel's mark is a lock, not the bug again: what it
                     // promises first is what it will not take.
-                    .child(
-                        div()
-                            .text_size(sk.text_px(18.))
-                            .child(sk.control("\u{1f512}", "locked")),
-                    )
+                    .child(div().text_size(sk.text_px(18.)).child(sk.control(
+                        "\u{1f512}",
+                        crate::lang::current().strings().parts.ctl_locked,
+                    )))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18560,11 +18606,10 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(
-                        div()
-                            .text_size(sk.text_px(18.))
-                            .child(sk.control("\u{1f916}", "agents")),
-                    )
+                    .child(div().text_size(sk.text_px(18.)).child(sk.control(
+                        "\u{1f916}",
+                        crate::lang::current().strings().parts.ctl_agents,
+                    )))
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18818,7 +18863,10 @@ impl Workspace {
                         })
                         .text_color(th.accent)
                         .child(if is_current {
-                            sk.control("\u{2713}", "current")
+                            sk.control(
+                                "\u{2713}",
+                                crate::lang::current().strings().parts.ctl_current,
+                            )
                         } else {
                             ""
                         }),
@@ -19065,7 +19113,7 @@ impl Workspace {
                         sk.chip(id == lp.model_id)
                             .cursor_pointer()
                             .text_size(sk.text_px(11.))
-                            .child(model.label.clone())
+                            .child(model.label_in(self.lang))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -19083,9 +19131,9 @@ impl Workspace {
             .when(
                 lp.model_id.is_some() && catalog.model(lp.model_id.as_deref()).is_none(),
                 |row| {
-                    row.child(div().text_color(th.accent).child(format!(
-                        "{} · unavailable",
-                        lp.model_id.as_deref().unwrap_or_default()
+                    row.child(div().text_color(th.accent).child(lang::fill(
+                        self.lang.strings().parts.model_choice_unavailable,
+                        &[("choice", lp.model_id.as_deref().unwrap_or_default())],
                     )))
                 },
             )
@@ -19097,7 +19145,7 @@ impl Workspace {
                     } else {
                         th.complement
                     })
-                    .child(catalog.status.clone())
+                    .child(catalog.status.text(self.lang))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -19136,7 +19184,7 @@ impl Workspace {
                         sk.chip(effort == lp.effort)
                             .cursor_pointer()
                             .text_size(sk.text_px(11.))
-                            .child(effort.clone().unwrap_or_else(|| "Agent default".into()))
+                            .child(model_catalog::effort_in(effort.as_deref(), self.lang))
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -19154,11 +19202,10 @@ impl Workspace {
                     .as_ref()
                     .filter(|effort| !catalog.efforts(lp.model_id.as_deref()).contains(effort)),
                 |row, effort| {
-                    row.child(
-                        div()
-                            .text_color(th.accent)
-                            .child(format!("{effort} · unavailable")),
-                    )
+                    row.child(div().text_color(th.accent).child(lang::fill(
+                        self.lang.strings().parts.model_choice_unavailable,
+                        &[("choice", &model_catalog::effort_in(Some(effort), self.lang))],
+                    )))
                 },
             );
 
@@ -19593,7 +19640,10 @@ impl Workspace {
                         div()
                             .w(px(if sk.text_controls() { 42. } else { 16. }))
                             .flex_none()
-                            .child(sk.control("\u{2715}", "close")),
+                            .child(sk.control(
+                                "\u{2715}",
+                                crate::lang::current().strings().parts.ctl_close,
+                            )),
                     )
                     .child(div().flex_1().min_w(px(0.)).child(match &ruling_dir {
                         Some(d) => lang::fill(ui.logo_remove_dir, &[("dir", &tilde(d))]),
@@ -20657,9 +20707,9 @@ impl Workspace {
             .text_size(sk.text_px(11.))
             .text_color(if on { accent } else { text.alpha(0.7) })
             .child(if on {
-                sk.control("◉", "on")
+                sk.control("◉", crate::lang::current().strings().parts.ctl_on)
             } else {
-                sk.control("○", "off")
+                sk.control("○", crate::lang::current().strings().parts.ctl_off)
             })
             .child(self.lang.strings().ui.focus_inherit_btn)
             .on_mouse_down(
@@ -20917,6 +20967,29 @@ impl Workspace {
             }
             keylayer::Nav::Trail { back } => self.trail_step(back, cx),
         }
+    }
+
+    /// Switch document presentation without replacing the view or its notes.
+    fn toggle_doc_glow_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let glow = self.doc_glow_pane != Some(true);
+        self.doc_glow_pane = Some(glow);
+        let reader = self.focus_read.as_ref().and_then(|p| p.upgrade());
+        let pane = reader.clone().or_else(|| match &self.osd_menu {
+            Some(MenuScope::Pane(p)) => Some(p.clone()),
+            _ => self.focused_leaf(window, cx),
+        });
+        if let Some(pane) = pane {
+            let readable = pane.update(cx, |v, cx| v.set_float_to_read(!glow, cx));
+            if readable {
+                if glow && reader.as_ref() == Some(&pane) {
+                    self.close_focus_read(cx);
+                } else if !glow {
+                    self.open_focus_read(pane, window, cx);
+                }
+            }
+        }
+        self.save(cx);
+        cx.notify();
     }
 
     /// Alt+O. Parker, 2026-11-02: *"alt+o opens current -> alt + o while ANY
@@ -23792,7 +23865,9 @@ impl Workspace {
                         | theme::GradeKey::InactiveText
                         | theme::GradeKey::ActiveBrightness
                         | theme::GradeKey::InactiveBrightness
-                        | theme::GradeKey::InactiveBlur => {
+                        | theme::GradeKey::InactiveBlur
+                        | theme::GradeKey::ActiveOpacity
+                        | theme::GradeKey::InactiveOpacity => {
                             format!("{}%", (v * 100.).round() as i32)
                         }
                         theme::GradeKey::AfterglowMs
@@ -24619,11 +24694,11 @@ impl Workspace {
             }
             AgentBadge::Done => div()
                 .text_size(px(11. * s))
-                .child(sk.control("✅", "done"))
+                .child(sk.control("✅", crate::lang::current().strings().parts.ctl_done))
                 .into_any_element(),
             AgentBadge::Blocked => div()
                 .text_size(px(11. * s))
-                .child(sk.control("❌", "blocked"))
+                .child(sk.control("❌", crate::lang::current().strings().parts.ctl_blocked))
                 .into_any_element(),
         }
     }
@@ -24646,9 +24721,9 @@ impl Workspace {
                 .child(match dir {
                     BarDir::Down if sk.unboxed() => "−",
                     BarDir::Right if sk.unboxed() => "+",
-                    BarDir::Down => "fold",
-                    BarDir::Left => "TABS",
-                    BarDir::Right => "unfold",
+                    BarDir::Down => crate::lang::current().strings().parts.ctl_fold,
+                    BarDir::Left => crate::lang::current().strings().parts.ctl_tabs,
+                    BarDir::Right => crate::lang::current().strings().parts.ctl_unfold,
                 });
         }
         let step = (2.0 * s).max(1.5);
@@ -24742,8 +24817,8 @@ impl Workspace {
             .map(|d| {
                 if sk.text_controls() {
                     d.w(sk.px(70.)).child(match dir {
-                        SplitDir::Row => "split right",
-                        SplitDir::Col => "split down",
+                        SplitDir::Row => self.lang.strings().parts.ctl_split_right,
+                        SplitDir::Col => self.lang.strings().parts.ctl_split_down,
                     })
                 } else {
                     d.child(Self::split_glyph(dir, sk.ink.ink, s))
@@ -25603,7 +25678,10 @@ impl Workspace {
                 }
                 div()
                     .text_size(sk.text_px(10. * s))
-                    .child(SharedString::from(sk.control("📌", "pinned")))
+                    .child(SharedString::from(sk.control(
+                        "📌",
+                        crate::lang::current().strings().parts.ctl_pinned,
+                    )))
                     .into_any_element()
             })
         })
@@ -25619,7 +25697,7 @@ impl Workspace {
                     .text_size(sk.text_px(11. * s))
                     .text_color(hsla(0., 0., 0., 0.))
                     .group_hover(grp, move |st| st.text_color(th.faint))
-                    .child(sk.control("×", "close"))
+                    .child(sk.control("×", crate::lang::current().strings().parts.ctl_close))
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -26013,13 +26091,19 @@ impl Workspace {
                                         div()
                                             .text_size(sk.text_px(BIN_PT * 0.78 * s))
                                             .text_color(ember.alpha(flicker * open))
-                                            .child(sk.control("\u{1F525}", "pace")),
+                                            .child(sk.control(
+                                                "\u{1F525}",
+                                                crate::lang::current().strings().parts.ctl_pace,
+                                            )),
                                     )
                                     .child(
                                         div()
                                             .text_size(sk.text_px(BIN_PT * s))
                                             .text_color(bin_ink.alpha(bin_ink.a * open))
-                                            .child(sk.control("\u{1F5D1}", "delete")),
+                                            .child(sk.control(
+                                                "\u{1F5D1}",
+                                                crate::lang::current().strings().parts.ctl_delete,
+                                            )),
                                     ),
                             )
                             .child(
@@ -26604,7 +26688,10 @@ impl Workspace {
                     .when_some(pane::chrome_glyph_font('\u{f06a9}', th), |d, family| {
                         d.font_family(family)
                     })
-                    .child(sk.control("\u{f06a9}", "agents")),
+                    .child(sk.control(
+                        "\u{f06a9}",
+                        crate::lang::current().strings().parts.ctl_agents,
+                    )),
             );
         if sk.text_controls() && cells.iter().all(|(_, n)| *n == 0) {
             counter = counter.child("0");
@@ -27852,7 +27939,10 @@ impl Workspace {
                             .mt(px(1. * s))
                             .text_size(sk.text_px(8. * s))
                             .text_color(sk.ink.ink)
-                            .child(sk.control("\u{25cf}", "on")),
+                            .child(sk.control(
+                                "\u{25cf}",
+                                crate::lang::current().strings().parts.ctl_on,
+                            )),
                     )
                 }),
         )
@@ -28001,7 +28091,7 @@ impl Workspace {
                                     ui.rail_key_pin
                                 }),
                         )
-                        .child("esc"),
+                        .child("Esc"),
                 ),
         );
 
@@ -28839,7 +28929,7 @@ impl Workspace {
             // corner, beside SPINE, since that is then the only way in.
             .when(sk.unboxed(), |d| {
                 d.child(
-                    Self::bezel_btn_s(&sk, "ADD PROJECT", false, s)
+                    Self::bezel_btn_s(&sk, self.lang.strings().parts.ctl_add_project, false, s)
                         .id("spine-add-project")
                         .debug_selector(|| "spine-add-project".into())
                         .flex_none()
@@ -29087,7 +29177,7 @@ impl Workspace {
             .text_size(sk.text_px(12. * ts))
             .text_color(text.unwrap_or(if is_active { th.text } else { th.faint }))
             .cursor_pointer()
-            .child(sk.control("×", "close"))
+            .child(sk.control("×", crate::lang::current().strings().parts.ctl_close))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -29223,9 +29313,14 @@ impl Workspace {
                     div()
                         .text_size(sk.text_px(CHROME_NAME_PT * ts))
                         .child(if pinned > 1 {
-                            SharedString::from(format!("{}{pinned}", sk.control("📌", "pinned ")))
+                            SharedString::from(format!(
+                                "{} {pinned}",
+                                sk.control("📌", crate::lang::current().strings().parts.ctl_pinned)
+                            ))
                         } else {
-                            SharedString::from(sk.control("📌", "pinned"))
+                            SharedString::from(
+                                sk.control("📌", crate::lang::current().strings().parts.ctl_pinned),
+                            )
                         })
                         .into_any_element()
                 })
@@ -31775,14 +31870,18 @@ impl Render for Workspace {
         // strip and every overlay without a line of this function changing.
         let sk = skin::skin(cx, scale);
         let bezel = darken(th.surface, 0.55);
-        window.set_background_appearance(if sk.m.frost > 0. {
+        let tab = &self.tabs[self.active];
+        let mut leaves = vec![];
+        tab.root.leaves(&mut leaves);
+        // A pane the desktop shows through needs a surface with alpha in it.
+        let see_through = leaves
+            .iter()
+            .any(|l| l.read(cx).resolved_theme(cx).grade.see_through());
+        window.set_background_appearance(if sk.m.frost > 0. || see_through {
             gpui::WindowBackgroundAppearance::Blurred
         } else {
             gpui::WindowBackgroundAppearance::Opaque
         });
-        let tab = &self.tabs[self.active];
-        let mut leaves = vec![];
-        tab.root.leaves(&mut leaves);
         // Which pane holds the keyboard — passed down to `render_node`, which
         // draws the focus ring.
         //
@@ -31870,7 +31969,7 @@ impl Render for Workspace {
                         if sk.text_controls() {
                             d.text_size(sk.text_px(10. * scale))
                                 .text_color(sk.ink.ink_dim)
-                                .child("SPINE")
+                                .child(self.lang.strings().parts.ctl_spine)
                         } else {
                             d.child(Self::triangle(
                                 BarDir::Right,
@@ -32008,7 +32107,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(9. * scale))
                     .text_color(th.text)
-                    .child(sk.control("▭", "size")),
+                    .child(sk.control("▭", crate::lang::current().strings().parts.ctl_size)),
             )
             .child(
                 div()
@@ -32091,7 +32190,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(15. * scale))
                     .text_color(th.text)
-                    .child(sk.control("▭", "size")),
+                    .child(sk.control("▭", crate::lang::current().strings().parts.ctl_size)),
             );
 
         // What the mother bar actually shows: ▭ 110%, one click to the track.
@@ -32105,7 +32204,7 @@ impl Render for Workspace {
                 div()
                     .text_size(sk.text_px(11. * scale))
                     .text_color(th.text)
-                    .child(sk.control("\u{25ad}", "size")),
+                    .child(sk.control("\u{25ad}", crate::lang::current().strings().parts.ctl_size)),
             )
             .child(
                 div()
@@ -32259,7 +32358,7 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("🎨", "look"))
+            .child(sk.control("🎨", crate::lang::current().strings().parts.ctl_look))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32274,7 +32373,7 @@ impl Render for Workspace {
             .items_center()
             .map(|d| {
                 if sk.text_controls() {
-                    d.child("gauges")
+                    d.child(self.lang.strings().parts.ctl_gauges)
                 } else {
                     d.child(pane::eq_icon(th.accent, scale * 0.5))
                 }
@@ -32300,7 +32399,10 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{1f916}", "agents"))
+            .child(sk.control(
+                "\u{1f916}",
+                crate::lang::current().strings().parts.ctl_agents,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32325,7 +32427,10 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{1faa6}", "recover"))
+            .child(sk.control(
+                "\u{1faa6}",
+                crate::lang::current().strings().parts.ctl_recover,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32351,7 +32456,10 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{1f514}", "notices"))
+            .child(sk.control(
+                "\u{1f514}",
+                crate::lang::current().strings().parts.ctl_notices,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32380,7 +32488,10 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{1f41e}", "report"))
+            .child(sk.control(
+                "\u{1f41e}",
+                crate::lang::current().strings().parts.ctl_report,
+            ))
             .when(crashed, |d| {
                 d.child(
                     div()
@@ -32441,7 +32552,10 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{1f4dc}", "artifacts"))
+            .child(sk.control(
+                "\u{1f4dc}",
+                crate::lang::current().strings().parts.ctl_artifacts,
+            ))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32463,7 +32577,7 @@ impl Render for Workspace {
             } else {
                 CHROME_GLYPH * scale
             }))
-            .child(sk.control("\u{2026}", "more"))
+            .child(sk.control("\u{2026}", crate::lang::current().strings().parts.ctl_more))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -32670,16 +32784,21 @@ impl Render for Workspace {
                     // header (see `render_left_bar`), and this corner empties.
                     .when(sk.unboxed() && !self.left_bar, |d| {
                         d.child(
-                            Self::bezel_btn_s(&sk, "ADD PROJECT", false, scale)
-                                .id("minimal-add-project")
-                                .debug_selector(|| "minimal-add-project".into())
-                                .on_mouse_down(
-                                    MouseButton::Left,
-                                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                                        cx.stop_propagation();
-                                        ws.new_project_with_terminal(window, cx);
-                                    }),
-                                ),
+                            Self::bezel_btn_s(
+                                &sk,
+                                self.lang.strings().parts.ctl_add_project,
+                                false,
+                                scale,
+                            )
+                            .id("minimal-add-project")
+                            .debug_selector(|| "minimal-add-project".into())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    ws.new_project_with_terminal(window, cx);
+                                }),
+                            ),
                         )
                     })
                     .when(ui_mark, |d| {
@@ -32938,7 +33057,7 @@ impl Render for Workspace {
                     "chalk" => t.ui.pal_skin_chalk,
                     "ops" => t.ui.pal_skin_ops,
                     "clean" => t.ui.pal_skin_clean,
-                    "custom" if sk.text_controls() => "custom file",
+                    "custom" if sk.text_controls() => t.parts.ctl_custom_file,
                     "custom" => t.ui.pal_skin_custom,
                     "terminimalist" => "TERMINIMALIST",
                     other => other,
@@ -33383,7 +33502,7 @@ impl Render for Workspace {
                         let name = chip
                             .as_ref()
                             .map(|c| c.id.replace('-', " "))
-                            .unwrap_or_else(|| "custom".to_string());
+                            .unwrap_or_else(|| t.parts.ctl_custom.to_string());
                         sk.choice(
                             tile.w(px(150.))
                                 .h(px(28.))
@@ -34147,6 +34266,7 @@ impl Render for Workspace {
                             t.g_brightness,
                             grade.active_brightness_at_edge(),
                         ),
+                        (G::ActiveOpacity, t.g_opacity, grade.opacity_for_focus(true)),
                         (G::Text, t.g_text, grade.text),
                         (
                             G::ImageGlow,
@@ -34172,6 +34292,11 @@ impl Render for Workspace {
                             G::InactiveBrightness,
                             t.g_brightness,
                             grade.inactive_brightness_at_edge(),
+                        ),
+                        (
+                            G::InactiveOpacity,
+                            t.g_opacity,
+                            grade.opacity_for_focus(false),
                         ),
                         (G::InactiveBlur, t.g_blur, grade.inactive_blur_at_edge()),
                         (
@@ -34234,6 +34359,33 @@ impl Render for Workspace {
                         ),
                 );
                 if open {
+                    if controls
+                        .first()
+                        .is_some_and(|(key, _, _)| *key == G::DocBrightness)
+                    {
+                        let glow = self.doc_glow_pane == Some(true);
+                        let mode = if glow {
+                            t.g_doc_glow_pane
+                        } else {
+                            t.g_doc_reader
+                        };
+                        section = section.child(
+                            Self::bezel_btn(
+                                &sk,
+                                &format!("{} {mode}", if glow { "◉" } else { "◯" }),
+                                glow,
+                            )
+                            .id("osd-doc-mode")
+                            .debug_selector(|| "osd-doc-mode".to_string())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                    cx.stop_propagation();
+                                    ws.toggle_doc_glow_pane(w, cx);
+                                }),
+                            ),
+                        );
+                    }
                     for (key, name, value) in controls {
                         lingers_shown |= matches!(
                             key,
@@ -35626,7 +35778,15 @@ impl Render for Workspace {
                                                         .text_size(sk.text_px(9. * cs))
                                                         .font_weight(gpui::FontWeight::EXTRA_BOLD)
                                                         .text_color(hsla(0., 0.85, 0.62, 1.))
-                                                        .child(sk.control("\u{26a0}", "warning")),
+                                                        .child(
+                                                            sk.control(
+                                                                "\u{26a0}",
+                                                                crate::lang::current()
+                                                                    .strings()
+                                                                    .parts
+                                                                    .ctl_warning,
+                                                            ),
+                                                        ),
                                                 )
                                             },
                                         )
@@ -36683,7 +36843,10 @@ impl Render for Workspace {
                                                 .flex_none()
                                                 .text_size(sk.text_px(7. * gs))
                                                 .text_color(dead_glow.alpha(0.7))
-                                                .child(sk.control("\u{25cf}", "on")),
+                                                .child(sk.control(
+                                                    "\u{25cf}",
+                                                    crate::lang::current().strings().parts.ctl_on,
+                                                )),
                                         )
                                         .child(
                                             div()
@@ -36745,7 +36908,15 @@ impl Render for Workspace {
                                             .text_color(th.complement)
                                             .cursor_pointer()
                                             .hover(|s| s.bg(th.complement.alpha(0.16)))
-                                            .child(sk.control("\u{2b07} .cdx", "download .cdx"))
+                                            .child(
+                                                sk.control(
+                                                    "\u{2b07} .cdx",
+                                                    crate::lang::current()
+                                                        .strings()
+                                                        .parts
+                                                        .ctl_download_cdx,
+                                                ),
+                                            )
                                             .on_mouse_down(
                                                 MouseButton::Left,
                                                 cx.listener(
@@ -36773,7 +36944,7 @@ impl Render for Workspace {
                                         .child(format!(
                                             "{} {}",
                                             s.resurrect,
-                                            sk.control("\u{23ce}", "enter")
+                                            sk.control("\u{23ce}", "Enter")
                                         )),
                                 ),
                         )
@@ -36824,7 +36995,10 @@ impl Render for Workspace {
                         .items_center()
                         .gap_2()
                         .text_size(sk.text_px(13. * gs))
-                        .child(div().child(sk.control("\u{1faa6}", "recover")))
+                        .child(div().child(sk.control(
+                            "\u{1faa6}",
+                            crate::lang::current().strings().parts.ctl_recover,
+                        )))
                         .child(
                             div()
                                 .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -36859,7 +37033,13 @@ impl Render for Workspace {
                             .text_size(sk.text_px(9. * gs))
                             .text_color(th.complement)
                             .font_weight(gpui::FontWeight::BOLD)
-                            .child(format!("{} {msg}", sk.control("\u{2b07}", "download"))),
+                            .child(format!(
+                                "{} {msg}",
+                                sk.control(
+                                    "\u{2b07}",
+                                    crate::lang::current().strings().parts.ctl_download
+                                )
+                            )),
                     )
                 })
                 .child(chips)
@@ -37431,7 +37611,14 @@ impl Render for Workspace {
                     d.child(
                         entry(
                             "\u{2192}",
-                            &format!("{} {}", s.ch_split, sk.control("\u{2192}", "right")),
+                            &format!(
+                                "{} {}",
+                                s.ch_split,
+                                sk.control(
+                                    "\u{2192}",
+                                    crate::lang::current().strings().parts.ctl_right
+                                )
+                            ),
                             "more-split-right",
                         )
                         .on_mouse_down(
@@ -37446,7 +37633,14 @@ impl Render for Workspace {
                     .child(
                         entry(
                             "\u{2193}",
-                            &format!("{} {}", s.ch_split, sk.control("\u{2193}", "down")),
+                            &format!(
+                                "{} {}",
+                                s.ch_split,
+                                sk.control(
+                                    "\u{2193}",
+                                    crate::lang::current().strings().parts.ctl_down
+                                )
+                            ),
                             "more-split-down",
                         )
                         .on_mouse_down(
@@ -37702,7 +37896,7 @@ impl Render for Workspace {
                 .cursor_pointer()
                 .text_color(th.text)
                 .text_size(sk.text_px(14.))
-                .child(sk.control("✕", "close"))
+                .child(sk.control("✕", crate::lang::current().strings().parts.ctl_close))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -37853,7 +38047,7 @@ impl Render for Workspace {
                         .flex_none()
                         .text_size(sk.text_px(10.))
                         .text_color(th.text.alpha(0.5))
-                        .child(hs.footer),
+                        .child(helpsheet::footer(self.lang.strings())),
                 );
             // Through the builder, so the glass under the card is flat and the
             // wheel scrolls the sheet rather than the pane beneath it.
@@ -39312,7 +39506,6 @@ impl Render for Workspace {
                     .child(stage)
                     .child(bezel_bottom)
                     .children(menu_overlay)
-                    .children(osd_overlay)
                     .children(mcp_overlay)
                     .children(threshing_floor_overlay)
                     .children(dead_overlay)
@@ -39338,6 +39531,9 @@ impl Render for Workspace {
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
+                    // Document gauges must remain clickable while a brief is
+                    // read, including the switch back to the glow pane.
+                    .children(osd_overlay)
                     // except the artifact rail: Alt+O pressed while a document
                     // is read raises it, numbered, and a rail drawn under the
                     // reading frame would be raised out of sight
@@ -40015,6 +40211,77 @@ mod tests {
             shown.as_deref(),
             Some(std::path::Path::new(&newer)),
             "1: the focused pane's NEWEST artifact"
+        );
+
+        let reading = ws
+            .read_with(cx, |ws, cx| ws.focus_lent(cx))
+            .expect("reader is the default");
+        ws.update(cx, |ws, cx| {
+            ws.open_osd(MenuScope::Outer, None);
+            ws.osd_groups = vec![false, false, true];
+            cx.notify();
+        });
+        draw(cx);
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("document mode gauge");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "glow pane closes the fullscreen frame"
+        );
+        assert!(
+            mine.read_with(cx, |v, _| v.has_float()),
+            "the brief stays open"
+        );
+        assert!(!mine.read_with(cx, |v, _| v.float_to_read()));
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.build_state(cx).doc_glow_pane),
+            Some(true)
+        );
+
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("mode gauge stays up");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.focus_lent(cx)),
+            Some(reading),
+            "switching back reads the SAME document view"
+        );
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("mode gauge stays up");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        ws.update(cx, |ws, cx| {
+            ws.osd_menu = None;
+            cx.notify();
+        });
+        focus_mine(cx);
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(
+            !mine.read_with(cx, |v, _| v.has_float()),
+            "Escape closes the glow pane"
+        );
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert!(
+            mine.read_with(cx, |v, _| v.has_float()),
+            "Alt+O reopens in glow mode"
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "the saved mode is used by Alt+O"
+        );
+        cx.simulate_keystrokes("alt-r");
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_some()),
+            "explicit Alt+R can still enlarge a glow pane"
         );
 
         focus_mine(cx);
@@ -49436,6 +49703,22 @@ node = "Leaf"
             !back.focus_inherit,
             "missing key defaults to the flat reader"
         );
+    }
+
+    #[test]
+    fn document_mode_preserves_unset_and_both_saved_choices() {
+        assert_eq!(StateFile::default().doc_glow_pane, None);
+        let old: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
+        assert_eq!(old.doc_glow_pane, None);
+        for choice in [None, Some(false), Some(true)] {
+            let state = StateFile {
+                doc_glow_pane: choice,
+                ..Default::default()
+            };
+            let saved = toml::to_string(&state).unwrap();
+            let back: StateFile = toml::from_str(&saved).unwrap();
+            assert_eq!(back.doc_glow_pane, choice);
+        }
     }
 
     #[test]

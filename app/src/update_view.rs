@@ -619,12 +619,13 @@ impl Workspace {
             .when(u.choices.channel == Channel::Dev, |d| {
                 d.child(note(ui.upd_dev_band.into(), true))
             })
-            .child(fact(ui.upd_running, me.describe()))
-            .children(
-                u.install
-                    .as_ref()
-                    .map(|i| fact(ui.upd_installed_as, update::describe_install(i))),
-            )
+            .child(fact(ui.upd_running, me.describe_in(self.lang)))
+            .children(u.install.as_ref().map(|i| {
+                fact(
+                    ui.upd_installed_as,
+                    update::describe_install_in(i, self.lang),
+                )
+            }))
             .children(
                 u.record
                     .previous
@@ -643,7 +644,8 @@ impl Workspace {
         // that would pretend otherwise.
         if let Some(i) = u.install.as_ref().filter(|i| !i.can_install()) {
             panel = panel.child(note(
-                ui.upd_cannot.replace("{why}", &update::refusal(i)),
+                ui.upd_cannot
+                    .replace("{why}", &update::refusal_in(i, self.lang)),
                 false,
             ));
         }
@@ -674,8 +676,16 @@ impl Workspace {
         match &u.check {
             Some(Err(e)) => panel = panel.child(note(ui.upd_failed.replace("{why}", e), true)),
             Some(Ok(c)) => {
-                if let Some(none) = &c.none {
-                    panel = panel.child(note(none.clone(), false));
+                if c.none.is_some() {
+                    let p = self.lang.strings().parts;
+                    panel = panel.child(note(
+                        match c.channel {
+                            Channel::Stable => p.update_no_stable,
+                            Channel::Dev => p.update_no_dev,
+                        }
+                        .into(),
+                        false,
+                    ));
                 }
                 if let Some(o) = &c.offer {
                     let mut when = o
@@ -715,7 +725,7 @@ impl Workspace {
                             update::Relation::Older | update::Relation::Diverged
                         );
                     if o.is_update() || older {
-                        if let Some(why) = o.not_installable() {
+                        if let Some(why) = o.not_installable_in(self.lang) {
                             panel = panel
                                 .child(note(ui.upd_not_installable.replace("{why}", why), true));
                         } else if installable && u.installed.is_none() && u.prepared.is_none() {

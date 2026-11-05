@@ -1461,7 +1461,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(sk.control("○", "off"))
+                            .child(sk.control("○", crate::lang::current().strings().parts.ctl_off))
                             .cursor_crosshair()
                             .on_drag(rel_drag, |d, position, window, cx| {
                                 let tether = Some(window.mouse_position());
@@ -4641,11 +4641,7 @@ impl Workspace {
                             .gap_1(),
                         active,
                     )
-                    .child(
-                        div()
-                            .text_size(sk.text_px(20.))
-                            .child(sk.control("+", "add")),
-                    )
+                    .child(div().text_size(sk.text_px(20.)).child("+"))
                     .child(
                         div()
                             .text_size(sk.text_px(9.))
@@ -4715,9 +4711,15 @@ impl Workspace {
             target_rail = target_rail.child(target_strip);
         }
         if !locked {
+            let (add, add_size) = add_target_face(
+                sk.text_controls(),
+                targets.is_empty(),
+                ui.floor_rel_empty_target,
+            );
             target_rail = target_rail.child(
-                Self::bezel_btn(sk, "+", false)
-                    .text_size(sk.text_px(20.))
+                sk.bezel(false, 1.0)
+                    .child(add)
+                    .text_size(sk.text_px(add_size))
                     .flex()
                     .items_center()
                     .justify_center()
@@ -4919,9 +4921,9 @@ impl Workspace {
                 .gap_3()
                 .min_w(px(0.))
                 .child(actor_slot)
-                .child(div().pt(px(39.)).child(sk.control("→", "right")))
+                .child(div().pt(px(39.)).child("→"))
                 .child(verb_slot)
-                .child(div().pt(px(39.)).child(sk.control("→", "right")))
+                .child(div().pt(px(39.)).child("→"))
                 .child(target_slot),
         )
         .child(footer)
@@ -6987,6 +6989,18 @@ fn wire_route(
         let x1 = if left_to_right { tx } else { tx + sw };
         let (y0, y1) = (fy + sh / 2., ty + sh / 2.);
         (vec![(x0, y0), (x1, y1)], ((x0 + x1) / 2., (y0 + y1) / 2.))
+    }
+}
+
+/// What the add-target button says, and at what size. A skin of words reads the
+/// empty row as a sentence, *+ Actor → Choose verb → Choose target*; the button
+/// that adds another stays a `+`, as *+ New org* does, because no word in nine
+/// languages fits its 36 pixels. The glyph skins keep their large `+`.
+fn add_target_face(words: bool, empty: bool, choose: &'static str) -> (&'static str, f32) {
+    if words && empty {
+        (choose, 10.)
+    } else {
+        ("+", 20.)
     }
 }
 
@@ -11224,6 +11238,18 @@ mod tests {
             };
             assert!((length(&there.points) - length(&back.points)).abs() < 0.01);
         }
+    }
+
+    /// A skin of words asks for the target in words, and only while there is none.
+    #[test]
+    fn the_add_target_button_reads_as_part_of_the_sentence() {
+        assert_eq!(
+            add_target_face(true, true, "Choose target").0,
+            "Choose target"
+        );
+        assert_eq!(add_target_face(true, false, "Choose target").0, "+");
+        assert_eq!(add_target_face(false, true, "Choose target"), ("+", 20.));
+        assert_eq!(add_target_face(false, false, "Choose target"), ("+", 20.));
     }
 
     /// A one-way line keeps its own route and its label on the line.

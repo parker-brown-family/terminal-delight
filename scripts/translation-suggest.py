@@ -26,13 +26,16 @@ warnings onto the pull request's changed lines and a how-to into the run
 summary; anywhere else it prints the same list. docs/TRANSLATING.md is the how.
 """
 
+import argparse
 import os
 import re
 import subprocess
 import sys
+from pathlib import Path
+import json
 
 UI_CALL = re.compile(
-    r"\.child\(|tooltip|Tooltip|palette_help|\.label\(|label\(|\.title\(|\.placeholder\(|SharedString::from\("
+    r"\.child\(|tooltip|Tooltip|palette_help|\.label\(|label\(|\.title\(|\.placeholder\(|\.control\(|\.control_text\(|\bbezel_btn(?:_s)?\(|\bstatus:\s*\""
 )
 # A label-shaped match arm: `=> "ON PACE",` or `=> "Light screen; no glow.",`
 ARM = re.compile(r'=>\s*"([^"]*)"')
@@ -42,7 +45,7 @@ NOT_DRAWN = re.compile(
     r"log::|tracing::|eprintln!|println!|panic!|unreachable!|expect\(|assert|anyhow!|bail!|"
     r"env::var|Command::new|\.arg\(|serde|#\[|json!|write!|writeln!|debug!|info!|warn!|error!"
 )
-WORDS = re.compile(r"[A-Za-z]{3,}")
+WORDS = re.compile(r"[A-Za-z]{2,}")
 TABLES = ("app/src/lang.rs", "app/src/lang/")  # the pack itself
 
 
@@ -69,26 +72,101 @@ def drawn_words(lit):
 
 
 def test_spans(path, ref):
-    """The line ranges of the file's `#[cfg(test)] mod … {` blocks in `ref`. A
-    `#[cfg(test)]` on a single function is not a module and starts nothing."""
-    lines = git("show", f"{ref}:{path}").splitlines()
+    """The line ranges of test-only items at the selected revision."""
+    source = git("show", f"{ref}:{path}")
+    return test_spans_source(source)
+
+
+def code_mask(source):
+    """Keep source offsets while hiding comments, strings and character literals.
+
+    Braces inside a raw test fixture must not end its containing function.
+    """
+    token = re.compile(r'//[^\n]*|/\*[\s\S]*?\*/|r(\#*)"[\s\S]*?"\1|"(?:[^"\\]|\\[\s\S])*"|\'(?:[^\'\\\n]|\\.)\'')
+    return token.sub(lambda m: re.sub(r'[^\n]', ' ', m[0]), source)
+
+
+def test_spans_source(source):
+    """Test modules AND standalone test functions, including gpui tests."""
+    mask = code_mask(source)
     spans = []
-    for i, line in enumerate(lines):
-        if line.strip() != "#[cfg(test)]" or i + 1 >= len(lines):
+    for annotation in re.finditer(r'#\[(?:cfg\(test\)|(?:gpui::)?test)\]', mask):
+        opening = mask.find('{', annotation.end())
+        semicolon = mask.find(';', annotation.end())
+        if opening < 0 or (0 <= semicolon < opening):
             continue
-        nxt = lines[i + 1]
-        if not re.match(r"\s*(pub(\([^)]*\))? )?mod \w+ \{", nxt):
-            continue
-        indent = nxt[: len(nxt) - len(nxt.lstrip())]
-        end = next((j for j in range(i + 2, len(lines)) if lines[j] == indent + "}"), len(lines) - 1)
-        spans.append((i + 1, end + 1))
+        depth = 1
+        end = opening + 1
+        while end < len(mask) and depth:
+            depth += (mask[end] == '{') - (mask[end] == '}')
+            end += 1
+        spans.append((source.count('\n', 0, annotation.start()) + 1, source.count('\n', 0, end) + 1))
     return spans
 
 
+def drawn_literals(line):
+    # An id is not a caption, even when format! builds it over several calls.
+    drawn = re.sub(r'\.id\((?:[^()"]|"(?:[^"\\]|\\.)*"|\([^()]*\))*\)', '', line)
+    # Placeholder names passed to fill are data, not UI words.
+    drawn = re.sub(r'\(\s*"[a-z_]+"\s*,\s*&', '(&', drawn)
+    hits = []
+    if UI_CALL.search(drawn):
+        if '.control(' in drawn:
+            controls = re.findall(r'\.control\(\s*"(?:[^"\\]|\\.)*"\s*,\s*"((?:[^"\\]|\\.)*)"', drawn)
+            hits.extend(lit for lit in controls if drawn_words(lit))
+            drawn = re.sub(r'\.control\([^\n]*?\)', '', drawn)
+        hits.extend(lit for lit in LITERAL.findall(drawn) if drawn_words(lit))
+    for arm in ARM.findall(drawn):
+        if drawn_words(arm) and not arm.startswith('(') and (arm.isupper() or ' ' in arm) and arm not in hits:
+            hits.append(arm)
+    return list(dict.fromkeys(hits))
+
+
+def continued_literals(source):
+    """Locate text-control words and statuses split across lines by rustfmt."""
+    quoted = r'"((?:[^"\\]|\\.)*)"'
+    hits = {}
+    for pattern, group in [(r'\.control\(\s*' + quoted + r'\s*,\s*' + quoted, 2),
+                           (r'\bstatus\s*:\s*' + quoted, 1),
+                           (r'\.control_text\(\s*' + quoted, 1),
+                           (r'\bbezel_btn(?:_s)?\(\s*[^,]+,\s*' + quoted, 1)]:
+        for match in re.finditer(pattern, source):
+            literal = match[group]
+            if drawn_words(literal):
+                line = source.count('\n', 0, match.start(group)) + 1
+                hits.setdefault(line, []).append(literal)
+    return hits
+
+
 def main():
-    base = sys.argv[1] if len(sys.argv) > 1 else "origin/main"
-    if len(sys.argv) > 2:
-        head = sys.argv[2]
+    parser = argparse.ArgumentParser(description=__doc__)
+    parser.add_argument('base', nargs='?', default='origin/main')
+    parser.add_argument('head', nargs='?')
+    parser.add_argument('--all', action='store_true', help='audit every tracked Rust source in the working tree')
+    parser.add_argument('--json', action='store_true', help='emit candidate file/line/literal records')
+    args = parser.parse_args()
+    if args.all:
+        found = []
+        for path in git('ls-files', 'app/src/*.rs', 'app/src/**/*.rs').splitlines():
+            if path.startswith(TABLES):
+                continue
+            source = Path(path).read_text()
+            tests = test_spans_source(source)
+            continued = continued_literals(source)
+            for n, line in enumerate(source.splitlines(), 1):
+                if line.lstrip().startswith(('//', '*')) or NOT_DRAWN.search(line) or any(a <= n <= b for a,b in tests):
+                    continue
+                for lit in dict.fromkeys(drawn_literals(line) + continued.get(n, [])):
+                    found.append(dict(file=path, line=n, literal=lit))
+        if args.json:
+            print(json.dumps(found, ensure_ascii=False, indent=2))
+        else:
+            for hit in found:
+                print(f"{hit['file']}:{hit['line']}: {hit['literal']}")
+        return 0
+    base = args.base
+    if args.head:
+        head = args.head
     else:
         merged = subprocess.run(["git", "merge-tree", "--write-tree", base, "HEAD"], capture_output=True, text=True)
         head = merged.stdout.split()[0] if merged.returncode == 0 and merged.stdout else "HEAD"
@@ -114,11 +192,12 @@ def main():
 
     # Added lines, per file, with their new line numbers.
     diff = git("diff", "-U0", *rng_args, "--", "app/src")
-    path, new_line, tests = None, 0, []
+    path, new_line, tests, continued = None, 0, [], {}
     for raw in diff.splitlines():
         if raw.startswith("+++ "):
             path = raw[6:] if raw.startswith("+++ b/") else None
             tests = test_spans(path, head) if path else []
+            continued = continued_literals(git('show', f'{head}:{path}')) if path else {}
             continue
         m = re.match(r"@@ -\S+ \+(\d+)", raw)
         if m:
@@ -140,14 +219,7 @@ def main():
             continue
         if NOT_DRAWN.search(line):
             continue
-        hits = []
-        if UI_CALL.search(line):
-            drawn = re.sub(r'\.id\("[^"]*"\)', "", line)
-            hits = [lit for lit in LITERAL.findall(drawn) if drawn_words(lit)]
-        for arm in ARM.findall(line):
-            if drawn_words(arm) and not arm.startswith("(") and (arm.isupper() or " " in arm) and arm not in hits:
-                hits.append(arm)
-        for lit in hits:
+        for lit in dict.fromkeys(drawn_literals(line) + continued.get(here, [])):
             found.append((path, here, f'On-screen English "{lit}": draw it from the language pack '
                           "(a field in lang/chrome.rs for main.rs, lang/parts.rs for other modules) "
                           "so it reads in every language."))

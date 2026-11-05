@@ -223,6 +223,11 @@ async function appKeys() {
   /* Since 0.5.0 the sheet is data: `helpsheet::shortcuts` lists its sections in
      reading order, and `helpsheet::columns` cuts them into two halves at the
      point that leaves the heights closest. Read the list, and cut it the same way. */
+  /* the parts strings (`s.parts.*`), which the translated rows use */
+  const parts = await readFile(join(ROOT, 'app', 'src', 'lang', 'parts.rs'), 'utf8');
+  const partsBlock = parts.match(/pub const EN: Parts = Parts \{([\s\S]*?)\n\};/);
+  if (!partsBlock) { fail(where, 'app/src/lang/parts.rs has no EN strings block'); return []; }
+  for (const m of partsBlock[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[`parts.${m[1]}`] = unescape(m[2]);
   const sheet = await readFile(join(ROOT, 'app', 'src', 'helpsheet.rs'), 'utf8');
   const start = sheet.indexOf('pub fn shortcuts('), end = sheet.indexOf('pub fn features(', start);
   if (start < 0 || end < 0) { fail(where, 'app/src/helpsheet.rs has no shortcuts() before features(); update appKeys()'); return []; }
@@ -244,7 +249,7 @@ async function appKeys() {
     if (cur.trim()) out.push(cur.trim());
     return { out, close: i };
   };
-  const ref = (e) => { const m = e.match(/^([sh])\.((?:ui\.)?\w+)$/); return m && string(m[1] === 'h' ? `h.${m[2]}` : m[2]); };
+  const ref = (e) => { const m = e.match(/^([sh])\.((?:ui\.|parts\.)?\w+)$/); return m && string(m[1] === 'h' ? `h.${m[2]}` : m[2]); };
   const label = (expr) => {
     let m;
     if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return unescape(m[1]);

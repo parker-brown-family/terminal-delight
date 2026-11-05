@@ -625,6 +625,25 @@ pub struct Sending {
     pub map: String,
     /// Edits whose automatic write failed; sending does not retry that write.
     pub unsaved: usize,
+    /// Pictures the map lists, or `None` while that is not known.
+    pub pictures: Option<usize>,
+}
+
+/// What the bar adds to "in the agent's prompt, not sent": the pictures that
+/// went, because an agent's prompt folds a long paste into one line and this
+/// is where a person sees them go, and the edits a failed write kept out of
+/// the file. Pictures not known are not claimed.
+pub fn landed_counts(l: crate::lang::Lang, unsaved: usize, pictures: Option<usize>) -> String {
+    let ui = l.strings().ui;
+    let pictures = match pictures {
+        None | Some(0) => String::new(),
+        Some(n) => l.count(&ui.doc_pictures, n),
+    };
+    let unsaved = match unsaved {
+        0 => String::new(),
+        n => l.count(&ui.doc_unsaved, n),
+    };
+    format!("{pictures}{unsaved}")
 }
 
 fn rect_css(x: f32, y: f32, w: f32, h: f32) -> RectCss {
@@ -957,6 +976,15 @@ impl NotesLayer {
     /// Each anchor's pictures as the map lists them: the label and the full
     /// path, and a picture whose file is not on this disk says so rather than
     /// sending an agent to open nothing.
+    ///
+    /// The path is in brackets because a bare one does not reach the agent.
+    /// Claude Code cuts a paste at every space before a `/` and at every line
+    /// break, and any piece ending in `.png`, `.jpg`, `.jpeg`, `.gif` or
+    /// `.webp` is lifted out as an attachment. Measured on 2.1.296: two
+    /// pictures arrived as `[Image #1] [Image #2]` above the map, each
+    /// `[doc-image #n]` left with no path, nothing to say which picture was on
+    /// which element, and every note holding a path cut in two. In brackets no
+    /// piece ends in a picture's extension, so the map arrives as written.
     fn picture_lines(&self) -> PictureLines {
         let Pictures::Kept { folder, list } = &self.pictures else {
             return PictureLines::new();
@@ -974,7 +1002,7 @@ impl NotesLayer {
                         } else {
                             " (not on this machine)"
                         };
-                        format!("{} {}{gone}", img.label(), path.display())
+                        format!("{} ({}){gone}", img.label(), path.display())
                     })
                     .collect();
                 (nid.clone(), lines)
@@ -1155,25 +1183,31 @@ impl NotesLayer {
     pub fn map(&self, anchors: &[Anchor]) -> Option<String> {
         let notes = self.notes()?;
         let pictures = self.picture_lines();
-        if let Keeping::Store(doc) = &self.keeping {
+        let mut map = if let Keeping::Store(doc) = &self.keeping {
             let lines: Vec<(&str, &str, Option<u32>)> = anchors
                 .iter()
                 .map(|a| (a.nid.as_str(), a.title.as_str(), a.line))
                 .collect();
-            return Some(super::md_notes::build_map(doc, notes, &lines, &pictures));
+            super::md_notes::build_map(doc, notes, &lines, &pictures)
+        } else {
+            let empty = ConcurMap::default();
+            let pairs: Vec<(&str, &str)> = anchors
+                .iter()
+                .map(|a| (a.nid.as_str(), a.title.as_str()))
+                .collect();
+            build_map_with(
+                &self.label,
+                notes,
+                self.concurs().unwrap_or(&empty),
+                &pairs,
+                &pictures,
+            )
+        };
+        // A list that cannot be read is not a document with no pictures.
+        if let Pictures::Unreadable(why) = &self.pictures {
+            map.push_str(&format!("\nPictures not listed here: {}\n", why.english()));
         }
-        let empty = ConcurMap::default();
-        let pairs: Vec<(&str, &str)> = anchors
-            .iter()
-            .map(|a| (a.nid.as_str(), a.title.as_str()))
-            .collect();
-        Some(build_map_with(
-            &self.label,
-            notes,
-            self.concurs().unwrap_or(&empty),
-            &pairs,
-            &pictures,
-        ))
+        Some(map)
     }
 
     /// How many pictures are pasted onto this document's elements, or
@@ -1268,6 +1302,7 @@ impl NotesLayer {
         Some(Sending {
             map: self.map(anchors)?,
             unsaved: self.unsaved(),
+            pictures: self.picture_count(),
         })
     }
 
@@ -2079,7 +2114,8 @@ impl NotesLayer {
                         (
                             th.surface,
                             th.text.alpha(0.8),
-                            sk.control("💬", "add").into(),
+                            sk.control("💬", crate::lang::current().strings().parts.ctl_add)
+                                .into(),
                         )
                     };
                     at_rect(div(), *at)
@@ -3318,7 +3354,7 @@ mod tests {
         assert!(map.contains(notes::PICTURES_LEGEND), "{map}");
         assert!(
             map.contains(&format!(
-                "[b] b title\n  · [doc-image #1] {}\n",
+                "[b] b title\n  · [doc-image #1] ({})\n",
                 file.display()
             )),
             "an element with only a picture still gets its line: {map}"
@@ -3332,6 +3368,111 @@ mod tests {
         );
         assert!(l.send(&anchors).is_some(), "a picture is something to send");
         let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The pieces of a paste Claude Code lifts out as attachments, by the rule
+    /// measured on 2.1.296: it cuts at every space before a `/` and at every
+    /// line break, and takes any piece ending in a picture's extension. A
+    /// lifted path leaves the map, and the picture leaves its element.
+    fn lifted_from_a_paste(map: &str) -> Vec<String> {
+        map.split('\n')
+            .flat_map(|line| line.split(" /"))
+            .map(|piece| piece.trim().to_lowercase())
+            .filter(|piece| {
+                [".png", ".jpg", ".jpeg", ".gif", ".webp"]
+                    .iter()
+                    .any(|ext| piece.ends_with(ext))
+            })
+            .collect()
+    }
+
+    /// Every picture keeps its path on its own element through an agent's
+    /// paste, whatever its format, and one whose file went says so too.
+    #[test]
+    fn a_pictures_path_stays_on_its_element_through_an_agents_paste() {
+        assert_eq!(
+            lifted_from_a_paste("  · [doc-image #1] /s/doc-image-1.png").len(),
+            1,
+            "the rule finds the line as it used to be written"
+        );
+        let root = std::env::temp_dir().join(format!(
+            "td-notes-ui-paste-{}-{}",
+            std::process::id(),
+            SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap()
+                .as_nanos()
+        ));
+        let doc = Path::new("/r/b.html");
+        let folder = doc_images::folder(&root, doc);
+        let r = |y| Some(rect_css(0.0, y, 700.0, 100.0));
+        let anchors = vec![anchor("a", r(0.0), false), anchor("b", r(200.0), false)];
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        l.pictures_read(folder.clone(), doc_images::read(&folder, doc));
+        for (nid, bytes, ext) in [
+            ("a", &b"one"[..], "png"),
+            ("b", b"two", "jpeg"),
+            ("b", b"three", "webp"),
+        ] {
+            let kept = doc_images::attach(&folder, doc, nid, bytes, ext, "2026-11-04 22:40")
+                .map(|(list, one)| (list, vec![one]));
+            l.attached(kept);
+        }
+        std::fs::remove_file(folder.join("doc-image-3.webp")).unwrap();
+        l.pictures_read(folder.clone(), doc_images::read(&folder, doc));
+        let map = l.map(&anchors).expect("a map");
+        assert_eq!(lifted_from_a_paste(&map), Vec::<String>::new(), "{map}");
+        let one = folder.join("doc-image-1.png");
+        let two = folder.join("doc-image-2.jpeg");
+        let three = folder.join("doc-image-3.webp");
+        assert!(
+            map.contains(&format!(
+                "[a] a title\n  · [doc-image #1] ({})\n",
+                one.display()
+            )),
+            "{map}"
+        );
+        assert!(
+            map.contains(&format!(
+                "[b] b title\n  · [doc-image #2] ({})\n  · [doc-image #3] ({}) (not on this machine)\n",
+                two.display(),
+                three.display()
+            )),
+            "{map}"
+        );
+        assert_eq!(l.send(&anchors).expect("a send").pictures, Some(3));
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// The bar counts the pictures that went, in the reader's language, and
+    /// says nothing of pictures it could not count.
+    #[test]
+    fn the_bar_counts_the_pictures_a_send_carried() {
+        use crate::lang::Lang;
+        assert_eq!(landed_counts(Lang::En, 0, None), "");
+        assert_eq!(landed_counts(Lang::En, 0, Some(0)), "");
+        assert_eq!(landed_counts(Lang::En, 0, Some(1)), " · 1 picture");
+        assert_eq!(landed_counts(Lang::De, 0, Some(2)), " · 2 Bilder");
+        assert_eq!(
+            landed_counts(Lang::En, 1, Some(2)),
+            " · 2 pictures · it includes 1 edit not saved into the file"
+        );
+    }
+
+    /// A list that cannot be read is not a document with no pictures, so the
+    /// map says so, and a send does not claim a count nobody read.
+    #[test]
+    fn a_list_of_pictures_that_cannot_be_read_is_said_in_the_map() {
+        let r = |y| Some(rect_css(0.0, y, 700.0, 100.0));
+        let anchors = vec![anchor("a", r(0.0), false)];
+        let mut l = layer(r#"{"a":[{"text":"hi"}]}"#, "{}", ConcurSupport::Supported);
+        l.pictures_read("/state/pictures/b".into(), Err(Words::as_is("broken list")));
+        let map = l.map(&anchors).expect("a map");
+        assert!(
+            map.ends_with("\nPictures not listed here: broken list\n"),
+            "{map}"
+        );
+        assert_eq!(l.send(&anchors).expect("a note to send").pictures, None);
     }
 
     /// What is on the clipboard, sorted: text is words; copied files are their

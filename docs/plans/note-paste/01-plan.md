@@ -13,8 +13,10 @@ A note box is open on a brief or a Markdown file, in the floating square or on t
 ```
 [fig-09-inside-and-outside] 09 · Inside and outside the plan
   · the fence needs a third column
-  · [doc-image #1] /home/parker/.local/state/terminal-delight/notes/pictures/2026-09-29-pasting-into-notes-html-1fa785be139dad14/doc-image-1.png
+  · [doc-image #1] (/home/parker/.local/state/terminal-delight/notes/pictures/2026-09-29-pasting-into-notes-html-1fa785be139dad14/doc-image-1.png)
 ```
+
+Amended 2026-11-04: the path is in brackets, or it does not reach the agent. See the status page.
 
 ## Today
 

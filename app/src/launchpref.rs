@@ -103,6 +103,7 @@ mod tests {
         };
         ids.into_iter()
             .map(|id| crate::model_catalog::Model {
+                caption: crate::model_catalog::Caption::Name,
                 id: Some(id.into()),
                 label: id.into(),
                 resolved_id: None,

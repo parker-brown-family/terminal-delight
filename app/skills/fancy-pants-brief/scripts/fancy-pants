@@ -2,15 +2,22 @@
 """fancy-pants — every HTML page a person reads, in glass over an Omarchy wallpaper.
 
     fancy-pants head [--theme T] [--image P] [--out F]    the <head> blocks a page starts with
-    fancy-pants new PAGE --title "…" [--eyebrow "…"]      a starter page: masthead, section rail, one pane
+    fancy-pants new PAGE --title "…" [--purpose P]        a starter brief: PAGE.src.html to write, PAGE built from it
     fancy-pants dress PAGE [--out F]                       put the look onto a page built without it
-    fancy-pants check PAGE… [--no-render]                  fail a page that is light, flat, or needs the network
+    fancy-pants check PAGE… [--no-render]                  fail a page that is light, flat, read-only, or needs the network
 
 The look is decision-brief's, read from the sibling directory rather than copied:
 assets/base.css (the glass, the gel buttons, the components) and scripts/brief-wall (a
 random Omarchy theme and one of its wallpapers, baked in, a light theme turned dark). The
 only thing this directory adds is assets/sections.js, which fills the rail of gel buttons
 that jumps between a page's parts.
+
+No page a person reads is read-only. Parker, 2026-11-02, on a Gate 1 page this script's
+`new` had made: "ALL BRIEFS MUST HAVE COMMENTABLE SECIONTS AND THE COPY MAP | ONE-CLICK BACK
+TO AGENT PROMPT (TD functionality) --- READ ONLY BRIEFS ARE JUST TRASH!!!!" So `new` hands the
+page to the briefing skill (brief.py new + html), which gives every section and figure a note,
+the copy map and Terminal Delight's send-back, and `check` fails a page without them.
+`brief.py adopt PAGE` converts a page built some other way.
 
 `check` is the gate. It reads the page's own CSS, apart from the look's blocks, and fails it
 when the look is missing, when there is no wallpaper, when the page paints an opaque ground
@@ -27,9 +34,11 @@ LOOK = HERE.parent / 'decision-brief'
 BASE_CSS = LOOK / 'assets' / 'base.css'
 BRIEF_WALL = LOOK / 'scripts' / 'brief-wall'
 SECTIONS_JS = HERE / 'assets' / 'sections.js'
+BRIEF_PY = HERE.parent / 'briefing' / 'scripts' / 'brief.py'
 
 BASE_MARK = 'decision-brief — glass over an Omarchy wallpaper'
 NOTES_MARK = 'decision-brief — reader notes'
+NOTES_ENGINE = NOTES_MARK + '.'   # notes.js's own header; notes.css's reads "reader notes, styling"
 SECTIONS_MARK = 'fancy-pants-brief — the rail of gel buttons'
 
 # The theme's colour roles. brief-wall writes them; a page that writes them too has
@@ -82,41 +91,36 @@ def cmd_head(a):
 
 
 def cmd_new(a):
+    """A brief, through the briefing skill: the source to write and the commentable page built from it."""
     page = Path(a.page)
-    if page.exists() and not a.force:
-        sys.exit(f'fancy-pants: {page} exists; --force replaces it')
-    meta, look = head_blocks(a.theme, a.image)
-    t, eyebrow = html.escape(a.title), html.escape(a.eyebrow or '')
-    page.write_text(f'''<!doctype html>
-<html lang="en"><head>
-{meta}<title>{t}</title>
-{look}<style>
-/* This page's own CSS. Build what the material needs on top of base.css; never paint
-   body or main, and never redefine --bg, --fg, --acc or the other theme roles. */
-</style>
-</head>
-<body>
-<header class="top"><div class="wrap">
-  <div class="eyebrow">{eyebrow}</div>
-  <h1>{t}</h1>
-  <p class="lede"></p>
-  <nav class="sections"></nav>
-</div></header>
-<main class="wrap">
-  <div class="glass"><span class="h">Where it stands</span>
-    <p></p>
-  </div>
-
-  <section class="pane">
-    <h2><span class="n">01</span></h2>
-    <p></p>
-  </section>
-
-  <footer><p></p></footer>
-</main>
-{sections_script()}</body></html>
-''')
-    print(f'fancy-pants: {page} — fill it in, then: fancy-pants check {page}', file=sys.stderr)
+    if page.name.endswith('.src.html') or page.suffix != '.html':
+        sys.exit('fancy-pants: name the page to build, PAGE.html; its source is written beside it as PAGE.src.html')
+    if not BRIEF_PY.is_file():
+        sys.exit(f'fancy-pants: new builds through the briefing skill, which is not at {BRIEF_PY}. '
+                 'Install briefing beside fancy-pants-brief: a page with no notes is read-only, and check fails it')
+    source = page.with_name(page.stem + '.src.html')
+    if (page.exists() or source.exists()) and not a.force:
+        sys.exit(f'fancy-pants: {page if page.exists() else source} exists; --force replaces it '
+                 f'(a page someone may have commented on: rebuild it from its source with brief.py html instead)')
+    for f in (page, source):
+        if a.force and f.exists():
+            f.unlink()
+    ident = a.id or re.sub(r'[^a-z0-9]+', '-', page.stem.lower()).strip('-')
+    run = lambda *args: subprocess.run([sys.executable, str(BRIEF_PY), *args], capture_output=True, text=True)
+    made = run('new', str(source), '--id', ident, '--purpose', a.purpose, '--title', a.title)
+    if made.returncode:
+        sys.exit('fancy-pants: ' + (made.stderr.strip() or made.stdout.strip()))
+    if a.eyebrow:
+        text = source.read_text()
+        text = re.sub(r'(<div class="eyebrow">)[^<]*(</div>)', lambda m: m[1] + html.escape(a.eyebrow) + m[2], text, count=1)
+        source.write_text(text)
+    built = run('html', str(source), str(page))
+    if built.returncode:
+        sys.exit('fancy-pants: ' + (built.stderr.strip() or built.stdout.strip()))
+    print(f'fancy-pants: write {source} (replace every TODO(brief)), then rebuild and check it:\n'
+          f'  python3 {BRIEF_PY} html {source} {page}\n'
+          f'  python3 {BRIEF_PY} check {page}\n'
+          f'  python3 {Path(__file__).resolve()} check {page}', file=sys.stderr)
 
 
 def cmd_dress(a):
@@ -199,8 +203,42 @@ def light(value):
     return (0.2126 * r + 0.7152 * g + 0.0722 * b) / 255 > 0.6
 
 
+READ_ONLY = re.compile(r'<meta\b[^>]*name=["\']?fancy-pants-read-only["\']?[^>]*content=["\']([^"\']*)', re.I)
+ANCHOR = re.compile(r'<(h2|figure)\b([^>]*)>', re.I)
+# brief.py narrows the targets to the anchors. Everywhere else notes.js finds the h2s and figures itself.
+ANCHORED_TARGETS = re.compile(r'NOTES_TARGETS\s*=\s*\[\s*\[\s*[\'"]\[data-brief-anchor\]')
+
+
+def notes_check(doc):
+    """A page a person reads takes notes: the notes engine, its report-notes island, and a target on every part.
+
+    Terminal Delight reads a page with no island as a read-only picture. notes.js tags a decision brief's h2s and
+    figures at runtime, so a missing data-brief-anchor means something only on a page that narrows its targets to them.
+
+    None when the page is commentable; otherwise what is missing. A page whose design is someone
+    else's (the exceptions SKILL.md lists) says so with <meta name="fancy-pants-read-only" content="why">."""
+    if 'id="report-notes"' not in doc or NOTES_ENGINE not in doc:
+        return ('read-only: no reader notes, so nobody can comment on a section, copy the map, or send it back '
+                'to the agent from Terminal Delight. Build briefs with briefing (fancy-pants new, or brief.py new + html); '
+                'convert this page with: python3 ' + str(BRIEF_PY) + ' adopt PAGE --purpose <summary|engineering|decision>')
+    loose = [m[1].lower() for m in ANCHOR.finditer(doc) if 'data-brief-anchor' not in m[2]] if ANCHORED_TARGETS.search(doc) else []
+    if loose:
+        return (f'{len(loose)} of the page\'s h2s and figures take no note (no data-brief-anchor): '
+                + ', '.join(sorted(set(loose))) + '; give each an id equal to its data-brief-anchor and rebuild')
+    return None
+
+
 def static_check(doc):
     fails, warns = [], []
+    declared = READ_ONLY.search(doc)
+    if declared and declared[1].strip():
+        warns.append(f'read-only by declaration: {declared[1].strip()}')
+    elif declared:
+        fails.append('declares itself read-only without saying why; the content of fancy-pants-read-only is the reason')
+    else:
+        missing = notes_check(doc)
+        if missing:
+            fails.append(missing)
     if BASE_MARK not in doc:
         fails.append('the look is missing: base.css is not inlined (fancy-pants dress, or start from fancy-pants new)')
     wall = re.search(r'<style\b[^>]*id="brief-wall"[^>]*>(.*?)</style>', doc, re.S | re.I)
@@ -303,6 +341,8 @@ def main():
         if name == 'new':
             p.add_argument('--title', required=True)
             p.add_argument('--eyebrow')
+            p.add_argument('--purpose', default='summary', help='the brief\'s purpose: summary, engineering, decision, or an outcome')
+            p.add_argument('--id', help='the brief\'s stable id (default: from the page\'s file name)')
             p.add_argument('--force', action='store_true')
         if name == 'dress':
             p.add_argument('--out', help='write here instead of in place')

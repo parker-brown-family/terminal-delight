@@ -6,9 +6,9 @@ downloading it, and when.
 
 ## Current release context
 
-0.5.0 is released. The next release is **0.5.1**, on `dev/0.5.1`, and new work
-targets that branch with the 0.5.1 [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/3).
-`dev/0.5.0` is closed to new work; everything that landed on it was merged forward.
+0.5.2 is frozen at the commit its release branch was cut from. The next release
+is **0.5.3**: new work lands on `dev/0.5.1`, which stays the integration branch,
+with the 0.5.3 [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/5).
 
 A PR’s **milestone** records its intended release. Its **base branch** records
 where it will merge. **Area labels** describe the work; `area:agent-comms`

@@ -105,9 +105,18 @@ impl BuildInfo {
 
     /// `0.5.0 · 3e2f69bb · 2026-11-02`, with `unknown` where a fact is.
     pub(crate) fn describe(&self) -> String {
+        self.describe_in(crate::lang::Lang::En)
+    }
+}
+
+impl BuildInfo {
+    pub(crate) fn describe_in(&self, l: crate::lang::Lang) -> String {
         let mut s = self.version.clone();
         s.push_str(" · ");
-        s.push_str(self.short_sha().unwrap_or("commit unknown"));
+        s.push_str(
+            self.short_sha()
+                .unwrap_or(l.strings().parts.update_commit_unknown),
+        );
         if self.dirty == Some(true) {
             s.push_str("+dirty");
         }
@@ -614,6 +623,16 @@ impl Offer {
             Some("this release has no Linux AppImage")
         } else if self.checksum.is_none() {
             Some("no checksum was published for it, so TD cannot check the download — download it yourself from its page")
+        } else {
+            None
+        }
+    }
+
+    pub(crate) fn not_installable_in(&self, l: crate::lang::Lang) -> Option<&'static str> {
+        if self.asset.is_none() {
+            Some(l.strings().parts.update_no_image)
+        } else if self.checksum.is_none() {
+            Some(l.strings().parts.update_no_checksum)
         } else {
             None
         }
@@ -2159,6 +2178,36 @@ pub(crate) fn describe_install(i: &Install) -> String {
         Install::Source { checkout, .. } => format!("source checkout · {}", checkout.display()),
         Install::Package { exe } => format!("system package · {}", exe.display()),
         Install::Unknown { exe, .. } => format!("unrecognised · {}", exe.display()),
+    }
+}
+
+/// Installation captions are UI text; CLI descriptions keep their stable English.
+pub(crate) fn describe_install_in(i: &Install, l: crate::lang::Lang) -> String {
+    let p = l.strings().parts;
+    let (template, path) = match i {
+        Install::AppImage { .. } => return describe_install(i),
+        Install::Launcher { launcher, .. } => (p.update_launcher, launcher),
+        Install::Source { checkout, .. } => (p.update_source, checkout),
+        Install::Package { exe } => (p.update_package, exe),
+        Install::Unknown { exe, .. } => (p.update_unknown, exe),
+    };
+    crate::lang::fill(template, &[("path", &path.display().to_string())])
+}
+
+pub(crate) fn refusal_in(i: &Install, l: crate::lang::Lang) -> String {
+    let p = l.strings().parts;
+    match i {
+        Install::Source { checkout, .. } => {
+            let commands = format!(
+                "git -C {} pull --ff-only\ncargo build --release --manifest-path {}/app/Cargo.toml",
+                checkout.display(),
+                checkout.display()
+            );
+            crate::lang::fill(p.update_refuse_source, &[("commands", &commands)])
+        }
+        Install::Package { .. } => p.update_refuse_package.into(),
+        Install::Unknown { .. } => p.update_refuse_unknown.into(),
+        _ => String::new(),
     }
 }
 

@@ -1,0 +1,368 @@
+[
+  {
+    "file": "app/src/benchdraw.rs",
+    "line": 522,
+    "english": "add",
+    "field": "crate::lang::current().strings().parts.ctl_add"
+  },
+  {
+    "file": "app/src/docview/notes_ui.rs",
+    "line": 2082,
+    "english": "add",
+    "field": "crate::lang::current().strings().parts.ctl_add"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 10884,
+    "english": "hide",
+    "field": "crate::lang::current().strings().parts.ctl_hide"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 10886,
+    "english": "show",
+    "field": "crate::lang::current().strings().parts.ctl_show"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 11345,
+    "english": "hide",
+    "field": "crate::lang::current().strings().parts.ctl_hide"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 11347,
+    "english": "show",
+    "field": "crate::lang::current().strings().parts.ctl_show"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 13321,
+    "english": "warning",
+    "field": "crate::lang::current().strings().parts.ctl_warning"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 18007,
+    "english": "locked",
+    "field": "crate::lang::current().strings().parts.ctl_locked"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 18566,
+    "english": "agents",
+    "field": "crate::lang::current().strings().parts.ctl_agents"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 18821,
+    "english": "current",
+    "field": "crate::lang::current().strings().parts.ctl_current"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 19596,
+    "english": "close",
+    "field": "crate::lang::current().strings().parts.ctl_close"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 20660,
+    "english": "on",
+    "field": "crate::lang::current().strings().parts.ctl_on"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 20662,
+    "english": "off",
+    "field": "crate::lang::current().strings().parts.ctl_off"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 24622,
+    "english": "done",
+    "field": "crate::lang::current().strings().parts.ctl_done"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 24626,
+    "english": "blocked",
+    "field": "crate::lang::current().strings().parts.ctl_blocked"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 25606,
+    "english": "pinned",
+    "field": "crate::lang::current().strings().parts.ctl_pinned"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 25622,
+    "english": "close",
+    "field": "crate::lang::current().strings().parts.ctl_close"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 26016,
+    "english": "pace",
+    "field": "crate::lang::current().strings().parts.ctl_pace"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 26022,
+    "english": "delete",
+    "field": "crate::lang::current().strings().parts.ctl_delete"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 26607,
+    "english": "agents",
+    "field": "crate::lang::current().strings().parts.ctl_agents"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 27855,
+    "english": "on",
+    "field": "crate::lang::current().strings().parts.ctl_on"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 29090,
+    "english": "close",
+    "field": "crate::lang::current().strings().parts.ctl_close"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 29226,
+    "english": "pinned",
+    "field": "crate::lang::current().strings().parts.ctl_pinned"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 29228,
+    "english": "pinned",
+    "field": "crate::lang::current().strings().parts.ctl_pinned"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32011,
+    "english": "size",
+    "field": "crate::lang::current().strings().parts.ctl_size"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32094,
+    "english": "size",
+    "field": "crate::lang::current().strings().parts.ctl_size"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32108,
+    "english": "size",
+    "field": "crate::lang::current().strings().parts.ctl_size"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32262,
+    "english": "look",
+    "field": "crate::lang::current().strings().parts.ctl_look"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32303,
+    "english": "agents",
+    "field": "crate::lang::current().strings().parts.ctl_agents"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32328,
+    "english": "recover",
+    "field": "crate::lang::current().strings().parts.ctl_recover"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32354,
+    "english": "notices",
+    "field": "crate::lang::current().strings().parts.ctl_notices"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32383,
+    "english": "report",
+    "field": "crate::lang::current().strings().parts.ctl_report"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32444,
+    "english": "artifacts",
+    "field": "crate::lang::current().strings().parts.ctl_artifacts"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 32466,
+    "english": "more",
+    "field": "crate::lang::current().strings().parts.ctl_more"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 35629,
+    "english": "warning",
+    "field": "crate::lang::current().strings().parts.ctl_warning"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 36686,
+    "english": "on",
+    "field": "crate::lang::current().strings().parts.ctl_on"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 36748,
+    "english": "download .cdx",
+    "field": "crate::lang::current().strings().parts.ctl_download_cdx"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 36776,
+    "english": "enter",
+    "field": "\"Enter\""
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 36827,
+    "english": "recover",
+    "field": "crate::lang::current().strings().parts.ctl_recover"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 36862,
+    "english": "download",
+    "field": "crate::lang::current().strings().parts.ctl_download"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 37434,
+    "english": "right",
+    "field": "crate::lang::current().strings().parts.ctl_right"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 37449,
+    "english": "down",
+    "field": "crate::lang::current().strings().parts.ctl_down"
+  },
+  {
+    "file": "app/src/main.rs",
+    "line": 37705,
+    "english": "close",
+    "field": "crate::lang::current().strings().parts.ctl_close"
+  },
+  {
+    "file": "app/src/paint.rs",
+    "line": 547,
+    "english": "light",
+    "field": "crate::lang::current().strings().parts.ctl_light"
+  },
+  {
+    "file": "app/src/paint.rs",
+    "line": 638,
+    "english": "score",
+    "field": "crate::lang::current().strings().parts.ctl_score"
+  },
+  {
+    "file": "app/src/pane/doc.rs",
+    "line": 474,
+    "english": "zoom out",
+    "field": "crate::lang::current().strings().parts.ctl_zoom_out"
+  },
+  {
+    "file": "app/src/pane/doc.rs",
+    "line": 478,
+    "english": "zoom in",
+    "field": "crate::lang::current().strings().parts.ctl_zoom_in"
+  },
+  {
+    "file": "app/src/pane/handed.rs",
+    "line": 543,
+    "english": "on",
+    "field": "crate::lang::current().strings().parts.ctl_on"
+  },
+  {
+    "file": "app/src/pane/handed.rs",
+    "line": 597,
+    "english": "more",
+    "field": "crate::lang::current().strings().parts.ctl_more"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 12158,
+    "english": "asleep",
+    "field": "crate::lang::current().strings().parts.ctl_asleep"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 12273,
+    "english": "turns",
+    "field": "crate::lang::current().strings().parts.ctl_turns"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 12690,
+    "english": "add",
+    "field": "crate::lang::current().strings().parts.ctl_add"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 12963,
+    "english": "turns",
+    "field": "crate::lang::current().strings().parts.ctl_turns"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 12983,
+    "english": "focus",
+    "field": "crate::lang::current().strings().parts.pane_overflow_focus"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 13004,
+    "english": "look",
+    "field": "crate::lang::current().strings().parts.ctl_look"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 13047,
+    "english": "menu",
+    "field": "crate::lang::current().strings().parts.ctl_menu"
+  },
+  {
+    "file": "app/src/pane.rs",
+    "line": 13119,
+    "english": "close",
+    "field": "crate::lang::current().strings().parts.ctl_close"
+  },
+  {
+    "file": "app/src/threshing_floor_view.rs",
+    "line": 1464,
+    "english": "off",
+    "field": "crate::lang::current().strings().parts.ctl_off"
+  },
+  {
+    "file": "app/src/threshing_floor_view.rs",
+    "line": 4647,
+    "english": "add",
+    "field": "crate::lang::current().strings().parts.ctl_add"
+  },
+  {
+    "file": "app/src/threshing_floor_view.rs",
+    "line": 4922,
+    "english": "right",
+    "field": "crate::lang::current().strings().parts.ctl_right"
+  },
+  {
+    "file": "app/src/threshing_floor_view.rs",
+    "line": 4924,
+    "english": "right",
+    "field": "crate::lang::current().strings().parts.ctl_right"
+  }
+]

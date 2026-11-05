@@ -17,6 +17,11 @@
 
 Installed as `td-bffd5cd-note-agent-pictures`, built from main with all three.
 
+## Amended 2026-11-04: a picture's path goes in brackets
+Parker: *"images should be MAPPED to the specific sections of the doc if they aren't already. if I paste this image to that specific section, the prompt should reflect it."* The map did that. Claude Code undid it on the way in: it cuts a paste at every space before a `/` and at every line break, and lifts any piece ending in a picture's extension out as an attachment. One real send on 2026-11-04 landed as `[Image #3]` above the map with a bare `· [doc-image #1]` under its element. Run through Claude Code 2.1.296 with two pictures on two elements, the map lost both paths, gained `[Image #1] [Image #2]` with nothing saying which was which, lost its blank lines, and a note holding `/tmp/crash.log` was cut in two.
+
+The map now writes `· [doc-image #n] (<path>)`, the same run arrives exactly as written, and the agent opens each picture by its path, as this plan always said. What that gives up: the picture no longer arrives attached, and no `[Image #n]` appears in the prompt box, so the notes bar now counts the pictures that went. A picture on an element a rebuilt brief no longer has is listed at the end instead of counted and lost, and a list that cannot be read is said in the map.
+
 ## Not verified
 - **The picture list has not been looked at.** Opening a note box needs a pointer, and nothing here presses one in a hidden window, so its look in the box rests on the report of what was drawn. Parker is testing it live.
 - **The caps on pictures handed to an agent** (eight, 3.75 MB each) are estimates of what a model and the MCP client take, not measured against either.

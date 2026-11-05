@@ -13,7 +13,6 @@ pub struct Help {
     /// Shown in place of the rows when nothing matches what was typed.
     pub(crate) no_match: &'static str,
     /// Footer line: how the sheet is driven from the keyboard.
-    pub(crate) footer: &'static str,
 
     /// Section: the window's navigation chords.
     pub(crate) s_around: &'static str,
@@ -150,7 +149,6 @@ pub struct Help {
 pub const EN: Help = Help {
     filter_hint: "type to filter",
     no_match: "Nothing matches",
-    footer: "Type to filter · Tab switches SHORTCUTS / FEATURES · ↑ ↓ PgUp PgDn scroll · Esc clears, then closes",
     s_around: "GET AROUND",
     s_reading: "WHILE A DOCUMENT IS OPEN",
     s_scroll_mode: "IN SCROLL MODE",
@@ -248,7 +246,6 @@ pub const EN: Help = Help {
 pub const ES: Help = Help {
     filter_hint: "escribe para filtrar",
     no_match: "Nada coincide",
-    footer: "Escribe para filtrar · Tab cambia ATAJOS / FUNCIONES · ↑ ↓ RePág AvPág desplazan · Esc borra y luego cierra",
     s_around: "MOVERSE",
     s_reading: "CON UN DOCUMENTO ABIERTO",
     s_scroll_mode: "EN MODO DESPLAZAMIENTO",
@@ -257,7 +254,7 @@ pub const ES: Help = Help {
     needs_digit: "Un dígito va directo a esa fila; Alt puede seguir pulsada",
     left_bar: "Mostrar u ocultar la barra izquierda",
     agent_watch: "El panel de observación: lo que el servidor MCP muestra a los agentes",
-    ag_page: "Pasar páginas del historial de un agente (una shell se queda RePág)",
+    ag_page: "Pasar páginas del historial de un agente (una shell se queda PgUp)",
     ag_ends: "Inicio / final de la sesión de un agente",
     r_line: "Desplazar una línea",
     r_page: "Página abajo / arriba",
@@ -346,7 +343,6 @@ pub const ES: Help = Help {
 pub const DE: Help = Help {
     filter_hint: "tippen zum Filtern",
     no_match: "Nichts passt",
-    footer: "Tippen filtert · Tab wechselt KÜRZEL / FUNKTIONEN · ↑ ↓ Bild↑ Bild↓ blättern · Esc leert, dann schließt",
     s_around: "UNTERWEGS",
     s_reading: "BEI OFFENEM DOKUMENT",
     s_scroll_mode: "IM BLÄTTERMODUS",
@@ -355,7 +351,7 @@ pub const DE: Help = Help {
     needs_digit: "Eine Ziffer springt direkt zu dieser Zeile; Alt darf gedrückt bleiben",
     left_bar: "Linke Leiste ein- oder ausblenden",
     agent_watch: "Die Agentenaufsicht: was der MCP-Server Agenten zeigt",
-    ag_page: "Im Verlauf eines Agenten blättern (eine Shell behält Bild↑)",
+    ag_page: "Im Verlauf eines Agenten blättern (eine Shell behält PgUp)",
     ag_ends: "Anfang / Ende der Sitzung eines Agenten",
     r_line: "Eine Zeile scrollen",
     r_page: "Seite runter / hoch",
@@ -422,7 +418,7 @@ pub const DE: Help = Help {
     fk_sessions: "Sitzungs-Host",
     fd_sessions: "Fenster schließen oder abstürzen lassen; Shells und Agenten laufen weiter",
     fk_themes: "Desktop-Farben",
-    fd_themes: "Folgt dem Thema deines Desktops; der Maler ist Strg+Shift+D",
+    fd_themes: "Folgt dem Thema deines Desktops; der Maler ist Ctrl+Shift+D",
     fk_skins: "Skins",
     fd_skins: "Die Form um die Terminals: Ecken, Kanten, Schriften",
     fd_uiconfig: "Schlicht vorgegeben; der Rest ist einen Klick entfernt in CONFIG",
@@ -438,13 +434,12 @@ pub const DE: Help = Help {
     fd_bug: "Enthält nie, was auf deinem Bildschirm steht",
     fd_omarchy: "Kann das Terminal sein, das Super+Return öffnet",
     fk_burn: "Phosphor-Nachleuchten",
-    fd_burn: "Cursor und gelöschter Text können nachleuchten wie auf einem Bildschirm von 1984 · Strg+Shift+G",
+    fd_burn: "Cursor und gelöschter Text können nachleuchten wie auf einem Bildschirm von 1984 · Ctrl+Shift+G",
 };
 
 pub const FR: Help = Help {
     filter_hint: "tapez pour filtrer",
     no_match: "Aucune correspondance",
-    footer: "Tapez pour filtrer · Tab bascule RACCOURCIS / FONCTIONS · ↑ ↓ PgPréc PgSuiv défilent · Échap efface, puis ferme",
     s_around: "SE DÉPLACER",
     s_reading: "DOCUMENT OUVERT",
     s_scroll_mode: "EN MODE DÉFILEMENT",
@@ -453,7 +448,7 @@ pub const FR: Help = Help {
     needs_digit: "Un chiffre va droit à cette ligne ; Alt peut rester enfoncé",
     left_bar: "Afficher ou masquer la barre de gauche",
     agent_watch: "Le panneau de veille : ce que le serveur MCP montre aux agents",
-    ag_page: "Feuilleter l’historique d’un agent (un shell garde PgPréc)",
+    ag_page: "Feuilleter l’historique d’un agent (un shell garde PgUp)",
     ag_ends: "Début / fin de la session d’un agent",
     r_line: "Défiler d’une ligne",
     r_page: "Page suivante / précédente",
@@ -500,7 +495,8 @@ pub const FR: Help = Help {
     fk_frame: "Cadre de lecture",
     fd_frame: "Pages et Markdown dessinés dans la fenêtre, lus au clavier · Alt+click",
     fk_briefs: "Dossiers",
-    fd_briefs: "Annoter une section, tamponner une décision, renvoyer d’une touche · Ctrl+Shift+Enter",
+    fd_briefs:
+        "Annoter une section, tamponner une décision, renvoyer d’une touche · Ctrl+Shift+Enter",
     fk_pictures: "Images",
     fd_pictures: "Graphismes Kitty, icat et chafa s’affichent dans le panneau",
     fk_sticky: "Notes adhésives",
@@ -536,13 +532,13 @@ pub const FR: Help = Help {
     fd_bug: "Ne contient jamais ce qui est à l’écran",
     fd_omarchy: "Peut être le terminal qu’ouvre Super+Return",
     fk_burn: "Rémanence du phosphore",
-    fd_burn: "Le curseur et le texte effacé peuvent persister, comme sur un écran de 1984 · Ctrl+Shift+G",
+    fd_burn:
+        "Le curseur et le texte effacé peuvent persister, comme sur un écran de 1984 · Ctrl+Shift+G",
 };
 
 pub const RU: Help = Help {
     filter_hint: "печатайте для фильтра",
     no_match: "Ничего не найдено",
-    footer: "Печать фильтрует · Tab переключает КЛАВИШИ / ВОЗМОЖНОСТИ · ↑ ↓ PgUp PgDn листают · Esc очищает, затем закрывает",
     s_around: "ПЕРЕМЕЩЕНИЕ",
     s_reading: "ПРИ ОТКРЫТОМ ДОКУМЕНТЕ",
     s_scroll_mode: "В РЕЖИМЕ ПРОКРУТКИ",
@@ -598,7 +594,8 @@ pub const RU: Help = Help {
     fk_frame: "Рамка чтения",
     fd_frame: "Страницы и Markdown прямо в окне, читаются с клавиатуры · Alt+click",
     fk_briefs: "Брифы",
-    fd_briefs: "Заметка к любому разделу, штамп на решение, отправка одной клавишей · Ctrl+Shift+Enter",
+    fd_briefs:
+        "Заметка к любому разделу, штамп на решение, отправка одной клавишей · Ctrl+Shift+Enter",
     fk_pictures: "Картинки",
     fd_pictures: "Графика Kitty, icat и chafa рисуются прямо в панели",
     fk_sticky: "Стикеры",
@@ -640,7 +637,6 @@ pub const RU: Help = Help {
 pub const ZH: Help = Help {
     filter_hint: "输入以筛选",
     no_match: "没有匹配项",
-    footer: "输入即筛选 · Tab 切换 快捷键 / 功能 · ↑ ↓ PgUp PgDn 滚动 · Esc 先清空，再关闭",
     s_around: "四处移动",
     s_reading: "文档打开时",
     s_scroll_mode: "滚动模式中",
@@ -738,7 +734,6 @@ pub const ZH: Help = Help {
 pub const JA: Help = Help {
     filter_hint: "入力して絞り込み",
     no_match: "一致なし",
-    footer: "入力で絞り込み · Tab で ショートカット / 機能 を切替 · ↑ ↓ PgUp PgDn でスクロール · Esc で消去、もう一度で閉じる",
     s_around: "移動",
     s_reading: "文書を開いているとき",
     s_scroll_mode: "スクロールモード中",
@@ -836,7 +831,6 @@ pub const JA: Help = Help {
 pub const KO: Help = Help {
     filter_hint: "입력해서 거르기",
     no_match: "일치하는 항목 없음",
-    footer: "입력하면 거름 · Tab 으로 단축키 / 기능 전환 · ↑ ↓ PgUp PgDn 스크롤 · Esc 는 지우고, 다시 누르면 닫기",
     s_around: "이동",
     s_reading: "문서가 열려 있을 때",
     s_scroll_mode: "스크롤 모드에서",
@@ -934,7 +928,6 @@ pub const KO: Help = Help {
 pub const HI: Help = Help {
     filter_hint: "छाँटने के लिए लिखें",
     no_match: "कुछ मेल नहीं खाता",
-    footer: "लिखकर छाँटें · Tab से शॉर्टकट / सुविधाएँ बदलें · ↑ ↓ PgUp PgDn स्क्रॉल · Esc पहले साफ़, फिर बंद",
     s_around: "इधर-उधर जाना",
     s_reading: "दस्तावेज़ खुला हो तब",
     s_scroll_mode: "स्क्रॉल मोड में",

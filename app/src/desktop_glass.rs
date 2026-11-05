@@ -4,6 +4,12 @@
 //! An unboxed skin also takes the compositor's border off this process's own
 //! windows, and gives it back when the skin changes: the tile is borderless on
 //! the outside. Only our windows, by pid, and only the one property.
+//!
+//! On Omarchy every window of ours also carries the `terminal` tag, because
+//! its Super+C reads that tag at the press: a tagged window gets Ctrl+Insert,
+//! which copies, and any other gets Ctrl+C, which interrupts the agent in the
+//! pane. Omarchy's list of terminals doesn't name us on 4.0, so nothing else
+//! tags us there.
 use gpui::{App, Global, Window};
 use std::io::{Read, Write};
 use std::os::unix::net::UnixStream;
@@ -70,12 +76,36 @@ fn ask(path: &Path, command: &str, limit: u64) -> Option<Vec<u8>> {
 /// one desktop, so a window is ours by pid, never by class or title. `None`
 /// when the reply is unreadable, which is not the same as owning none.
 fn own_windows(reply: &[u8], pid: u32) -> Option<Vec<String>> {
+    windows_where(reply, pid, |_| true)
+}
+
+/// Those of them not yet a terminal. A rule's tag reads `terminal*`, ours
+/// `terminal`, and either is enough for Omarchy's binding.
+fn untagged_windows(reply: &[u8], pid: u32) -> Option<Vec<String>> {
+    windows_where(reply, pid, |client| {
+        !client
+            .get("tags")
+            .and_then(|tags| tags.as_array())
+            .is_some_and(|tags| {
+                tags.iter()
+                    .filter_map(|tag| tag.as_str())
+                    .any(|tag| tag.trim_end_matches('*') == "terminal")
+            })
+    })
+}
+
+fn windows_where(
+    reply: &[u8],
+    pid: u32,
+    keep: impl Fn(&serde_json::Value) -> bool,
+) -> Option<Vec<String>> {
     let clients: serde_json::Value = serde_json::from_slice(reply).ok()?;
     Some(
         clients
             .as_array()?
             .iter()
             .filter(|c| c.get("pid").and_then(|v| v.as_u64()) == Some(u64::from(pid)))
+            .filter(|c| keep(c))
             .filter_map(|c| c.get("address")?.as_str())
             // The address goes into a Lua string below; take only the shape
             // Hyprland gives it.
@@ -98,8 +128,14 @@ fn border_dispatch(address: &str, borderless: bool) -> String {
     )
 }
 
+/// Make one window a terminal. `+` sets the tag where a bare name would toggle
+/// it off a window that already has it.
+fn tag_dispatch(address: &str) -> String {
+    format!("dispatch hl.dsp.window.tag({{ tag = \"+terminal\", window = \"address:{address}\" }})")
+}
+
 #[derive(Debug, PartialEq)]
-enum Border {
+enum Sent {
     Applied,
     /// No window yet, or no readable answer: worth asking again.
     NotYet,
@@ -107,21 +143,44 @@ enum Border {
     Refused,
 }
 
-fn apply_border(path: &Path, borderless: bool) -> Border {
+fn send_each(path: &Path, windows: Vec<String>, dispatch: impl Fn(&str) -> String) -> Sent {
+    for address in windows {
+        match ask(path, &dispatch(&address), 4096) {
+            None => return Sent::NotYet,
+            Some(reply) if reply.trim_ascii() != b"ok" => return Sent::Refused,
+            Some(_) => {}
+        }
+    }
+    Sent::Applied
+}
+
+fn apply_border(path: &Path, borderless: bool) -> Sent {
     let Some(windows) = ask(path, "j/clients", 4 << 20)
         .and_then(|reply| own_windows(&reply, std::process::id()))
         .filter(|w| !w.is_empty())
     else {
-        return Border::NotYet;
+        return Sent::NotYet;
     };
-    for address in windows {
-        match ask(path, &border_dispatch(&address, borderless), 4096) {
-            None => return Border::NotYet,
-            Some(reply) if reply.trim_ascii() != b"ok" => return Border::Refused,
-            Some(_) => {}
-        }
+    send_each(path, windows, |address| {
+        border_dispatch(address, borderless)
+    })
+}
+
+/// Tag every window of `pid` the compositor knows. A window we opened a moment
+/// ago may not be mapped yet, so settling takes seeing all `expected` of them:
+/// an untagged window missed here would stay one until the next window opens.
+fn apply_tags(path: &Path, pid: u32, expected: usize) -> Sent {
+    let Some(reply) = ask(path, "j/clients", 4 << 20) else {
+        return Sent::NotYet;
+    };
+    let (Some(mapped), Some(untagged)) = (own_windows(&reply, pid), untagged_windows(&reply, pid))
+    else {
+        return Sent::NotYet;
+    };
+    match send_each(path, untagged, tag_dispatch) {
+        Sent::Applied if mapped.len() < expected => Sent::NotYet,
+        outcome => outcome,
     }
-    Border::Applied
 }
 
 pub fn init(cx: &mut App) {
@@ -137,6 +196,38 @@ pub fn init(cx: &mut App) {
         .join(signature)
         .join(".socket.sock");
     let border_path = path.clone();
+    if crate::palette::omarchy_installed() {
+        let tag_path = path.clone();
+        cx.spawn(async move |cx| {
+            // Hyprland is asked only while our window list differs from the
+            // one last settled, so a window at rest costs no request.
+            let mut settled = Vec::new();
+            loop {
+                let windows: Vec<_> = cx.update(|cx| {
+                    cx.windows()
+                        .iter()
+                        .map(|window| window.window_id())
+                        .collect()
+                });
+                if windows != settled {
+                    let path = tag_path.clone();
+                    let expected = windows.len();
+                    let outcome = cx
+                        .background_executor()
+                        .spawn(async move { apply_tags(&path, std::process::id(), expected) })
+                        .await;
+                    if outcome == Sent::Refused {
+                        eprintln!("terminal-delight: the compositor refused the terminal tag");
+                    }
+                    if outcome != Sent::NotYet {
+                        settled = windows;
+                    }
+                }
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+            }
+        })
+        .detach();
+    }
     cx.spawn(async move |cx| {
         // The state the compositor last settled on for us. `None` until one
         // has: a border we never took away has nothing to give back.
@@ -149,10 +240,10 @@ pub fn init(cx: &mut App) {
                     .background_executor()
                     .spawn(async move { apply_border(&path, want) })
                     .await;
-                if outcome == Border::Refused {
+                if outcome == Sent::Refused {
                     eprintln!("terminal-delight: the compositor refused border_size");
                 }
-                if outcome != Border::NotYet {
+                if outcome != Sent::NotYet {
                     settled = Some(want);
                 }
             }
@@ -225,6 +316,88 @@ mod tests {
             r#"dispatch hl.dsp.window.set_prop({ window = "address:0x57761de70370", prop = "border_size", value = "0" })"#
         );
         assert!(border_dispatch("0x1", false).contains(r#"value = "unset""#));
+    }
+    #[test]
+    fn only_this_processes_untagged_windows_are_tagged() {
+        let reply = br#"[
+            {"address":"0xa","pid":42,"tags":["default-opacity*"]},
+            {"address":"0xb","pid":42,"tags":["terminal"]},
+            {"address":"0xc","pid":42,"tags":["terminal*"]},
+            {"address":"0xd","pid":42,"tags":["terminals","not-terminal"]},
+            {"address":"0xe","pid":42},
+            {"address":"0xf","pid":7,"tags":[]}
+        ]"#;
+        assert_eq!(
+            untagged_windows(reply, 42),
+            Some(vec!["0xa".to_owned(), "0xd".to_owned(), "0xe".to_owned()]),
+            "a tag by us or by a rule counts, a name that contains it does not"
+        );
+        assert_eq!(untagged_windows(b"ok", 42), None, "unreadable is not none");
+    }
+    #[test]
+    fn the_tag_dispatch_is_the_form_hyprland_accepted() {
+        // Sent to Hyprland 0.56.2 on Omarchy 4.0.4 on 2026-11-04: it answered
+        // `ok`, and `j/clients` then read `terminal` among the window's tags.
+        assert_eq!(
+            tag_dispatch("0x5f328f10aa00"),
+            r#"dispatch hl.dsp.window.tag({ tag = "+terminal", window = "address:0x5f328f10aa00" })"#
+        );
+    }
+    /// A Hyprland that answers `j/clients` with `clients` and every dispatch
+    /// with `answer`, and hands back what it was asked.
+    fn compositor(
+        name: &str,
+        clients: &'static str,
+        answer: &'static str,
+        requests: usize,
+    ) -> (std::path::PathBuf, std::thread::JoinHandle<Vec<String>>) {
+        let path =
+            std::env::temp_dir().join(format!("td-glass-{name}-{}.sock", std::process::id()));
+        let _ = std::fs::remove_file(&path);
+        let socket = std::os::unix::net::UnixListener::bind(&path).unwrap();
+        let heard = std::thread::spawn(move || {
+            (0..requests)
+                .map(|_| {
+                    let (mut peer, _) = socket.accept().unwrap();
+                    let mut request = [0; 512];
+                    let n = peer.read(&mut request).unwrap();
+                    let request = String::from_utf8_lossy(&request[..n]).into_owned();
+                    let reply = if request == "j/clients" {
+                        clients
+                    } else {
+                        answer
+                    };
+                    peer.write_all(reply.as_bytes()).unwrap();
+                    request
+                })
+                .collect()
+        });
+        (path, heard)
+    }
+    #[test]
+    fn a_window_not_mapped_yet_keeps_the_tagging_open() {
+        let clients = r#"[{"address":"0xa","pid":42,"tags":[]}]"#;
+        let (path, heard) = compositor("unmapped", clients, "ok", 2);
+        assert_eq!(apply_tags(&path, 42, 2), Sent::NotYet);
+        assert_eq!(
+            heard.join().unwrap(),
+            ["j/clients".to_owned(), tag_dispatch("0xa")],
+            "the window that is there is tagged while the other is awaited"
+        );
+    }
+    #[test]
+    fn tagged_windows_settle_without_a_dispatch() {
+        let clients = r#"[{"address":"0xa","pid":42,"tags":["terminal*"]}]"#;
+        let (path, heard) = compositor("tagged", clients, "unused", 1);
+        assert_eq!(apply_tags(&path, 42, 1), Sent::Applied);
+        assert_eq!(heard.join().unwrap(), ["j/clients"]);
+    }
+    #[test]
+    fn a_compositor_without_the_dispatcher_is_not_asked_again() {
+        let clients = r#"[{"address":"0xa","pid":42,"tags":[]}]"#;
+        let (path, heard) = compositor("refused", clients, "Invalid dispatcher", 2);
+        assert_eq!(apply_tags(&path, 42, 1), Sent::Refused);
+        heard.join().unwrap();
     }
     #[test]
     fn unreadable_or_out_of_range_policy_stays_unknown() {

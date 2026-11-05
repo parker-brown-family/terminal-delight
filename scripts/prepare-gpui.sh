@@ -50,6 +50,10 @@
 #                             of their own (set_doc_grades): the floating
 #                             document's gauges, on whatever drew it, and live
 #                             while the glass is flattened under GAUGES.
+#   0014-tube-alpha         — a bent tube keeps its screen's alpha on the glass
+#                             rather than forcing it to 1, so a pane's opacity
+#                             gauges show the desktop through the CRT. Identical
+#                             wherever the screen is opaque.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -70,9 +74,10 @@ patch_glow_taps="$repo_root/docs/patches/0010-image-glow-taps.patch"
 patch_cutout="$repo_root/docs/patches/0011-desktop-cutout.patch"
 patch_tube_blur="$repo_root/docs/patches/0012-tube-blur.patch"
 patch_doc_grade="$repo_root/docs/patches/0013-doc-grade.patch"
+patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade"; do
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -166,3 +171,6 @@ apply_patch "$patch_tube_blur" "tube-blur" \
 
 apply_patch "$patch_doc_grade" "doc-grade" \
     'grep -qF "td-doc-grade" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_tube_alpha" "tube-alpha" \
+    'grep -qF "td-tube-alpha" crates/gpui_wgpu/src/crt_pass.wgsl'

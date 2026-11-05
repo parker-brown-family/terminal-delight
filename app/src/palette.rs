@@ -437,6 +437,11 @@ pub fn init(cx: &mut App) {
 
 /// Where Omarchy keeps themes, in precedence order (later roots win). The env
 /// override exists for tests and for an Omarchy installed somewhere unusual.
+/// Whether this desktop is Omarchy: one of its theme folders is there.
+pub fn omarchy_installed() -> bool {
+    roots().iter().any(|root| root.is_dir())
+}
+
 fn roots() -> Vec<PathBuf> {
     if let Some(over) = std::env::var("TD_OMARCHY_THEMES")
         .ok()

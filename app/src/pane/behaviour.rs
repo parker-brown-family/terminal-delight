@@ -3171,7 +3171,7 @@ fn a_picture_pasted_into_a_note_is_attached_to_its_block(cx: &mut TestAppContext
     let map = report["map"].as_str().expect("a map");
     assert!(
         map.contains(&format!(
-            "[L1] A paragraph that takes a note.\n  · [doc-image #1] {}\n",
+            "[L1] A paragraph that takes a note.\n  · [doc-image #1] ({})\n",
             file.display()
         )),
         "the map gives the block its picture's full path:\n{map}"
@@ -3246,7 +3246,7 @@ fn a_picture_pasted_into_a_note_on_a_brief_leaves_the_brief_untouched(cx: &mut T
     let map = report["map"].as_str().expect("a map");
     assert!(
         map.contains(&format!(
-            "[{nid}] {title}\n  · [doc-image #1] {}\n",
+            "[{nid}] {title}\n  · [doc-image #1] ({})\n",
             file.display()
         )),
         "{map}"
@@ -3948,7 +3948,7 @@ fn a_brief_opened_by_a_person_is_read_from_the_keyboard(cx: &mut TestAppContext)
     let seen = asks.clone();
     let view = pane.view.clone();
     pane.cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+        cx.subscribe(&view, move |_, _: &super::OpenDocumentRead, _| {
             seen.set(seen.get() + 1)
         })
         .detach();
@@ -4241,7 +4241,7 @@ fn an_agent_opening_a_brief_keeps_the_small_square(cx: &mut TestAppContext) {
     let seen = asks.clone();
     let view = pane.view.clone();
     pane.cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+        cx.subscribe(&view, move |_, _: &super::OpenDocumentRead, _| {
             seen.set(seen.get() + 1)
         })
         .detach();
@@ -5303,4 +5303,45 @@ fn scroll_mode_moves_the_view_with_letters_and_q_leaves_it(cx: &mut TestAppConte
     pane.keys("q");
     assert!(!pane.read(|v| v.scroll_mode), "q leaves");
     assert_eq!(offset(&mut pane), 0, "back at the live bottom");
+}
+
+/// Codex 0.162 reserves row one for a pinned prompt header and ignores wheel
+/// reports there. Exercise the actual key dispatch and PTY against that boundary.
+#[gpui::test]
+fn scroll_mode_reaches_the_codex_body_below_its_pinned_header(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(
+        cx,
+        r#"python3 -u -c '
+import os, re, tty
+tty.setraw(0)
+os.write(1, b"\x1b[?1049h\x1b[?1000h\x1b[?1006h")
+position = 0
+def paint():
+    os.write(1, ("\x1b[H\x1b[2Kpinned prompt\r\n\x1b[2Kposition=%d\r\n" % position).encode())
+paint()
+pending = b""
+while True:
+    pending += os.read(0, 4096)
+    while (match := re.search(rb"\x1b\[<(64|65);(\d+);(\d+)M", pending)):
+        pending = pending[match.end():]
+        if int(match[3]) <= 1:
+            continue
+        position += 1 if match[1] == b"64" else -1
+        paint()
+'"#,
+    );
+    pane.running_as(super::PaneMode::Codex);
+    pane.wait_for_row("position=0");
+    pane.settle();
+    let half = pane.read(|v| (v.session.term.lock().screen_lines() / 2).max(1));
+    pane.keys("alt-[ up");
+    pane.wait_for_row("position=1");
+    pane.keys("down");
+    pane.wait_for_row("position=0");
+    for (key, position) in [("u", half), ("d", 0), ("pageup", half), ("pagedown", 0)] {
+        pane.keys(key);
+        pane.wait_for_row(&format!("position={position}"));
+    }
+    pane.keys("q");
+    assert!(!pane.read(|v| v.scroll_mode));
 }
