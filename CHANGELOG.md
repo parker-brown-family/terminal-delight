@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.5.1] — 2026-11-04
+
 ### Install
 
 - **One line installs it.** `curl -fsSL
