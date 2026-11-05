@@ -61,6 +61,14 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   behind to answer used to lose its control socket, and with it every way to reach
   it until it restarted. Only a refused connection counts as stale now. (#796)
 
+### Agents
+
+- **A 529 on screen is not an API error.** Any agent showing those three digits,
+  in a line count or a process id, was marked as errored. A prompt to another
+  agent could be refused the same way, because its header prints the sender's
+  process id. The real message still reads as an error: it says *overloaded* or
+  *API Error*.
+
 ### Upgrading from 0.5.0
 
 - **A window that follows Omarchy changes colour.** Programs in it take the
