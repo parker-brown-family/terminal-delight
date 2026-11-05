@@ -17,6 +17,10 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ### Agents
 
+- **The Agents menu stays compact when TD Skills changes.** Switching skills
+  on or off keeps the same centred frame. Settings and long skill lists scroll
+  inside it; smaller windows keep both sections within the available space.
+
 - **Choose optional skills in CONFIG → Agents.** Turn on TD Skills to open a
   separate scrolling list, with Briefing and Software Factory as starter
   choices. Import a skill file, folder or repository through one source field;
