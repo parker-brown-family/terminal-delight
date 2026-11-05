@@ -7,6 +7,19 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Agents
+
+- **Choose optional skills in CONFIG → Agents.** Turn on TD Skills to open a
+  separate scrolling list, with Briefing and Software Factory as starter
+  choices. Import a skill file, folder or repository through one source field;
+  one source can add several skills. Skill names open their sources.
+- **Ordinary Claude and Codex commands receive the selected additions.** TD
+  preserves personal skills, exclusions and provider configuration. Each pane's
+  TD Skills indicator reports confirmed, partial, absent or unknown attachment;
+  availability does not mean the agent followed an instruction. After updating,
+  open a new Bash terminal before starting the agent to receive the command
+  bridge. Existing running agents keep their original selection.
+
 ### Terminals
 
 - **TERMINIMALIST's relationship row reads as a sentence.** It says

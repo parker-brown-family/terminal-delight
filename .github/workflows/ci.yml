@@ -61,6 +61,9 @@ jobs:
           ../scripts/known-hashes.sh --check
           python3 ../scripts/tests/test_uninstall.py -v
 
+      - name: Skill bridge fixtures (isolated homes, no model calls)
+        run: python3 -m unittest discover -s src/skills -p 'test_*.py' -v
+
       # The distro helper lacks descriptor mounts. Use a fixed upstream release
       # with safe setup-path resolution; the runtime also refuses older helpers.
       - name: Install the qualified Restricted helper

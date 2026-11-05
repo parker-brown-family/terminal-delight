@@ -1,0 +1,158 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-session-local-provider-attachment",
+      "at": "2026-11-05T08:32Z",
+      "title": "Session-local provider attachment",
+      "context": null,
+      "chose": "Keep personal provider files unchanged; add skills through a native Claude directory and a private Codex server for each invocation.",
+      "because": "Native tests preserve the personal skill catalog and expose TD additions without changing shared agent configuration.",
+      "passed_over": [],
+      "undo": "Disable TD Skills and start another agent session.",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "../../../app/src/skills/test_bridge.py",
+          "sha256": "sha256:2ca617432549c16865fe655c094a894ee9f7a0f0984c39f7060e102636c25698",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": {
+        "href": "../../../../../reports/2026-11-05-td-skills-manager.html",
+        "id": "td-skills-manager-assessment",
+        "revision": "sha256:bb6ebe14a94b969d726eb8d056d712177e18c133f13135f2b63b03ebbdbf7ee9"
+      },
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-preserve-the-daily-window-and-use-a-fresh-test-s",
+      "at": "2026-11-05T15:28Z",
+      "title": "Preserve the daily window and use a fresh test session",
+      "context": null,
+      "chose": "Install the preview for new launches and open Skills test beside the existing daily window.",
+      "because": "The live daily host lacks the shell bridge and three closed tabs still hold live agents. Replacing the window would end those held agents; a new hosted session exercises the full feature without that loss.",
+      "passed_over": [],
+      "undo": "Close Skills test and repoint the launcher to the recorded old binary.",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "../../../../../../../../tmp/td-skills-cutover-preflight/before.json",
+          "sha256": "sha256:243fb216ba7e7ef66f355793efd9007ff684aa975772c2432664415573fa42e0",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-keep-the-installed-preview-available-for-manual",
+      "at": "2026-11-05T15:33Z",
+      "title": "Keep the installed preview available for manual testing",
+      "context": null,
+      "chose": "Swap the daily window after a fresh preflight and pause dev auto-updates until this unmerged preview is integrated or rolled back.",
+      "because": "The concurrent glow-pane cutover cleared the earlier live holds; the new preflight permits a safe daily swap. An automatic branch build would remove the unmerged Skills feature during testing.",
+      "passed_over": [],
+      "undo": "Repoint the launcher to td-f740cb68-wave and start td-wave-follow.timer.",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "evidence/cutover/live/activation.json",
+          "sha256": "sha256:5aa69c1eb1be83c3e52f0e24dcd682595fe498ac2c2bc74cac37c7901f2d24a5",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-initialize-new-shells-held-by-an-older-host",
+      "at": "2026-11-05T16:10Z",
+      "title": "Initialize new shells held by an older host",
+      "context": null,
+      "chose": "Queue a TD-owned Bash activation script only into freshly created ordinary shells, never existing panes or resumed agents.",
+      "because": "The retained session host cannot export the bridge, and restarting it would end live work. This makes new terminals in the current window usable without provider config or shell rc edits.",
+      "passed_over": [],
+      "undo": "Remove the client startup call; source assets are versioned and personal aliases/functions are retained.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-clear-only-already-closed-terminal-holds-for-the",
+      "at": "2026-11-05T16:34Z",
+      "title": "Clear only already-closed terminal holds for the requested update",
+      "context": null,
+      "chose": "Release the seven terminals the person already closed, retain their available resume commands, and preserve all open terminals and the host during the window swap.",
+      "because": "The requested local cutover otherwise waits for the closed-tab Undo period. This is part of the authorized installation; no open terminal is eligible for release.",
+      "passed_over": [],
+      "undo": "Reopen saved agent conversations from the recorded resume lines; closed plain shells can be reopened at their recorded directories.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

@@ -334,10 +334,9 @@ pub fn run_cli(args: &[String]) -> i32 {
     match args.first().map(String::as_str) {
         None => {
             let env = |k: &str| std::env::var(k).ok();
-            let kit = crate::briefkit::default_root();
-            if let Some(text) =
-                briefing_for(env, &crate::surfacefeed::surfaces_root(), kit.as_deref())
-            {
+            // The native bridge supplies optional skills after honoring the
+            // person's provider exclusions. This hook supplies TD context only.
+            if let Some(text) = briefing_for(env, &crate::surfacefeed::surfaces_root(), None) {
                 print!("{text}");
             }
             0
@@ -575,17 +574,17 @@ mod tests {
             cwd: d.clone(),
             opener: None,
         };
-        let written = recipe.prepare_briefing(&session_dir, &kit).unwrap();
+        let written = recipe.prepare_briefing(&session_dir, Some(&kit)).unwrap();
         let launcher = std::fs::read_to_string(written).unwrap();
         let typed = briefing_for(
             env_of(&[("TD_SESSION", "special:work"), ("TD_PANE_ID", "7")]),
             &surfaces,
-            Some(&kit),
+            None,
         )
         .expect("a pane with a session is told");
         assert_eq!(typed, launcher);
-        assert!(typed.contains("BRIEFS AND JUDGEMENT CALLS"), "{typed}");
-        assert!(typed.contains(&kit.join("briefing/SKILL.md").display().to_string()));
+        assert!(!typed.contains("BRIEFS AND JUDGEMENT CALLS"), "{typed}");
+        assert!(!typed.contains(&kit.join("briefing/SKILL.md").display().to_string()));
     }
 
     /// Outside a Terminal Delight pane the hook runs in every Claude session

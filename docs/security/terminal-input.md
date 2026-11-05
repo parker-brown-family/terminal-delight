@@ -29,7 +29,7 @@ audited 2026-09-08:
 
 | # | Site | Enclosing function | What initiates it | Class |
 |---|---|---|---|---|
-| 1 | `pane.rs` | `send` | the key handler, `terminal_key`, for the key pressed — or, for Backspace or Delete over a selection on the line being typed, the arrow keys and DELs that erase it (`erase_selection_keys`); the cut keybinding, `cut_selection`, the same erase; and `run_line`, the launch panel's recipe line | keystroke + pointer |
+| 1 | `pane.rs` | `send` | the key handler, `terminal_key`, for the key pressed — or, for Backspace or Delete over a selection on the line being typed, the arrow keys and DELs that erase it (`erase_selection_keys`); the cut keybinding, `cut_selection`, the same erase; and `run_line`, for the launch panel's recipe or fresh-shell TD skills setup described below | keystroke + pointer + new-shell setup |
 | 2 | `pane.rs` | `handle_term_event` → `TermEvent::PtyWrite` and `TermEvent::ColorRequest` | the program in the pane asking the terminal a question (cursor reports, device attributes, the colour of a palette slot) | protocol reply |
 | 3 | `pane.rs` | `render` | focus in/out, `\x1b[I` / `\x1b[O`, only when the program set `FOCUS_IN_OUT` | protocol reply |
 | 4 | `pane.rs` | `scroll_by_wheel` ×2 | mouse wheel over an alt-screen program, translated to arrow keys | pointer |
@@ -50,12 +50,21 @@ Mouse selections and Shift+Arrow selections can cross soft wraps. A selected ran
 literal newlines must include the caret's row; a range entirely in unrelated history is not
 expanded into an edit. The existing scrolled-view and non-agent alternate-screen guards remain.
 
-`send` is the only site that composes bytes from a keystroke, and it is reachable only from the key
-handler, the cut keybinding and the launch panel's `run_line`. That is the invariant. Everything
+`send` is the only site that composes bytes from a keystroke. The key handler, cut keybinding and
+`run_line` reach it. `run_line` carries the launch panel's recipe or TD skills setup into a newly
+created shell. Everything
 else is the terminal answering its own program (#2, #3), a pointer gesture the person made (#4, #6,
 #7, #9), site #8 handing a command line to a shell it just spawned, or site #10 typing a prompt
-another agent sent — and #8 and #10 are the only ones something other than a person can start. #10
+another agent sent. Fresh-shell setup through #1, #8 and #10 can start without a keystroke. #10
 starts only along a line a person drew, for that pair of panes.
+
+Since the Skills Manager revision of 2026-11-05, a new window can attach to a host that predates
+the skills bridge. For a freshly spawned plain Bash shell, `make_pane_host_spawned` checks the
+child environment and queues TD's own `activate.bash` through `run_line` when needed. This happens
+before the new pane is returned for use. `bootstrap_shell` refuses an adopted pane, a resume
+recipe or another shell program. The script defines command functions while retaining personal
+aliases and functions. It edits no shell startup file or provider configuration. There is no
+timer, MCP verb or agent-provided setup string, and this path never targets a running agent.
 
 **`mcp.rs` and `plugins.rs` reach none of them but #10, and `mcp.rs` reaches that only by asking
 the window.** `prompt_agent` carries no bytes: it names a pane and some words, and the window
@@ -69,7 +78,8 @@ twelve tools are `list_panes`, `pane_events`, `get_pane_config`, `set_pane_confi
 notes a person left on the brief beside the calling agent, from the same report `ctl doc notes`
 prints, and writes nothing. `open_document` changes the layout of the caller's own tab and nothing
 else: a document pane it splits off gets a fresh shell with no command line — `PaneRestore` with no
-`resume`, so site #8 has nothing to type — exactly as a Ctrl+Alt+click's does, and it takes no pane
+`resume`, so site #8 has nothing to type; a fresh Bash shell can still receive the TD-owned skills
+setup above — exactly as a Ctrl+Alt+click's does, and it takes no pane
 argument, so it cannot reach another agent's. There is no other input verb, by design, and this
 audit confirmed it rather than taking the docs' word for it. The plugin *host* launches plugin MCP servers
 over stdio and never holds a `Session`.
