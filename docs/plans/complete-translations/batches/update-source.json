@@ -1,0 +1,81 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "entries": [
+    {
+      "key": "update_commit_unknown",
+      "en": "commit unknown",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_launcher",
+      "en": "launcher build · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_source",
+      "en": "source checkout · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_package",
+      "en": "system package · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_unknown",
+      "en": "unrecognised · {path}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_refuse_source",
+      "en": "TD never pulls or rebuilds a checkout. To update it yourself:\n{commands}",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_refuse_package",
+      "en": "your package manager owns this install — update it there",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_refuse_unknown",
+      "en": "this file was not installed as an AppImage or into TD’s build library, so TD does not replace it",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_no_stable",
+      "en": "no stable release has been published",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_no_dev",
+      "en": "no public dev build has been published yet",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_no_image",
+      "en": "this release has no Linux AppImage",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_no_checksum",
+      "en": "no checksum was published for it, so TD cannot check the download — download it yourself from its page",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_host_older",
+      "en": "this build was proven against this window’s build, and your terminals’ host runs an older one",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_wire_changed",
+      "en": "this build changes how the window talks to your terminals",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    },
+    {
+      "key": "update_host_unknown",
+      "en": "the session host of {hosts} runs a build TD cannot vouch for",
+      "context": "Update panel status owned by TD; raw OS diagnostics and release notes are separate. Preserve AppImage and TD. {commands}, {path}, {hosts} are inserted verbatim."
+    }
+  ]
+}

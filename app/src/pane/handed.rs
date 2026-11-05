@@ -429,7 +429,10 @@ impl TerminalView {
                     cx.notify();
                 }
                 Err(err) => v.say(
-                    format!("Artifact archive could not be opened: {err}"),
+                    crate::lang::fill(
+                        crate::lang::current().strings().parts.archive_open_error,
+                        &[("reason", &err.to_string())],
+                    ),
                     None,
                     cx,
                 ),
@@ -533,24 +536,22 @@ impl TerminalView {
                 .cursor_pointer()
                 .hover(|s| s.bg(sk.ink.hover))
         };
-        let label = half()
-            .gap(px(5.))
-            .when(fresh && wide, |d| {
-                d.child(
-                    div()
-                        .text_size(px(7.))
-                        .text_color(sk.ink.mark)
-                        .child(sk.control("\u{25cf}", "on")),
-                )
-            })
-            .child(div().text_color(ink).child(name))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    view.open_newest_handover(cx);
-                }),
-            );
+        let label =
+            half()
+                .gap(px(5.))
+                .when(fresh && wide, |d| {
+                    d.child(div().text_size(px(7.)).text_color(sk.ink.mark).child(
+                        sk.control("\u{25cf}", crate::lang::current().strings().parts.ctl_on),
+                    ))
+                })
+                .child(div().text_color(ink).child(name))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |view, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        view.open_newest_handover(cx);
+                    }),
+                );
         // The ▾ is the door to the whole list, so it is drawn as large and as
         // readable as the name beside it rather than as a footnote to it.
         let caret = half()
@@ -594,7 +595,7 @@ impl TerminalView {
 fn chip_words(sk: &crate::skin::Skin) -> (&'static str, &'static str) {
     (
         crate::lang::current().strings().artifact_word,
-        sk.control("\u{25bc}", "more"),
+        sk.control("\u{25bc}", crate::lang::current().strings().parts.ctl_more),
     )
 }
 

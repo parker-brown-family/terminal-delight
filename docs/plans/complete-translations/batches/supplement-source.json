@@ -1,0 +1,82 @@
+{
+  "target": "app/src/lang/parts.rs",
+  "struct": "Parts",
+  "languages": [
+    "en",
+    "es",
+    "de",
+    "fr",
+    "ru",
+    "zh",
+    "ja",
+    "ko",
+    "hi"
+  ],
+  "entries": [
+    {
+      "key": "model_selected_effort",
+      "en": "Selected effort unavailable; choose Agent default or a reported effort",
+      "context": "Launcher validation. Agent default is a translated label; match model_default from previous batch."
+    },
+    {
+      "key": "ctl_gauges",
+      "en": "gauges",
+      "context": "Compact tab label for gauges and CRT controls."
+    },
+    {
+      "key": "archive_open_error",
+      "en": "Artifact archive could not be opened: {reason}",
+      "context": "App notice when archive page cannot open."
+    },
+    {
+      "key": "archive_file_limit",
+      "en": "not a regular file within the capture limit",
+      "context": "Archive capture diagnostic shown to humans."
+    },
+    {
+      "key": "archive_file_changed",
+      "en": "file changed during capture",
+      "context": "Archive capture diagnostic."
+    },
+    {
+      "key": "archive_remote",
+      "en": "Remote link; no local bytes captured.",
+      "context": "Archive capture diagnostic."
+    },
+    {
+      "key": "archive_local_missing",
+      "en": "Local revision unavailable: {reason}",
+      "context": "Archive capture diagnostic."
+    },
+    {
+      "key": "archive_saved_hash",
+      "en": "saved revision failed its content hash",
+      "context": "Archive capture diagnostic."
+    },
+    {
+      "key": "archive_save_failed",
+      "en": "Revision measured; snapshot could not be saved: {reason}",
+      "context": "Archive capture diagnostic. Bytes measured, persistence unavailable."
+    },
+    {
+      "key": "archive_not_regular",
+      "en": "not a regular record",
+      "context": "Archive diagnostic."
+    },
+    {
+      "key": "archive_scan_limit",
+      "en": "record exceeds archive scan limit",
+      "context": "Archive diagnostic."
+    },
+    {
+      "key": "archive_line_unreadable",
+      "en": "{path}: line {n} could not be read",
+      "context": "Archive diagnostic."
+    },
+    {
+      "key": "archive_path_unreadable",
+      "en": "Could not read {path}: {reason}",
+      "context": "Archive diagnostic."
+    }
+  ]
+}

@@ -1,0 +1,192 @@
+key,form,en,es,de,fr,ru,zh,ja,ko,hi
+ctl_add,,add,añadir,hinzufügen,ajouter,добавить,添加,追加,추가,जोड़ें
+ctl_hide,,hide,ocultar,ausblenden,masquer,скрыть,隐藏,非表示,숨기기,छिपाएँ
+ctl_show,,show,mostrar,einblenden,afficher,показать,显示,表示,표시,दिखाएँ
+ctl_warning,,warning,advertencia,Warnung,avertissement,предупреждение,警告,警告,경고,चेतावनी
+ctl_locked,,locked,bloqueado,gesperrt,verrouillé,заблокировано,已锁定,ロック中,잠김,लॉक है
+ctl_agents,,agents,agentes,Agenten,agents,агенты,智能体,エージェント,에이전트,एजेंट
+ctl_current,,current,actual,aktuell,actuel,текущее,当前,現在,현재,वर्तमान
+ctl_close,,close,cerrar,schließen,fermer,закрыть,关闭,閉じる,닫기,बंद करें
+ctl_on,,on,activado,an,activé,включено,开启,オン,켜짐,चालू
+ctl_off,,off,desactivado,aus,désactivé,выключено,关闭,オフ,꺼짐,बंद
+ctl_done,,done,hecho,fertig,terminé,готово,完成,完了,완료,पूर्ण
+ctl_blocked,,blocked,bloqueado,blockiert,bloqué,заблокировано,受阻,ブロック中,차단됨,अवरुद्ध
+ctl_pinned,,pinned,fijado,angeheftet,épinglé,закреплено,已固定,ピン留め済み,고정됨,पिन किया गया
+ctl_pace,,pace,ritmo,Tempo,rythme,темп,消耗速率,消費ペース,사용 속도,खपत दर
+ctl_delete,,delete,eliminar,löschen,supprimer,удалить,删除,削除,삭제,हटाएँ
+ctl_size,,size,tamaño,Größe,taille,размер,大小,サイズ,크기,आकार
+ctl_look,,look,apariencia,Aussehen,apparence,вид,外观,外観,모양,दिखावट
+ctl_recover,,recover,recuperar,wiederherstellen,récupérer,восстановить,恢复,復元,복구,बहाल करें
+ctl_notices,,notices,avisos,Hinweise,notifications,уведомления,通知,通知,알림,सूचनाएँ
+ctl_report,,report,informe,Bericht,rapport,отчёт,报告,レポート,보고서,रिपोर्ट
+ctl_artifacts,,artifacts,artefactos,Artefakte,artefacts,артефакты,产物,成果物,아티팩트,आर्टिफ़ैक्ट
+ctl_more,,more,más,mehr,plus,ещё,更多,その他,더 보기,और
+ctl_download,,download,descargar,herunterladen,télécharger,скачать,下载,ダウンロード,다운로드,डाउनलोड
+ctl_right,,right,derecha,rechts,droite,вправо,向右,右へ,오른쪽,दाएँ
+ctl_down,,down,abajo,unten,bas,вниз,向下,下へ,아래,नीचे
+ctl_light,,light,brillo,Helligkeit,luminosité,яркость,亮度,明るさ,밝기,चमक
+ctl_score,,score,puntuación,Punktzahl,score,оценка,评分,スコア,점수,स्कोर
+ctl_asleep,,asleep,dormido,schlafend,en veille,спит,休眠,スリープ,휴면,सुप्त
+ctl_turns,,turns,turnos,Eingaben,interventions,реплики,用户消息,ユーザー発言,사용자 메시지,यूज़र संदेश
+ctl_menu,,menu,menú,Menü,menu,меню,菜单,メニュー,메뉴,मेनू
+ctl_zoom_out,,zoom out,alejar,verkleinern,dézoomer,уменьшить,缩小,縮小,축소,छोटा करें
+ctl_zoom_in,,zoom in,acercar,vergrößern,zoomer,увеличить,放大,拡大,확대,बड़ा करें
+ctl_fold,,fold,plegar,einklappen,replier,свернуть,折叠,折りたたむ,접기,समेटें
+ctl_unfold,,unfold,desplegar,ausklappen,déplier,развернуть,展开,展開,펼치기,फैलाएँ
+ctl_custom,,custom,personalizado,individuell,personnalisé,свой,自定义,カスタム,사용자 지정,कस्टम
+ctl_tabs,,TABS,PESTAÑAS,TABS,ONGLETS,ВКЛАДКИ,标签页,タブ,탭,टैब
+ctl_split_right,,split right,dividir a la derecha,rechts teilen,scinder à droite,разделить вправо,向右拆分,右に分割,오른쪽으로 분할,दाईं ओर बाँटें
+ctl_split_down,,split down,dividir hacia abajo,unten teilen,scinder en bas,разделить вниз,向下拆分,下に分割,아래로 분할,नीचे बाँटें
+ctl_custom_file,,custom file,archivo propio,eigene Datei,fichier personnalisé,свой файл,自定义文件,カスタムファイル,사용자 지정 파일,कस्टम फ़ाइल
+ctl_spine,,SPINE,BARRA LATERAL,SEITENLEISTE,BARRE LATÉRALE,БОКОВАЯ ПАНЕЛЬ,侧栏,サイドバー,사이드바,साइडबार
+ctl_download_cdx,,download .cdx,descargar .cdx,.cdx herunterladen,télécharger .cdx,скачать .cdx,下载 .cdx,.cdxをダウンロード,.cdx 다운로드,.cdx डाउनलोड
+model_default,,Agent default,Predeterminado del agente,Agentenstandard,Choix par défaut de l’agent,По умолчанию у агента,智能体默认,エージェントの既定値,에이전트 기본값,एजेंट का डिफ़ॉल्ट
+model_loading,,Loading models…,Cargando modelos…,Modelle werden geladen…,Chargement des modèles…,Загрузка моделей…,正在加载模型…,モデルを読み込み中…,모델 불러오는 중…,मॉडल लोड हो रहे हैं…
+model_ready,,Installed agent catalog,Catálogo del agente instalado,Katalog des installierten Agenten,Catalogue de l’agent installé,Каталог установленного агента,已安装智能体的模型目录,インストール済みエージェントのカタログ,설치된 에이전트의 카탈로그,इंस्टॉल किए गए एजेंट का कैटलॉग
+model_unavailable,,Models unavailable · {reason},Modelos no disponibles · {reason},Modelle nicht verfügbar · {reason},Modèles indisponibles · {reason},Модели недоступны · {reason},模型不可用 · {reason},モデルを利用できません · {reason},모델을 사용할 수 없음 · {reason},मॉडल उपलब्ध नहीं · {reason}
+model_version_unknown,,{model} · version unknown,{model} · versión desconocida,{model} · Version unbekannt,{model} · version inconnue,{model} · версия неизвестна,{model} · 版本未知,{model} · バージョン不明,{model} · 버전 알 수 없음,{model} · संस्करण अज्ञात
+model_recommended,,Recommended · {model},Recomendado · {model},Empfohlen · {model},Recommandé · {model},Рекомендуется · {model},推荐 · {model},推奨 · {model},권장 · {model},अनुशंसित · {model}
+model_retry,,{status} · retry,{status} · reintentar,{status} · erneut versuchen,{status} · réessayer,{status} · повторить,{status} · 重试,{status} · 再試行,{status} · 다시 시도,{status} · पुनः प्रयास करें
+model_no_choices,,No reported choices · retry,No se han comunicado opciones · reintentar,Keine Optionen gemeldet · erneut versuchen,Aucun choix signalé · réessayer,Агент не сообщил о вариантах · повторить,未报告任何选项 · 重试,選択肢の報告なし · 再試行,보고된 선택지 없음 · 다시 시도,कोई विकल्प नहीं बताया गया · पुनः प्रयास करें
+model_requested_running,,{requested} requested · running {running},Solicitado: {requested} · en uso: {running},Angefordert: {requested} · läuft: {running},Demandé : {requested} · utilisé : {running},Запрошено: {requested} · используется: {running},已请求 {requested} · 正在运行 {running},要求: {requested} · 実行中: {running},요청: {requested} · 실행 중: {running},माँगा गया: {requested} · उपयोग में: {running}
+model_selected_unavailable,,Selected model unavailable · {status},Modelo seleccionado no disponible · {status},Gewähltes Modell nicht verfügbar · {status},Modèle sélectionné indisponible · {status},Выбранная модель недоступна · {status},所选模型不可用 · {status},選択したモデルを利用できません · {status},선택한 모델을 사용할 수 없음 · {status},चुना गया मॉडल उपलब्ध नहीं · {status}
+model_choice_unavailable,,{choice} · unavailable,{choice} · no disponible,{choice} · nicht verfügbar,{choice} · indisponible,{choice} · недоступно,{choice} · 不可用,{choice} · 利用不可,{choice} · 사용 불가,{choice} · उपलब्ध नहीं
+model_error_1,,running executable not identified,ejecutable en ejecución sin identificar,ausgeführte Programmdatei nicht identifiziert,exécutable en cours non identifié,исполняемый файл запущенного процесса не определён,未识别出正在运行的可执行文件,実行中の実行ファイルが未特定,실행 중인 실행 파일이 식별되지 않음,चल रही निष्पादन योग्य फ़ाइल की पहचान नहीं हुई
+model_error_2,,running profile unavailable,perfil en uso no disponible,Profil des laufenden Agenten nicht verfügbar,profil en cours indisponible,профиль запущенного агента недоступен,当前运行配置不可用,実行中のプロファイルが利用不可,실행 중인 프로필을 사용할 수 없음,सक्रिय प्रोफ़ाइल उपलब्ध नहीं
+model_error_3,,agent rejected catalog request,el agente rechazó la solicitud del catálogo,Agent hat die Kataloganfrage abgelehnt,l’agent a refusé la demande de catalogue,агент отклонил запрос каталога,智能体拒绝了模型目录请求,エージェントがカタログ要求を拒否しました,에이전트가 카탈로그 요청을 거부함,एजेंट ने कैटलॉग का अनुरोध अस्वीकार कर दिया
+model_error_4,,missing catalog response,falta la respuesta a la solicitud del catálogo,Antwort auf die Kataloganfrage fehlt,réponse à la demande de catalogue absente,ответ на запрос каталога отсутствует,缺少模型目录响应,カタログの応答がありません,카탈로그 응답이 없음,कैटलॉग का उत्तर नहीं मिला
+model_error_5,,repeated catalog cursor,cursor de paginación del catálogo repetido,wiederholter Seitencursor im Katalog,curseur de pagination du catalogue répété,курсор пагинации каталога повторился,模型目录分页游标重复,カタログのページングカーソルが重複,카탈로그 페이지 커서가 반복됨,कैटलॉग का पेजिनेशन कर्सर दोहराया गया
+model_error_6,,too many catalog pages,demasiadas páginas de catálogo,zu viele Katalogseiten,trop de pages de catalogue,слишком много страниц каталога,模型目录页数过多,カタログのページ数が多すぎます,카탈로그 페이지가 너무 많음,कैटलॉग में बहुत अधिक पृष्ठ
+model_error_7,,agent returned no visible models,el agente no devolvió modelos visibles,Agent hat keine sichtbaren Modelle zurückgegeben,l’agent n’a renvoyé aucun modèle visible,агент не вернул ни одной видимой модели,智能体未返回任何可见模型,エージェントが表示対象のモデルを返しませんでした,에이전트가 표시 가능한 모델을 반환하지 않음,एजेंट ने कोई दृश्यमान मॉडल नहीं लौटाया
+model_error_8,,invalid catalog choice,opción de catálogo no válida,ungültige Katalogauswahl,choix de catalogue invalide,некорректный вариант выбора в каталоге,模型目录选项无效,カタログの選択肢が無効,카탈로그 선택 항목이 유효하지 않음,कैटलॉग का विकल्प अमान्य
+model_error_9,,invalid effort list,lista de niveles de esfuerzo de razonamiento no válida,ungültige Liste der Stufen für den Denkaufwand,liste des niveaux d’effort de raisonnement invalide,некорректный список уровней рассуждения,推理强度列表无效,推論強度の一覧が無効,추론 강도 목록이 유효하지 않음,तर्क-प्रयास के स्तरों की सूची अमान्य
+model_error_10,,missing Codex model list,falta la lista de modelos de Codex,Modellliste von Codex fehlt,liste des modèles de Codex absente,список моделей Codex отсутствует,缺少 Codex 模型列表,Codex のモデル一覧がありません,Codex 모델 목록이 없음,Codex की मॉडल सूची मौजूद नहीं
+model_error_11,,missing model ID,falta el ID del modelo,Modell-ID fehlt,ID du modèle absent,ID модели отсутствует,缺少模型 ID,モデル ID がありません,모델 ID가 없음,मॉडल ID मौजूद नहीं
+model_error_12,,invalid effort level,nivel de esfuerzo de razonamiento no válido,ungültige Stufe für den Denkaufwand,niveau d’effort de raisonnement invalide,некорректный уровень рассуждения,推理强度级别无效,推論強度のレベルが無効,추론 강도 수준이 유효하지 않음,तर्क-प्रयास का स्तर अमान्य
+model_error_13,,missing Claude model list,falta la lista de modelos de Claude,Modellliste von Claude fehlt,liste des modèles de Claude absente,список моделей Claude отсутствует,缺少 Claude 模型列表,Claude のモデル一覧がありません,Claude 모델 목록이 없음,Claude की मॉडल सूची मौजूद नहीं
+model_error_14,,agent input unavailable,entrada del agente no disponible,Agenteneingabe nicht verfügbar,entrée de l’agent indisponible,ввод агента недоступен,智能体输入不可用,エージェントの入力が利用不可,에이전트 입력을 사용할 수 없음,एजेंट का इनपुट उपलब्ध नहीं
+model_error_15,,agent output unavailable,salida del agente no disponible,Agentenausgabe nicht verfügbar,sortie de l’agent indisponible,вывод агента недоступен,智能体输出不可用,エージェントの出力が利用不可,에이전트 출력을 사용할 수 없음,एजेंट का आउटपुट उपलब्ध नहीं
+model_error_16,,missing catalog result,falta el resultado del catálogo,Katalogergebnis fehlt,résultat du catalogue absent,результат запроса каталога отсутствует,缺少模型目录结果,カタログの結果がありません,카탈로그 결과가 없음,कैटलॉग का परिणाम मौजूद नहीं
+model_output_limit,,{source} output exceeded limit,la salida de {source} superó el límite,Ausgabe von {source} hat das Limit überschritten,la sortie de {source} a dépassé la limite,вывод {source} превысил лимит,{source} 输出超出限制,{source} の出力が上限を超えました,{source} 출력이 제한을 초과함,{source} का आउटपुट सीमा से अधिक हो गया
+model_invalid_json,,invalid {source} JSON,JSON de {source} no válido,ungültiges JSON von {source},JSON de {source} invalide,некорректный JSON от {source},{source} 的 JSON 无效,{source} の JSON が無効,{source}의 JSON이 유효하지 않음,{source} का JSON अमान्य
+model_read_error,,cannot read agent {source},no se puede leer {source} del agente,{source} des Agenten kann nicht gelesen werden,impossible de lire {source} de l’agent,не удаётся прочитать {source} агента,无法读取智能体的 {source},エージェントの {source} を読み取れません,에이전트의 {source} 읽기 불가,एजेंट के {source} को पढ़ा नहीं जा सकता
+model_input_closed,,{source} input already closed,la entrada de {source} ya está cerrada,Eingabe von {source} bereits geschlossen,l’entrée de {source} est déjà fermée,ввод {source} уже закрыт,{source} 输入已关闭,{source} の入力はすでに閉じられています,{source} 입력이 이미 닫힘,{source} का इनपुट पहले ही बंद हो चुका है
+model_request_error,,cannot request agent {source},no se puede solicitar {source} al agente,{source} kann beim Agenten nicht angefordert werden,impossible de demander {source} à l’agent,не удаётся запросить {source} у агента,无法向智能体请求 {source},エージェントに {source} を要求できません,에이전트에 {source} 요청 불가,एजेंट से {source} का अनुरोध नहीं किया जा सकता
+model_flush_error,,cannot flush {source} request,no se puede enviar la solicitud de {source} desde el búfer,{source}-Anfrage kann nicht aus dem Puffer gesendet werden,impossible de transmettre la requête {source} mise en tampon,не удаётся отправить из буфера запрос {source},无法刷新 {source} 请求的缓冲区,{source} の要求をフラッシュできません,{source} 요청을 버퍼에서 내보낼 수 없음,{source} का अनुरोध बफ़र से भेजा नहीं जा सकता
+model_timeout,,{source} request timed out,se agotó el tiempo de espera de la solicitud de {source},Zeitüberschreitung bei der {source}-Anfrage,délai d’attente dépassé pour la requête {source},время ожидания ответа на запрос {source} истекло,{source} 请求超时,{source} の要求がタイムアウトしました,{source} 요청 시간이 초과됨,{source} के अनुरोध की प्रतीक्षा का समय समाप्त हो गया
+model_connection_closed,,agent closed {source} connection,el agente cerró la conexión de {source},Agent hat die {source}-Verbindung geschlossen,l’agent a fermé la connexion {source},агент закрыл соединение {source},智能体关闭了 {source} 连接,エージェントが {source} の接続を閉じました,에이전트가 {source} 연결을 닫음,एजेंट ने {source} कनेक्शन बंद कर दिया
+effort_none,,none,ninguno,keiner,aucun,нет,无,なし,없음,कोई नहीं
+effort_minimal,,minimal,mínimo,minimal,minimal,минимальный,最低,最小,최소,न्यूनतम
+effort_low,,low,bajo,niedrig,faible,низкий,低,低,낮음,कम
+effort_medium,,medium,medio,mittel,moyen,средний,中,中,중간,मध्यम
+effort_high,,high,alto,hoch,élevé,высокий,高,高,높음,उच्च
+effort_xhigh,,extra high,muy alto,sehr hoch,très élevé,очень высокий,超高,超高,매우 높음,अति उच्च
+effort_max,,maximum,máximo,maximal,maximum,максимальный,最高,最大,최대,अधिकतम
+effort_ultra,,ultra,ultra,ultra,ultra,ультра,极致,ウルトラ,울트라,अल्ट्रा
+archive_unavailable,,unavailable,no disponible,nicht verfügbar,indisponible,недоступно,不可用,利用不可,사용 불가,अनुपलब्ध
+archive_date,,{date} (local),{date} (hora local),{date} (Ortszeit),{date} (heure locale),{date} (местное время),{date}（本地时间）,{date}（ローカル時刻）,{date} (로컬 시간),{date} (स्थानीय समय)
+archive_pending,,Some revision captures are still pending. Reopen the archive to refresh.,Algunas capturas de revisiones siguen pendientes. Reabre el archivo para actualizarlo.,Einige Revisionen warten noch auf Erfassung. Archiv zum Aktualisieren erneut öffnen.,Certains instantanés de révisions sont encore en attente. Rouvrez l’archive pour l’actualiser.,"Некоторые версии ещё ожидают фиксации. Чтобы обновить данные, откройте архив заново.",部分修订快照仍待完成。重新打开归档即可刷新。,一部のリビジョンはスナップショットの取得待ちです。アーカイブを開き直すと更新されます。,일부 리비전 스냅샷이 아직 대기 중입니다. 새로 고치려면 아카이브를 다시 여세요.,कुछ संस्करणों के स्नैपशॉट अभी लंबित हैं। ताज़ा करने के लिए आर्काइव फिर से खोलें।
+archive_conversation_unavailable,,Conversation unavailable,Conversación no disponible,Unterhaltung nicht verfügbar,Conversation indisponible,Диалог недоступен,对话不可用,会話を利用できません,대화를 사용할 수 없음,बातचीत अनुपलब्ध
+archive_name_invalid,,Saved revision name is invalid.,El nombre de la revisión guardada no es válido.,Der Name der gespeicherten Revision ist ungültig.,Le nom de la révision enregistrée est invalide.,Недопустимое имя сохранённой версии.,已保存的修订版本名称无效。,保存済みリビジョンの名前が無効です。,저장된 리비전 이름이 유효하지 않습니다.,सहेजे गए संस्करण का नाम अमान्य है।
+archive_revision_unavailable,,Saved revision unavailable: {reason},Revisión guardada no disponible: {reason},Gespeicherte Revision nicht verfügbar: {reason},Révision enregistrée indisponible : {reason},Сохранённая версия недоступна: {reason},已保存的修订版本不可用：{reason},保存済みリビジョンを利用できません: {reason},저장된 리비전을 사용할 수 없음: {reason},सहेजा गया संस्करण अनुपलब्ध: {reason}
+archive_hash_changed,,Saved revision changed; its content hash no longer matches.,La revisión guardada ha cambiado; su hash de contenido ya no coincide.,Die gespeicherte Revision wurde geändert; ihr Inhalts-Hash stimmt nicht mehr überein.,La révision enregistrée a changé ; son empreinte de contenu ne correspond plus.,Сохранённая версия изменилась; хеш её содержимого больше не совпадает.,已保存的修订版本已更改；其内容哈希不再匹配。,保存済みリビジョンが変更され、内容のハッシュが一致しなくなりました。,저장된 리비전이 변경되어 콘텐츠 해시가 더 이상 일치하지 않습니다.,सहेजा गया संस्करण बदल गया है; उसकी सामग्री का हैश अब मेल नहीं खाता।
+archive_current_exists,,Current file exists; bytes may have changed.,El archivo actual existe; sus bytes pueden haber cambiado.,Die aktuelle Datei existiert; ihre Bytes könnten sich geändert haben.,Le fichier actuel existe ; ses octets ont peut-être changé.,Текущий файл существует; его байты могли измениться.,当前文件存在；其字节内容可能已更改。,現在のファイルは存在します。バイト列は変わっている可能性があります。,현재 파일이 존재합니다. 바이트는 변경되었을 수 있습니다.,मौजूदा फ़ाइल मौजूद है; उसके बाइट्स बदल गए हो सकते हैं।
+archive_current_unavailable,,Current file unavailable.,Archivo actual no disponible.,Aktuelle Datei nicht verfügbar.,Fichier actuel indisponible.,Текущий файл недоступен.,当前文件不可用。,現在のファイルを利用できません。,현재 파일을 사용할 수 없습니다.,मौजूदा फ़ाइल अनुपलब्ध है।
+archive_remote_unchecked,,Remote link; availability not checked.,Enlace remoto; disponibilidad no comprobada.,Remote-Link; Verfügbarkeit nicht geprüft.,Lien distant ; disponibilité non vérifiée.,Ссылка на удалённый ресурс; доступность не проверялась.,远程链接；尚未检查可用性。,リモートリンクです。利用可否は確認していません。,원격 링크입니다. 사용 가능 여부는 확인하지 않았습니다.,दूरस्थ लिंक; उपलब्धता की जाँच नहीं की गई है।
+archive_open_revision,,Open captured revision,Abrir revisión capturada,Erfasste Revision öffnen,Ouvrir l’instantané de la révision,Открыть зафиксированную версию,打开修订快照,リビジョンのスナップショットを開く,리비전 스냅샷 열기,संस्करण का स्नैपशॉट खोलें
+archive_copy_unavailable,,Captured copy unavailable,Copia capturada no disponible,Erfasste Kopie nicht verfügbar,Instantané indisponible,Зафиксированная копия недоступна,快照副本不可用,スナップショットを利用できません,스냅샷 사본을 사용할 수 없음,स्नैपशॉट अनुपलब्ध
+archive_no_record,,Revision unavailable: this handover has no capture record.,Revisión no disponible: esta entrega no tiene registro de captura.,Revision nicht verfügbar: Diese Übergabe enthält keinen Erfassungsdatensatz.,Révision indisponible : aucun enregistrement de capture pour cette remise.,Версия недоступна: для этой передачи нет записи о фиксации.,修订版本不可用：此次交付没有快照记录。,リビジョンを利用できません。この受け渡しにはスナップショットの取得記録がありません。,리비전을 사용할 수 없음: 이 전달 건에는 스냅샷 기록이 없습니다.,संस्करण अनुपलब्ध: इस हस्तांतरण का कोई स्नैपशॉट रिकॉर्ड नहीं है।
+archive_open_target,,Open current target,Abrir destino actual,Aktuelles Ziel öffnen,Ouvrir la cible actuelle,Открыть текущий целевой объект,打开当前目标,現在の参照先を開く,현재 대상 열기,मौजूदा लक्ष्य खोलें
+archive_cannot_open,,Target cannot be opened,No se puede abrir el destino,Ziel kann nicht geöffnet werden,Impossible d’ouvrir la cible,Невозможно открыть целевой объект,无法打开目标,参照先を開けません,대상을 열 수 없음,लक्ष्य खोला नहीं जा सकता
+archive_source_revision,,Source and revision,Origen y revisión,Quelle und Revision,Source et révision,Источник и версия,来源与修订版本,ソースとリビジョン,출처 및 리비전,स्रोत और संस्करण
+archive_origin,,Origin,Origen,Herkunft,Origine,Источник,来源,出所,출처,स्रोत
+archive_target,,Target,Destino,Ziel,Cible,Целевой объект,目标,参照先,대상,लक्ष्य
+archive_identity,,Artifact identity,Identidad del artefacto,Artefaktidentität,Identité de l’artefact,Идентификационные данные артефакта,产物标识,成果物の識別情報,아티팩트 식별 정보,आर्टिफ़ैक्ट की पहचान
+archive_hash,,Revision SHA-256,SHA-256 de la revisión,SHA-256 der Revision,SHA-256 de la révision,SHA-256 версии,修订版本 SHA-256,リビジョンの SHA-256,리비전 SHA-256,संस्करण का SHA-256
+archive_handed,,Handed over,Entregado,Übergeben,Remis,Передано,已交付,受け渡し済み,전달됨,सौंपा गया
+archive_captured,,Captured,Capturado,Erfasst,Instantané créé,Зафиксировано,已生成快照,スナップショット取得済み,스냅샷 저장됨,स्नैपशॉट लिया गया
+archive_incomplete,,Some records could not be read. This archive is incomplete.,No se pudieron leer algunos registros. Este archivo está incompleto.,Einige Datensätze konnten nicht gelesen werden. Dieses Archiv ist unvollständig.,Certains enregistrements n’ont pas pu être lus. Cette archive est incomplète.,Некоторые записи не удалось прочитать. Этот архив неполон.,部分记录无法读取。此归档不完整。,一部の記録を読み取れませんでした。このアーカイブは不完全です。,일부 기록을 읽을 수 없었습니다. 이 아카이브는 불완전합니다.,कुछ रिकॉर्ड पढ़े नहीं जा सके। यह आर्काइव अधूरा है।
+archive_title,,Artifact archive,Archivo de artefactos,Artefaktarchiv,Archive des artefacts,Архив артефактов,产物归档,成果物アーカイブ,아티팩트 아카이브,आर्टिफ़ैक्ट आर्काइव
+archive_intro,,"Documents handed over in TD, including closed conversations. A captured revision preserves the file’s bytes at capture time. Linked images and other external resources are not copied.","Documentos entregados en TD, incluidos los de conversaciones cerradas. Una revisión capturada conserva los bytes del archivo en el momento de la captura. Las imágenes enlazadas y otros recursos externos no se copian.","In TD übergebene Dokumente, auch aus geschlossenen Unterhaltungen. Eine erfasste Revision bewahrt die Bytes der Datei zum Zeitpunkt der Erfassung. Verlinkte Bilder und andere externe Ressourcen werden nicht kopiert.","Documents remis dans TD, y compris ceux des conversations fermées. Un instantané de révision conserve les octets du fichier au moment de la capture. Les images liées et les autres ressources externes ne sont pas copiées.","Документы, переданные в TD, в том числе в закрытых диалогах. Зафиксированная версия сохраняет байты файла на момент фиксации. Изображения по ссылкам и другие внешние ресурсы не копируются.",在 TD 中交付的文档，包括已关闭对话中的文档。修订快照会保留创建快照时文件的字节内容。链接的图片和其他外部资源不会被复制。,TD で受け渡されたドキュメント（終了した会話の分を含む）。リビジョンのスナップショットは、取得時点のファイルのバイト列を保持します。リンク先の画像やその他の外部リソースはコピーされません。,"TD에서 전달된 문서로, 종료된 대화의 문서도 포함합니다. 리비전 스냅샷은 생성 시점의 파일 바이트를 보존합니다. 링크된 이미지와 기타 외부 리소스는 복사하지 않습니다.","TD में सौंपे गए दस्तावेज़, बंद की गई बातचीत के दस्तावेज़ों सहित। संस्करण का स्नैपशॉट बनाते समय फ़ाइल में जो बाइट्स थे, वे उसमें सुरक्षित रहते हैं। लिंक की गई छवियाँ और अन्य बाहरी संसाधन कॉपी नहीं किए जाते।"
+archive_find,,"Find a title, path or conversation","Buscar un título, una ruta o una conversación","Titel, Pfad oder Unterhaltung suchen","Rechercher un titre, un chemin ou une conversation","Поиск по названию, пути или диалогу",查找标题、路径或对话,タイトル、パス、会話を検索,"제목, 경로 또는 대화 찾기","शीर्षक, पथ या बातचीत खोजें"
+archive_search,,Search saved artifacts,Buscar artefactos guardados,Gespeicherte Artefakte durchsuchen,Rechercher dans les artefacts enregistrés,Поиск сохранённых артефактов,搜索已保存的产物,保存済みの成果物を検索,저장된 아티팩트 검색,सहेजे गए आर्टिफ़ैक्ट खोजें
+archive_count_filtered,,{n} of {total} archive entries,Entradas del archivo: {n} de {total},Archiveinträge: {n} von {total},Entrées de l’archive : {n} sur {total},Записей в архиве: {n} из {total},归档条目：{n} 个，共 {total} 个,アーカイブ項目: {total} 件中 {n} 件,아카이브 항목: 전체 {total}개 중 {n}개,आर्काइव प्रविष्टियाँ: कुल {total} में से {n}
+archive_count,one,{n} archive entry,{n} entrada en el archivo,{n} Archiveintrag,{n} entrée d’archive,{n} запись в архиве,{n} 个归档条目,{n} 件のアーカイブ項目,아카이브 항목 {n}개,आर्काइव में {n} प्रविष्टि
+archive_count,few,{n} archive entries,{n} entradas en el archivo,{n} Archiveinträge,{n} entrées d’archive,{n} записи в архиве,{n} 个归档条目,{n} 件のアーカイブ項目,아카이브 항목 {n}개,आर्काइव में {n} प्रविष्टियाँ
+archive_count,many,{n} archive entries,{n} entradas en el archivo,{n} Archiveinträge,{n} entrées d’archive,{n} записей в архиве,{n} 个归档条目,{n} 件のアーカイブ項目,아카이브 항목 {n}개,आर्काइव में {n} प्रविष्टियाँ
+archive_count,other,{n} archive entries,{n} entradas en el archivo,{n} Archiveinträge,{n} entrées d’archive,{n} записи в архиве,{n} 个归档条目,{n} 件のアーカイブ項目,아카이브 항목 {n}개,आर्काइव में {n} प्रविष्टियाँ
+help_footer,,"Type to filter · Tab switches {shortcuts} / {features} · ↑ ↓ PgUp PgDn scroll · Esc clears, then closes",Escribe para filtrar · Tab alterna {shortcuts} / {features} · ↑ ↓ PgUp PgDn desplazan · Esc borra y luego cierra,"Tippen zum Filtern · Tab: {shortcuts} / {features} wechseln · ↑ ↓ PgUp PgDn scrollen · Esc: leeren, dann schließen","Tapez pour filtrer · Tab alterne {shortcuts} / {features} · ↑ ↓ PgUp PgDn : défiler · Esc efface, puis ferme","Фильтр при вводе · Tab переключает {shortcuts} / {features} · ↑ ↓ PgUp PgDn — прокрутка · Esc очищает, затем закрывает",输入以筛选 · Tab 切换 {shortcuts} / {features} · ↑ ↓ PgUp PgDn 滚动 · Esc 先清空，再关闭,入力で絞り込み · Tab: {shortcuts} / {features} を切替 · ↑ ↓ PgUp PgDn: スクロール · Esc: 消去、次に閉じる,"입력하여 필터링 · Tab: {shortcuts} / {features} 전환 · ↑ ↓ PgUp PgDn: 스크롤 · Esc: 지우기, 그다음 닫기","फ़िल्टर करने के लिए टाइप करें · Tab: {shortcuts} / {features} बदलें · ↑ ↓ PgUp PgDn: स्क्रॉल · Esc: साफ़ करें, फिर बंद करें"
+help_marks_off,,Alt+1 … 4 (marks off),Alt+1 … 4 (marcas desactivadas),Alt+1 … 4 (Markierungen aus),Alt+1 … 4 (repères désactivés),Alt+1 … 4 (метки выкл.),Alt+1 … 4 (标记关闭),Alt+1 … 4 (マーク: オフ),Alt+1 … 4 (표식 꺼짐),Alt+1 … 4 (चिह्न बंद)
+help_needs_me,,NEEDS ME,REQUIERE MI ATENCIÓN,BRAUCHT MICH,BESOIN DE MOI,НУЖНО МОЁ ВНИМАНИЕ,需要我处理,自分の対応が必要,내 대응 필요,मेरा ध्यान चाहिए
+model_selected_effort,,Selected effort unavailable; choose Agent default or a reported effort,El nivel de esfuerzo seleccionado no está disponible; elige «Predeterminado del agente» o un nivel de esfuerzo indicado por el agente,Gewählter Denkaufwand nicht verfügbar; „Agentenstandard“ oder eine gemeldete Stufe wählen,Le niveau d’effort sélectionné est indisponible ; choisissez « Choix par défaut de l’agent » ou un niveau d’effort indiqué par l’agent,"Выбранный уровень рассуждения недоступен; выберите «По умолчанию у агента» или уровень, о котором сообщил агент",所选推理强度不可用；请选择“智能体默认”或智能体报告的推理强度,選択した推論強度は利用できません。「エージェントの既定値」またはエージェントが報告した推論強度を選択してください,선택한 추론 강도를 사용할 수 없습니다. ‘에이전트 기본값’ 또는 에이전트가 보고한 추론 강도를 선택하세요,चुना गया तर्क-प्रयास स्तर उपलब्ध नहीं है; “एजेंट का डिफ़ॉल्ट” या एजेंट द्वारा बताया गया स्तर चुनें
+ctl_gauges,,gauges,indicadores,Messanzeigen,jauges,индикаторы,仪表,メーター,게이지,गेज
+archive_open_error,,Artifact archive could not be opened: {reason},No se pudo abrir el archivo de artefactos: {reason},Das Artefaktarchiv konnte nicht geöffnet werden: {reason},Impossible d’ouvrir l’archive des artefacts : {reason},Не удалось открыть архив артефактов: {reason},无法打开产物归档：{reason},成果物アーカイブを開けませんでした: {reason},아티팩트 아카이브를 열 수 없었습니다: {reason},आर्टिफ़ैक्ट आर्काइव खोला नहीं जा सका: {reason}
+archive_file_limit,,not a regular file within the capture limit,no es un archivo normal o supera el límite de captura,keine reguläre Datei oder Erfassungsgrenze überschritten,ce n’est pas un fichier ordinaire ou la limite de capture est dépassée,не обычный файл или превышен лимит фиксации,不是常规文件，或超出快照生成限制,通常ファイルではないか、スナップショットの取得上限を超えています,일반 파일이 아니거나 스냅샷 캡처 한도를 초과함,सामान्य फ़ाइल नहीं है या स्नैपशॉट की सीमा से अधिक है
+archive_file_changed,,file changed during capture,el archivo cambió durante la captura,Datei während der Erfassung geändert,le fichier a changé pendant la capture,файл изменился во время фиксации,生成快照期间文件发生了变化,スナップショットの取得中にファイルが変更されました,스냅샷 캡처 중 파일이 변경됨,स्नैपशॉट लेते समय फ़ाइल बदल गई
+archive_remote,,Remote link; no local bytes captured.,Enlace remoto; no se capturaron bytes locales.,Remote-Link; keine lokalen Bytes erfasst.,Lien distant ; aucun octet local capturé.,Ссылка на удалённый ресурс; локальные байты не зафиксированы.,远程链接；未捕获本地字节内容。,リモートリンクです。ローカルのバイト列は取得されていません。,원격 링크입니다. 로컬 바이트는 캡처되지 않았습니다.,दूरस्थ लिंक; स्थानीय बाइट्स कैप्चर नहीं किए गए।
+archive_local_missing,,Local revision unavailable: {reason},Revisión local no disponible: {reason},Lokale Revision nicht verfügbar: {reason},Révision locale indisponible : {reason},Локальная версия недоступна: {reason},本地修订版本不可用：{reason},ローカルのリビジョンを利用できません: {reason},로컬 리비전을 사용할 수 없음: {reason},स्थानीय संस्करण अनुपलब्ध: {reason}
+archive_saved_hash,,saved revision failed its content hash,la revisión guardada no superó la comprobación del hash de contenido,gespeicherte Revision hat die Inhalts-Hash-Prüfung nicht bestanden,la révision enregistrée a échoué à la vérification de l’empreinte du contenu,сохранённая версия не прошла проверку хеша содержимого,已保存的修订版本未通过内容哈希校验,保存済みリビジョンが内容のハッシュ検証に失敗しました,저장된 리비전이 콘텐츠 해시 검증을 통과하지 못함,सहेजा गया संस्करण सामग्री के हैश की जाँच में विफल रहा
+archive_save_failed,,Revision measured; snapshot could not be saved: {reason},Medición de la revisión completada; no se pudo guardar la instantánea: {reason},Messung der Revision abgeschlossen; Snapshot konnte nicht gespeichert werden: {reason},Mesure de la révision effectuée ; l’instantané n’a pas pu être enregistré : {reason},Измерение версии завершено; не удалось сохранить снимок: {reason},修订版本的字节测量已完成；无法保存快照：{reason},リビジョンの計測は完了しましたが、スナップショットを保存できませんでした: {reason},리비전 측정은 완료했지만 스냅샷을 저장할 수 없었습니다: {reason},संस्करण का मापन पूरा हुआ; स्नैपशॉट सहेजा नहीं जा सका: {reason}
+archive_not_regular,,not a regular record,no es un registro normal,kein regulärer Datensatz,ce n’est pas un enregistrement ordinaire,не обычная запись,不是常规记录,通常の記録ではありません,일반 기록이 아님,सामान्य रिकॉर्ड नहीं है
+archive_scan_limit,,record exceeds archive scan limit,el registro supera el límite de exploración del archivo de artefactos,Datensatz überschreitet die Scan-Grenze des Archivs,l’enregistrement dépasse la limite d’analyse de l’archive,запись превышает лимит сканирования архива,记录超出归档扫描上限,記録がアーカイブのスキャン上限を超えています,기록이 아카이브 스캔 한도를 초과함,रिकॉर्ड आर्काइव की स्कैन सीमा से अधिक है
+archive_line_unreadable,,{path}: line {n} could not be read,{path}: no se pudo leer la línea {n},{path}: Zeile {n} konnte nicht gelesen werden,{path} : la ligne {n} n’a pas pu être lue,{path}: не удалось прочитать строку {n},{path}：无法读取第 {n} 行,{path}: {n} 行目を読み取れませんでした,{path}: {n}번째 줄을 읽을 수 없었습니다,{path}: पंक्ति {n} पढ़ी नहीं जा सकी
+archive_path_unreadable,,Could not read {path}: {reason},No se pudo leer {path}: {reason},{path} konnte nicht gelesen werden: {reason},Impossible de lire {path} : {reason},Не удалось прочитать {path}: {reason},无法读取 {path}：{reason},{path} を読み取れませんでした: {reason},{path} 읽기에 실패했습니다: {reason},{path} पढ़ा नहीं जा सका: {reason}
+update_commit_unknown,,commit unknown,commit desconocido,Commit unbekannt,commit inconnu,коммит неизвестен,提交未知,コミット不明,커밋 알 수 없음,कमिट अज्ञात
+update_launcher,,launcher build · {path},compilación del lanzador · {path},Launcher-Build · {path},build du lanceur · {path},сборка лаунчера · {path},启动器构建 · {path},ランチャービルド · {path},런처 빌드 · {path},लॉन्चर बिल्ड · {path}
+update_source,,source checkout · {path},copia de trabajo del código fuente · {path},Arbeitskopie des Quellcodes · {path},copie de travail du code source · {path},рабочая копия исходников · {path},源码工作副本 · {path},ソースの作業コピー · {path},소스 작업 사본 · {path},सोर्स कोड की वर्किंग कॉपी · {path}
+update_package,,system package · {path},paquete del sistema · {path},Systempaket · {path},paquet système · {path},системный пакет · {path},系统软件包 · {path},システムパッケージ · {path},시스템 패키지 · {path},सिस्टम पैकेज · {path}
+update_unknown,,unrecognised · {path},no reconocido · {path},nicht erkannt · {path},non reconnu · {path},не распознано · {path},未识别 · {path},未認識 · {path},인식되지 않음 · {path},पहचाना नहीं गया · {path}
+update_refuse_source,,"TD never pulls or rebuilds a checkout. To update it yourself:
+{commands}","TD nunca hace pull ni recompila una copia de trabajo. Para actualizarla por tu cuenta:
+{commands}","TD führt für Arbeitskopien nie einen Pull oder eine Neukompilierung aus. So aktualisierst du diese Kopie selbst:
+{commands}","TD n’effectue jamais de pull ni de recompilation d’une copie de travail. Pour la mettre à jour vous-même :
+{commands}","TD никогда не выполняет pull и не пересобирает рабочую копию. Чтобы обновить её самостоятельно:
+{commands}","TD 从不对源码工作副本执行 pull 或重新构建。如需自行更新：
+{commands}","TD は作業コピーに対して pull や再ビルドを一切行いません。自分で更新するには:
+{commands}","TD는 작업 사본에서 pull이나 재빌드를 절대 수행하지 않습니다. 직접 업데이트하려면:
+{commands}","TD किसी वर्किंग कॉपी पर कभी pull या रीबिल्ड नहीं करता। इसे खुद अपडेट करने के लिए:
+{commands}"
+update_refuse_package,,your package manager owns this install — update it there,tu gestor de paquetes administra esta instalación — actualízala desde allí,dein Paketmanager verwaltet diese Installation — aktualisiere sie dort,cette installation est gérée par votre gestionnaire de paquets — effectuez la mise à jour depuis celui-ci,этой установкой управляет ваш пакетный менеджер — обновляйте её через него,此安装由你的软件包管理器管理，请通过它更新,このインストールはパッケージマネージャーが管理しています。そちらで更新してください,이 설치는 패키지 관리자가 관리합니다. 해당 패키지 관리자에서 업데이트하세요,इस इंस्टॉलेशन को आपका पैकेज मैनेजर संभालता है — वहीं से अपडेट करें
+update_refuse_unknown,,"this file was not installed as an AppImage or into TD’s build library, so TD does not replace it","este archivo no se instaló como AppImage ni en la biblioteca de compilaciones de TD, por lo que TD no lo reemplaza",diese Datei wurde weder als AppImage noch in der Build-Bibliothek von TD installiert; deshalb ersetzt TD sie nicht,ce fichier n’a été installé ni comme AppImage ni dans la bibliothèque de builds de TD ; TD ne le remplace donc pas,"этот файл не был установлен ни как AppImage, ни в библиотеку сборок TD, поэтому TD его не заменяет",此文件既未作为 AppImage 安装，也未安装到 TD 的构建库中，因此 TD 不会替换它,このファイルは AppImage としても TD のビルドライブラリ内にもインストールされていないため、TD は置き換えません,이 파일은 AppImage로도 TD 빌드 라이브러리에도 설치되지 않았으므로 TD가 교체하지 않습니다,"यह फ़ाइल न तो AppImage के रूप में और न ही TD की बिल्ड लाइब्रेरी में इंस्टॉल की गई थी, इसलिए TD इसे बदलता नहीं है"
+update_no_stable,,no stable release has been published,no se ha publicado ninguna versión estable,es wurde keine stabile Version veröffentlicht,aucune version stable n’a été publiée,стабильных выпусков не опубликовано,尚未发布稳定版本,安定版は公開されていません,공개된 안정 버전이 없음,कोई स्थिर रिलीज़ प्रकाशित नहीं की गई है
+update_no_dev,,no public dev build has been published yet,todavía no se ha publicado ninguna compilación de desarrollo pública,es wurde noch kein öffentlicher Entwicklungsbuild veröffentlicht,aucun build de développement public n’a encore été publié,публичных сборок разрабатываемой версии пока не опубликовано,尚未发布公开的开发构建版本,開発ビルドはまだ一般公開されていません,공개 개발 빌드가 아직 게시되지 않음,अभी तक कोई सार्वजनिक डेवलपमेंट बिल्ड प्रकाशित नहीं किया गया है
+update_no_image,,this release has no Linux AppImage,esta versión no incluye un AppImage para Linux,für diese Version gibt es kein Linux-AppImage,cette version ne contient pas d’AppImage pour Linux,в этом выпуске нет AppImage для Linux,此版本不包含 Linux AppImage,このリリースには Linux 用の AppImage がありません,이 릴리스에는 Linux용 AppImage가 없음,इस रिलीज़ में Linux के लिए AppImage नहीं है
+update_no_checksum,,"no checksum was published for it, so TD cannot check the download — download it yourself from its page","no se publicó ninguna suma de comprobación para este archivo, así que TD no puede verificar la descarga — descárgalo por tu cuenta desde su página","dafür wurde keine Prüfsumme veröffentlicht, daher kann TD den Download nicht prüfen — lade die Datei selbst von ihrer Seite herunter","aucune somme de contrôle n’a été publiée pour ce fichier, donc TD ne peut pas vérifier le téléchargement — téléchargez-le vous-même depuis sa page","для этого файла не опубликована контрольная сумма, поэтому TD не может проверить загрузку — скачайте файл самостоятельно с его страницы",未发布此文件的校验和，因此 TD 无法验证下载内容，请自行从其页面下载,このファイルのチェックサムが公開されていないため、TD はダウンロード内容を検証できません。そのページから自分でダウンロードしてください,이 파일의 체크섬이 공개되지 않아 TD가 다운로드를 검증할 수 없습니다. 해당 페이지에서 직접 다운로드하세요,"इस फ़ाइल का चेकसम प्रकाशित नहीं किया गया है, इसलिए TD डाउनलोड की जाँच नहीं कर सकता — इसके पेज से खुद डाउनलोड करें"
+ctl_about,,about,aprox.,ca.,env.,около,约,約,약,लगभग
+ctl_active,,active,activo,aktiv,actif,активно,活跃,アクティブ,활성,सक्रिय
+ctl_adopt,,adopt,incorporar,übernehmen,rattacher,присоединить,纳入项目,取り込む,프로젝트 편입,प्रोजेक्ट में लें
+ctl_anchor,,anchor,anclar,verankern,ancrer,закрепить,锚定,固定,고정,स्थिर करें
+ctl_available,,available,disponible,verfügbar,disponible,доступно,可用,利用可能,사용 가능,उपलब्ध
+ctl_awake,,awake,despierto,wach,éveillé,бодрствует,醒着,起きている,깨어 있음,जागृत
+ctl_beside,,beside,al lado,daneben,à côté,рядом,旁边,隣に,옆에,बगल में
+ctl_comment,,comment,comentar,kommentieren,commenter,комментировать,评论,コメント,댓글,टिप्पणी करें
+ctl_copy,,copy,copiar,kopieren,copier,копировать,复制,コピー,복사,कॉपी करें
+ctl_display,,display,pantalla,Anzeige,affichage,экран,显示,表示,화면,डिस्प्ले
+ctl_effects,,effects,efectos,Effekte,effets,эффекты,特效,エフェクト,효과,प्रभाव
+ctl_find,,find,buscar,suchen,rechercher,найти,查找,検索,찾기,ढूँढें
+ctl_images,,images,imágenes,Bilder,images,изображения,图片,画像,이미지,छवियाँ
+ctl_language,,language,idioma,Sprache,langue,язык,语言,言語,언어,भाषा
+ctl_launch,,launch,iniciar,starten,lancer,запустить,启动,起動,실행,शुरू करें
+ctl_left,,left,izquierda,links,gauche,влево,向左,左へ,왼쪽,बाएँ
+ctl_lookup,,lookup,buscar nombre,Namenssuche,chercher par nom,поиск по имени,按名查找,名前検索,이름 검색,नाम खोजें
+ctl_maximize,,maximize,maximizar,maximieren,maximiser,развернуть,最大化,最大化,최대화,अधिकतम करें
+ctl_new,,new,nuevo,neu,nouveau,новое,新建,新規,새로 만들기,नया
+ctl_next,,next,siguiente,weiter,suivant,далее,下一个,次へ,다음,अगला
+ctl_notes,,notes,notas,Notizen,notes,заметки,笔记,メモ,메모,नोट्स
+ctl_open,,open,abrir,öffnen,ouvrir,открыть,打开,開く,열기,खोलें
+ctl_paused,,paused,en pausa,pausiert,en pause,приостановлено,已暂停,一時停止中,일시 중지됨,रुका हुआ
+ctl_plugins,,plugins,complementos,Plugins,plugins,плагины,插件,プラグイン,플러그인,प्लगइन
+ctl_previous,,previous,anterior,zurück,précédent,назад,上一个,前へ,이전,पिछला
+ctl_refresh,,refresh,actualizar,aktualisieren,actualiser,обновить,刷新,更新,새로 고침,रीफ़्रेश
+ctl_remove,,remove,quitar,entfernen,retirer,убрать,移除,取り除く,제거,निकालें
+ctl_reset,,reset,restablecer,zurücksetzen,réinitialiser,сбросить,重置,リセット,초기화,रीसेट
+ctl_rest,,rest,descanso,Pause,repos,отдых,休息,休憩,휴식,आराम
+ctl_selected,,selected,seleccionado,ausgewählt,sélectionné,выбрано,已选中,選択済み,선택됨,चयनित
+ctl_send,,send,enviar,senden,envoyer,отправить,发送,送信,보내기,भेजें
+ctl_settings,,settings,ajustes,Einstellungen,paramètres,настройки,设置,設定,설정,सेटिंग्स
+ctl_sleep,,sleep,dormir,schlafen,endormir,усыпить,休眠,スリープ,재우기,सुलाएँ
+ctl_total,,total,total,gesamt,total,всего,总计,合計,합계,कुल
+ctl_up,,up,arriba,oben,haut,вверх,向上,上へ,위,ऊपर
+ctl_usage,,usage,uso,Nutzung,utilisation,использование,用量,使用量,사용량,उपयोग
+ctl_window,,window,ventana,Fenster,fenêtre,окно,窗口,ウィンドウ,창,विंडो
+ctl_add_project,,ADD PROJECT,AÑADIR PROYECTO,PROJEKT ANLEGEN,AJOUTER PROJET,ДОБАВИТЬ ПРОЕКТ,添加项目,プロジェクト追加,프로젝트 추가,प्रोजेक्ट जोड़ें

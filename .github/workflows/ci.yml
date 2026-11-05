@@ -221,6 +221,18 @@ jobs:
       - name: Prove the suggester against history
         run: bash scripts/test-translation-suggest.sh
 
+  translation-integrity:
+    name: Translation integrity
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Prove batch refusal and detector boundaries
+        run: |
+          python3 scripts/test_i18n_batch.py
+          python3 scripts/test_translation_suggest.py
+      - name: Verify the completed batch against all nine installed tables
+        run: python3 scripts/i18n-batch.py docs/plans/complete-translations/complete.json --verify
+
   release-policy:
     name: Release policy
     runs-on: ubuntu-latest

@@ -10,10 +10,11 @@ use gpui::*;
 pub(crate) fn slider_switch(on: bool, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
     if sk.text_controls() {
         return sk.choice(
-            div()
-                .px(sk.px(6.))
-                .py(sk.px(2.))
-                .child(if on { "on" } else { "off" }),
+            div().px(sk.px(6.)).py(sk.px(2.)).child(if on {
+                crate::lang::current().strings().parts.ctl_on
+            } else {
+                crate::lang::current().strings().parts.ctl_off
+            }),
             on,
         );
     }

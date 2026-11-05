@@ -544,7 +544,7 @@ pub fn face_el(face: &Face, th: &Theme, sk: &Skin) -> AnyElement {
                         .right(px(1.))
                         .text_size(sk.text_px(7.))
                         .text_color(chips[0])
-                        .child(sk.control("☀", "light")),
+                        .child(sk.control("☀", crate::lang::current().strings().parts.ctl_light)),
                 )
             })
             .into_any_element(),
@@ -601,7 +601,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                 .px(sk.px(8.))
                 .py(sk.px(6.))
                 .cursor_pointer()
-                .child(format!("{}{}", e.key, e.rest)),
+                .child(text_tile_label(e.key, &e.rest, &e.second)),
             e.lit,
         );
     }
@@ -635,7 +635,7 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                     .right(px(4.))
                     .text_size(sk.text_px(8.))
                     .text_color(acc)
-                    .child(sk.control("★", "score")),
+                    .child(sk.control("★", crate::lang::current().strings().parts.ctl_score)),
             )
         })
         // Face and name sit in FIXED-height boxes so every tile is the same
@@ -708,6 +708,15 @@ pub fn tile(e: &Entry, th: &Theme, sk: &Skin) -> Div {
                 .rounded(sk.rad_raw(2.))
                 .bg(swatch.unwrap_or(acc.alpha(0.0))),
         )
+}
+
+fn text_tile_label(key: char, rest: &str, second: &str) -> String {
+    let mut label = format!("{key}{rest}");
+    if !second.is_empty() {
+        label.push(' ');
+        label.push_str(second);
+    }
+    label
 }
 
 /// One shelf pill — the visible half of `z`. The caller attaches the click.
@@ -899,6 +908,17 @@ mod tests {
     fn the_lead_tile_keeps_its_d_in_every_language() {
         assert_eq!(split_lead("DESKTOP"), ("ESKTOP".into(), String::new()));
         assert_eq!(split_lead("BUREAU"), (String::new(), "BUREAU".to_string()));
+        for l in crate::lang::Lang::ALL {
+            let word = l.strings().parts.paint_tile_desktop;
+            let (rest, second) = split_lead(word);
+            let shown = text_tile_label('D', &rest, &second);
+            assert!(shown.starts_with('D'), "{l:?}: physical shortcut missing");
+            assert!(
+                shown.contains(word),
+                "{l:?}: desktop caption disappeared: {shown}"
+            );
+        }
+        assert_eq!(text_tile_label('R', "ETRO", "82"), "RETRO 82");
         assert_eq!(split_lead(""), (String::new(), String::new()));
     }
 

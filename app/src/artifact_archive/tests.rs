@@ -2,6 +2,32 @@ use super::*;
 use crate::handover::Source;
 use crate::vitals::Bond;
 
+#[test]
+fn archive_renders_selected_language_without_changing_saved_evidence() {
+    let scratch = crate::testsync::Scratch::new("artifact-language");
+    let href = "https://example.com/<review>";
+    let observation = keep(scratch.path(), "conversation", &rec(href, 10), href);
+    for l in crate::lang::Lang::ALL {
+        let p = l.strings().parts;
+        let page = fs::read_to_string(write_page_in(scratch.path(), l).unwrap()).unwrap();
+        assert!(page.contains(&format!("lang=\"{}\"", l.code())));
+        for text in [
+            p.archive_title,
+            p.archive_remote_unchecked,
+            p.archive_remote,
+        ] {
+            assert!(page.contains(&html(text)), "{l:?}: {text}");
+        }
+        assert!(page.contains(&html(&l.count(&p.archive_count, 1))), "{l:?}");
+        assert!(!page.contains("<review>"));
+        let reloaded = load(scratch.path());
+        assert_eq!(
+            reloaded.entries[0].observation.as_ref().unwrap(),
+            &observation
+        );
+    }
+}
+
 fn rec(href: &str, time: u64) -> Rec {
     let h = Handover {
         label: "A <decision> & review".into(),

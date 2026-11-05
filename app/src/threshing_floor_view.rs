@@ -1461,7 +1461,7 @@ impl Workspace {
                             .flex()
                             .items_center()
                             .justify_center()
-                            .child(sk.control("○", "off"))
+                            .child(sk.control("○", crate::lang::current().strings().parts.ctl_off))
                             .cursor_crosshair()
                             .on_drag(rel_drag, |d, position, window, cx| {
                                 let tether = Some(window.mouse_position());
@@ -4644,7 +4644,7 @@ impl Workspace {
                     .child(
                         div()
                             .text_size(sk.text_px(20.))
-                            .child(sk.control("+", "add")),
+                            .child(sk.control("+", crate::lang::current().strings().parts.ctl_add)),
                     )
                     .child(
                         div()
@@ -4919,9 +4919,17 @@ impl Workspace {
                 .gap_3()
                 .min_w(px(0.))
                 .child(actor_slot)
-                .child(div().pt(px(39.)).child(sk.control("→", "right")))
+                .child(
+                    div()
+                        .pt(px(39.))
+                        .child(sk.control("→", crate::lang::current().strings().parts.ctl_right)),
+                )
                 .child(verb_slot)
-                .child(div().pt(px(39.)).child(sk.control("→", "right")))
+                .child(
+                    div()
+                        .pt(px(39.))
+                        .child(sk.control("→", crate::lang::current().strings().parts.ctl_right)),
+                )
                 .child(target_slot),
         )
         .child(footer)

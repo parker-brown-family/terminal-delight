@@ -11397,6 +11397,7 @@ impl Render for TerminalView {
             .letter_glow_for_focus(focused_now, th.terminal_light);
         // INACTIVE TERMINALS blur, in logical px: at 100% a little past the
         // frosted backdrop behind a TERMINIMALIST popup (7px, `Skin::popup`).
+        let pwords = crate::lang::current().strings().parts;
         let inactive_blur = if focused_now {
             0.0
         } else {
@@ -12170,7 +12171,7 @@ impl Render for TerminalView {
                                         .when_some(chrome_glyph_font('\u{f04b2}', &th), |d, f| {
                                             d.font_family(f)
                                         })
-                                        .child(sk.control("\u{f04b2}", "asleep")),
+                                        .child(sk.control("\u{f04b2}", pwords.ctl_asleep)),
                                 )
                                 .child(crate::lang::fill(
                                     parts.sleep_card_since,
@@ -12285,7 +12286,7 @@ impl Render for TerminalView {
                         .gap_2()
                         .px(px(12.))
                         .py(px(6.))
-                        .child(div().w(px(22.)).child(sk.control("👤", "turns")))
+                        .child(div().w(px(22.)).child(sk.control("👤", pwords.ctl_turns)))
                         .child(
                             crate::lang::current()
                                 .strings()
@@ -12409,21 +12410,15 @@ impl Render for TerminalView {
                 ));
             }
             if SHOW_FOCUS_GLYPH && !show_focus {
-                menu = menu.child(
-                    item(
-                        "👓",
-                        crate::lang::current().strings().parts.pane_overflow_focus,
-                    )
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            v.hdr_overflow = None;
-                            cx.emit(OpenFocusRead);
-                            cx.notify();
-                        }),
-                    ),
-                );
+                menu = menu.child(item("👓", pwords.pane_overflow_focus).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _ev: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        v.hdr_overflow = None;
+                        cx.emit(OpenFocusRead);
+                        cx.notify();
+                    }),
+                ));
             }
             if !ui_close {
                 menu = menu.child(item("×", uis.cfg_close).on_mouse_down(
@@ -12702,7 +12697,7 @@ impl Render for TerminalView {
                             .when_some(chrome_glyph_font('\u{ff0b}', &th), |d, family| {
                                 d.font_family(family)
                             })
-                            .child(sk.control("\u{ff0b}", "add")),
+                            .child(sk.control("\u{ff0b}", pwords.ctl_add)),
                     )
                     .child(
                         div()
@@ -12975,7 +12970,7 @@ impl Render for TerminalView {
                                         .text_size(sk.text_px(hicon))
                                         .line_height(px(hicon))
                                         .mr(px(1.))
-                                        .child(sk.control("👤", "turns")),
+                                        .child(sk.control("👤", pwords.ctl_turns)),
                                 )
                                 .child(step("▲", false, cx))
                                 .child(step("▼", true, cx)),
@@ -12995,7 +12990,7 @@ impl Render for TerminalView {
                                 // the FOCUS lens reads +50% over the other 2× glyphs
                                 .text_size(sk.text_px(hicon * 1.5))
                                 .line_height(px(hicon * 1.5))
-                                .child(sk.control("👓", "focus"))
+                                .child(sk.control("👓", pwords.pane_overflow_focus))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -13016,7 +13011,7 @@ impl Render for TerminalView {
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child(sk.control("🎨", "look"))
+                                .child(sk.control("🎨", pwords.ctl_look))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, ev: &MouseDownEvent, _w, cx| {
@@ -13059,7 +13054,7 @@ impl Render for TerminalView {
                                 .cursor_pointer()
                                 .text_size(sk.text_px(hicon))
                                 .line_height(px(hicon))
-                                .child(sk.control("⋯", "menu"))
+                                .child(sk.control("⋯", pwords.ctl_menu))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|v, ev: &MouseDownEvent, _w, cx| {
@@ -13131,7 +13126,7 @@ impl Render for TerminalView {
                                 .text_size(sk.text_px(hicon * 1.36))
                                 .line_height(px(hicon * 1.36))
                                 .hover(|s| s.bg(bar_fg.alpha(0.18)))
-                                .child(sk.control("×", "close"))
+                                .child(sk.control("×", pwords.ctl_close))
                                 .on_mouse_down(
                                     MouseButton::Left,
                                     cx.listener(|_, _ev: &MouseDownEvent, _w, cx| {
@@ -13926,8 +13921,8 @@ mod tests {
         let pane = cut(include_str!("pane.rs"));
         let main = cut(include_str!("main.rs"));
         for (src, glyph, file) in [
-            (pane, ".control(\"\\u{ff0b}\",", "pane.rs"),
-            (main, ".control(\"\\u{f06a9}\",", "main.rs"),
+            (pane, "\"\\u{ff0b}\"", "pane.rs"),
+            (main, "\"\\u{f06a9}\"", "main.rs"),
         ] {
             let at = src
                 .find(glyph)
