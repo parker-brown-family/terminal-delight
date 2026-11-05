@@ -28,6 +28,15 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   own windows as terminals on Omarchy, so Super+C copies and Super+V pastes with
   no setup, and the line can go.
 
+### Documents
+
+- **A pasted picture stays on its section in the agent's prompt.** ↪ sent each
+  picture under its section, but Claude Code lifted the path out of the paste
+  and attached the picture at the top, so nothing said which picture was on
+  which section. The map now keeps the path in brackets, the agent opens each
+  picture from the section it was pasted on, and the notes bar counts the
+  pictures that went.
+
 ## [0.5.1] — 2026-11-04
 
 ### Install

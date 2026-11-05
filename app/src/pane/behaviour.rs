@@ -3171,7 +3171,7 @@ fn a_picture_pasted_into_a_note_is_attached_to_its_block(cx: &mut TestAppContext
     let map = report["map"].as_str().expect("a map");
     assert!(
         map.contains(&format!(
-            "[L1] A paragraph that takes a note.\n  · [doc-image #1] {}\n",
+            "[L1] A paragraph that takes a note.\n  · [doc-image #1] ({})\n",
             file.display()
         )),
         "the map gives the block its picture's full path:\n{map}"
@@ -3246,7 +3246,7 @@ fn a_picture_pasted_into_a_note_on_a_brief_leaves_the_brief_untouched(cx: &mut T
     let map = report["map"].as_str().expect("a map");
     assert!(
         map.contains(&format!(
-            "[{nid}] {title}\n  · [doc-image #1] {}\n",
+            "[{nid}] {title}\n  · [doc-image #1] ({})\n",
             file.display()
         )),
         "{map}"

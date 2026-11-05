@@ -37,6 +37,20 @@
 | `every decision a reader can stamp (.ask, .grill-q, or .q inside a .grill) needs id="x" data-brief-anchor="x" …` | A decision without an anchor takes no note and no CONCUR; the message lists them by title | Give each one `id="q-short-name" data-brief-anchor="q-short-name"` |
 | `derives_from must be a list …` / `calls must name a .calls.json ledger …` | The identity comment's new fields are malformed | Use `new --derives-from` and `new --calls` to see their shape |
 
+## Converting: `adopt`
+
+`adopt` turns a page built without briefing into a source and a commentable page. When the build refuses, the page is put back as it was and no source is left behind.
+
+| Message begins | Meaning | Do this |
+|---|---|---|
+| `… is already a brief; edit its .src.html and run html` | The page was built by `html` | Edit its source and rebuild |
+| `… already carries briefing markers` | The file is a source, not a built page | Run `html` on it |
+| `….src.html exists; that page is already adopted` | A source sits beside the page | Edit that source and rebuild with `html` |
+| `name the brief with --id …` / `name the purpose with --purpose …` | The file name makes no usable id, or the purpose is blank | Pass `--id` and `--purpose` |
+| `<h2 id="…">: an anchor must be a lowercase id` | An existing id is not kebab-case, so it cannot double as an anchor | Rename the id in the page, then adopt again |
+| `the page has no </head>` / `no <body>…</body>` / `neither <header> nor <main>` / `no </main>` | adopt fences the authored header and main as the fingerprinted content, and cannot find them | Wrap the page's content in `<main>`, with its masthead in `<header>` |
+| `the page has no h2 sections` | A brief takes notes by section | Give the page its sections first |
+
 ## Checking: `check`
 
 | Message begins | Meaning | Do this |

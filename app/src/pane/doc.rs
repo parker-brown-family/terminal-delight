@@ -621,6 +621,7 @@ impl TerminalView {
             cx.emit(SendNotesBeside {
                 map: ev.map.clone(),
                 unsaved: ev.unsaved,
+                pictures: ev.pictures,
                 seat,
             })
         })

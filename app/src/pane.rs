@@ -577,6 +577,7 @@ pub(crate) struct DocFace {
 pub struct SendNotesBeside {
     pub map: String,
     pub unsaved: usize,
+    pub pictures: Option<usize>,
     pub seat: crate::docopen::DocSeat,
 }
 
