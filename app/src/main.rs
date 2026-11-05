@@ -20986,7 +20986,7 @@ impl Workspace {
             _ => self.focused_leaf(window, cx),
         });
         if let Some(pane) = pane {
-            // Only what is being read moves to the glow pane: a small square
+            // Only what is being read moves between the two: a small square
             // an agent opened stays small, and keeps leaving the keys alone.
             if glow {
                 if reader.as_ref() == Some(&pane)
@@ -20994,7 +20994,9 @@ impl Workspace {
                 {
                     self.close_focus_read(cx);
                 }
-            } else if pane.update(cx, |v, cx| v.set_float_to_read(true, cx)) {
+            } else if pane.read(cx).reading_view(cx).is_some()
+                && pane.update(cx, |v, cx| v.set_float_to_read(true, cx))
+            {
                 self.open_focus_read(pane, window, cx);
             }
         }
@@ -40113,7 +40115,8 @@ mod tests {
             let _fork = crate::testsync::forks_and_locks();
             cx.update(|w, cx| {
                 ws.update(cx, |ws, cx| {
-                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx)
+                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx);
+                    ws.split(SplitDir::Row, w, cx);
                 })
             });
         }
@@ -40136,17 +40139,24 @@ mod tests {
         let doc = dir.join("plan.md");
         std::fs::write(&doc, "# Plan\n\nA paragraph to read.\n").unwrap();
         let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
-        let views = ws.read_with(cx, |ws, _| ws.every_view());
-        let second = views[1].clone();
+        let (second, beside) = ws.read_with(cx, |ws, _| {
+            let mut leaves = vec![];
+            ws.tabs[1].root.leaves(&mut leaves);
+            (leaves[0].clone(), leaves[1].clone())
+        });
 
-        // Opened on a tab's pane that does not hold the keyboard: the keys
-        // follow the document.
+        // Opened on a pane that does not hold the keyboard, as the rail can:
+        // the keys follow the document.
         ws.update(cx, |ws, _| ws.doc_glow_pane = Some(true));
         cx.update(|w, cx| {
             ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
-            w.focus(&ws.read(cx).every_view()[0].focus_handle(cx), cx);
+            w.focus(&beside.focus_handle(cx), cx);
         });
         draw(cx);
+        assert!(
+            !cx.update(|w, cx| second.focus_handle(cx).is_focused(w)),
+            "the pane beside it has the keyboard"
+        );
         second
             .update(cx, |v, cx| v.open_to_read(target, None, cx))
             .unwrap();
@@ -40183,6 +40193,31 @@ mod tests {
             second.read_with(cx, |v, _| v.has_float()),
             "the brief waits"
         );
+
+        // An agent's small square is nobody's read, whichever way the gauge
+        // is switched over it.
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
+            w.focus(&second.focus_handle(cx), cx);
+        });
+        draw(cx);
+        second.update(cx, |v, cx| {
+            v.close_float(cx);
+            let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+            v.open_float(target, None, cx).expect("the small square");
+        });
+        draw(cx);
+        for _ in 0..2 {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.toggle_doc_glow_pane(w, cx)));
+            draw(cx);
+            assert!(
+                ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+                "no frame"
+            );
+            assert!(!second.read_with(cx, |v, _| v.float_to_read()));
+            assert!(second.read_with(cx, |v, cx| v.reading_view(cx).is_none()));
+            assert!(second.read_with(cx, |v, _| v.has_float()), "it stays up");
+        }
     }
 
     #[gpui::test]
