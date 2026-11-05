@@ -248,14 +248,8 @@ whole of this; in short:
   then `terminal-delight default-terminal on`; `off` puts the old one back.
 - **Super+C and Super+V.** Omarchy's universal copy and paste reach a window it
   counts as a terminal as Ctrl+Insert and Shift+Insert, which Terminal Delight
-  takes as copy and paste. Omarchy's own list does not name Terminal Delight, so
-  add this line to `~/.config/hypr/hyprland.lua`:
-
-  ```lua
-  o.window("terminal-delight", { tag = "+terminal" })
-  ```
-
-  Without it, Super+C arrives as Ctrl+C and interrupts the program in the pane.
+  takes as copy and paste. Omarchy's list does not name Terminal Delight, so it
+  tags its own windows as terminals within a second of opening them.
   Ctrl+Shift+C and Ctrl+Shift+V work either way.
 - **`scripts/td-send`**, run by hand, moves the focused terminal tile (foot,
   Alacritty, kitty, Ghostty, `org.omarchy.*`) into a Terminal Delight pane: idle
