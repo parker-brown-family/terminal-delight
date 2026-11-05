@@ -4141,6 +4141,11 @@ const SHOW_FOCUS_GLYPH: bool = false;
 pub struct OpenFocusRead;
 impl gpui::EventEmitter<OpenFocusRead> for TerminalView {}
 
+/// A person opened a readable document; the workspace chooses its saved mode.
+/// Explicit Alt+R still uses OpenFocusRead regardless of that preference.
+pub struct OpenDocumentRead;
+impl gpui::EventEmitter<OpenDocumentRead> for TerminalView {}
+
 /// Esc was pressed while this pane is the one being focus-read — close the
 /// modal. Routed through the pane (not the workspace) because the mirrored pane
 /// keeps keyboard focus so you can keep typing into it while you read.

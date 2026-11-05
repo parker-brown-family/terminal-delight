@@ -2947,6 +2947,9 @@ struct StateFile {
     /// files → `false` (the flat reader everyone had before).
     #[serde(default)]
     focus_inherit: bool,
+    /// Unset means no choice yet: person-opened briefs use the fullscreen reader.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    doc_glow_pane: Option<bool>,
     /// Global "anchor terminal content to TOP" preference. Absent on old files →
     /// `false` (the classic bottom-anchored prompt). When `true`, every pane skips
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
@@ -3055,6 +3058,7 @@ impl Default for StateFile {
             // taken from. A file without the key still reads `false`, which is
             // what everyone had before the preference existed.
             focus_inherit: true,
+            doc_glow_pane: None,
             anchor_top: false,
             agent_tint: false,
             card_art: None,
@@ -5377,6 +5381,8 @@ struct Workspace {
     /// look (barrel curvature + screen glare) instead of the flat default. One
     /// toggle in the modal header; applies to every reader open from then on.
     focus_inherit_theme: bool,
+    /// Window-wide document presentation, selected in FLOATING DOCUMENT gauges.
+    doc_glow_pane: Option<bool>,
     /// Global, persisted: when on, terminal content anchors to the TOP of each
     /// pane (the prompt/typing area sits near the top) instead of hugging the
     /// bottom. Published into [`pane::set_anchor_top`] each render frame so the
@@ -5506,6 +5512,21 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe_in(pane, window, |ws, pane, _ev: &OpenFocusRead, window, cx| {
         ws.open_focus_read(pane.clone(), window, cx);
     })
+    .detach();
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, _ev: &pane::OpenDocumentRead, window, cx| {
+            if ws.doc_glow_pane == Some(true) {
+                pane.update(cx, |v, cx| v.set_float_to_read(false, cx));
+                if ws.focus_read.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(pane) {
+                    ws.close_focus_read(cx);
+                }
+            } else {
+                ws.open_focus_read(pane.clone(), window, cx);
+            }
+        },
+    )
     .detach();
     // Esc inside the modal (routed up from the mirrored pane) → close it
     cx.subscribe(pane, |ws, _pane, _ev: &CloseFocusRead, cx| {
@@ -6868,6 +6889,7 @@ impl Workspace {
             focus_inline: false,
             focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
+            doc_glow_pane: saved.doc_glow_pane,
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
             lang: saved.lang,
@@ -8784,6 +8806,7 @@ impl Workspace {
             floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
+            doc_glow_pane: self.doc_glow_pane,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
             card_art: self.card_art,
@@ -20944,6 +20967,29 @@ impl Workspace {
             }
             keylayer::Nav::Trail { back } => self.trail_step(back, cx),
         }
+    }
+
+    /// Switch document presentation without replacing the view or its notes.
+    fn toggle_doc_glow_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let glow = self.doc_glow_pane != Some(true);
+        self.doc_glow_pane = Some(glow);
+        let reader = self.focus_read.as_ref().and_then(|p| p.upgrade());
+        let pane = reader.clone().or_else(|| match &self.osd_menu {
+            Some(MenuScope::Pane(p)) => Some(p.clone()),
+            _ => self.focused_leaf(window, cx),
+        });
+        if let Some(pane) = pane {
+            let readable = pane.update(cx, |v, cx| v.set_float_to_read(!glow, cx));
+            if readable {
+                if glow && reader.as_ref() == Some(&pane) {
+                    self.close_focus_read(cx);
+                } else if !glow {
+                    self.open_focus_read(pane, window, cx);
+                }
+            }
+        }
+        self.save(cx);
+        cx.notify();
     }
 
     /// Alt+O. Parker, 2026-11-02: *"alt+o opens current -> alt + o while ANY
@@ -34313,6 +34359,33 @@ impl Render for Workspace {
                         ),
                 );
                 if open {
+                    if controls
+                        .first()
+                        .is_some_and(|(key, _, _)| *key == G::DocBrightness)
+                    {
+                        let glow = self.doc_glow_pane == Some(true);
+                        let mode = if glow {
+                            t.g_doc_glow_pane
+                        } else {
+                            t.g_doc_reader
+                        };
+                        section = section.child(
+                            Self::bezel_btn(
+                                &sk,
+                                &format!("{} {mode}", if glow { "◉" } else { "◯" }),
+                                glow,
+                            )
+                            .id("osd-doc-mode")
+                            .debug_selector(|| "osd-doc-mode".to_string())
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                    cx.stop_propagation();
+                                    ws.toggle_doc_glow_pane(w, cx);
+                                }),
+                            ),
+                        );
+                    }
                     for (key, name, value) in controls {
                         lingers_shown |= matches!(
                             key,
@@ -39433,7 +39506,6 @@ impl Render for Workspace {
                     .child(stage)
                     .child(bezel_bottom)
                     .children(menu_overlay)
-                    .children(osd_overlay)
                     .children(mcp_overlay)
                     .children(threshing_floor_overlay)
                     .children(dead_overlay)
@@ -39459,6 +39531,9 @@ impl Render for Workspace {
                     .children(drag_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
+                    // Document gauges must remain clickable while a brief is
+                    // read, including the switch back to the glow pane.
+                    .children(osd_overlay)
                     // except the artifact rail: Alt+O pressed while a document
                     // is read raises it, numbered, and a rail drawn under the
                     // reading frame would be raised out of sight
@@ -40136,6 +40211,77 @@ mod tests {
             shown.as_deref(),
             Some(std::path::Path::new(&newer)),
             "1: the focused pane's NEWEST artifact"
+        );
+
+        let reading = ws
+            .read_with(cx, |ws, cx| ws.focus_lent(cx))
+            .expect("reader is the default");
+        ws.update(cx, |ws, cx| {
+            ws.open_osd(MenuScope::Outer, None);
+            ws.osd_groups = vec![false, false, true];
+            cx.notify();
+        });
+        draw(cx);
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("document mode gauge");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "glow pane closes the fullscreen frame"
+        );
+        assert!(
+            mine.read_with(cx, |v, _| v.has_float()),
+            "the brief stays open"
+        );
+        assert!(!mine.read_with(cx, |v, _| v.float_to_read()));
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.build_state(cx).doc_glow_pane),
+            Some(true)
+        );
+
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("mode gauge stays up");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.focus_lent(cx)),
+            Some(reading),
+            "switching back reads the SAME document view"
+        );
+        let toggle = cx
+            .debug_bounds("osd-doc-mode")
+            .expect("mode gauge stays up");
+        cx.simulate_click(toggle.center(), gpui::Modifiers::default());
+        draw(cx);
+        ws.update(cx, |ws, cx| {
+            ws.osd_menu = None;
+            cx.notify();
+        });
+        focus_mine(cx);
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(
+            !mine.read_with(cx, |v, _| v.has_float()),
+            "Escape closes the glow pane"
+        );
+        cx.simulate_keystrokes("alt-o");
+        draw(cx);
+        assert!(
+            mine.read_with(cx, |v, _| v.has_float()),
+            "Alt+O reopens in glow mode"
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "the saved mode is used by Alt+O"
+        );
+        cx.simulate_keystrokes("alt-r");
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_some()),
+            "explicit Alt+R can still enlarge a glow pane"
         );
 
         focus_mine(cx);
@@ -49557,6 +49703,22 @@ node = "Leaf"
             !back.focus_inherit,
             "missing key defaults to the flat reader"
         );
+    }
+
+    #[test]
+    fn document_mode_preserves_unset_and_both_saved_choices() {
+        assert_eq!(StateFile::default().doc_glow_pane, None);
+        let old: StateFile = toml::from_str("active = 0\ntabs = []\n").unwrap();
+        assert_eq!(old.doc_glow_pane, None);
+        for choice in [None, Some(false), Some(true)] {
+            let state = StateFile {
+                doc_glow_pane: choice,
+                ..Default::default()
+            };
+            let saved = toml::to_string(&state).unwrap();
+            let back: StateFile = toml::from_str(&saved).unwrap();
+            assert_eq!(back.doc_glow_pane, choice);
+        }
     }
 
     #[test]

@@ -3948,7 +3948,7 @@ fn a_brief_opened_by_a_person_is_read_from_the_keyboard(cx: &mut TestAppContext)
     let seen = asks.clone();
     let view = pane.view.clone();
     pane.cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+        cx.subscribe(&view, move |_, _: &super::OpenDocumentRead, _| {
             seen.set(seen.get() + 1)
         })
         .detach();
@@ -4241,7 +4241,7 @@ fn an_agent_opening_a_brief_keeps_the_small_square(cx: &mut TestAppContext) {
     let seen = asks.clone();
     let view = pane.view.clone();
     pane.cx.update(|_, cx| {
-        cx.subscribe(&view, move |_, _: &super::OpenFocusRead, _| {
+        cx.subscribe(&view, move |_, _: &super::OpenDocumentRead, _| {
             seen.set(seen.get() + 1)
         })
         .detach();
