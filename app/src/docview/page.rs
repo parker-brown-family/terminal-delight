@@ -817,6 +817,18 @@ impl PageDoc {
                                     });
                                 (l, first)
                             })
+                            .and_then(|(l, first)| {
+                                // The view may have gone while its first
+                                // screen was photographed: nothing will adopt
+                                // this page, so it is closed here.
+                                if still.load(Ordering::SeqCst) {
+                                    return Ok((l, first));
+                                }
+                                if let Some(id) = l.page {
+                                    engine.close(id);
+                                }
+                                Err(EngineError::Closed)
+                            })
                         });
                         Ok::<_, (String, String)>((hash, read, key, cached, looked, opened))
                     }

@@ -756,17 +756,23 @@ impl SnapshotEngine {
                     // Held in flight while it is made, so the idle clock
                     // cannot close the browser under it.
                     shared.in_flight.fetch_add(1, Ordering::SeqCst);
-                    let made = make_blank(&cdp, &pref);
-                    shared.in_flight.fetch_sub(1, Ordering::SeqCst);
-                    if let Ok(blank) = made {
+                    if let Ok(blank) = make_blank(&cdp, &pref) {
+                        // Kept only for the browser that is still running,
+                        // and while still counted in flight: an idle close
+                        // or a relaunch that came first has already let its
+                        // ready page go, and must not find one put back.
+                        let current = lock(&shared.browser)
+                            .as_ref()
+                            .is_some_and(|b| Arc::ptr_eq(&b.cdp, &cdp));
                         let mut slot = lock(&shared.ready);
-                        if slot.is_none() && !cdp.is_closed() {
+                        if slot.is_none() && current && !cdp.is_closed() {
                             *slot = Some(blank);
                         } else {
                             drop(slot);
                             close_blank(&blank);
                         }
                     }
+                    shared.in_flight.fetch_sub(1, Ordering::SeqCst);
                 }
                 shared.making.store(false, Ordering::SeqCst);
             });
