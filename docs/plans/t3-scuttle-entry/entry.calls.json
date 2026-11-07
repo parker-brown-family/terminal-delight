@@ -1,0 +1,119 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-build-without-waiting-for-plan-approval",
+      "at": "2026-11-07T17:39Z",
+      "title": "Build without waiting for plan approval",
+      "context": null,
+      "chose": "Wrote the one-page plan and built straight on",
+      "because": "Parker said build, keep it off launch branches, and he is AFK; the branch is unmerged",
+      "passed_over": [],
+      "undo": "Delete explore/t3-scuttle",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "plan"
+    },
+    {
+      "id": "call-inbox-shelves-and-their-order",
+      "at": "2026-11-07T17:39Z",
+      "title": "Inbox shelves and their order",
+      "context": null,
+      "chose": "LOOK AT ME on top; working, snoozed, sleep and quiet, done folded below",
+      "because": "Parker named LOOK AT ME, sleep and quiet, done and snooze mid-run; WORKING folds like T3's shelf",
+      "passed_over": [
+        "T3's pinned/active/working/snoozed/settled names"
+      ],
+      "undo": "Reorder the Shelf enum",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-look-at-me-keeps-the-rail-s-order",
+      "at": "2026-11-07T17:39Z",
+      "title": "LOOK AT ME keeps the rail's order",
+      "context": null,
+      "chose": "Promoted, then lane, then oldest first, as the rail sorts",
+      "because": "One pane ranked two ways in one window is the defect the rail removed",
+      "passed_over": [
+        "T3's newest-return-first"
+      ],
+      "undo": "Sort the shelf by return time instead",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null
+    },
+    {
+      "id": "call-a-row-is-keyed-by-the-host-pane-id",
+      "at": "2026-11-07T17:39Z",
+      "title": "A row is keyed by the host pane id",
+      "context": null,
+      "chose": "Host pane id; host-less panes use the window's id and are not saved",
+      "because": "Session strings are not unique per pane (issue 416); the host pane id survives sleep and restarts",
+      "passed_over": [
+        "conversation id"
+      ],
+      "undo": "Change Key and the store's file format",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}
