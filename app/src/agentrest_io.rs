@@ -221,11 +221,7 @@ pub fn run(mut job: Job) -> Outcome {
                 return out;
             };
             let argv = read_argv(pid);
-            let wake = match job.agent {
-                Some(Agent::Codex) => agentrest::codex_wake_argv(&argv, &session),
-                _ => crate::skills::wake_launch_line(&argv)
-                    .and_then(|line| agentrest::wake_argv(&line, &session)),
-            };
+            let wake = wake_line(job.agent, &argv, &session);
             if let Err(r) = agentrest::may_sleep(&job.look, rested, &job.thresholds, &wake) {
                 out.refusal = Some(r);
                 return out;
@@ -277,6 +273,17 @@ fn read_argv(pid: i32) -> Vec<String> {
 }
 
 /// Where wake scripts are kept.
+/// The words a sleeper wakes through, from the launch line it ran: a Codex's
+/// own resume line, or a Claude's read back through the skill bridge, whose
+/// words in that line name a folder that will not outlive the agent.
+fn wake_line(agent: Option<Agent>, argv: &[String], session: &str) -> Result<Vec<String>, String> {
+    match agent {
+        Some(Agent::Codex) => agentrest::codex_wake_argv(argv, session),
+        _ => crate::skills::wake_launch_line(argv)
+            .and_then(|line| agentrest::wake_argv(&line, session)),
+    }
+}
+
 pub fn wake_dir() -> PathBuf {
     let base = std::env::var_os("XDG_STATE_HOME")
         .map(PathBuf::from)
@@ -703,6 +710,49 @@ mod tests {
             "abc-1",
         ]));
         assert!(script.ends_with("exec /home/p/.local/bin/claude --append-system-prompt 'it'\\''s $x' --resume abc-1\n"), "{script}");
+    }
+
+    /// The sleep path itself reads a bridged Claude's line back through the
+    /// bridge, and leaves a Codex's and an unbridged Claude's to their own rules.
+    #[test]
+    fn sleep_wakes_a_claude_the_bridge_started_through_the_bridge() {
+        let sid = "f5ae3d94-e006-45e5-9ec4-93b1934624c2";
+        let state = std::env::temp_dir().join(format!("td-rest-bridged-{}", std::process::id()));
+        let run = state.join("terminal-delight/skill-receipts/runs/790289-omeil8k1");
+        std::fs::create_dir_all(&run).unwrap();
+        std::fs::write(run.join("settings.json"), "{}").unwrap();
+        let run_text = run.to_string_lossy().into_owned();
+        let settings = format!("{run_text}/settings.json");
+        let bridged = s(&[
+            "/home/p/.local/bin/claude",
+            "--add-dir",
+            &run_text,
+            "--settings",
+            &settings,
+            "--model",
+            "opus",
+        ]);
+        for agent in [Some(Agent::Claude), None] {
+            let wake = wake_line(agent, &bridged, sid).unwrap();
+            assert!(
+                wake[0].contains("/skill-manager/") && wake[0].ends_with("/bin/claude"),
+                "{wake:?}"
+            );
+            assert_eq!(&wake[1..], ["--model", "opus", "--resume", sid]);
+            assert!(!wake.iter().any(|w| w.contains(&run_text)), "{wake:?}");
+        }
+        std::fs::remove_dir_all(&state).unwrap();
+
+        let plain = s(&["/home/p/.local/bin/claude", "--model", "opus"]);
+        assert_eq!(
+            wake_line(Some(Agent::Claude), &plain, sid).unwrap(),
+            agentrest::wake_argv(&plain, sid).unwrap()
+        );
+        let codex = s(&["codex", "--model", "o3"]);
+        assert_eq!(
+            wake_line(Some(Agent::Codex), &codex, sid),
+            agentrest::codex_wake_argv(&codex, sid)
+        );
     }
 
     #[test]
