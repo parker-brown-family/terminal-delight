@@ -114,6 +114,62 @@
       },
       "status": "open",
       "verdict": null
+    },
+    {
+      "id": "call-chords-for-the-two-new-surfaces",
+      "at": "2026-11-07T18:45Z",
+      "title": "Chords for the two new surfaces",
+      "context": null,
+      "chose": "Ctrl+Shift+I for the inbox, Ctrl+Shift+E for the composer",
+      "because": "Both were unclaimed in the pane chord table; I for inbox, E for entry",
+      "passed_over": [
+        "T3's mod+shift+O and a plain Alt chord"
+      ],
+      "undo": "Change two letters in keylayer and pane.rs",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-the-farbox-stays-opt-in",
+      "at": "2026-11-07T18:45Z",
+      "title": "The farbox stays opt-in",
+      "context": null,
+      "chose": "machines.toml lists far machines; no file, no chip",
+      "because": "Nothing on the far box is read, so a far agent's row says unknown; ssh and gliff need no server",
+      "passed_over": [
+        "A TD host on the farbox reached over a socket"
+      ],
+      "undo": "Delete machines.toml",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
     }
   ]
 }
