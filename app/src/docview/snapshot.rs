@@ -40,7 +40,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
@@ -86,6 +86,71 @@ const ERROR_HOOK: &str = "window.__tdErrors = []; \
     window.addEventListener('error', function (e) { window.__tdErrors.push(String(e.message)); }); \
     window.addEventListener('unhandledrejection', function (e) { window.__tdErrors.push(String(e.reason)); });";
 
+/// What the probe hides from the picture: the page's own notes chrome, and
+/// the rule it draws beside an anchor with notes (extract.js says why). The
+/// probe hides them again with the same rule; a test holds the two together.
+const NOTES_UI_HIDE: &str =
+    ".notebar, .note-btn, .concur-zone { visibility: hidden !important; }\n\
+    .notable.has-note, tr.notable.has-note > td:first-child { box-shadow: none !important; }";
+
+/// Run before the page's own first byte, beside [`ERROR_HOOK`]: the notes
+/// chrome is hidden from the first frame on, so the frame drawn at load is the
+/// frame photographed and nothing is drawn twice. Hiding it only once the
+/// probe ran repainted what the load had already drawn. A page that refuses
+/// the sheet is still hidden by the probe; this is the fast way, not the only.
+fn new_document_script() -> String {
+    let css = serde_json::to_string(NOTES_UI_HIDE).unwrap_or_default();
+    format!(
+        "{ERROR_HOOK}\ntry {{ var s = new CSSStyleSheet(); s.replaceSync({css}); \
+         document.adoptedStyleSheets = document.adoptedStyleSheets.concat([s]); }} catch (e) {{}}"
+    )
+}
+
+fn viewport_params(g: Geometry, height_css: u32) -> Value {
+    json!({
+        "width": g.css_width,
+        "height": height_css.max(1),
+        "deviceScaleFactor": g.scale,
+        "mobile": false,
+    })
+}
+
+/// The screenshot of one band. One function, so the first band photographed
+/// while the page is still being read and a band asked for later are the
+/// same request.
+///
+/// The first screen is photographed as the page already shows it, with no
+/// clip: a clip makes Chromium re-emulate the viewport for the capture and
+/// put it back after, and each of those is a fresh layout, raster and draw
+/// of every glass pane on the CPU (four full draws were traced for one
+/// clipped first screen). The same pixels came back both ways on every brief
+/// compared. `exact` asks for the clipped form anyway, for the rare window
+/// whose view Chromium sizes a row differently from [`Geometry::height_dev`].
+fn screenshot_params(g: Geometry, band: Band, exact: bool) -> Value {
+    if !exact && is_first_screen(g, band) {
+        return json!({
+            "format": "png",
+            "optimizeForSpeed": true,
+            "captureBeyondViewport": false,
+            "fromSurface": true,
+        });
+    }
+    let (y, h) = g.band_css(band);
+    json!({
+        "format": "png",
+        "optimizeForSpeed": true,
+        "captureBeyondViewport": band.top_dev != 0
+            || band.height_dev > g.height_dev(g.viewport_css_height as f32),
+        "fromSurface": true,
+        "clip": { "x": 0, "y": y, "width": g.css_width, "height": h, "scale": 1 },
+    })
+}
+
+/// Whether `band` is exactly the screen the page is showing.
+fn is_first_screen(g: Geometry, band: Band) -> bool {
+    band.top_dev == 0 && band.height_dev == g.height_dev(g.viewport_css_height as f32)
+}
+
 const CALL: Duration = Duration::from_secs(10);
 /// How long a browser just spawned has to give its first answer. That answer
 /// measures the process starting, not a call, and a cold start is slower than
@@ -107,6 +172,9 @@ struct Browser {
 }
 
 struct LivePage {
+    /// The first band's screenshot, asked for while the page was being read,
+    /// until a [`PageEngine::tile`] for that band collects it.
+    first: Option<(Band, cdp::Pending)>,
     started: std::time::SystemTime,
     context: String,
     target: String,
@@ -116,9 +184,24 @@ struct LivePage {
     cdp: Arc<Cdp>,
 }
 
+/// A page in a context of its own, set up the way every page is, resting at
+/// `about:blank` until an open takes it. Making one starts a renderer, which
+/// was 60–240 ms of an open depending on how busy the box was; one waiting
+/// costs that renderer, about 15 MiB, while the browser lives.
+struct Blank {
+    context: String,
+    target: String,
+    session: SessionId,
+    cdp: Arc<Cdp>,
+}
+
 struct Shared {
     browser: Mutex<Option<Browser>>,
     pages: Mutex<HashMap<PageId, Arc<Mutex<LivePage>>>>,
+    /// At most one ready page, made after a page closes for the next open.
+    /// It goes with the browser: nothing keeps a browser alive to keep it.
+    ready: Mutex<Option<Blank>>,
+    making: AtomicBool,
     last_call: Mutex<Instant>,
     in_flight: AtomicUsize,
     idle: Duration,
@@ -262,6 +345,8 @@ impl SnapshotEngine {
         let shared = Arc::new(Shared {
             browser: Mutex::new(None),
             pages: Mutex::new(HashMap::new()),
+            ready: Mutex::new(None),
+            making: AtomicBool::new(false),
             last_call: Mutex::new(Instant::now()),
             in_flight: AtomicUsize::new(0),
             idle,
@@ -335,6 +420,25 @@ impl SnapshotEngine {
             "--mute-audio",
             "--hide-scrollbars",
             "--force-color-profile=srgb",
+            // What headless Chromium runs that no page here ever uses, and
+            // what it costs (Chromium 152, measured 2026-11-07, interleaved
+            // runs on a loaded box). Each new browser context loaded the
+            // address bar's own dropdown, chrome://omnibox-popup.top-chrome,
+            // into a renderer of its own: about 190 ms of CPU and 80 MiB per
+            // open, for a window that never exists. Turning it off took 70 ms
+            // off the median open. And Chromium keeps a spare renderer
+            // warm for the next navigation, which a page in a new context of
+            // its own can never use: one process and about 10 MiB, for
+            // nothing. TD keeps its own ready page instead (`make_ready`).
+            "--disable-features=PreloadTopChromeWebUI,WebUIOmniboxAimPopup,WebUIOmniboxPopup,WebUIOmniboxFullPopup,SpareRendererForSitePerProcess",
+            // The GPU process (37 MiB idle), a component extension's renderer
+            // (30 MiB) and the network service (25 MiB) each ran as a process
+            // of their own. Software compositing does the same work in the
+            // browser process; a page here reaches no network; no brief uses
+            // an extension. Idle 241 -> 190 MiB, a page open 329 -> 289 MiB,
+            // with no change in how long an open takes. The GPU and network
+            // halves are below, beside the switches they share.
+            "--disable-component-extensions-with-background-pages",
         ]
         .iter()
         .map(OsString::from)
@@ -356,16 +460,24 @@ impl SnapshotEngine {
                 a.push(s.into());
             }
         }
+        // One switch: Chromium keeps only the last `--enable-features` it is
+        // given, so a second one would silently drop the first.
+        let mut features = vec!["NetworkServiceInProcess2"];
         if pref.vulkan() {
+            // A real GPU keeps its process: the Vulkan path is the one
+            // measured that way, and a driver fault stays out of the browser.
+            features.extend(["Vulkan", "VulkanFromANGLE", "DefaultANGLEVulkan"]);
             for s in [
-                "--enable-features=Vulkan,VulkanFromANGLE,DefaultANGLEVulkan",
                 "--use-angle=vulkan",
                 "--ignore-gpu-blocklist",
                 "--enable-gpu",
             ] {
                 a.push(s.into());
             }
+        } else {
+            a.push("--in-process-gpu".into());
         }
+        a.push(format!("--enable-features={}", features.join(",")).into());
         a
     }
 
@@ -380,6 +492,12 @@ impl SnapshotEngine {
     #[allow(dead_code)] // called by app/tests/snapshot_engine.rs
     pub fn warm(&self) -> Result<(), EngineError> {
         self.call(|| self.cdp().map(|_| ()))
+    }
+
+    /// Whether a page is set up and waiting for the next open.
+    #[allow(dead_code)] // read by app/tests/snapshot_engine.rs
+    pub fn page_ready(&self) -> bool {
+        lock(&self.shared.ready).is_some()
     }
 
     /// The running browser's profile directory, if one is running.
@@ -412,6 +530,7 @@ impl SnapshotEngine {
         }
         if let Some(dead) = slot.take() {
             lock(&self.shared.pages).clear();
+            lock(&self.shared.ready).take();
             finish(dead);
         }
         let _ = std::fs::create_dir_all(&self.shared.runtime);
@@ -547,56 +666,35 @@ impl SnapshotEngine {
         cdp.call(
             Some(session),
             "Emulation.setDeviceMetricsOverride",
-            json!({
-                "width": g.css_width,
-                "height": height_css.max(1),
-                "deviceScaleFactor": g.scale,
-                "mobile": false,
-            }),
+            viewport_params(g, height_css),
             CALL,
         )
         .map(|_| ())
         .map_err(|e| protocol(e, "size the page"))
     }
 
-    /// A new page in a new context, set up and navigated to `path`, with the
-    /// probe installed. Closed again if any step fails.
+    /// A page in a context of its own, navigated to `path`, with the probe
+    /// installed: the ready one if one is waiting, else one made now. Closed
+    /// again if any step fails.
     fn load(&self, cdp: &Arc<Cdp>, path: &Path, g: Geometry) -> Result<LivePage, EngineError> {
-        let ctx = cdp
-            .call(None, "Target.createBrowserContext", json!({}), CALL)
-            .map_err(|e| protocol(e, "make a browser context"))?;
-        let context = str_field(&ctx, "browserContextId")?;
-        let made = cdp.call(
-            None,
-            "Target.createTarget",
-            json!({ "url": "about:blank", "browserContextId": context }),
-            CALL,
-        );
-        let target = match made
-            .map_err(|e| protocol(e, "open a page"))
-            .and_then(|t| str_field(&t, "targetId"))
-        {
-            Ok(t) => t,
-            Err(e) => {
-                let _ = cdp.call(
-                    None,
-                    "Target.disposeBrowserContext",
-                    json!({ "browserContextId": context }),
-                    CALL,
-                );
-                return Err(e);
-            }
+        let ready = lock(&self.shared.ready)
+            .take()
+            .filter(|b| Arc::ptr_eq(&b.cdp, cdp));
+        let blank = match ready {
+            Some(b) => b,
+            None => make_blank(cdp, &self.pref)?,
         };
-        let mut page = LivePage {
+        let page = LivePage {
+            first: None,
             started: std::time::SystemTime::now(),
-            context,
-            target,
-            session: SessionId(String::new()),
+            context: blank.context,
+            target: blank.target,
+            session: blank.session,
             generation: 0,
             geometry: g,
             cdp: cdp.clone(),
         };
-        match self.set_up(cdp, &mut page, path) {
+        match Self::navigate(cdp, &page, path) {
             Ok(()) => Ok(page),
             Err(e) => {
                 close_page(&page);
@@ -605,56 +703,15 @@ impl SnapshotEngine {
         }
     }
 
-    /// Attach to a new page, set it up the way every page is set up, load
-    /// `path` and install the probe. The caller closes the page on an error.
-    fn set_up(&self, cdp: &Arc<Cdp>, page: &mut LivePage, path: &Path) -> Result<(), EngineError> {
-        let attached = cdp
-            .call(
-                None,
-                "Target.attachToTarget",
-                json!({ "targetId": page.target, "flatten": true }),
-                CALL,
-            )
-            .map_err(|e| protocol(e, "attach to the page"))?;
-        page.session = SessionId(str_field(&attached, "sessionId")?);
-        let s = page.session.clone();
-        let on = |method: &str, params: Value, what: &'static str| {
-            cdp.call(Some(&s), method, params, CALL)
-                .map(|_| ())
-                .map_err(|e| protocol(e, what))
-        };
-        on("Page.enable", json!({}), "enable the page")?;
-        on("Network.enable", json!({}), "enable resource observation")?;
-        cdp.watch_resources(&s);
-        if !self.pref.network_allowed() {
-            // Measured on Chromium 151: `urls` stops every http and https
-            // request a page makes (images, fetch, beacons, stylesheets,
-            // localhost), the newer `urlPatterns` with these patterns stops
-            // none of them, and neither stops a WebSocket. The proxy flags
-            // in `launch_args` are what stop that.
-            on(
-                "Network.setBlockedURLs",
-                json!({ "urls": ["http://*", "https://*", "ws://*", "wss://*"] }),
-                "block the network",
-            )?;
-        }
-        Self::set_viewport(cdp, &s, page.geometry, page.geometry.viewport_css_height)?;
-        // Something animates on at least one brief, and a capture should not
-        // catch it mid-flight.
-        on(
-            "Emulation.setEmulatedMedia",
-            json!({ "features": [{ "name": "prefers-reduced-motion", "value": "reduce" }] }),
-            "ask for reduced motion",
-        )?;
-        on(
-            "Page.addScriptToEvaluateOnNewDocument",
-            json!({ "source": ERROR_HOOK }),
-            "hook the page's errors",
-        )?;
-        let loaded = cdp.expect(Some(&s), "Page.loadEventFired");
+    /// Size a set-up page, load `path` into it and install the probe. The
+    /// caller closes the page on an error.
+    fn navigate(cdp: &Arc<Cdp>, page: &LivePage, path: &Path) -> Result<(), EngineError> {
+        let s = &page.session;
+        Self::set_viewport(cdp, s, page.geometry, page.geometry.viewport_css_height)?;
+        let loaded = cdp.expect(Some(s), "Page.loadEventFired");
         let nav = cdp
             .call(
-                Some(&s),
+                Some(s),
                 "Page.navigate",
                 json!({ "url": file_url(path) }),
                 CALL,
@@ -668,15 +725,176 @@ impl SnapshotEngine {
             .map_err(|e| protocol(e, "load the page"))?;
         // Height at load and after fonts.ready was identical in all 119
         // files measured, but a font that lands late would move every anchor.
-        let _ = Self::evaluate(
+        // The probe goes in once they are ready, in the same round trip; a
+        // font set that never settles is waited out no longer than before.
+        Self::evaluate(
             cdp,
-            &s,
-            "document.fonts.ready.then(() => true)",
-            "wait for fonts",
-        );
-        Self::evaluate(cdp, &s, EXTRACT_JS, "install the probe")?;
+            s,
+            &format!("document.fonts.ready.catch(() => true).then(() => {{\n{EXTRACT_JS}\n}})"),
+            "install the probe",
+        )?;
         Ok(())
     }
+
+    /// Make the next open's page now, off the caller's thread, unless one is
+    /// ready or being made. Not counted as a call: a ready page never keeps
+    /// an idle browser running.
+    fn make_ready(&self) {
+        let shared = self.shared.clone();
+        if lock(&shared.ready).is_some() || shared.making.swap(true, Ordering::SeqCst) {
+            return;
+        }
+        let pref = self.pref.clone();
+        let spawned = std::thread::Builder::new()
+            .name("td-page-ready".into())
+            .spawn(move || {
+                let cdp = lock(&shared.browser)
+                    .as_ref()
+                    .filter(|b| !b.cdp.is_closed())
+                    .map(|b| b.cdp.clone());
+                if let Some(cdp) = cdp {
+                    // Held in flight while it is made, so the idle clock
+                    // cannot close the browser under it.
+                    shared.in_flight.fetch_add(1, Ordering::SeqCst);
+                    let made = make_blank(&cdp, &pref);
+                    shared.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    if let Ok(blank) = made {
+                        let mut slot = lock(&shared.ready);
+                        if slot.is_none() && !cdp.is_closed() {
+                            *slot = Some(blank);
+                        } else {
+                            drop(slot);
+                            close_blank(&blank);
+                        }
+                    }
+                }
+                shared.making.store(false, Ordering::SeqCst);
+            });
+        if spawned.is_err() {
+            self.shared.making.store(false, Ordering::SeqCst);
+        }
+    }
+}
+
+/// A new page in a new context, attached and set up the way every page is
+/// set up, resting at `about:blank`. Closed again if any step fails.
+fn make_blank(cdp: &Arc<Cdp>, pref: &pref::Html) -> Result<Blank, EngineError> {
+    let ctx = cdp
+        .call(None, "Target.createBrowserContext", json!({}), CALL)
+        .map_err(|e| protocol(e, "make a browser context"))?;
+    let context = str_field(&ctx, "browserContextId")?;
+    let made = cdp.call(
+        None,
+        "Target.createTarget",
+        json!({ "url": "about:blank", "browserContextId": context }),
+        CALL,
+    );
+    let target = match made
+        .map_err(|e| protocol(e, "open a page"))
+        .and_then(|t| str_field(&t, "targetId"))
+    {
+        Ok(t) => t,
+        Err(e) => {
+            let _ = cdp.call(
+                None,
+                "Target.disposeBrowserContext",
+                json!({ "browserContextId": context }),
+                CALL,
+            );
+            return Err(e);
+        }
+    };
+    let mut blank = Blank {
+        context,
+        target,
+        session: SessionId(String::new()),
+        cdp: cdp.clone(),
+    };
+    match set_up(cdp, pref, &mut blank) {
+        Ok(()) => Ok(blank),
+        Err(e) => {
+            close_blank(&blank);
+            Err(e)
+        }
+    }
+}
+
+/// Attach to a new page and set it up the way every page is set up. Its size
+/// is set when it is given a file. The caller closes the page on an error.
+fn set_up(cdp: &Arc<Cdp>, pref: &pref::Html, blank: &mut Blank) -> Result<(), EngineError> {
+    let attached = cdp
+        .call(
+            None,
+            "Target.attachToTarget",
+            json!({ "targetId": blank.target, "flatten": true }),
+            CALL,
+        )
+        .map_err(|e| protocol(e, "attach to the page"))?;
+    blank.session = SessionId(str_field(&attached, "sessionId")?);
+    let s = blank.session.clone();
+    cdp.watch_resources(&s);
+    // Sent together and answered together: none depends on another's answer,
+    // and one at a time they cost a round trip each to a browser that may be
+    // busy.
+    let mut batch = vec![
+        ("enable the page", "Page.enable", json!({})),
+        ("enable resource observation", "Network.enable", json!({})),
+    ];
+    if !pref.network_allowed() {
+        // Measured on Chromium 151: `urls` stops every http and https request
+        // a page makes (images, fetch, beacons, stylesheets, localhost), the
+        // newer `urlPatterns` with these patterns stops none of them, and
+        // neither stops a WebSocket. The proxy flags in `launch_args` are
+        // what stop that.
+        batch.push((
+            "block the network",
+            "Network.setBlockedURLs",
+            json!({ "urls": ["http://*", "https://*", "ws://*", "wss://*"] }),
+        ));
+    }
+    batch.extend([
+        // Something animates on at least one brief, and a capture should not
+        // catch it mid-flight.
+        (
+            "ask for reduced motion",
+            "Emulation.setEmulatedMedia",
+            json!({ "features": [{ "name": "prefers-reduced-motion", "value": "reduce" }] }),
+        ),
+        (
+            "hook the page's errors",
+            "Page.addScriptToEvaluateOnNewDocument",
+            json!({ "source": new_document_script() }),
+        ),
+    ]);
+    let mut sent = Vec::with_capacity(batch.len());
+    for (what, method, params) in batch {
+        sent.push((
+            what,
+            cdp.send_call(Some(&s), method, params)
+                .map_err(|e| protocol(e, what))?,
+        ));
+    }
+    for (what, reply) in sent {
+        reply.wait(CALL).map_err(|e| protocol(e, what))?;
+    }
+    Ok(())
+}
+
+fn close_blank(b: &Blank) {
+    b.cdp.forget_resources(&b.session);
+    let short = Duration::from_secs(2);
+    let _ = b.cdp.call(
+        None,
+        "Target.closeTarget",
+        json!({ "targetId": b.target }),
+        short,
+    );
+    let _ = b.cdp.call(
+        None,
+        "Target.disposeBrowserContext",
+        json!({ "browserContextId": b.context }),
+        short,
+    );
 }
 
 /// The line of a browser's standard error that says why it would not start.
@@ -881,12 +1099,82 @@ fn engine_thread(rx: mpsc::Receiver<Job>, shared: Weak<Shared>) {
                     let dead = lock(&s.browser).take();
                     if let Some(b) = dead {
                         lock(&s.pages).clear();
+                        lock(&s.ready).take();
                         finish(b);
                     }
                 }
             }
             Err(mpsc::RecvTimeoutError::Disconnected) => return,
         }
+    }
+}
+
+impl SnapshotEngine {
+    /// A band, photographed clipped to exactly its rows however the view
+    /// stands: the form every band but the first screen takes. The engine
+    /// tests compare the first screen with it.
+    #[allow(dead_code)] // called by app/tests/snapshot_engine.rs
+    pub fn tile_clipped(
+        &self,
+        page: PageId,
+        generation: u64,
+        band: Band,
+    ) -> Result<Tile, EngineError> {
+        self.capture_band(page, generation, band, true)
+    }
+
+    fn capture_band(
+        &self,
+        page: PageId,
+        generation: u64,
+        band: Band,
+        exact: bool,
+    ) -> Result<Tile, EngineError> {
+        self.call(|| {
+            let live = self.live(page)?;
+            let mut p = lock(&live);
+            if p.generation != generation {
+                return Err(EngineError::Stale);
+            }
+            let early = match p.first.take() {
+                Some((b, shot)) if b == band && !exact => Some(shot),
+                // Asked for another band first (a link into the middle of
+                // the page): the early screen is not wanted.
+                _ => None,
+            };
+            let capture = |exact: bool| {
+                p.cdp.call(
+                    Some(&p.session),
+                    "Page.captureScreenshot",
+                    screenshot_params(p.geometry, band, exact),
+                    CAPTURE,
+                )
+            };
+            let decode = |shot: Value| -> Result<(Vec<u8>, (u32, u32)), EngineError> {
+                let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
+                let png = cdp::base64_decode(data).map_err(EngineError::Protocol)?;
+                let size = png_size(&png)
+                    .ok_or_else(|| EngineError::Protocol("a tile that is not a PNG".into()))?;
+                Ok((png, size))
+            };
+            let shot = match early {
+                Some(shot) => shot.wait(CAPTURE),
+                None => capture(exact),
+            }
+            .map_err(|e| protocol(e, "capture a tile"))?;
+            let (mut png, (mut width_dev, mut height_dev)) = decode(shot)?;
+            if !exact && height_dev != band.height_dev && is_first_screen(p.geometry, band) {
+                // The view came back a row off the band: ask for the band.
+                let shot = capture(true).map_err(|e| protocol(e, "capture a tile"))?;
+                (png, (width_dev, height_dev)) = decode(shot)?;
+            }
+            Ok(Tile {
+                band,
+                png,
+                width_dev,
+                height_dev,
+            })
+        })
     }
 }
 
@@ -938,7 +1226,22 @@ impl PageEngine for SnapshotEngine {
     fn open(&self, req: &PageRequest) -> Result<PageLayout, EngineError> {
         self.call(|| {
             let cdp = self.cdp()?;
-            let page = self.load(&cdp, &req.path, req.geometry)?;
+            let mut page = self.load(&cdp, &req.path, req.geometry)?;
+            // The probe is in, so the page is as it will be photographed.
+            // The first screen is asked for now, to be drawn while extract()
+            // reads the page, and kept for the tile call that wants it. A page
+            // shorter than a screen has a shorter first band, and drops it.
+            let first = Band {
+                top_dev: 0,
+                height_dev: req.geometry.band_step(),
+            };
+            let early = cdp
+                .send_call(
+                    Some(&page.session),
+                    "Page.captureScreenshot",
+                    screenshot_params(req.geometry, first, false),
+                )
+                .ok();
             let value = match Self::evaluate(
                 &cdp,
                 &page.session,
@@ -967,10 +1270,8 @@ impl PageEngine for SnapshotEngine {
             }
             let id = PageId(self.next_page.fetch_add(1, Ordering::SeqCst));
             let generation = self.next_generation.fetch_add(1, Ordering::SeqCst);
-            let mut page = page;
             page.generation = generation;
-            lock(&self.shared.pages).insert(id, Arc::new(Mutex::new(page)));
-            Ok(PageLayout {
+            let layout = PageLayout {
                 page: Some(id),
                 generation,
                 rendered: req.expect,
@@ -985,52 +1286,30 @@ impl PageEngine for SnapshotEngine {
                 dialogs: got.dialogs,
                 diagnostics: got.diagnostics,
                 videos: Some(got.videos),
-            })
+            };
+            if layout.bands().first() == Some(&first) {
+                page.first = early.map(|shot| (first, shot));
+            }
+            lock(&self.shared.pages).insert(id, Arc::new(Mutex::new(page)));
+            Ok(layout)
         })
     }
 
     fn tile(&self, page: PageId, generation: u64, band: Band) -> Result<Tile, EngineError> {
-        self.call(|| {
-            let live = self.live(page)?;
-            let p = lock(&live);
-            if p.generation != generation {
-                return Err(EngineError::Stale);
-            }
-            let (y, h) = p.geometry.band_css(band);
-            let shot = p
-                .cdp
-                .call(
-                    Some(&p.session),
-                    "Page.captureScreenshot",
-                    json!({
-                        "format": "png",
-                        "optimizeForSpeed": true,
-                        "captureBeyondViewport": band.top_dev != 0 || band.height_dev > p.geometry.height_dev(p.geometry.viewport_css_height as f32),
-                        "fromSurface": true,
-                        "clip": { "x": 0, "y": y, "width": p.geometry.css_width, "height": h, "scale": 1 },
-                    }),
-                    CAPTURE,
-                )
-                .map_err(|e| protocol(e, "capture a tile"))?;
-            let data = shot.get("data").and_then(Value::as_str).unwrap_or("");
-            let png = cdp::base64_decode(data).map_err(EngineError::Protocol)?;
-            let (width_dev, height_dev) =
-                png_size(&png).ok_or_else(|| EngineError::Protocol("a tile that is not a PNG".into()))?;
-            Ok(Tile {
-                band,
-                png,
-                width_dev,
-                height_dev,
-            })
-        })
+        self.capture_band(page, generation, band, false)
     }
 
     fn dialog(&self, page: PageId, generation: u64, id: &str) -> Result<DialogRender, EngineError> {
         self.call(|| {
             let live = self.live(page)?;
-            let p = lock(&live);
+            let mut p = lock(&live);
             if p.generation != generation {
                 return Err(EngineError::Stale);
+            }
+            // Opening a dialog changes what is on screen: an early capture
+            // still on its way is let finish first, and given up.
+            if let Some((_, shot)) = p.first.take() {
+                let _ = shot.wait(CAPTURE);
             }
             let (cdp, s, g) = (&p.cdp, &p.session, p.geometry);
             let quoted = serde_json::to_string(id).unwrap_or_default();
@@ -1124,11 +1403,13 @@ impl PageEngine for SnapshotEngine {
                 Ok(())
             })
             .ok();
+            self.make_ready();
         }
     }
 
     fn shutdown(&self) {
         lock(&self.shared.pages).clear();
+        lock(&self.shared.ready).take();
         let running = lock(&self.shared.browser).take();
         if let Some(b) = running {
             finish(b);
@@ -1174,6 +1455,93 @@ mod tests {
             has("--password-store=basic"),
             "never reach for the desktop's keyring"
         );
+    }
+
+    /// Chromium keeps only the last `--enable-features` it is given, so the
+    /// in-process network service and the Vulkan features share one switch,
+    /// and the GPU process folds into the browser only off the Vulkan path.
+    #[test]
+    fn one_switch_carries_every_feature_and_only_software_folds_the_gpu_in() {
+        let p = Path::new("/run/user/1000/terminal-delight/chromium-1-0");
+        let count = |args: &[OsString], prefix: &str| {
+            args.iter()
+                .filter(|a| a.to_string_lossy().starts_with(prefix))
+                .count()
+        };
+        let plain = SnapshotEngine::launch_args(p, &pref::Html::default());
+        let vulkan = SnapshotEngine::launch_args(
+            p,
+            &pref::Html {
+                gpu: Some("vulkan".into()),
+                ..Default::default()
+            },
+        );
+        for args in [&plain, &vulkan] {
+            assert_eq!(count(args, "--enable-features="), 1);
+            assert_eq!(count(args, "--disable-features="), 1);
+            assert!(args.iter().any(|a| a
+                .to_string_lossy()
+                .starts_with("--enable-features=NetworkServiceInProcess2")));
+            assert!(args
+                .iter()
+                .any(|a| a.to_string_lossy().contains("WebUIOmniboxAimPopup")));
+        }
+        assert!(vulkan
+            .iter()
+            .any(|a| a.to_string_lossy() == "--enable-features=NetworkServiceInProcess2,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan"));
+        assert!(plain.iter().any(|a| a == "--in-process-gpu"));
+        assert!(!vulkan.iter().any(|a| a == "--in-process-gpu"));
+    }
+
+    /// The first screen is photographed as the page shows it, and every other
+    /// band, or the first screen asked for exactly, clipped to its rows.
+    #[test]
+    fn only_the_first_screen_is_photographed_without_a_clip() {
+        let g = Geometry {
+            css_width: 968,
+            viewport_css_height: 1400,
+            scale: 1.6,
+        };
+        let screen = Band {
+            top_dev: 0,
+            height_dev: 2240,
+        };
+        assert!(is_first_screen(g, screen));
+        assert!(screenshot_params(g, screen, false).get("clip").is_none());
+        let exact = screenshot_params(g, screen, true);
+        assert_eq!(exact["clip"]["height"], 1400.0);
+        assert_eq!(exact["captureBeyondViewport"], false);
+        let below = Band {
+            top_dev: 2240,
+            height_dev: 2240,
+        };
+        let p = screenshot_params(g, below, false);
+        assert_eq!(p["clip"]["y"], 1400.0);
+        assert_eq!(p["captureBeyondViewport"], true);
+        // A page shorter than the screen has a shorter first band: clipped.
+        let short = Band {
+            top_dev: 0,
+            height_dev: 900,
+        };
+        assert!(!is_first_screen(g, short));
+        assert!(screenshot_params(g, short, false).get("clip").is_some());
+    }
+
+    /// The notes chrome is hidden from the first frame by the script run
+    /// before the page's own, and again by the probe: the same rule, or the
+    /// frame drawn at load and the frame photographed would differ.
+    #[test]
+    fn the_early_sheet_and_the_probe_hide_the_same_notes_ui() {
+        for rule in NOTES_UI_HIDE.split('\n') {
+            assert!(
+                EXTRACT_JS.contains(rule.trim()),
+                "extract.js has no `{rule}`"
+            );
+        }
+        let script = new_document_script();
+        assert!(script.starts_with(ERROR_HOOK));
+        assert!(script.contains("adoptedStyleSheets"));
+        assert!(script.contains(".notebar, .note-btn, .concur-zone"));
     }
 
     #[test]

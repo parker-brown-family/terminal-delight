@@ -691,6 +691,84 @@ fn a_tile_is_exactly_the_band_it_was_asked_for_at_any_scale() {
     rig.done();
 }
 
+/// The first screen is photographed while the page is still being read, as
+/// the page already shows it, with no clip. It must be the very picture the
+/// clipped capture takes of the same rows, at every scale a window can have,
+/// or the faster first screen would be a different page.
+#[test]
+fn the_first_screen_taken_early_is_the_picture_a_clipped_capture_takes() {
+    let Some(mut rig) = Rig::new("first-screen", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let pixels = |png: &[u8]| image::load_from_memory(png).unwrap().to_rgba8();
+    for scale in [1.0f32, 1.25, 1.6, 2.0] {
+        let g = Geometry { scale, ..NARROW };
+        let layout = rig.open(&fixture("brief.html"), g).unwrap();
+        let page = layout.page.unwrap();
+        let first = layout.bands()[0];
+        assert_eq!(first.top_dev, 0);
+        let early = rig.engine.tile(page, layout.generation, first).unwrap();
+        let clipped = rig
+            .engine
+            .tile_clipped(page, layout.generation, first)
+            .unwrap();
+        assert_eq!(
+            (early.width_dev, early.height_dev),
+            (clipped.width_dev, clipped.height_dev),
+            "scale {scale}"
+        );
+        assert_eq!(early.height_dev, first.height_dev, "scale {scale}");
+        let (a, b) = (pixels(&early.png), pixels(&clipped.png));
+        let differ = a.pixels().zip(b.pixels()).filter(|(x, y)| x != y).count();
+        assert_eq!(
+            differ, 0,
+            "scale {scale}: {differ} pixels differ between the early first screen and the clipped one"
+        );
+        rig.engine.close(page);
+    }
+    rig.done();
+}
+
+/// A page closing leaves the next one ready, made off the caller's thread;
+/// the next open takes it and lays the brief out exactly as a page made on
+/// the spot does; and closing that one readies another.
+#[test]
+fn a_closed_page_leaves_the_next_one_ready_and_the_next_open_takes_it() {
+    let Some(mut rig) = Rig::new("ready", Html::default(), Duration::from_secs(300)) else {
+        return;
+    };
+    let ready_within = |rig: &Rig| {
+        let until = Instant::now() + Duration::from_secs(15);
+        while !rig.engine.page_ready() && Instant::now() < until {
+            std::thread::sleep(Duration::from_millis(20));
+        }
+        rig.engine.page_ready()
+    };
+    let brief = fixture("brief.html");
+    assert!(
+        !rig.engine.page_ready(),
+        "nothing is made before a page closes"
+    );
+    let made_now = rig.open(&brief, NARROW).unwrap();
+    rig.engine.close(made_now.page.unwrap());
+    assert!(ready_within(&rig), "closing a page readies the next");
+    let from_ready = rig.open(&brief, NARROW).unwrap();
+    assert!(!rig.engine.page_ready(), "the open took the ready page");
+    let rects = |l: &PageLayout| {
+        l.anchors
+            .iter()
+            .map(|a| (a.nid.clone(), a.rect))
+            .collect::<Vec<_>>()
+    };
+    assert_eq!(made_now.height_css, from_ready.height_css);
+    assert_eq!(rects(&made_now), rects(&from_ready));
+    assert_eq!(made_now.links, from_ready.links);
+    rig.engine.close(from_ready.page.unwrap());
+    assert!(ready_within(&rig), "and closing that one readies another");
+    rig.record();
+    rig.done();
+}
+
 #[test]
 fn resource_inventory_includes_css_and_missing_images_and_detects_edits() {
     let Some(mut rig) = Rig::new("resources", Html::default(), Duration::from_secs(300)) else {

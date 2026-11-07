@@ -767,6 +767,12 @@ impl PageDoc {
         // after that is closed at once instead of living on in Chromium.
         let wanted = Wanted::new();
         let foreground = super::prepare::foreground(cx);
+        // A page opened for the first time, with no place in it asked for,
+        // is read from the top: its first band is the one wanted first.
+        let top_first =
+            self.current.is_none() && self.pending_top.is_none() && self.pending_fragment.is_none();
+        let started = self.timing.started;
+        let svg = cx.svg_renderer();
         self.work = Some(cx.spawn(async move |this, cx| {
             let _foreground = foreground;
             let wanted = wanted;
@@ -775,20 +781,48 @@ impl PageDoc {
             // Read, hash and look the render up, off the foreground. The
             // notes are read from these same bytes, so what the layer shows
             // belongs to the render it is drawn over.
+            //
+            // A render the cache does not have is opened right here, and a
+            // page read from the top has its first band photographed here
+            // too: each trip back to the foreground in between waited for the
+            // window's next frame, and bought nothing.
             let found = cx
                 .background_spawn({
-                    let (path, root) = (path.clone(), root.clone());
+                    let (path, root, engine, still) =
+                        (path.clone(), root.clone(), engine.clone(), wanted.flag());
                     async move {
                         let bytes = std::fs::read(&path).map_err(|e| (path.display().to_string(), e.to_string()))?;
                         let hash = layout_hash(&bytes);
                         let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
                         let cached = cache::lookup(&root, key);
-                        Ok::<_, (String, String)>((hash, read, key, cached))
+                        let looked = started.elapsed().as_secs_f64() * 1000.0;
+                        let opened = cached.is_none().then(|| {
+                            let req = PageRequest { path: path.clone(), geometry: g, expect: hash };
+                            open_if_wanted(&*engine, &req, &still).map(|mut l| {
+                                let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                                l.diagnostics.extend(why.into_iter().flatten());
+                                // Decoded here too: the first screen arrives
+                                // ready to draw.
+                                let first = l
+                                    .page
+                                    .zip(l.bands().first().copied())
+                                    .filter(|_| top_first)
+                                    .and_then(|(id, band)| engine.tile(id, l.generation, band).ok())
+                                    .map(|t| {
+                                        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, t.png.clone())
+                                            .to_image_data(svg)
+                                            .ok();
+                                        (t, image)
+                                    });
+                                (l, first)
+                            })
+                        });
+                        Ok::<_, (String, String)>((hash, read, key, cached, looked, opened))
                     }
                 })
                 .await;
-            let (mut hash, mut read, key, cached) = match found {
+            let (mut hash, mut read, key, cached, looked, mut opened) = match found {
                 Ok(f) => f,
                 Err((at, e)) => {
                     let t = &crate::lang::current().strings().parts;
@@ -804,7 +838,7 @@ impl PageDoc {
             };
             this.update(cx, |view, _| {
                 if let Some(p) = page_of(view) {
-                    p.timing.cache_lookup = Some(p.timing.elapsed());
+                    p.timing.cache_lookup = Some(looked);
                     p.timing.cache_hit = Some(cached.is_some());
                 }
             }).ok();
@@ -850,6 +884,7 @@ impl PageDoc {
             // Render. A file that changed between the read and the load is
             // read again, once.
             let mut layout = None;
+            let mut first_tile = None;
             for attempt in 0..2 {
                 let req = PageRequest {
                     path: path.clone(),
@@ -859,15 +894,21 @@ impl PageDoc {
                 let (engine, still, root) = (engine.clone(), wanted.flag(), root.clone());
                 // A film the page carries inside itself is kept as a file
                 // here, off the foreground, before anything can press it.
-                let opened = cx.background_spawn(async move {
-                    let mut l = open_if_wanted(&*engine, &req, &still)?;
-                    let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
-                    l.diagnostics.extend(why.into_iter().flatten());
-                    Ok(l)
-                });
-                match opened.await {
-                    Ok(l) => {
+                let result = match opened.take() {
+                    Some(done) => done,
+                    None => cx
+                        .background_spawn(async move {
+                            let mut l = open_if_wanted(&*engine, &req, &still)?;
+                            let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                            l.diagnostics.extend(why.into_iter().flatten());
+                            Ok((l, None))
+                        })
+                        .await,
+                };
+                match result {
+                    Ok((l, first)) => {
                         layout = Some(Ok(l));
+                        first_tile = first;
                         break;
                     }
                     Err(EngineError::FileChanged) if attempt == 0 => {
@@ -922,7 +963,29 @@ impl PageDoc {
                 );
             }
             let adopted = this
-                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx)))
+                .update(cx, |view, cx| {
+                    page_of(view).map(|p| {
+                        p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx);
+                        // The first band came with the layout, decoded: it lands
+                        // in the same update, and is neither asked for nor
+                        // decoded again. One that would not decode lands as a
+                        // PNG, and the usual decode says why.
+                        if let Some((t, image)) = first_tile {
+                            if p.is_current(generation) {
+                                let top = t.band.top_dev;
+                                if image.is_some() {
+                                    if let Some(r) = p.current.as_mut() {
+                                        r.tiles.decoding.insert(top);
+                                    }
+                                }
+                                p.landed(t.band, Arc::from(t.png), cx);
+                                if image.is_some() {
+                                    p.decoded(generation, top, image, cx);
+                                }
+                            }
+                        }
+                    })
+                })
                 .ok()
                 .flatten();
             if adopted.is_none() {

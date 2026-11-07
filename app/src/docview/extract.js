@@ -307,4 +307,10 @@
       return true;
     }
   };
+
+  /* The page as it will be photographed, from the moment the probe is in:
+     the snapshot engine starts the first screenshot while extract() is still
+     reading, so nothing extract() does may change a pixel after this. */
+  hideNotesUi();
+  window.scrollTo(0, 0);
 })();
