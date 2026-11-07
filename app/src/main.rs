@@ -32040,7 +32040,8 @@ impl Render for Workspace {
                              // The inbox advances its clock, marks the pane in front of the person
                              // visited, saves and books its next wake — once a frame, after the
                              // reap, so it never lists a pane this frame has already closed.
-        self.inbox_tick(cx);
+        let looking = window.is_window_active() && !self.overlay_owns_keyboard();
+        self.inbox_tick(looking, cx);
         // The composer holds the keyboard while it is up. If something else
         // took it — a click on a tab, a pane, the tree — the page is put away
         // rather than left over a terminal that is now being typed into.
@@ -40049,9 +40050,13 @@ impl Render for Workspace {
                 // is naturally typed with Alt still down, and that must pick the
                 // third row rather than go to the pane marked 3.
                 let digit = navkeys::row_digit(key).is_some();
+                // Not while the composer is up: a sentence is being typed, and
+                // a `y` or a digit in it must never answer an ask or jump a
+                // pane from a queue drawn underneath the page.
                 if !m.control
                     && !m.platform
                     && (!m.alt || digit)
+                    && ws.composer.is_none()
                     && (ws.rail_key(key, cx) || ws.art_key(key, cx))
                 {
                     cx.stop_propagation();

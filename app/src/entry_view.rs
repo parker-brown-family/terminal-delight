@@ -141,6 +141,11 @@ impl Workspace {
     /// defaults on the usage card), and the project on the repository the
     /// person is standing in, by path — a name can match two directories.
     pub(crate) fn open_composer(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        // The queue answers keys in the capture phase; it folds when the page
+        // opens over it, through its own door so its lifecycle runs.
+        if self.rail_open {
+            self.rail_close();
+        }
         if self.composer.is_none() {
             let home = session::home_dir();
             let projects = launcher::scan(&launcher::default_roots(&home), 1000);
@@ -998,6 +1003,40 @@ mod tests {
         let stage =
             &src[at + end..at + end + src[at + end..].find("let root = div()").expect("root")];
         assert!(!stage.contains("render_composer"), "and not beside it");
+    }
+
+    /// The attention queue answers plain keys in the capture phase, ahead of
+    /// the composer. With the page up it must answer none of them — a `y` in
+    /// a sentence would approve an agent's access ask — and opening the page
+    /// folds the queue (found by the round-one review from Codex).
+    #[test]
+    fn the_queue_takes_no_key_while_the_composer_is_up() {
+        let src = include_str!("main.rs");
+        let at = src
+            .find("&& (ws.rail_key(key, cx) || ws.art_key(key, cx))")
+            .expect("the queue's capture-phase keys");
+        let guard = &src[at.saturating_sub(400)..at];
+        assert!(
+            guard.contains("ws.composer.is_none()"),
+            "the queue's keys are not fenced off"
+        );
+        let view = include_str!("entry_view.rs");
+        let open = view.find("fn open_composer(").expect("open_composer");
+        assert!(
+            view[open..open + 600].contains("self.rail_close()"),
+            "opening the page does not fold the queue"
+        );
+    }
+
+    /// A pane counts as visited only while somebody can be looking at it.
+    #[test]
+    fn a_pane_behind_a_page_is_not_visited() {
+        let src = include_str!("main.rs");
+        assert!(src
+            .contains("let looking = window.is_window_active() && !self.overlay_owns_keyboard();"));
+        let view = include_str!("inbox_view.rs");
+        let tick = view.find("fn inbox_tick(").expect("inbox_tick");
+        assert!(view[tick..tick + 900].contains(".filter(|_| looking)"));
     }
 
     /// While it is up the composer holds the keyboard, and every gate that

@@ -214,6 +214,10 @@ pub struct Fact {
     /// When the lane was last seen to change. `None` when it has not been seen
     /// to change, which is a different claim from "just now".
     pub changed: Option<Instant>,
+    /// The screen line behind the lane — the question itself, the error — as
+    /// the rail quotes it. A second question in the same lane changes this and
+    /// not `changed`, which is why a person's word is checked against both.
+    pub evidence: Option<String>,
     /// The pane's name, as its own header says it.
     pub title: String,
     /// Where it sits on the left bar: `PROJECT › tab`.
@@ -314,6 +318,9 @@ pub struct Snooze {
     /// When it was set, by this window's clock. Read from disk, the moment it
     /// was read. See the module's rule about a person's word.
     pub from: Instant,
+    /// The line the row was quoting when it was snoozed. A question in other
+    /// words is a new question.
+    pub seen: Option<String>,
 }
 
 /// A person said *done*.
@@ -321,6 +328,8 @@ pub struct Snooze {
 pub struct Done {
     pub at: SystemTime,
     pub from: Instant,
+    /// The line the row was quoting when it was marked done.
+    pub seen: Option<String>,
 }
 
 /// A snooze ran out, or the person woke it early.
@@ -352,7 +361,14 @@ pub struct Store {
 impl Store {
     /// Snooze `key` until `until`. Takes it off DONE and clears a woke mark:
     /// the newest word wins.
-    pub fn snooze(&mut self, key: Key, until: SystemTime, now: SystemTime, at: Instant) {
+    pub fn snooze(
+        &mut self,
+        key: Key,
+        until: SystemTime,
+        now: SystemTime,
+        at: Instant,
+        seen: Option<String>,
+    ) {
         self.done.remove(&key);
         self.woke.remove(&key);
         self.snoozed.insert(
@@ -361,6 +377,7 @@ impl Store {
                 until,
                 since: now,
                 from: at,
+                seen,
             },
         );
         self.dirty = true;
@@ -376,10 +393,17 @@ impl Store {
     }
 
     /// Mark `key` done. Clears its snooze and its woke mark.
-    pub fn mark_done(&mut self, key: Key, now: SystemTime, at: Instant) {
+    pub fn mark_done(&mut self, key: Key, now: SystemTime, at: Instant, seen: Option<String>) {
         self.snoozed.remove(&key);
         self.woke.remove(&key);
-        self.done.insert(key, Done { at: now, from: at });
+        self.done.insert(
+            key,
+            Done {
+                at: now,
+                from: at,
+                seen,
+            },
+        );
         self.dirty = true;
     }
 
@@ -457,9 +481,10 @@ impl Store {
             .snoozed
             .iter()
             .filter(|(key, s)| {
-                by_key
-                    .get(key)
-                    .is_some_and(|f| urgent(f.lane) && f.changed.is_some_and(|c| c > s.from))
+                by_key.get(key).is_some_and(|f| {
+                    urgent(f.lane)
+                        && (f.changed.is_some_and(|c| c > s.from) || reworded(f, &s.seen))
+                })
             })
             .map(|(k, _)| *k)
             .collect();
@@ -481,7 +506,8 @@ impl Store {
                     let new_lane = f.lane.is_some_and(|l| l != AttentionKind::Unknown)
                         && f.changed.is_some_and(|c| c > d.from);
                     let started = tracker.started(**key).is_some_and(|s| s > d.from);
-                    new_lane || started
+                    let new_question = urgent(f.lane) && reworded(f, &d.seen);
+                    new_lane || started || new_question
                 })
             })
             .map(|(k, _)| *k)
@@ -514,6 +540,26 @@ impl Store {
                 self.dirty = true;
             }
         }
+    }
+}
+
+/// The row is quoting a line, and it is not the line the person acted on: a
+/// second question in the same lane, which `changed` cannot see because the
+/// lane never left. An absent quote is not a reworded one.
+fn reworded(f: &Fact, seen: &Option<String>) -> bool {
+    f.evidence.is_some() && f.evidence != *seen
+}
+
+/// A lane's place in the rail's order: `AttentionKind`'s own derived order,
+/// written out because the inbox needs a number to put woken rows between two
+/// lanes. The test beside it holds the two together.
+fn lane_ordinal(kind: AttentionKind) -> u8 {
+    match kind {
+        AttentionKind::Access => 0,
+        AttentionKind::Decision => 1,
+        AttentionKind::Failure => 2,
+        AttentionKind::ReviewReady => 3,
+        AttentionKind::Unknown => 4,
     }
 }
 
@@ -739,25 +785,32 @@ fn order_look(look: &mut [Row], store: &Store, order: LookOrder) {
                 .enumerate()
                 .map(|(i, item)| (item.pane, i))
                 .collect();
+            // One key for every row, so the lane rows keep exactly the order
+            // `project` gave them and a woken row slots in where a lane between
+            // review-ready and unknown would: at its own level, after the
+            // known lanes at that level and before the unknown one. The rail
+            // sorts level, then lane, then age, so (level, lane slot, rank)
+            // reproduces its order for every lane row, promoted unknowns
+            // included.
+            let slot = |kind: AttentionKind| 2 * lane_ordinal(kind);
+            let woke_slot = 2 * lane_ordinal(AttentionKind::ReviewReady) + 1;
             let woke_at = |r: &Row| store.woke.get(&r.fact.key).map(|w| w.from);
             look.sort_by(|a, b| {
-                let tier = |r: &Row| match r.status {
-                    Status::Lane(AttentionKind::Unknown) => 2,
-                    Status::Lane(_) => 0,
-                    _ => 1,
+                let key = |r: &Row| match r.status {
+                    Status::Lane(kind) => (
+                        r.fact.priority,
+                        slot(kind),
+                        *rank.get(&r.fact.pane).unwrap_or(&usize::MAX),
+                    ),
+                    _ => (r.fact.priority, woke_slot, 0),
                 };
-                tier(a)
-                    .cmp(&tier(b))
-                    .then_with(|| match (a.status, b.status) {
-                        (Status::Lane(_), Status::Lane(_)) => rank
-                            .get(&a.fact.pane)
-                            .unwrap_or(&usize::MAX)
-                            .cmp(rank.get(&b.fact.pane).unwrap_or(&usize::MAX)),
-                        _ => match (woke_at(a), woke_at(b)) {
-                            (Some(x), Some(y)) => x.cmp(&y),
-                            _ => a.fact.pane.cmp(&b.fact.pane),
-                        },
+                key(a)
+                    .cmp(&key(b))
+                    .then_with(|| match (woke_at(a), woke_at(b)) {
+                        (Some(x), Some(y)) => x.cmp(&y),
+                        _ => std::cmp::Ordering::Equal,
                     })
+                    .then_with(|| a.fact.pane.cmp(&b.fact.pane))
             });
         }
         LookOrder::Returned => {
@@ -908,12 +961,17 @@ struct File {
     done: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     woke: BTreeMap<String, u64>,
+    /// The line each done row was quoting when it was marked.
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    done_seen: BTreeMap<String, String>,
 }
 
 #[derive(serde::Serialize, serde::Deserialize)]
 struct FileSnooze {
     until_ms: u64,
     since_ms: u64,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    seen: Option<String>,
 }
 
 fn ms(t: SystemTime) -> u64 {
@@ -943,6 +1001,7 @@ pub fn encode(store: &Store) -> String {
                     FileSnooze {
                         until_ms: ms(s.until),
                         since_ms: ms(s.since),
+                        seen: s.seen.clone(),
                     },
                 ))
             })
@@ -956,6 +1015,11 @@ pub fn encode(store: &Store) -> String {
             .woke
             .iter()
             .filter_map(|(k, w)| Some((k.word()?, ms(w.at))))
+            .collect(),
+        done_seen: store
+            .done
+            .iter()
+            .filter_map(|(k, d)| Some((k.word()?, d.seen.clone()?)))
             .collect(),
     };
     serde_json::to_string_pretty(&file).unwrap_or_else(|_| "{\"v\":1}".into())
@@ -987,6 +1051,7 @@ pub fn decode(text: &str, at: Instant) -> Result<Store, String> {
                     until: from_ms(s.until_ms),
                     since: from_ms(s.since_ms),
                     from: at,
+                    seen: s.seen,
                 },
             );
         }
@@ -998,6 +1063,7 @@ pub fn decode(text: &str, at: Instant) -> Result<Store, String> {
                 Done {
                     at: from_ms(at_ms),
                     from: at,
+                    seen: file.done_seen.get(&word).cloned(),
                 },
             );
         }
@@ -1029,6 +1095,7 @@ mod tests {
             working: false,
             priority: Priority::Neutral,
             changed: None,
+            evidence: None,
             title: format!("pane {n}"),
             place: String::new(),
             lead: None,
@@ -1217,6 +1284,7 @@ mod tests {
             wall() + Duration::from_secs(3600),
             wall(),
             t0 + Duration::from_secs(1),
+            None,
         );
         let p = partition(
             &facts,
@@ -1248,8 +1316,20 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.snooze(Key::Pane(1), wall() + Duration::from_secs(3600), wall(), t0);
-        store.snooze(Key::Pane(2), wall() + Duration::from_secs(3600), wall(), t0);
+        store.snooze(
+            Key::Pane(1),
+            wall() + Duration::from_secs(3600),
+            wall(),
+            t0,
+            None,
+        );
+        store.snooze(
+            Key::Pane(2),
+            wall() + Duration::from_secs(3600),
+            wall(),
+            t0,
+            None,
+        );
         let mut asking = fact(1);
         asking.lane = Some(AttentionKind::Decision);
         asking.changed = Some(t0 + Duration::from_secs(5));
@@ -1281,7 +1361,7 @@ mod tests {
         finished.changed = Some(t0);
         let p = partition(&[finished.clone()], &mut store, &mut tracker, wall(), t0);
         assert_eq!(shelf_of(&p, 1), Some(Shelf::LookAtMe));
-        store.mark_done(Key::Pane(1), wall(), t0 + Duration::from_secs(1));
+        store.mark_done(Key::Pane(1), wall(), t0 + Duration::from_secs(1), None);
         let p = partition(
             &[finished.clone()],
             &mut store,
@@ -1314,7 +1394,7 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.mark_done(Key::Pane(1), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
         let mut finished = fact(1);
         finished.lane = Some(AttentionKind::ReviewReady);
         finished.changed = Some(t0 + Duration::from_secs(4));
@@ -1333,7 +1413,7 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.mark_done(Key::Pane(1), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
         let mut unknown = fact(1);
         unknown.life = Life::Unknown;
         unknown.lane = Some(AttentionKind::Unknown);
@@ -1355,7 +1435,7 @@ mod tests {
         let t0 = Instant::now();
         let text = encode(&{
             let mut s = Store::default();
-            s.mark_done(Key::Pane(1), wall(), t0);
+            s.mark_done(Key::Pane(1), wall(), t0, None);
             s
         });
         let mut store = decode(&text, t0).expect("round trip");
@@ -1489,7 +1569,13 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.snooze(Key::Pane(1), wall() + Duration::from_secs(3600), wall(), t0);
+        store.snooze(
+            Key::Pane(1),
+            wall() + Duration::from_secs(3600),
+            wall(),
+            t0,
+            None,
+        );
         store.wake(Key::Pane(1), wall(), t0 + Duration::from_secs(1));
         let p = partition(
             &[fact(1)],
@@ -1511,13 +1597,105 @@ mod tests {
     }
 
     #[test]
+    fn a_promoted_unknown_keeps_the_place_the_rail_gives_it() {
+        let t0 = Instant::now();
+        let mut unknown = fact(1);
+        unknown.life = Life::Unknown;
+        unknown.lane = Some(AttentionKind::Unknown);
+        unknown.priority = Priority::Promoted;
+        let mut asking = fact(2);
+        asking.lane = Some(AttentionKind::Decision);
+        asking.changed = Some(t0);
+        let mut woken = fact(3);
+        woken.priority = Priority::Promoted;
+        let mut store = Store::default();
+        store.woke.insert(
+            Key::Pane(3),
+            Woke {
+                at: wall(),
+                from: t0,
+            },
+        );
+        let p = shelve(&[asking, unknown, woken], &store, &Tracker::default(), t0);
+        // Promoted before neutral, as the rail sorts; inside the promoted level
+        // the woken row sits before the unknown lane.
+        assert_eq!(look_order(&p), vec![3, 1, 2]);
+    }
+
+    #[test]
+    fn lane_ordinals_follow_the_rails_own_lane_order() {
+        let lanes = [
+            AttentionKind::Access,
+            AttentionKind::Decision,
+            AttentionKind::Failure,
+            AttentionKind::ReviewReady,
+            AttentionKind::Unknown,
+        ];
+        for pair in lanes.windows(2) {
+            assert!(pair[0] < pair[1]);
+            assert!(lane_ordinal(pair[0]) < lane_ordinal(pair[1]));
+        }
+    }
+
+    #[test]
+    fn a_second_question_in_new_words_wakes_a_snooze_and_lifts_done() {
+        let t0 = Instant::now();
+        let mut store = Store::default();
+        let mut tracker = Tracker::default();
+        let first = Some("Do you want to proceed?".to_string());
+        store.snooze(
+            Key::Pane(1),
+            wall() + Duration::from_secs(3600),
+            wall(),
+            t0,
+            first.clone(),
+        );
+        store.mark_done(Key::Pane(2), wall(), t0, first.clone());
+        let ask = |n: u64, words: &Option<String>| {
+            let mut f = fact(n);
+            f.lane = Some(AttentionKind::Decision);
+            // The lane never left: the change was before the marks.
+            f.changed = t0.checked_sub(Duration::from_secs(5));
+            f.evidence = words.clone();
+            f
+        };
+        // The same question: both words hold.
+        let p = partition(
+            &[ask(1, &first), ask(2, &first)],
+            &mut store,
+            &mut tracker,
+            wall(),
+            t0 + Duration::from_secs(1),
+        );
+        assert_eq!(shelf_of(&p, 1), Some(Shelf::Snoozed));
+        assert_eq!(shelf_of(&p, 2), Some(Shelf::Done));
+        // A different question in the same lane: both come back.
+        let second = Some("Do you want to delete 3 files?".to_string());
+        let p = partition(
+            &[ask(1, &second), ask(2, &second)],
+            &mut store,
+            &mut tracker,
+            wall(),
+            t0 + Duration::from_secs(2),
+        );
+        assert_eq!(shelf_of(&p, 1), Some(Shelf::LookAtMe));
+        assert_eq!(shelf_of(&p, 2), Some(Shelf::LookAtMe));
+    }
+
+    #[test]
     fn the_newest_word_wins_between_snooze_and_done() {
         let t0 = Instant::now();
         let mut store = Store::default();
-        store.mark_done(Key::Pane(1), wall(), t0);
-        store.snooze(Key::Pane(1), wall() + Duration::from_secs(60), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
+        store.snooze(
+            Key::Pane(1),
+            wall() + Duration::from_secs(60),
+            wall(),
+            t0,
+            None,
+        );
         assert!(store.done.is_empty());
-        store.mark_done(Key::Pane(1), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
         assert!(store.snoozed.is_empty());
     }
 
@@ -1526,7 +1704,7 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.mark_done(Key::Pane(1), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
         store.take_dirty();
         partition(&[], &mut store, &mut tracker, wall(), t0);
         partition(
@@ -1550,7 +1728,7 @@ mod tests {
         let t0 = Instant::now();
         let mut store = Store::default();
         let mut tracker = Tracker::default();
-        store.mark_done(Key::Pane(1), wall(), t0);
+        store.mark_done(Key::Pane(1), wall(), t0, None);
         partition(&[], &mut store, &mut tracker, wall(), t0);
         partition(
             &[fact(1)],
@@ -1567,9 +1745,15 @@ mod tests {
     fn the_store_round_trips_and_window_keys_are_never_written() {
         let t0 = Instant::now();
         let mut store = Store::default();
-        store.snooze(Key::Pane(7), wall() + Duration::from_secs(90), wall(), t0);
-        store.mark_done(Key::Pane(8), wall(), t0);
-        store.mark_done(Key::Window(9), wall(), t0);
+        store.snooze(
+            Key::Pane(7),
+            wall() + Duration::from_secs(90),
+            wall(),
+            t0,
+            None,
+        );
+        store.mark_done(Key::Pane(8), wall(), t0, None);
+        store.mark_done(Key::Window(9), wall(), t0, None);
         store.woke.insert(
             Key::Pane(10),
             Woke {

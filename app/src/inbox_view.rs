@@ -37,8 +37,29 @@ const INBOX_BADGE_KEYS: usize = 1 << 21;
 /// already says in its own mark. Left on the title they push every name one
 /// glyph to the right and tell the reader nothing the mark does not.
 fn bare_title(t: &str) -> &str {
-    t.trim_start_matches(|c: char| "✳✻✽✶✢·◐◑◒◓⠂⠁⠈⠐⠠⢀⡀⠄".contains(c))
-        .trim_start()
+    let t = t
+        .trim_start_matches(|c: char| "✳✻✽✶✢·◐◑◒◓⠂⠁⠈⠐⠠⢀⡀⠄".contains(c))
+        .trim_start();
+    // A shell's own title — `me@host:~/dir` — is the shell saying who and
+    // where, not what the agent in it is doing. It names nothing the place
+    // line does not, so the row falls back to the tab's name.
+    if shell_title(t) {
+        ""
+    } else {
+        t
+    }
+}
+
+/// `user@host:path`, the title bash and zsh set by default: one word with an
+/// `@` before its first `:`, and nothing after the path.
+fn shell_title(t: &str) -> bool {
+    let Some((who, rest)) = t.split_once(':') else {
+        return false;
+    };
+    who.contains('@')
+        && !who.contains(char::is_whitespace)
+        && (rest.starts_with('~') || rest.starts_with('/'))
+        && !rest.trim().contains(' ')
 }
 
 /// One line of an agent's words, for a row with room for one: the first line,
@@ -184,6 +205,7 @@ impl Workspace {
                     working: v.agent_working(),
                     priority: item.map(|i| i.priority).unwrap_or(level),
                     changed: item.and_then(|i| i.observed_at),
+                    evidence: item.and_then(|i| i.evidence.clone()),
                     title: if title.is_empty() {
                         v.mode.label().to_string()
                     } else {
@@ -204,8 +226,16 @@ impl Workspace {
     /// next moment the shelves will move on their own — a snooze running out,
     /// or a WORKING seat's grace ending — because nothing else may draw a
     /// frame then.
-    pub(crate) fn inbox_tick(&mut self, cx: &mut Context<Self>) {
-        if let Some(focused) = self.tabs.get(self.active).and_then(|t| t.focused) {
+    pub(crate) fn inbox_tick(&mut self, looking: bool, cx: &mut Context<Self>) {
+        // Visited only when the person can actually be looking at it: the
+        // window active and no page or panel over the panes. A WOKE row behind
+        // the composer, or in a window on another workspace, has not been seen.
+        let focused = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.focused)
+            .filter(|_| looking);
+        if let Some(focused) = focused {
             if let Some(view) = self.pane_by_id(focused) {
                 let key = view
                     .read(cx)
@@ -513,6 +543,7 @@ impl Workspace {
                     attention::Priority::Neutral
                 },
                 changed: age.and_then(ago),
+                evidence: line.filter(|_| lane.is_some()).map(str::to_string),
                 title: title.to_string(),
                 place: place.to_string(),
                 lead: Some(lead.to_string()),
@@ -536,23 +567,26 @@ impl Workspace {
             inbox::Woke { at: now, from: at },
         );
         if let Some(t) = inbox::Wake::Morning.at(now) {
-            store.snooze(inbox::Key::Window(900_009), t, now, at);
+            store.snooze(inbox::Key::Window(900_009), t, now, at, None);
         }
         store.snooze(
             inbox::Key::Window(900_010),
             now + Duration::from_secs(2 * 3600),
             now,
             at,
+            None,
         );
         store.mark_done(
             inbox::Key::Window(900_016),
             now - Duration::from_secs(3600),
             at,
+            None,
         );
         store.mark_done(
             inbox::Key::Window(900_017),
             now - Duration::from_secs(600),
             at,
+            None,
         );
         store.take_dirty();
         store
@@ -648,9 +682,10 @@ impl Workspace {
 
     fn inbox_snooze(&mut self, key: inbox::Key, until: SystemTime, cx: &mut Context<Self>) {
         self.inbox_hover = None;
+        let seen = self.inbox_seen(key, cx);
         self.inbox_store
             .borrow_mut()
-            .snooze(key, until, SystemTime::now(), Instant::now());
+            .snooze(key, until, SystemTime::now(), Instant::now(), seen);
         self.inbox_snoozing = None;
         self.inbox_save();
         cx.notify();
@@ -658,12 +693,25 @@ impl Workspace {
 
     fn inbox_done(&mut self, key: inbox::Key, cx: &mut Context<Self>) {
         self.inbox_hover = None;
+        let seen = self.inbox_seen(key, cx);
         self.inbox_store
             .borrow_mut()
-            .mark_done(key, SystemTime::now(), Instant::now());
+            .mark_done(key, SystemTime::now(), Instant::now(), seen);
         self.inbox_snoozing = None;
         self.inbox_save();
         cx.notify();
+    }
+
+    /// The line the row was quoting when the person acted on it: a question
+    /// with different words after that is a new question, even in the same
+    /// lane (see [`inbox::Store::advance`]).
+    fn inbox_seen(&self, key: inbox::Key, cx: &App) -> Option<String> {
+        let (shelves, _) = self.inbox_rows(cx);
+        let seen = shelves
+            .rows()
+            .find(|r| r.fact.key == key)
+            .and_then(|r| r.fact.evidence.clone());
+        seen
     }
 
     fn inbox_wake(&mut self, key: inbox::Key, cx: &mut Context<Self>) {
@@ -1270,6 +1318,10 @@ mod tests {
         );
         assert_eq!(bare_title("[ ! ] Action Required"), "[ ! ] Action Required");
         assert_eq!(bare_title("shell"), "shell");
+        assert_eq!(bare_title("parker@legion:~/.cache/td"), "");
+        assert_eq!(bare_title("me@box:/srv/app"), "");
+        assert_eq!(bare_title("Reply to me@box: done"), "Reply to me@box: done");
+        assert_eq!(bare_title("ssh me@box"), "ssh me@box");
     }
 
     #[test]
