@@ -756,23 +756,33 @@ impl SnapshotEngine {
                     // Held in flight while it is made, so the idle clock
                     // cannot close the browser under it.
                     shared.in_flight.fetch_add(1, Ordering::SeqCst);
-                    if let Ok(blank) = make_blank(&cdp, &pref) {
-                        // Kept only for the browser that is still running,
-                        // and while still counted in flight: an idle close
-                        // or a relaunch that came first has already let its
-                        // ready page go, and must not find one put back.
-                        let current = lock(&shared.browser)
-                            .as_ref()
-                            .is_some_and(|b| Arc::ptr_eq(&b.cdp, &cdp));
+                    let blank = make_blank(&cdp, &pref).ok();
+                    // Kept only for the browser that is still running, decided
+                    // under that browser's lock and while still in flight: an
+                    // idle close, a relaunch or a shutdown takes the browser
+                    // under the same lock and lets the ready page go after it,
+                    // so either it sees this page or this sees it gone. The
+                    // flag drops with the page published, so an open that
+                    // takes the page at once still finds a worker free to
+                    // make the next.
+                    let mut spare = None;
+                    {
+                        let browser = lock(&shared.browser);
+                        let current = browser.as_ref().is_some_and(|b| Arc::ptr_eq(&b.cdp, &cdp));
                         let mut slot = lock(&shared.ready);
-                        if slot.is_none() && current && !cdp.is_closed() {
-                            *slot = Some(blank);
-                        } else {
-                            drop(slot);
-                            close_blank(&blank);
+                        match blank {
+                            Some(b) if slot.is_none() && current && !cdp.is_closed() => {
+                                *slot = Some(b);
+                            }
+                            other => spare = other,
                         }
+                        shared.making.store(false, Ordering::SeqCst);
+                    }
+                    if let Some(b) = spare {
+                        close_blank(&b);
                     }
                     shared.in_flight.fetch_sub(1, Ordering::SeqCst);
+                    return;
                 }
                 shared.making.store(false, Ordering::SeqCst);
             });
@@ -1145,8 +1155,14 @@ impl SnapshotEngine {
             let early = match p.first.take() {
                 Some((b, shot)) if b == band && !exact => Some(shot),
                 // Asked for another band first (a link into the middle of
-                // the page): the early screen is not wanted.
-                _ => None,
+                // the page): the early screen is not wanted, but Chromium is
+                // still taking it, and two captures at once on one page can
+                // spoil each other. It is let finish, then given up.
+                Some((_, shot)) => {
+                    let _ = shot.wait(CAPTURE);
+                    None
+                }
+                None => None,
             };
             let capture = |exact: bool| {
                 p.cdp.call(
@@ -1414,9 +1430,11 @@ impl PageEngine for SnapshotEngine {
     }
 
     fn shutdown(&self) {
+        // The browser first, then what lived in it: a ready page published
+        // under the browser's lock is either seen here or never published.
+        let running = lock(&self.shared.browser).take();
         lock(&self.shared.pages).clear();
         lock(&self.shared.ready).take();
-        let running = lock(&self.shared.browser).take();
         if let Some(b) = running {
             finish(b);
         }

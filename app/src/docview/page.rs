@@ -397,6 +397,41 @@ fn open_if_wanted(
     out
 }
 
+/// A page the engine opened for a view, which closes it if it is dropped
+/// before the view adopts it. The task that would adopt it can be dropped at
+/// any await (the view closed, or a newer render replaced it), and a page
+/// nobody adopted lived on in Chromium until the browser idled out.
+struct Unadopted {
+    engine: Arc<dyn PageEngine>,
+    page: Option<PageId>,
+}
+
+impl Unadopted {
+    fn new(engine: &Arc<dyn PageEngine>, layout: &PageLayout) -> Self {
+        Self {
+            engine: engine.clone(),
+            page: layout.page,
+        }
+    }
+
+    /// The view holds the page now: closing it is the view's.
+    fn adopted(mut self) {
+        self.page = None;
+    }
+}
+
+impl Drop for Unadopted {
+    fn drop(&mut self) {
+        if let Some(page) = self.page.take() {
+            // Off whatever thread dropped it: closing talks to the browser.
+            let engine = self.engine.clone();
+            let _ = std::thread::Builder::new()
+                .name("td-page-close".into())
+                .spawn(move || engine.close(page));
+        }
+    }
+}
+
 /// Every `Arc<RenderImage>` of one render lives in exactly one slot here.
 #[derive(Default)]
 struct TileSet {
@@ -800,6 +835,7 @@ impl PageDoc {
                         let opened = cached.is_none().then(|| {
                             let req = PageRequest { path: path.clone(), geometry: g, expect: hash };
                             open_if_wanted(&*engine, &req, &still).map(|mut l| {
+                                let owned = Unadopted::new(&engine, &l);
                                 let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
                                 l.diagnostics.extend(why.into_iter().flatten());
                                 // Decoded here too: the first screen arrives
@@ -815,19 +851,7 @@ impl PageDoc {
                                             .ok();
                                         (t, image)
                                     });
-                                (l, first)
-                            })
-                            .and_then(|(l, first)| {
-                                // The view may have gone while its first
-                                // screen was photographed: nothing will adopt
-                                // this page, so it is closed here.
-                                if still.load(Ordering::SeqCst) {
-                                    return Ok((l, first));
-                                }
-                                if let Some(id) = l.page {
-                                    engine.close(id);
-                                }
-                                Err(EngineError::Closed)
+                                (l, first, owned)
                             })
                         });
                         Ok::<_, (String, String)>((hash, read, key, cached, looked, opened))
@@ -897,6 +921,7 @@ impl PageDoc {
             // read again, once.
             let mut layout = None;
             let mut first_tile = None;
+            let mut owned = None;
             for attempt in 0..2 {
                 let req = PageRequest {
                     path: path.clone(),
@@ -911,16 +936,18 @@ impl PageDoc {
                     None => cx
                         .background_spawn(async move {
                             let mut l = open_if_wanted(&*engine, &req, &still)?;
+                            let owned = Unadopted::new(&engine, &l);
                             let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
                             l.diagnostics.extend(why.into_iter().flatten());
-                            Ok((l, None))
+                            Ok((l, None, owned))
                         })
                         .await,
                 };
                 match result {
-                    Ok((l, first)) => {
+                    Ok((l, first, page)) => {
                         layout = Some(Ok(l));
                         first_tile = first;
+                        owned = Some(page);
                         break;
                     }
                     Err(EngineError::FileChanged) if attempt == 0 => {
@@ -978,6 +1005,10 @@ impl PageDoc {
                 .update(cx, |view, cx| {
                     page_of(view).map(|p| {
                         p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx);
+                        // In the same update: the view closes it from here on.
+                        if let Some(owned) = owned.take() {
+                            owned.adopted();
+                        }
                         // The first band came with the layout, decoded: it lands
                         // in the same update, and is neither asked for nor
                         // decoded again. One that would not decode lands as a
@@ -1001,10 +1032,9 @@ impl PageDoc {
                 .ok()
                 .flatten();
             if adopted.is_none() {
-                // The view went while the page was loading.
-                if let Some(id) = page {
-                    cx.background_spawn(async move { engine.close(id) }).detach();
-                }
+                // The view went while the page was loading: dropping what
+                // it never adopted closes the page.
+                drop(owned);
                 return;
             }
             let Some(page) = page else { return };
