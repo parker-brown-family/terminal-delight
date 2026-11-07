@@ -1090,7 +1090,11 @@ impl SnapshotEngine {
                 // still taking it, and two captures at once on one page can
                 // spoil each other. It is let finish, then given up.
                 Some((_, shot)) => {
-                    let _ = shot.wait(CAPTURE);
+                    // A capture that outlived its wait is still running in
+                    // Chromium: say so, rather than start another beside it.
+                    if let Err(CdpError::Timeout) = shot.wait(CAPTURE) {
+                        return Err(EngineError::Timeout("capture a tile"));
+                    }
                     None
                 }
                 None => None,
@@ -1262,7 +1266,9 @@ impl PageEngine for SnapshotEngine {
             // Opening a dialog changes what is on screen: an early capture
             // still on its way is let finish first, and given up.
             if let Some((_, shot)) = p.first.take() {
-                let _ = shot.wait(CAPTURE);
+                if let Err(CdpError::Timeout) = shot.wait(CAPTURE) {
+                    return Err(EngineError::Timeout("capture the dialog"));
+                }
             }
             let (cdp, s, g) = (&p.cdp, &p.session, p.geometry);
             let quoted = serde_json::to_string(id).unwrap_or_default();
