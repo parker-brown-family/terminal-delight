@@ -1615,6 +1615,20 @@ pub(crate) fn open_with_system(target: &str) {
     }
 }
 
+/// Start a desktop program of its own — gliff showing a far machine's screen
+/// is the first — detached, and on a uwsm session in its own scope, for the
+/// reason [`open_with_system`] gives: the window it opens is the desktop's,
+/// and closing this terminal must not be able to take it along.
+pub(crate) fn launch_gui(program: &str, args: &[&str]) {
+    if session_uses_uwsm() {
+        let mut all = vec!["--", program];
+        all.extend_from_slice(args);
+        spawn_detached("uwsm-app", &all);
+    } else {
+        spawn_detached(program, args);
+    }
+}
+
 /// The filesystem item a clicked link points at, or None when there is nothing
 /// on this disk to show — an `http(s)` link, or a `file://` URI naming another
 /// host. Accepts what `link_under` hands back: an already-absolute path, or a
@@ -3724,6 +3738,14 @@ impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
 /// Ctrl+Shift+N — open or close the attention rail's queue.
 pub struct ToggleRail;
 impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
+/// Ctrl+Shift+I — turn the left spine between PROJECTS and INBOX.
+pub struct ToggleInbox;
+impl gpui::EventEmitter<ToggleInbox> for TerminalView {}
+
+/// Ctrl+Shift+E — open the composer: start an agent from a sentence.
+pub struct OpenComposer;
+impl gpui::EventEmitter<OpenComposer> for TerminalView {}
 
 /// Ctrl+Shift+Z — bring back the most recently closed thing.
 ///
@@ -8181,6 +8203,11 @@ impl TerminalView {
                 "b" => cx.emit(ToggleLeftBar),
                 // N for "needs me": the attention rail's queue.
                 "n" => cx.emit(ToggleRail),
+                // I for inbox: the left spine's other face.
+                "i" => cx.emit(ToggleInbox),
+                // E for entry: the composer that starts an agent from a
+                // sentence.
+                "e" => cx.emit(OpenComposer),
                 // M for made: what this pane's agent handed over, as a page
                 // over the pane. The pane's own, so it is acted on here rather
                 // than sent up to the workspace.

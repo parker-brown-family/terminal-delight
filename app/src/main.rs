@@ -61,6 +61,8 @@ mod docopen;
 mod docview;
 mod emphasis;
 mod engstate;
+mod entry;
+mod entry_view;
 mod fav;
 mod feedback;
 mod glyph;
@@ -72,6 +74,8 @@ mod host;
 mod hostctl;
 mod hostproto;
 mod hud;
+mod inbox;
+mod inbox_view;
 mod instance;
 mod keylayer;
 mod lang;
@@ -148,9 +152,9 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
-    OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
-    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
+    OpenAgentPanel, OpenComposer, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp,
+    OpenLogoPicker, OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav,
+    ReopenClosed, RequestCloseTab, TerminalView, ToggleInbox, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -371,7 +375,7 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 8] = [
     (
         "render_rail",
         Warped::FlatByDesign {
@@ -419,6 +423,16 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
         },
     ),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
+    (
+        "composer page",
+        Warped::FlatByDesign {
+            flag: "composer",
+            why: "a page of text and chips over every pane of the active tab: \
+                  under a tube its caret and chips would bow away from where \
+                  they are clicked. Bought flat by `composer` in the \
+                  suppression list, like the launcher panel it sits beside.",
+        },
+    ),
     (
         "sticky note",
         Warped::Predistorted("drawn through the pane's own map; hit-tested flat"),
@@ -4712,6 +4726,32 @@ struct Workspace {
     logo_picker: Option<LogoPicker>,
     /// The LAUNCH AGENT panel, if it is up.
     agent_launcher: Option<AgentLauncher>,
+    /// The composer over the main area: a sentence first, then where it runs
+    /// and with what (`entry_view.rs`). Owns the keyboard while up.
+    composer: Option<entry_view::Composer>,
+    /// What was typed into the composer when it was last put away, kept for
+    /// the next time it opens.
+    composer_stash: Option<String>,
+    /// What a person has said about the inbox — snoozes, done marks, which
+    /// shelves are open, which face the spine shows — and the file it is kept
+    /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
+    /// the way the rail's memo is.
+    inbox_store: std::cell::RefCell<inbox::Store>,
+    /// What this window has watched each pane do, on its own clock.
+    inbox_tracker: std::cell::RefCell<inbox::Tracker>,
+    /// One frame's inbox, shared by the toggle's count, the list and a click.
+    inbox_memo: std::cell::RefCell<Option<inbox_view::InboxMemo>>,
+    /// The row whose snooze choices are open under it.
+    inbox_snoozing: Option<inbox::Key>,
+    /// The inbox row the keyboard is on (Ctrl+Alt+↑↓ with the INBOX face up).
+    inbox_cursor: Option<inbox::Key>,
+    /// The inbox row under the pointer, which alone shows its verbs.
+    inbox_hover: Option<inbox::Key>,
+    /// When the inbox next moves on its own (a snooze running out, a WORKING
+    /// seat's grace ending), as booked; and the booking's epoch, so a later
+    /// booking supersedes an earlier one.
+    inbox_clock: Option<std::time::SystemTime>,
+    inbox_clock_epoch: u64,
     /// Bumped on every picker open. The async tier-3 sweep captures the value
     /// and drops its result unless it still matches — otherwise a slow sweep
     /// belonging to a CLOSED (or re-opened, different-pane) picker lands in
@@ -5588,6 +5628,17 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.set_left_bar(!ws.left_bar, cx);
         ws.save(cx);
         cx.notify();
+    })
+    .detach();
+    // ctrl+shift+I in any pane → the left spine turns between its faces.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleInbox, cx| {
+        let showing = ws.spine_inbox();
+        ws.set_spine_inbox(!showing, cx);
+    })
+    .detach();
+    // ctrl+shift+E in any pane → the composer, over the main area.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &OpenComposer, window, cx| {
+        ws.open_composer(window, cx);
     })
     .detach();
     // ctrl+shift+N in any pane → open or close the attention queue.
@@ -6645,6 +6696,16 @@ impl Workspace {
             lang_picker: None,
             logo_picker: None,
             agent_launcher: None,
+            composer: None,
+            composer_stash: None,
+            inbox_store: std::cell::RefCell::new(Self::inbox_load()),
+            inbox_tracker: std::cell::RefCell::new(inbox::Tracker::default()),
+            inbox_memo: std::cell::RefCell::new(None),
+            inbox_snoozing: None,
+            inbox_cursor: None,
+            inbox_hover: None,
+            inbox_clock: None,
+            inbox_clock_epoch: 0,
             logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
             tool_probe: std::collections::HashMap::new(),
@@ -16561,7 +16622,9 @@ impl Workspace {
                 let open = workspace
                     .update(cx, |workspace, cx| {
                         cx.notify();
-                        workspace.agent_launcher.is_some() || workspace.launch_defaults_open
+                        workspace.agent_launcher.is_some()
+                            || workspace.launch_defaults_open
+                            || workspace.composer.is_some()
                     })
                     .unwrap_or(false);
                 if !open {
@@ -21910,6 +21973,7 @@ impl Workspace {
             || self.admin_menu
             || self.update_menu
             || self.savings_menu
+            || self.composer.is_some()
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -22016,6 +22080,13 @@ impl Workspace {
         // queue, never the wall underneath it.
         if self.rail_open {
             self.rail_close();
+            return true;
+        }
+        // The composer is a page over the panes: Esc on a chip goes back to the
+        // sentence, and Esc on the sentence puts the page away with the draft
+        // kept for next time.
+        if self.composer.is_some() {
+            self.composer_escape();
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -22231,6 +22302,11 @@ impl Workspace {
         if ks.key.as_str() == "f1" {
             self.help_open = !self.help_open;
             cx.notify();
+            return;
+        }
+        // The composer owns every key while it is up: one that fell through
+        // would reach a terminal behind a page.
+        if self.composer.is_some() && self.composer_key(ks, window, cx) {
             return;
         }
         // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
@@ -22894,6 +22970,26 @@ impl Workspace {
                 // (or the live cursor's task) travels with the arrows
                 // instead of just the highlight. See `bar_carry_move`,
                 // `bar_carry_out`, `bar_carry_in`.
+                // With the spine on its INBOX face the same chords walk the
+                // inbox: ↑/↓ move the highlight row to row, → goes to the
+                // highlighted agent, ← lets the highlight go, and 1…9 go
+                // straight to that row (`inbox_view.rs`).
+                "up" | "down" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_walk(ks.key.as_str() == "down", cx);
+                }
+                "right" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_enter(cx);
+                }
+                "left" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_cursor = None;
+                    cx.notify();
+                }
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+                    if self.left_bar && self.spine_inbox() =>
+                {
+                    let n = (ks.key.as_bytes()[0] - b'0') as usize;
+                    self.inbox_jump(n, cx);
+                }
                 "up" | "down" if self.left_bar => {
                     let down = ks.key.as_str() == "down";
                     if m.shift {
@@ -29438,7 +29534,11 @@ impl Workspace {
             // whatever a branch row is pinned to — only the whole session
             // widens it (see `render_strip_head`). This row's glyphs and their
             // arrangement are the next pass.
-            .child(div().flex_1().min_w_0())
+            // The spine's two faces — PROJECTS and INBOX — in the stretch the
+            // scope chip once had, so the buttons stay at the right-hand end.
+            // The tree's own buttons (fold all, new project) act on the tree,
+            // so the INBOX face leaves them out and carries + NEW instead.
+            .child(self.render_spine_faces(&sk, s, cx))
             // Unboxed, ADD PROJECT lives here, beside the TABS handle with a
             // hairline between them: it is about the projects this tree lists,
             // and with it up here the top bar has nothing of its own left to
@@ -29447,7 +29547,7 @@ impl Workspace {
             // spine (adjescent and SEPARATED from tabs... this will eliminate
             // the TOP rail"*. With the spine shut it goes back to the top
             // corner, beside SPINE, since that is then the only way in.
-            .when(sk.unboxed(), |d| {
+            .when(sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     Self::bezel_btn_s(&sk, self.lang.strings().parts.ctl_add_project, false, s)
                         .id("spine-add-project")
@@ -29473,7 +29573,7 @@ impl Workspace {
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
             // NOT HIDE THE little arrow to change this even in clean mode."
-            .when(bar_header && !sk.unboxed(), |d| {
+            .when(bar_header && !sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     // fold or unfold the whole tree. One button rather than two,
                     // showing the triangle of what pressing it does: pointing down
@@ -29554,8 +29654,15 @@ impl Workspace {
             .flex_col()
             .gap(px(1. * s))
             .pb(px(6. * s));
-        for row in rows {
-            list = list.child(self.bar_row(row, cx));
+        if self.spine_inbox() {
+            // The INBOX face: the same list, holding every agent as a
+            // conversation to close (`inbox_view.rs`). The tree's keyboard
+            // cursor addresses tree rows, so it is not drawn here.
+            list = list.children(self.inbox_list(&th, s, cx));
+        } else {
+            for row in rows {
+                list = list.child(self.bar_row(row, cx));
+            }
         }
 
         Some(
@@ -31780,6 +31887,10 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
+        // The inbox advances its clock, marks the pane in front of the person
+        // visited, saves and books its next wake — once a frame, on the same
+        // frame stamp the rail's memo uses.
+        self.inbox_tick(cx);
         // The left bar follows UI CONFIG, which a design can move under it
         // (Clean asks for tabs across the top). Read once a frame, so the rest
         // of the pass — and the key handlers between passes — see one answer.
@@ -31975,6 +32086,8 @@ impl Render for Workspace {
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
                 || self.agent_launcher.is_some()
+                // The composer is a page over every pane of the active tab.
+                || self.composer.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -39848,7 +39961,10 @@ impl Render for Workspace {
             .mx_2()
             // Doubled black bezel gap between the mother bar and the screen.
             .mt(px(7.))
-            .child(pane_area);
+            .child(pane_area)
+            // The composer lies over the panes inside the screen's own box, so
+            // it can cover them without resizing any (`entry_view.rs`).
+            .children(self.render_composer(&th, cx));
 
         // The tree and the screen share the space under the mother bar. The bar
         // is `flex_none` at its own width and the screen takes what is left, so
