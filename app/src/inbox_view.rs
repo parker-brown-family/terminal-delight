@@ -225,18 +225,24 @@ impl Workspace {
             .map(|s| s.until)
             .min();
         let holding = shelves.working.iter().any(|r| !r.fact.working);
-        let due = match (next_wake, holding) {
-            (_, true) => Some(SystemTime::now() + inbox::WORKING_GRACE),
-            (Some(at), false) => Some(at),
-            (None, false) => None,
+        // The earliest moment anything moves: a snooze's hour, or — while a
+        // stopped agent holds its WORKING seat — the end of the grace, which is
+        // at most WORKING_GRACE away.
+        let grace = holding.then(|| SystemTime::now() + inbox::WORKING_GRACE);
+        let due = match (next_wake, grace) {
+            (Some(a), Some(b)) => Some(a.min(b)),
+            (a, b) => a.or(b),
         };
-        if due == self.inbox_clock {
-            return;
-        }
-        self.inbox_clock = due;
+        // Book only what is EARLIER than what is already booked. Booking every
+        // frame would spawn a timer a frame while a seat is held, and the one
+        // already booked will wake the window in time to book the next.
         let Some(due) = due else {
             return;
         };
+        if self.inbox_clock.is_some_and(|booked| booked <= due) {
+            return;
+        }
+        self.inbox_clock = Some(due);
         self.inbox_clock_epoch = self.inbox_clock_epoch.wrapping_add(1);
         let epoch = self.inbox_clock_epoch;
         let wait = due
@@ -259,6 +265,11 @@ impl Workspace {
     /// written whole, through the same atomic rename the session file uses.
     pub(crate) fn inbox_save(&self) {
         if !self.inbox_store.borrow_mut().take_dirty() || inbox_demo() {
+            return;
+        }
+        // The session file's own guard: a scratch window, one whose host is
+        // gone, or one that has handed its session on writes nothing.
+        if self.save_blocked().is_some() {
             return;
         }
         let text = inbox::encode(&self.inbox_store.borrow());
@@ -572,6 +583,10 @@ impl Workspace {
         };
         self.inbox_store.borrow_mut().visited(key);
         self.inbox_snoozing = None;
+        // Going to a pane with the composer up would leave the page over the
+        // terminal the keyboard just went to: what is typed next would land
+        // behind it. A row's click means "go there", so the page goes away.
+        self.composer_put_away();
         self.pending_jump = Some(id);
         self.inbox_save();
         cx.notify();
@@ -632,6 +647,7 @@ impl Workspace {
     }
 
     fn inbox_snooze(&mut self, key: inbox::Key, until: SystemTime, cx: &mut Context<Self>) {
+        self.inbox_hover = None;
         self.inbox_store
             .borrow_mut()
             .snooze(key, until, SystemTime::now(), Instant::now());
@@ -641,6 +657,7 @@ impl Workspace {
     }
 
     fn inbox_done(&mut self, key: inbox::Key, cx: &mut Context<Self>) {
+        self.inbox_hover = None;
         self.inbox_store
             .borrow_mut()
             .mark_done(key, SystemTime::now(), Instant::now());
@@ -650,6 +667,7 @@ impl Workspace {
     }
 
     fn inbox_wake(&mut self, key: inbox::Key, cx: &mut Context<Self>) {
+        self.inbox_hover = None;
         self.inbox_store
             .borrow_mut()
             .wake(key, SystemTime::now(), Instant::now());
@@ -658,6 +676,7 @@ impl Workspace {
     }
 
     fn inbox_reopen(&mut self, key: inbox::Key, cx: &mut Context<Self>) {
+        self.inbox_hover = None;
         self.inbox_store.borrow_mut().reopen(key);
         self.inbox_save();
         cx.notify();

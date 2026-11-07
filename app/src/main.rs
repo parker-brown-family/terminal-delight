@@ -31887,10 +31887,6 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
-        // The inbox advances its clock, marks the pane in front of the person
-        // visited, saves and books its next wake — once a frame, on the same
-        // frame stamp the rail's memo uses.
-        self.inbox_tick(cx);
         // The left bar follows UI CONFIG, which a design can move under it
         // (Clean asks for tabs across the top). Read once a frame, so the rest
         // of the pass — and the key handlers between passes — see one answer.
@@ -32041,6 +32037,16 @@ impl Render for Workspace {
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
+                             // The inbox advances its clock, marks the pane in front of the person
+                             // visited, saves and books its next wake — once a frame, after the
+                             // reap, so it never lists a pane this frame has already closed.
+        self.inbox_tick(cx);
+        // The composer holds the keyboard while it is up. If something else
+        // took it — a click on a tab, a pane, the tree — the page is put away
+        // rather than left over a terminal that is now being typed into.
+        if self.composer.is_some() && !self.focus_handle.is_focused(window) {
+            self.composer_put_away();
+        }
         warp::set_suppressed(
             pane_popup_open
                 // PAINT raises a card over EVERY pane at once, each one drawn
