@@ -1069,6 +1069,13 @@ impl Workspace {
         let pane = row.fact.pane;
         let wants = row.shelf == inbox::Shelf::LookAtMe;
         let snoozing = self.inbox_snoozing == Some(key);
+        // The pane you are in, marked the way the tree marks the active task:
+        // the list answers "where am I" as well as "what wants me".
+        let here = self
+            .tabs
+            .get(self.active)
+            .and_then(|t| t.focused)
+            .is_some_and(|id| id.as_u64() == pane);
         let title_ink = if wants {
             sk.ink.ink_lit
         } else {
@@ -1161,6 +1168,18 @@ impl Workspace {
             .cursor_pointer()
             .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
             .when(row.woke, |d| d.bg(sk.ink.warn.alpha(0.10)))
+            .when(here, |d| {
+                d.child(
+                    div()
+                        .absolute()
+                        .left(px(0.))
+                        .top(px(4. * s))
+                        .bottom(px(4. * s))
+                        .w(px(2. * s))
+                        .rounded(sk.radius())
+                        .bg(sk.ink.select),
+                )
+            })
             // The keyboard's highlight: an inset ring and a tint, never a
             // border, so a row does not grow a pixel under the cursor — the
             // tree's own cursor ring, for the same reason.

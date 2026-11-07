@@ -34,6 +34,9 @@ pub(crate) struct Composer {
     machines: Vec<entry::Machine>,
     machine: usize,
     machines_error: Option<String>,
+    /// The custom runner from `local-agent.toml`, read when the page opens —
+    /// the LAUNCH AGENT panel's habit — so the preview reads no file a frame.
+    local_adapter: Result<launcher::LocalAdapter, String>,
     /// The last thing the composer has to say: an error, or what it started
     /// in the background.
     note: Option<String>,
@@ -200,6 +203,7 @@ impl Workspace {
                 machines,
                 machine: 0,
                 machines_error,
+                local_adapter: launcher::LocalAdapter::load(),
                 note: None,
             });
             self.watch_model_catalogs(cx);
@@ -406,36 +410,7 @@ impl Workspace {
             cwd.clone(),
             &sentence,
         );
-        let line = if machine.is_far() {
-            // A far agent is handed no briefing: the briefing is a file on this
-            // machine and the drop directory it names is this window's, so
-            // neither means anything over there. A custom local runner is this
-            // machine's by definition.
-            if c.harness == launcher::Harness::Local {
-                Err(parts.launcher_err_local_configure.to_string())
-            } else {
-                Ok(entry::line_on(
-                    &machine,
-                    &session::home_dir(),
-                    &cwd,
-                    &recipe.command_line(None),
-                ))
-            }
-        } else {
-            (|| {
-                let dir =
-                    surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
-                let kit = skills::briefing_root();
-                let briefing = recipe.prepare_briefing(&dir, kit.as_deref())?;
-                let adapter = if c.harness == launcher::Harness::Local {
-                    Some(launcher::LocalAdapter::load()?)
-                } else {
-                    None
-                };
-                recipe.command_line_with_adapter(Some(&briefing), adapter.as_ref())
-            })()
-        };
-        let line = match line {
+        let line = match Self::composer_line(&c, &machine, &recipe, true) {
             Ok(line) => line,
             Err(err) => {
                 c.note = Some(err);
@@ -507,6 +482,47 @@ impl Workspace {
         }
         self.save(cx);
         cx.notify();
+    }
+
+    /// The line a send types, built one way for the send and for the preview
+    /// under the chips. With `write` false the briefing file is only named,
+    /// the way the LAUNCH AGENT panel's preview names it, so drawing the page
+    /// writes nothing.
+    ///
+    /// A far agent is handed no briefing: the briefing is a file on this
+    /// machine and the drop directory it names is this window's, so neither
+    /// means anything over there. A custom local runner is this machine's by
+    /// definition.
+    fn composer_line(
+        c: &Composer,
+        machine: &entry::Machine,
+        recipe: &launcher::Recipe,
+        write: bool,
+    ) -> Result<String, String> {
+        let parts = lang::current().strings().parts;
+        if machine.is_far() {
+            if c.harness == launcher::Harness::Local {
+                return Err(parts.launcher_err_local_configure.to_string());
+            }
+            return Ok(entry::line_on(
+                machine,
+                &session::home_dir(),
+                &recipe.cwd,
+                &recipe.command_line(None),
+            ));
+        }
+        let dir = surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
+        let briefing = if write {
+            recipe.prepare_briefing(&dir, skills::briefing_root().as_deref())?
+        } else {
+            dir.join("briefing.txt")
+        };
+        let adapter = if c.harness == launcher::Harness::Local {
+            Some(c.local_adapter.as_ref().map_err(|e| e.clone())?)
+        } else {
+            None
+        };
+        recipe.command_line_with_adapter(Some(&briefing), adapter)
     }
 
     /// Where a composed agent's tab goes: beside the terminals already open in
@@ -865,6 +881,21 @@ impl Workspace {
             list
         });
 
+        // What a send will run, whole and never elided, the LAUNCH AGENT
+        // panel's rule. The sentence is left off: it is in the box above, and
+        // the send appends it as the agent's first message.
+        let preview = c.project_path().map(|cwd| {
+            let recipe = entry::recipe(
+                c.harness,
+                c.model.clone(),
+                c.effort.clone(),
+                c.reach,
+                cwd.to_path_buf(),
+                "",
+            );
+            let here = entry::Machine::here(None, e.composer_machine);
+            Self::composer_line(c, machine.unwrap_or(&here), &recipe, false).unwrap_or_else(|e| e)
+        });
         let far_note = machine
             .filter(|m| m.is_far())
             .map(|m| lang::fill(e.composer_far_note, &[("machine", &m.name)]));
@@ -944,6 +975,14 @@ impl Workspace {
                     ),
             )
             .child(chip_row)
+            .children(preview.map(|line| {
+                div()
+                    .id("composer-preview")
+                    .debug_selector(|| "composer-preview".into())
+                    .text_size(sk.text_px(9.5 * s))
+                    .text_color(th.text.alpha(0.5))
+                    .child(line)
+            }))
             .children(list)
             .children(local_note.map(|n| {
                 div()
