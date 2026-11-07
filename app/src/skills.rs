@@ -272,6 +272,64 @@ pub fn launch_line(line: String, provider: &str) -> String {
     }
 }
 
+/// The launch line a sleeping Claude wakes through, read from the one it ran.
+///
+/// The bridge starts Claude as `claude --add-dir <run> --settings
+/// <run>/settings.json …`, where `<run>` is a folder under the receipts'
+/// `runs/` named for that process, and the next launch prunes it once the
+/// process has ended. Sleep ends it, so replaying those words names a folder
+/// that is gone, and Claude will not start: "Settings file not found", for all
+/// seven bridged sleepers on 2026-11-07. The wake starts through the bridge
+/// again instead, which makes a new folder, and carries inline whatever the
+/// person's own `--settings` had put in the old file beside the bridge's hook.
+/// A line the bridge did not write comes back unchanged.
+pub fn wake_launch_line(argv: &[String]) -> Result<Vec<String>, String> {
+    let shim = install().ok().map(|root| root.join("bin/claude"));
+    unbridged(argv, &state_root().join("runs"), shim.as_deref())
+}
+
+fn unbridged(argv: &[String], runs: &Path, shim: Option<&Path>) -> Result<Vec<String>, String> {
+    let [program, add, run, set, settings, rest @ ..] = argv else {
+        return Ok(argv.to_vec());
+    };
+    let run = Path::new(run);
+    if add != "--add-dir"
+        || set != "--settings"
+        || run.parent() != Some(runs)
+        || Path::new(settings) != run.join("settings.json")
+    {
+        return Ok(argv.to_vec());
+    }
+    // Read while the agent still runs, so its folder is still there. Unread,
+    // the person's settings are unknown, and a wake without them is not theirs.
+    let text = std::fs::read_to_string(settings)
+        .map_err(|e| format!("the skill bridge's settings for this agent: {e}"))?;
+    let mut supplied: serde_json::Value = serde_json::from_str(&text)
+        .map_err(|e| format!("the skill bridge's settings for this agent: {e}"))?;
+    let run_text = run.to_string_lossy();
+    if let Some(object) = supplied.as_object_mut() {
+        if let Some(hooks) = object.get_mut("hooks").and_then(|h| h.as_object_mut()) {
+            if let Some(start) = hooks.get_mut("SessionStart").and_then(|s| s.as_array_mut()) {
+                // The bridge's own acknowledgement names a file in the old folder.
+                start.retain(|entry| !entry.to_string().contains(run_text.as_ref()));
+                if start.is_empty() {
+                    hooks.remove("SessionStart");
+                }
+            }
+            if hooks.is_empty() {
+                object.remove("hooks");
+            }
+        }
+    }
+    let program = shim.map_or_else(|| program.clone(), |s| s.to_string_lossy().into_owned());
+    let mut line = vec![program];
+    if supplied.as_object().is_some_and(|o| !o.is_empty()) {
+        line.extend(["--settings".to_owned(), supplied.to_string()]);
+    }
+    line.extend(rest.iter().cloned());
+    Ok(line)
+}
+
 /// Run only on a worker: repository fetch and folder enumeration must not
 /// block a native render or input event.
 pub fn import(source: &str, folder: &str, revision: &str) -> Result<Vec<Source>, String> {
@@ -709,5 +767,234 @@ mod tests {
         let first = first.unwrap();
         assert!(env.contains(&("TD_SKILLS_SESSION".into(), first.0)));
         assert!(env.contains(&("TD_SKILLS_PANE_ID".into(), first.1.to_string())));
+    }
+
+    const SLEEPER: &str = "f5ae3d94-e006-45e5-9ec4-93b1934624c2";
+    const SHIM: &str = "/data/terminal-delight/skill-manager/k/bin/claude";
+
+    /// A run folder as the bridge leaves it, with `settings` in its file, and
+    /// the launch line the bridge gave the Claude it started there.
+    fn bridged(tag: &str, settings: Option<serde_json::Value>) -> (PathBuf, PathBuf, Vec<String>) {
+        let runs = std::env::temp_dir()
+            .join(format!("td-wake-{tag}-{}", std::process::id()))
+            .join("runs");
+        let run = runs.join("790289-omeil8k1");
+        std::fs::create_dir_all(&run).unwrap();
+        if let Some(settings) = settings {
+            std::fs::write(run.join("settings.json"), settings.to_string()).unwrap();
+        }
+        let line = vec![
+            "/home/p/.local/share/mise/installs/claude/latest/claude".to_owned(),
+            "--add-dir".to_owned(),
+            run.to_string_lossy().into_owned(),
+            "--settings".to_owned(),
+            run.join("settings.json").to_string_lossy().into_owned(),
+            "--model".to_owned(),
+            "opus".to_owned(),
+        ];
+        (runs, run, line)
+    }
+
+    fn acknowledgement(tag: &str) -> serde_json::Value {
+        let run = std::env::temp_dir()
+            .join(format!("td-wake-{tag}-{}", std::process::id()))
+            .join("runs/790289-omeil8k1");
+        serde_json::json!({"hooks": [{"type": "command", "timeout": 10, "command":
+            format!("python3 /data/skill-manager/k/bridge.py acknowledge {}/ack.json", run.display())}]})
+    }
+
+    #[test]
+    fn a_bridged_sleeper_wakes_through_the_bridge_and_names_no_old_folder() {
+        let ack = acknowledgement("plain");
+        let (runs, run, line) = bridged(
+            "plain",
+            Some(serde_json::json!({"hooks": {"SessionStart": [ack]}})),
+        );
+        let woke = unbridged(&line, &runs, Some(Path::new(SHIM))).unwrap();
+        assert_eq!(woke, [SHIM, "--model", "opus"]);
+        let wake = crate::agentrest::wake_argv(&woke, SLEEPER).unwrap();
+        assert_eq!(wake, [SHIM, "--model", "opus", "--resume", SLEEPER]);
+        // The folder the line named is pruned once the agent has ended; the
+        // wake must not depend on it.
+        std::fs::remove_dir_all(runs.parent().unwrap()).unwrap();
+        let script = crate::agentrest_io::wake_script(&wake);
+        assert!(!script.contains(&*run.to_string_lossy()), "{script}");
+    }
+
+    #[test]
+    fn the_persons_own_settings_survive_the_wake_and_the_bridges_hook_does_not() {
+        let ack = acknowledgement("own");
+        let mine = serde_json::json!({"hooks": [{"type": "command", "command": "my-start-hook"}]});
+        let stop = serde_json::json!({"hooks": [{"type": "command", "command": "my-stop-hook"}]});
+        let (runs, _, line) = bridged(
+            "own",
+            Some(
+                serde_json::json!({"model": "personal", "permissions": {"deny": ["Read(secret)"]},
+                "hooks": {"SessionStart": [mine, ack], "Stop": [stop]}}),
+            ),
+        );
+        let woke = unbridged(&line, &runs, Some(Path::new(SHIM))).unwrap();
+        assert_eq!(woke.len(), 5, "{woke:?}");
+        assert_eq!((woke[0].as_str(), woke[1].as_str()), (SHIM, "--settings"));
+        assert_eq!(&woke[3..], ["--model", "opus"]);
+        let carried: serde_json::Value = serde_json::from_str(&woke[2]).unwrap();
+        assert_eq!(
+            carried,
+            serde_json::json!({"model": "personal", "permissions": {"deny": ["Read(secret)"]},
+                "hooks": {"SessionStart": [mine], "Stop": [stop]}})
+        );
+        assert!(crate::agentrest::wake_argv(&woke, SLEEPER).is_ok());
+        std::fs::remove_dir_all(runs.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_line_the_bridge_did_not_write_wakes_word_for_word() {
+        let (runs, _, _) = bridged("other", None);
+        let shim = Some(Path::new(SHIM));
+        let plain: Vec<String> = ["claude", "--model", "opus"].map(String::from).to_vec();
+        assert_eq!(unbridged(&plain, &runs, shim).unwrap(), plain);
+        // A person's own folder and settings, outside the bridge's runs.
+        let theirs: Vec<String> = [
+            "claude",
+            "--add-dir",
+            "/home/p/notes",
+            "--settings",
+            "/home/p/notes/settings.json",
+            "-c",
+        ]
+        .map(String::from)
+        .to_vec();
+        assert_eq!(unbridged(&theirs, &runs, shim).unwrap(), theirs);
+        // The bridge's folder, but not the bridge's pair of words.
+        let run = runs.join("790289-omeil8k1").to_string_lossy().into_owned();
+        let half: Vec<String> = vec![
+            "claude".into(),
+            "--add-dir".into(),
+            run,
+            "-c".into(),
+            "x".into(),
+        ];
+        assert_eq!(unbridged(&half, &runs, shim).unwrap(), half);
+        std::fs::remove_dir_all(runs.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn a_bridged_sleeper_whose_settings_cannot_be_read_does_not_sleep() {
+        let (runs, _, line) = bridged("gone", None);
+        let err = unbridged(&line, &runs, Some(Path::new(SHIM))).unwrap_err();
+        assert!(err.contains("skill bridge"), "{err}");
+        std::fs::write(runs.join("790289-omeil8k1/settings.json"), "not json").unwrap();
+        assert!(unbridged(&line, &runs, Some(Path::new(SHIM))).is_err());
+        std::fs::remove_dir_all(runs.parent().unwrap()).unwrap();
+    }
+
+    #[test]
+    fn without_the_bridge_the_wake_runs_the_program_it_slept_with() {
+        let ack = acknowledgement("unbridged");
+        let (runs, _, line) = bridged(
+            "unbridged",
+            Some(serde_json::json!({"hooks": {"SessionStart": [ack]}})),
+        );
+        assert_eq!(
+            unbridged(&line, &runs, None).unwrap(),
+            [line[0].as_str(), "--model", "opus"]
+        );
+        std::fs::remove_dir_all(runs.parent().unwrap()).unwrap();
+    }
+
+    /// The round trip that failed in the field: the real bridge starts a Claude,
+    /// it ends, the next launch prunes its folder, and its wake starts anyway.
+    #[test]
+    fn a_wake_goes_back_through_the_real_bridge_after_its_folder_is_pruned() {
+        use std::os::unix::fs::PermissionsExt;
+        let root = install().unwrap();
+        let shim = root.join("bin/claude");
+        let dir = std::env::temp_dir().join(format!("td-wake-round-trip-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let skill = dir.join("skill");
+        std::fs::create_dir_all(&skill).unwrap();
+        std::fs::write(
+            skill.join("SKILL.md"),
+            "---\nname: td-wake-fixture\ndescription: A fixture.\n---\nBody.\n",
+        )
+        .unwrap();
+        let config = dir.join("skills.json");
+        let source = serde_json::json!({"path": skill, "origin": "fixture", "revision": "v1", "enabled": true});
+        let settings = serde_json::json!({"active": true, "briefing": false, "factory": false, "sources": [source]});
+        std::fs::write(&config, settings.to_string()).unwrap();
+        // Stands in for Claude: records its words and the settings file they
+        // name, which will not outlive it.
+        let fake = dir.join("claude");
+        std::fs::write(
+            &fake,
+            "#!/usr/bin/env python3\nimport json,os,sys\nfrom pathlib import Path\na=sys.argv[1:]\n\
+             s=Path(a[a.index('--settings')+1]).read_text()\n\
+             Path(os.environ['ARGV_LOG']).write_text(json.dumps({'argv':a,'settings':json.loads(s)}))\n",
+        )
+        .unwrap();
+        std::fs::set_permissions(&fake, std::fs::Permissions::from_mode(0o755)).unwrap();
+        let log = dir.join("argv.json");
+        let launch = |args: &[String]| -> (Vec<String>, serde_json::Value) {
+            let output = std::process::Command::new("python3")
+                .arg(&shim)
+                .args(args)
+                .current_dir(&dir)
+                .env_clear()
+                .env("PATH", "/usr/bin:/bin")
+                .env("HOME", &dir)
+                .env("XDG_STATE_HOME", dir.join("state"))
+                .env("XDG_CONFIG_HOME", dir.join("config"))
+                .env("TD_SKILLS_SESSION", "wake-fixture")
+                .env("TD_SKILLS_PANE_ID", "7")
+                .env("TD_SKILLS_CONFIG", &config)
+                .env("TD_SKILLS_REAL_CLAUDE", &fake)
+                .env("ARGV_LOG", &log)
+                .output()
+                .unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+            let record: serde_json::Value =
+                serde_json::from_str(&std::fs::read_to_string(&log).unwrap()).unwrap();
+            let argv = serde_json::from_value(record["argv"].clone()).unwrap();
+            (argv, record["settings"].clone())
+        };
+        let ours = |settings: &serde_json::Value| settings["hooks"]["SessionStart"].clone();
+
+        let (first, first_settings) = launch(&[
+            "--settings".into(),
+            r#"{"model":"personal"}"#.into(),
+            "--model".into(),
+            "opus".into(),
+        ]);
+        assert_eq!(
+            (first[0].as_str(), first[2].as_str()),
+            ("--add-dir", "--settings")
+        );
+        let old = PathBuf::from(&first[1]);
+        assert_eq!(first_settings["model"], "personal");
+        assert_eq!(ours(&first_settings).as_array().map(Vec::len), Some(1));
+
+        let mut slept = vec![fake.to_string_lossy().into_owned()];
+        slept.extend(first);
+        let runs = dir.join("state/terminal-delight/skill-receipts/runs");
+        let woke = unbridged(&slept, &runs, Some(&shim)).unwrap();
+        let wake = crate::agentrest::wake_argv(&woke, SLEEPER).unwrap();
+        assert_eq!(PathBuf::from(&wake[0]), shim);
+
+        let (second, second_settings) = launch(&wake[1..]);
+        assert!(!old.exists(), "the ended agent's folder was pruned");
+        assert_eq!(second[0], "--add-dir");
+        let new = PathBuf::from(&second[1]);
+        assert_ne!(new, old);
+        assert!(new.is_dir());
+        assert_eq!(&second[4..], ["--model", "opus", "--resume", SLEEPER]);
+        assert_eq!(second_settings["model"], "personal");
+        let hooks = ours(&second_settings);
+        assert_eq!(hooks.as_array().map(Vec::len), Some(1), "{hooks}");
+        assert!(hooks.to_string().contains(&*new.to_string_lossy()));
+        std::fs::remove_dir_all(&dir).unwrap();
     }
 }

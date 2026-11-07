@@ -223,7 +223,8 @@ pub fn run(mut job: Job) -> Outcome {
             let argv = read_argv(pid);
             let wake = match job.agent {
                 Some(Agent::Codex) => agentrest::codex_wake_argv(&argv, &session),
-                _ => agentrest::wake_argv(&argv, &session),
+                _ => crate::skills::wake_launch_line(&argv)
+                    .and_then(|line| agentrest::wake_argv(&line, &session)),
             };
             if let Err(r) = agentrest::may_sleep(&job.look, rested, &job.thresholds, &wake) {
                 out.refusal = Some(r);
