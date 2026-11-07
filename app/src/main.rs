@@ -40070,17 +40070,12 @@ mod tests {
         );
     }
 
-    /// One keystroke reaches a tab: Alt+N by place in the spine's order and
-    /// Alt+9 the last, pressed through a focused terminal; a pin follows its
-    /// tab through a reorder and a save; a letter the window already answers,
-    /// or another tab holds, is refused; and with the digits off Alt+N is the
-    /// program's again.
-    #[gpui::test]
     /// Alt+O climbs Parker's ladder from the FOCUSED pane: its newest artifact,
     /// then its own artifacts, then every pane's, then away. And what another
     /// pane has open never decides a rung — the bug of 2026-11-03, when the
     /// first press went straight to every pane's rail because some other pane
     /// in the window had a document up.
+    #[gpui::test]
     fn alt_o_climbs_from_the_focused_panes_newest_to_every_panes(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
