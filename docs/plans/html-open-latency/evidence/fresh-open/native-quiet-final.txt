@@ -1,0 +1,9 @@
+variant brief    kind    n    wall     p90  lookup  layout    tile  decode   paint  hits
+new    a-fresh  first   3     766     766      19     735     735     735     743  0
+new    a-fresh  warm   27     486     548       8     419     419     419     421  0
+new    b-built  first   3     845     845      29     789     789     789     796  0
+new    b-built  warm   27     595     652      19     523     523     523     526  0
+old    a-fresh  first   3     875     875      16     575     731     768     822  0
+old    a-fresh  warm   27     673     791       9     334     534     559     640  0
+old    b-built  first   3     971     971      65     665     824     837     915  0
+old    b-built  warm   27     842    1006      80     498     663     712     796  0
