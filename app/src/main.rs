@@ -5443,8 +5443,9 @@ fn make_pane_window_owned(
     cx: &mut Context<Workspace>,
 ) -> Entity<TerminalView> {
     let pane = cx.new(|cx| TerminalView::new_restored(restore, cx));
-    // Every freshly-built pane ships as the pinned house DESIGN screen (Wood ·
-    // hacker · agentic · theme) — it does NOT follow the warm outer cabinet.
+    // Every freshly-built pane starts from `PaneTheme::house()`, which is the
+    // default: it inherits the theme rather than being stamped with one at
+    // birth (old birth stamps are released on load by `release_birth_theme`).
     // Centralising the default HERE (not just
     // in make_pane) is what kills the orange-overglow CLASS: split, tear-off and
     // any future creation site inherit the right look for free. The restore path
