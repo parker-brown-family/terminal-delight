@@ -40,7 +40,7 @@ use std::ffi::{OsStr, OsString};
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Child;
-use std::sync::atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicU64, AtomicUsize, Ordering};
 use std::sync::{mpsc, Arc, Mutex, MutexGuard, Weak};
 use std::time::{Duration, Instant};
 
@@ -184,10 +184,8 @@ struct LivePage {
     cdp: Arc<Cdp>,
 }
 
-/// A page in a context of its own, set up the way every page is, resting at
-/// `about:blank` until an open takes it. Making one starts a renderer, which
-/// was 60–240 ms of an open depending on how busy the box was; one waiting
-/// costs that renderer, about 15 MiB, while the browser lives.
+/// A page in a context of its own, attached and set up the way every page
+/// is, resting at `about:blank` until it is given its file.
 struct Blank {
     context: String,
     target: String,
@@ -198,10 +196,6 @@ struct Blank {
 struct Shared {
     browser: Mutex<Option<Browser>>,
     pages: Mutex<HashMap<PageId, Arc<Mutex<LivePage>>>>,
-    /// At most one ready page, made after a page closes for the next open.
-    /// It goes with the browser: nothing keeps a browser alive to keep it.
-    ready: Mutex<Option<Blank>>,
-    making: AtomicBool,
     last_call: Mutex<Instant>,
     in_flight: AtomicUsize,
     idle: Duration,
@@ -345,8 +339,6 @@ impl SnapshotEngine {
         let shared = Arc::new(Shared {
             browser: Mutex::new(None),
             pages: Mutex::new(HashMap::new()),
-            ready: Mutex::new(None),
-            making: AtomicBool::new(false),
             last_call: Mutex::new(Instant::now()),
             in_flight: AtomicUsize::new(0),
             idle,
@@ -429,7 +421,7 @@ impl SnapshotEngine {
             // off the median open. And Chromium keeps a spare renderer
             // warm for the next navigation, which a page in a new context of
             // its own can never use: one process and about 10 MiB, for
-            // nothing. TD keeps its own ready page instead (`make_ready`).
+            // nothing.
             "--disable-features=PreloadTopChromeWebUI,WebUIOmniboxAimPopup,WebUIOmniboxPopup,WebUIOmniboxFullPopup,SpareRendererForSitePerProcess",
             // The GPU process (37 MiB idle), a component extension's renderer
             // (30 MiB) and the network service (25 MiB) each ran as a process
@@ -494,12 +486,6 @@ impl SnapshotEngine {
         self.call(|| self.cdp().map(|_| ()))
     }
 
-    /// Whether a page is set up and waiting for the next open.
-    #[allow(dead_code)] // read by app/tests/snapshot_engine.rs
-    pub fn page_ready(&self) -> bool {
-        lock(&self.shared.ready).is_some()
-    }
-
     /// The running browser's profile directory, if one is running.
     #[allow(dead_code)] // read by app/tests/snapshot_engine.rs
     pub fn profile_dir(&self) -> Option<PathBuf> {
@@ -530,7 +516,6 @@ impl SnapshotEngine {
         }
         if let Some(dead) = slot.take() {
             lock(&self.shared.pages).clear();
-            lock(&self.shared.ready).take();
             finish(dead);
         }
         let _ = std::fs::create_dir_all(&self.shared.runtime);
@@ -673,17 +658,10 @@ impl SnapshotEngine {
         .map_err(|e| protocol(e, "size the page"))
     }
 
-    /// A page in a context of its own, navigated to `path`, with the probe
-    /// installed: the ready one if one is waiting, else one made now. Closed
-    /// again if any step fails.
+    /// A new page in a context of its own, navigated to `path`, with the
+    /// probe installed. Closed again if any step fails.
     fn load(&self, cdp: &Arc<Cdp>, path: &Path, g: Geometry) -> Result<LivePage, EngineError> {
-        let ready = lock(&self.shared.ready)
-            .take()
-            .filter(|b| Arc::ptr_eq(&b.cdp, cdp));
-        let blank = match ready {
-            Some(b) => b,
-            None => make_blank(cdp, &self.pref)?,
-        };
+        let blank = make_blank(cdp, &self.pref, g)?;
         let page = LivePage {
             first: None,
             started: std::time::SystemTime::now(),
@@ -703,11 +681,10 @@ impl SnapshotEngine {
         }
     }
 
-    /// Size a set-up page, load `path` into it and install the probe. The
-    /// caller closes the page on an error.
+    /// Load `path` into a set-up page and install the probe. The caller
+    /// closes the page on an error.
     fn navigate(cdp: &Arc<Cdp>, page: &LivePage, path: &Path) -> Result<(), EngineError> {
         let s = &page.session;
-        Self::set_viewport(cdp, s, page.geometry, page.geometry.viewport_css_height)?;
         let loaded = cdp.expect(Some(s), "Page.loadEventFired");
         let nav = cdp
             .call(
@@ -735,66 +712,11 @@ impl SnapshotEngine {
         )?;
         Ok(())
     }
-
-    /// Make the next open's page now, off the caller's thread, unless one is
-    /// ready or being made. Not counted as a call: a ready page never keeps
-    /// an idle browser running.
-    fn make_ready(&self) {
-        let shared = self.shared.clone();
-        if lock(&shared.ready).is_some() || shared.making.swap(true, Ordering::SeqCst) {
-            return;
-        }
-        let pref = self.pref.clone();
-        let spawned = std::thread::Builder::new()
-            .name("td-page-ready".into())
-            .spawn(move || {
-                let cdp = lock(&shared.browser)
-                    .as_ref()
-                    .filter(|b| !b.cdp.is_closed())
-                    .map(|b| b.cdp.clone());
-                if let Some(cdp) = cdp {
-                    // Held in flight while it is made, so the idle clock
-                    // cannot close the browser under it.
-                    shared.in_flight.fetch_add(1, Ordering::SeqCst);
-                    let blank = make_blank(&cdp, &pref).ok();
-                    // Kept only for the browser that is still running, decided
-                    // under that browser's lock and while still in flight: an
-                    // idle close, a relaunch or a shutdown takes the browser
-                    // under the same lock and lets the ready page go after it,
-                    // so either it sees this page or this sees it gone. The
-                    // flag drops with the page published, so an open that
-                    // takes the page at once still finds a worker free to
-                    // make the next.
-                    let mut spare = None;
-                    {
-                        let browser = lock(&shared.browser);
-                        let current = browser.as_ref().is_some_and(|b| Arc::ptr_eq(&b.cdp, &cdp));
-                        let mut slot = lock(&shared.ready);
-                        match blank {
-                            Some(b) if slot.is_none() && current && !cdp.is_closed() => {
-                                *slot = Some(b);
-                            }
-                            other => spare = other,
-                        }
-                        shared.making.store(false, Ordering::SeqCst);
-                    }
-                    if let Some(b) = spare {
-                        close_blank(&b);
-                    }
-                    shared.in_flight.fetch_sub(1, Ordering::SeqCst);
-                    return;
-                }
-                shared.making.store(false, Ordering::SeqCst);
-            });
-        if spawned.is_err() {
-            self.shared.making.store(false, Ordering::SeqCst);
-        }
-    }
 }
 
 /// A new page in a new context, attached and set up the way every page is
 /// set up, resting at `about:blank`. Closed again if any step fails.
-fn make_blank(cdp: &Arc<Cdp>, pref: &pref::Html) -> Result<Blank, EngineError> {
+fn make_blank(cdp: &Arc<Cdp>, pref: &pref::Html, g: Geometry) -> Result<Blank, EngineError> {
     let ctx = cdp
         .call(None, "Target.createBrowserContext", json!({}), CALL)
         .map_err(|e| protocol(e, "make a browser context"))?;
@@ -826,7 +748,7 @@ fn make_blank(cdp: &Arc<Cdp>, pref: &pref::Html) -> Result<Blank, EngineError> {
         session: SessionId(String::new()),
         cdp: cdp.clone(),
     };
-    match set_up(cdp, pref, &mut blank) {
+    match set_up(cdp, pref, &mut blank, g) {
         Ok(()) => Ok(blank),
         Err(e) => {
             close_blank(&blank);
@@ -835,9 +757,14 @@ fn make_blank(cdp: &Arc<Cdp>, pref: &pref::Html) -> Result<Blank, EngineError> {
     }
 }
 
-/// Attach to a new page and set it up the way every page is set up. Its size
-/// is set when it is given a file. The caller closes the page on an error.
-fn set_up(cdp: &Arc<Cdp>, pref: &pref::Html, blank: &mut Blank) -> Result<(), EngineError> {
+/// Attach to a new page and set it up the way every page is set up. The
+/// caller closes the page on an error.
+fn set_up(
+    cdp: &Arc<Cdp>,
+    pref: &pref::Html,
+    blank: &mut Blank,
+    g: Geometry,
+) -> Result<(), EngineError> {
     let attached = cdp
         .call(
             None,
@@ -869,6 +796,11 @@ fn set_up(cdp: &Arc<Cdp>, pref: &pref::Html, blank: &mut Blank) -> Result<(), En
         ));
     }
     batch.extend([
+        (
+            "size the page",
+            "Emulation.setDeviceMetricsOverride",
+            viewport_params(g, g.viewport_css_height),
+        ),
         // Something animates on at least one brief, and a capture should not
         // catch it mid-flight.
         (
@@ -1115,7 +1047,6 @@ fn engine_thread(rx: mpsc::Receiver<Job>, shared: Weak<Shared>) {
                     let dead = lock(&s.browser).take();
                     if let Some(b) = dead {
                         lock(&s.pages).clear();
-                        lock(&s.ready).take();
                         finish(b);
                     }
                 }
@@ -1251,8 +1182,7 @@ impl PageEngine for SnapshotEngine {
             let mut page = self.load(&cdp, &req.path, req.geometry)?;
             // The probe is in, so the page is as it will be photographed.
             // The first screen is asked for now, to be drawn while extract()
-            // reads the page, and kept for the tile call that wants it. A page
-            // shorter than a screen has a shorter first band, and drops it.
+            // reads the page, and kept for the tile call that wants it.
             let first = Band {
                 top_dev: 0,
                 height_dev: req.geometry.band_step(),
@@ -1309,9 +1239,10 @@ impl PageEngine for SnapshotEngine {
                 diagnostics: got.diagnostics,
                 videos: Some(got.videos),
             };
-            if layout.bands().first() == Some(&first) {
-                page.first = early.map(|shot| (first, shot));
-            }
+            // Kept even when the first band turns out shorter than a screen:
+            // Chromium is taking it either way, and the next capture waits
+            // for it rather than running beside it.
+            page.first = early.map(|shot| (first, shot));
             lock(&self.shared.pages).insert(id, Arc::new(Mutex::new(page)));
             Ok(layout)
         })
@@ -1425,16 +1356,12 @@ impl PageEngine for SnapshotEngine {
                 Ok(())
             })
             .ok();
-            self.make_ready();
         }
     }
 
     fn shutdown(&self) {
-        // The browser first, then what lived in it: a ready page published
-        // under the browser's lock is either seen here or never published.
         let running = lock(&self.shared.browser).take();
         lock(&self.shared.pages).clear();
-        lock(&self.shared.ready).take();
         if let Some(b) = running {
             finish(b);
         }

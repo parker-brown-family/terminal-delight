@@ -729,46 +729,6 @@ fn the_first_screen_taken_early_is_the_picture_a_clipped_capture_takes() {
     rig.done();
 }
 
-/// A page closing leaves the next one ready, made off the caller's thread;
-/// the next open takes it and lays the brief out exactly as a page made on
-/// the spot does; and closing that one readies another.
-#[test]
-fn a_closed_page_leaves_the_next_one_ready_and_the_next_open_takes_it() {
-    let Some(mut rig) = Rig::new("ready", Html::default(), Duration::from_secs(300)) else {
-        return;
-    };
-    let ready_within = |rig: &Rig| {
-        let until = Instant::now() + Duration::from_secs(15);
-        while !rig.engine.page_ready() && Instant::now() < until {
-            std::thread::sleep(Duration::from_millis(20));
-        }
-        rig.engine.page_ready()
-    };
-    let brief = fixture("brief.html");
-    assert!(
-        !rig.engine.page_ready(),
-        "nothing is made before a page closes"
-    );
-    let made_now = rig.open(&brief, NARROW).unwrap();
-    rig.engine.close(made_now.page.unwrap());
-    assert!(ready_within(&rig), "closing a page readies the next");
-    let from_ready = rig.open(&brief, NARROW).unwrap();
-    assert!(!rig.engine.page_ready(), "the open took the ready page");
-    let rects = |l: &PageLayout| {
-        l.anchors
-            .iter()
-            .map(|a| (a.nid.clone(), a.rect))
-            .collect::<Vec<_>>()
-    };
-    assert_eq!(made_now.height_css, from_ready.height_css);
-    assert_eq!(rects(&made_now), rects(&from_ready));
-    assert_eq!(made_now.links, from_ready.links);
-    rig.engine.close(from_ready.page.unwrap());
-    assert!(ready_within(&rig), "and closing that one readies another");
-    rig.record();
-    rig.done();
-}
-
 #[test]
 fn resource_inventory_includes_css_and_missing_images_and_detects_edits() {
     let Some(mut rig) = Rig::new("resources", Html::default(), Duration::from_secs(300)) else {

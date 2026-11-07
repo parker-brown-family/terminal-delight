@@ -425,9 +425,13 @@ impl Drop for Unadopted {
         if let Some(page) = self.page.take() {
             // Off whatever thread dropped it: closing talks to the browser.
             let engine = self.engine.clone();
-            let _ = std::thread::Builder::new()
+            let spawned = std::thread::Builder::new()
                 .name("td-page-close".into())
                 .spawn(move || engine.close(page));
+            if spawned.is_err() {
+                // No thread to spare: closed here, which only blocks.
+                self.engine.close(page);
+            }
         }
     }
 }
