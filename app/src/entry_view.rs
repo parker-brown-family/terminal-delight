@@ -499,10 +499,12 @@ impl Workspace {
         recipe: &launcher::Recipe,
         write: bool,
     ) -> Result<String, String> {
-        let parts = lang::current().strings().parts;
         if machine.is_far() {
             if c.harness == launcher::Harness::Local {
-                return Err(parts.launcher_err_local_configure.to_string());
+                return Err(lang::fill(
+                    lang::current().strings().entry.composer_far_local,
+                    &[("machine", &machine.name)],
+                ));
             }
             return Ok(entry::line_on(
                 machine,

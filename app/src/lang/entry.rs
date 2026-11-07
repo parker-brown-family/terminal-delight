@@ -85,6 +85,8 @@ pub struct Entry {
     pub order_rail: &'static str,
     /// Under LOOK AT ME, the order it is in now; a press switches. T3's order: whoever came back most recently first.
     pub order_returned: &'static str,
+    /// Shown when the custom local runner is chosen with a far machine. {machine} is the far machine's name.
+    pub composer_far_local: &'static str,
 }
 
 pub const EN: Entry = Entry {
@@ -128,6 +130,8 @@ pub const EN: Entry = Entry {
     help_composer: "start an agent from a sentence",
     order_rail: "longest waiting first",
     order_returned: "newest first",
+    composer_far_local:
+        "A local runner runs on this machine only: pick claude or codex for {machine}.",
 };
 
 pub const ES: Entry = Entry {
@@ -170,6 +174,7 @@ pub const ES: Entry = Entry {
     help_composer: "iniciar un agente desde una frase",
     order_rail: "primero el que más espera",
     order_returned: "primero lo más reciente",
+    composer_far_local: "Un programa local solo se ejecuta en esta máquina: elige claude o codex para {machine}.",
 };
 
 pub const DE: Entry = Entry {
@@ -212,6 +217,7 @@ pub const DE: Entry = Entry {
     help_composer: "einen Agenten mit einem Satz starten",
     order_rail: "am längsten wartend zuerst",
     order_returned: "neueste zuerst",
+    composer_far_local: "Ein lokales Programm läuft nur auf diesem Rechner: wähl claude oder codex für {machine}.",
 };
 
 pub const FR: Entry = Entry {
@@ -254,6 +260,7 @@ pub const FR: Entry = Entry {
     help_composer: "lancer un agent à partir d’une phrase",
     order_rail: "le plus ancien d’abord",
     order_returned: "le plus récent d’abord",
+    composer_far_local: "Un programme local ne tourne que sur cette machine : choisissez claude ou codex pour {machine}.",
 };
 
 pub const RU: Entry = Entry {
@@ -296,6 +303,7 @@ pub const RU: Entry = Entry {
     help_composer: "запустить агента одной фразой",
     order_rail: "сначала дольше ждущие",
     order_returned: "сначала новые",
+    composer_far_local: "Локальная программа работает только на этой машине: выберите claude или codex для {machine}.",
 };
 
 pub const ZH: Entry = Entry {
@@ -338,6 +346,7 @@ pub const ZH: Entry = Entry {
     help_composer: "用一句话启动智能体",
     order_rail: "等待最久的优先",
     order_returned: "最新的优先",
+    composer_far_local: "本地程序只能在这台机器上运行：请为 {machine} 选择 claude 或 codex。",
 };
 
 pub const JA: Entry = Entry {
@@ -380,6 +389,7 @@ pub const JA: Entry = Entry {
     help_composer: "一文からエージェントを開始",
     order_rail: "待ち時間の長い順",
     order_returned: "新しい順",
+    composer_far_local: "ローカルの実行プログラムはこのマシン専用です。{machine} には claude か codex を選んでください。",
 };
 
 pub const KO: Entry = Entry {
@@ -422,6 +432,7 @@ pub const KO: Entry = Entry {
     help_composer: "한 문장으로 에이전트 시작",
     order_rail: "오래 기다린 순",
     order_returned: "최신 순",
+    composer_far_local: "로컬 실행기는 이 머신에서만 실행됩니다. {machine}에는 claude나 codex를 고르세요.",
 };
 
 pub const HI: Entry = Entry {
@@ -465,4 +476,5 @@ pub const HI: Entry = Entry {
     help_composer: "एक वाक्य से एजेंट शुरू करें",
     order_rail: "सबसे देर से रुके पहले",
     order_returned: "सबसे नए पहले",
+    composer_far_local: "लोकल प्रोग्राम सिर्फ़ इसी मशीन पर चलता है: {machine} के लिए claude या codex चुनें।",
 };
