@@ -62,8 +62,14 @@ const GH_BUDGET: Duration = Duration::from_secs(30);
 const FILE_CAP: u64 = 8 * 1024 * 1024;
 /// The most a diff may print.
 const PATCH_CAP: usize = 32 * 1024 * 1024;
-/// Lines of one file's diff drawn before "show more".
+/// Lines of one file's diff drawn before "show more", and how many more each
+/// press of it draws.
 const PATCH_ROWS: usize = 400;
+const MORE_ROWS: usize = 2000;
+/// Files a list draws; past it, the count of the rest.
+const LIST_ROWS: usize = 1500;
+/// Bytes of one line drawn; the rest is past the panel's edge anyway.
+const LINE_DRAWN: usize = 1000;
 /// Untracked files whose lines are counted on each read; past it, unknown.
 const UNTRACKED_COUNTED: usize = 300;
 /// Bytes of an untracked file read to count its lines.
@@ -136,8 +142,8 @@ pub(crate) struct ChangesLive {
     list: Reading<ChangeList>,
     patches: HashMap<String, Reading<FileDiff>>,
     open: HashSet<String>,
-    /// Files drawn past [`PATCH_ROWS`].
-    full: HashSet<String>,
+    /// Extra rows drawn past [`PATCH_ROWS`], per file, from "show more".
+    more: HashMap<String, usize>,
     cursor: usize,
     scroll: ScrollHandle,
 }
@@ -192,7 +198,7 @@ pub(crate) struct PullLive {
     diff: Reading<Vec<FileDiff>>,
     face: PullFace,
     open: HashSet<String>,
-    full: HashSet<String>,
+    more: HashMap<String, usize>,
     cursor: usize,
     scroll: ScrollHandle,
 }
@@ -358,6 +364,22 @@ fn git_text(dir: &Path, args: &[&str]) -> Result<String, String> {
         Ok(r) => Err(first_line(&r.err).unwrap_or_else(|| format!("git exited with {}", r.code))),
         Err(e) => Err(e),
     }
+}
+
+/// Where gh runs for `owner/repo`: the first candidate whose `origin` is
+/// that GitHub repository, so a gh that chooses its account by the remote
+/// (a wrapper that does) asks the right one; else the home folder.
+fn gh_dir(candidates: &[PathBuf], owner: &str, repo: &str) -> PathBuf {
+    candidates
+        .iter()
+        .find(|dir| {
+            git_text(dir, &["remote", "get-url", "origin"])
+                .ok()
+                .and_then(|u| flyout::github_slug(&u))
+                .is_some_and(|(o, r)| o.eq_ignore_ascii_case(owner) && r.eq_ignore_ascii_case(repo))
+        })
+        .cloned()
+        .unwrap_or_else(crate::session::home_dir)
 }
 
 /// The gh to run: `TD_GH` when set, else whichever `gh` is on PATH.
@@ -930,7 +952,17 @@ fn code_text(
     inside: &mut bool,
     ink: &Ink,
 ) -> StyledText {
-    let shown = text.replace('\t', "    ");
+    let mut shown = text.replace('\t', "    ");
+    // A minified file is one line of a megabyte, and shaping it every frame
+    // would stall the window for text nobody can see past the panel's edge.
+    if shown.len() > LINE_DRAWN {
+        let mut cut = LINE_DRAWN;
+        while !shown.is_char_boundary(cut) {
+            cut -= 1;
+        }
+        shown.truncate(cut);
+        shown.push('\u{2026}');
+    }
     let runs = match sy {
         Some(sy) => flyout::tokens(sy, &shown, inside),
         None => Vec::new(),
@@ -1087,11 +1119,23 @@ impl Workspace {
         if !self.flyout.open {
             return;
         }
+        // Readings for tabs no task shows any more go, with their tasks.
+        let shown: HashSet<&Target> = self.tabs.iter().flat_map(|t| t.side.tabs.iter()).collect();
+        let stale: Vec<Target> = self
+            .flyout
+            .live
+            .keys()
+            .filter(|k| !shown.contains(k))
+            .cloned()
+            .collect();
+        for k in stale {
+            self.flyout.live.remove(&k);
+        }
         if self.flyout_adding() {
+            // The + page is what is on screen: the tab behind it waits.
             self.flyout.here = self.flyout_here(cx);
             self.suggest_read(force, cx);
-        }
-        if let Some(t) = self.side_current() {
+        } else if let Some(t) = self.side_current() {
             self.flyout_read(&t, force, cx);
         }
     }
@@ -1272,20 +1316,49 @@ impl Workspace {
         }
     }
 
-    /// Where gh runs for `owner/repo`: a checkout of it this window knows, so
-    /// an account chosen by the remote is the one asked; else the home folder.
-    fn gh_dir(&self, owner: &str, repo: &str) -> PathBuf {
-        self.flyout
+    /// Folders that may be a checkout of `owner/repo`, best first: one the
+    /// `+` page already read the remote of, then the repositories this
+    /// window's panes stand in, the shown task's first. [`gh_dir`] settles
+    /// which, off the UI thread.
+    fn gh_candidates(&self, owner: &str, repo: &str, cx: &App) -> Vec<PathBuf> {
+        let mut out: Vec<PathBuf> = self
+            .flyout
             .suggest
             .iter()
-            .find(|(_, s)| {
+            .filter(|(_, s)| {
                 s.got
                     .as_ref()
                     .and_then(|g| g.slug.as_ref())
                     .is_some_and(|(o, r)| o == owner && r == repo)
             })
             .map(|(dir, _)| dir.clone())
-            .unwrap_or_else(crate::session::home_dir)
+            .collect();
+        let mut leaves = Vec::new();
+        for (i, t) in self.tabs.iter().enumerate() {
+            let mut ls = Vec::new();
+            t.root.leaves(&mut ls);
+            if i == self.active {
+                leaves.splice(0..0, ls);
+            } else {
+                leaves.extend(ls);
+            }
+        }
+        for leaf in leaves {
+            if let Some(root) = leaf
+                .read(cx)
+                .runtime()
+                .cwd
+                .and_then(|c| self.flyout.root_of(Path::new(&c)))
+            {
+                if !out.contains(&root) {
+                    out.push(root);
+                }
+            }
+            if out.len() >= 12 {
+                break;
+            }
+        }
+        out
     }
 
     fn pull_read(
@@ -1297,7 +1370,7 @@ impl Workspace {
         force: bool,
         cx: &mut Context<Self>,
     ) {
-        let dir = self.gh_dir(&owner, &repo);
+        let candidates = self.gh_candidates(&owner, &repo, cx);
         let Live::Pull(p) = self.flyout_live(key) else {
             return;
         };
@@ -1306,10 +1379,10 @@ impl Workspace {
             && !p.diff.busy;
         if p.pull.due(PULL_EVERY) || force && !p.pull.busy {
             p.pull.busy = true;
-            let (k, d, o, r) = (key.clone(), dir.clone(), owner.clone(), repo.clone());
+            let (k, c, o, r) = (key.clone(), candidates.clone(), owner.clone(), repo.clone());
             let task = cx.spawn(async move |this, cx| {
                 let read = cx
-                    .background_spawn(async move { read_pull(&d, &o, &r, number) })
+                    .background_spawn(async move { read_pull(&gh_dir(&c, &o, &r), &o, &r, number) })
                     .await;
                 this.update(cx, |ws, cx| {
                     if let Some(Live::Pull(p)) = ws.flyout.live.get_mut(&k) {
@@ -1336,7 +1409,9 @@ impl Workspace {
             let k = key.clone();
             let task = cx.spawn(async move |this, cx| {
                 let read = cx
-                    .background_spawn(async move { read_pull_diff(&dir, &owner, &repo, number) })
+                    .background_spawn(async move {
+                        read_pull_diff(&gh_dir(&candidates, &owner, &repo), &owner, &repo, number)
+                    })
                     .await;
                 this.update(cx, |ws, cx| {
                     if let Some(Live::Pull(p)) = ws.flyout.live.get_mut(&k) {
@@ -1553,12 +1628,12 @@ impl Workspace {
         match owner {
             DiffOwner::Changes(key) => {
                 if let Some(Live::Changes(c)) = self.flyout.live.get_mut(key) {
-                    c.full.insert(path.to_string());
+                    *c.more.entry(path.to_string()).or_default() += MORE_ROWS;
                 }
             }
             DiffOwner::Pull(key) => {
                 if let Some(Live::Pull(p)) = self.flyout.live.get_mut(key) {
-                    p.full.insert(path.to_string());
+                    *p.more.entry(path.to_string()).or_default() += MORE_ROWS;
                 }
             }
         }
@@ -2003,8 +2078,7 @@ impl Workspace {
         } else {
             0.
         };
-        let room = win_w - left - (RIGHT_COLUMN_W + SCREEN_KEEPS) * s - 24.;
-        want.min(room).max(FLYOUT_MIN * s * 0.75)
+        panel_width(want, win_w - left - RIGHT_COLUMN_W * s - 24., s)
     }
 
     /// A target's colour: the left-bar project its repository is filed as,
@@ -2383,7 +2457,7 @@ impl Workspace {
         let f = self.lang.strings().flyout;
         let ink = Ink::of(th, sk);
         let list = c.list.got.as_ref();
-        let (a, r) = list.map(|l| flyout::totals(&l.files)).unwrap_or((0, 0));
+        let totals = list.map(|l| flyout::totals(&l.files));
         let base_chip = |b: Base, word: &'static str| {
             let lit = b == base;
             div()
@@ -2428,7 +2502,9 @@ impl Workspace {
                             ),
                     )
                     .child(div().flex_1())
-                    .when(list.is_some(), |d| {
+                    // Only what git counted is summed; files it could not
+                    // count are said apart, never folded in as zero.
+                    .when_some(totals.as_ref().and_then(|t| t.counted), |d, (a, r)| {
                         d.child(
                             div()
                                 .flex_none()
@@ -2443,6 +2519,14 @@ impl Workspace {
                                 .text_color(ink.danger)
                                 .child(format!("\u{2212}{r}")),
                         )
+                    })
+                    .when_some(totals.as_ref().filter(|t| t.uncounted > 0), |d, t| {
+                        d.child(small(
+                            format!("+{} {}", t.uncounted, f.binary),
+                            ink.faint,
+                            sk,
+                            s,
+                        ))
                     })
                     .child(with_tip(
                         icon_button("flyout-refresh", "\u{27f3}", c.list.busy, sk, s)
@@ -2527,7 +2611,7 @@ impl Workspace {
             .px(px(4. * s))
             .pb(px(10. * s));
         if let Some(l) = list {
-            for (i, file) in l.files.iter().enumerate() {
+            for (i, file) in l.files.iter().enumerate().take(LIST_ROWS) {
                 let patch = match c.patches.get(&file.path) {
                     None => Patch::Unread,
                     Some(r) => match (&r.got, &r.error) {
@@ -2543,7 +2627,7 @@ impl Workspace {
                     Some(repo),
                     patch,
                     c.open.contains(&file.path),
-                    c.full.contains(&file.path),
+                    c.more.get(&file.path).copied().unwrap_or(0),
                     i == c.cursor && self.flyout.focused,
                     &ink,
                     th,
@@ -2552,6 +2636,14 @@ impl Workspace {
                     cx,
                 ));
             }
+        }
+        if let Some(rest) = list.map(|l| l.files.len()).filter(|n| *n > LIST_ROWS) {
+            rows = rows.child(note(
+                &lang::fill(f.more_files, &[("count", &(rest - LIST_ROWS).to_string())]),
+                ink.faint,
+                sk,
+                s,
+            ));
         }
         div()
             .flex_1()
@@ -2574,7 +2666,7 @@ impl Workspace {
         repo: Option<&Path>,
         patch: Patch<'_>,
         open: bool,
-        full: bool,
+        more: usize,
         cursor: bool,
         ink: &Ink,
         th: &theme::Theme,
@@ -2759,7 +2851,7 @@ impl Workspace {
                 Patch::Got(d) if d.binary => {
                     note(f.file_binary, ink.faint, sk, s).into_any_element()
                 }
-                Patch::Got(d) => self.diff_hunks(owner, &file.path, d, full, ink, th, sk, s, cx),
+                Patch::Got(d) => self.diff_hunks(owner, &file.path, d, more, ink, th, sk, s, cx),
             });
         }
         out.into_any_element()
@@ -2771,7 +2863,7 @@ impl Workspace {
         owner: &DiffOwner,
         path: &str,
         d: &FileDiff,
-        full: bool,
+        more: usize,
         ink: &Ink,
         th: &theme::Theme,
         sk: &skin::Skin,
@@ -2781,7 +2873,7 @@ impl Workspace {
         let f = self.lang.strings().flyout;
         let sy = flyout::syntax_for(Path::new(path));
         let total: usize = d.hunks.iter().map(|h| h.lines.len() + 1).sum();
-        let cap = if full { usize::MAX } else { PATCH_ROWS };
+        let cap = PATCH_ROWS + more;
         let code_px = sk.text_px(11. * s);
         let row_h = f32::from(code_px) * 1.5;
         let digits = d
@@ -3628,7 +3720,7 @@ impl Workspace {
                         None,
                         Patch::Got(d),
                         p.open.contains(d.path()),
-                        p.full.contains(d.path()),
+                        p.more.get(d.path()).copied().unwrap_or(0),
                         i == p.cursor && self.flyout.focused,
                         ink,
                         th,
@@ -3870,6 +3962,21 @@ impl Workspace {
                     .child(f.add_hint),
             )
             .into_any_element()
+    }
+}
+
+/// How wide the panel draws, given the width wanted and the room beside the
+/// left bar and the spine. The terminals keep [`SCREEN_KEEPS`] whenever the
+/// window has it to give; a window too narrow for both splits what there is,
+/// the panel taking at most half, so neither side is squeezed to nothing and
+/// the panes are never pushed under the reserve by the panel's own minimum.
+fn panel_width(want: f32, room: f32, s: f32) -> f32 {
+    let keep = SCREEN_KEEPS * s;
+    let floor = FLYOUT_MIN * s * 0.75;
+    if room - keep >= floor {
+        want.min(room - keep).max(floor)
+    } else {
+        want.min(room / 2.).max(0.)
     }
 }
 
@@ -4169,6 +4276,61 @@ mod tests {
             }
         );
         assert_eq!(side_of("https://example.com/x.rs", None), None);
+    }
+
+    /// The terminals keep their reserve whenever the window has it; a window
+    /// too narrow for both splits what there is, and the panel's own minimum
+    /// never pushes the panes under the reserve (found by the Codex review).
+    #[test]
+    fn the_panel_never_takes_the_room_the_terminals_keep() {
+        // Wide: the width asked for.
+        assert_eq!(panel_width(560., 1800., 1.), 560.);
+        // Dragged wider than the room: what is left after the reserve.
+        assert_eq!(panel_width(1500., 1800., 1.), 1800. - SCREEN_KEEPS);
+        // Room for both: the panes keep the whole reserve.
+        assert!(1000. - panel_width(900., 1000., 1.) >= SCREEN_KEEPS);
+        // A 640 px tile with the left bar open is too narrow for both. The
+        // panel's own minimum used to win here and leave the panes 138 px;
+        // now the two split what there is.
+        let room = 640. - 208. - RIGHT_COLUMN_W - 24.;
+        let w = panel_width(560., room, 1.);
+        assert!(
+            room - w >= room / 2. - 0.5,
+            "the panes keep at least half: {w}"
+        );
+        assert!(panel_width(560., 0., 1.) >= 0.);
+    }
+
+    /// gh runs from a checkout of the pull request's repository when one is
+    /// among the candidates, so a gh that picks its account by the remote
+    /// asks the right one (found by the Codex review).
+    #[test]
+    fn gh_runs_from_a_checkout_of_the_pull_requests_repository() {
+        let _fork = crate::testsync::forks_and_locks();
+        let other = Repo::new();
+        other.git(&["remote", "add", "origin", "git@github.com:someone/else.git"]);
+        let mine = Repo::new();
+        mine.git(&[
+            "remote",
+            "add",
+            "origin",
+            "git@github-work:Parker-Brown-Family/Terminal-Delight.git",
+        ]);
+        let picked = gh_dir(
+            &[other.root.clone(), mine.root.clone()],
+            "parker-brown-family",
+            "terminal-delight",
+        );
+        assert_eq!(picked, mine.root);
+        assert_eq!(
+            gh_dir(
+                &[other.root.clone()],
+                "parker-brown-family",
+                "terminal-delight"
+            ),
+            crate::session::home_dir(),
+            "no checkout of it: the home folder"
+        );
     }
 
     /// The flyout docks beside the panes: they narrow and none is covered.

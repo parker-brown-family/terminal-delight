@@ -206,6 +206,36 @@
       "status": "open",
       "verdict": null,
       "see": "shape"
+    },
+    {
+      "id": "call-a-window-too-narrow-for-both-splits-the-room",
+      "at": "2026-11-08T11:32Z",
+      "title": "A window too narrow for both splits the room",
+      "context": null,
+      "chose": "Terminals keep 380 px when the window has it; otherwise panel and panes split evenly",
+      "because": "The panel's own minimum used to squeeze panes to 138 px in a 640 px tile",
+      "passed_over": [
+        "Hide the panel when it cannot fit",
+        "Draw it over the panes in a narrow window"
+      ],
+      "undo": "Change panel_width",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
     }
   ]
 }

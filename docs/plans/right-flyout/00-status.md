@@ -80,25 +80,70 @@ pages; see the call on native rendering for why this build does not start there.
 
 - [x] Orientation: APES orient and context, Fieldcraft, the five subsystems mapped by hand
       (the fan-out guard refused a reader workflow, as Parker's rule says it should).
-- [ ] Model: `flyout.rs` (pure: tabs, targets, diff and numstat parsing, `gh` JSON, syntax).
-- [ ] Runner: `engstate::run_bounded` generalised from `run_git_bytes` (stderr kept for `gh`).
-- [ ] View: `flyout_view.rs` (chip, panel, tab strip, new-tab page, three tab kinds).
-- [ ] Wiring: stage row, spine chip, chord, keys, focus, poll loop, persistence.
-- [ ] Ways in: Alt+click and menu row (`docopen`), rail handovers (`pane/handed.rs`).
-- [ ] Strings in nine languages (`lang/flyout.rs`) and the leftover-English guard.
-- [ ] Tests: parsers, layout (panes shrink, nothing covered), keyboard (no leak),
-      persistence round trip, link routing.
-- [ ] Seen in a real hidden window, photographed; full suite, clippy, fmt.
-- [ ] Brief for Parker, ws7 window on the build.
+- [x] Model: `flyout.rs` (pure: tabs, targets, numstat and name-status, unified diff, the gutter,
+      GitHub addresses and remotes, `gh` JSON, timestamps, a syntax colourer, the file finder).
+- [x] Runner: `engstate::run_bounded`, generalised from `run_git_bytes` (git unchanged; stderr kept
+      for `gh`).
+- [x] View: `flyout_view.rs` (chip, panel, tab strip, `+` page, Changes, File and pull request tabs).
+- [x] Wiring: stage row, spine chip, Ctrl+Shift+R, keys, `overlay_owns_keyboard`, resize, 1 s poll,
+      persistence (`Tab.side` through `TabIdentity`, `SavedTab.side`, `StateFile.flyout`).
+- [x] Ways in: Alt+click and the right-click row (`docopen`), rail handovers (`pane/handed.rs`).
+- [x] Strings in nine languages (`lang/flyout.rs`), registered with the leftover-English guard.
+- [x] Tests: parsers, git against scratch repositories, `side_of` on real files, a window test
+      (panes narrow, nothing covered, keys stay in the flyout, Esc gives them back), persistence,
+      the click table, the handover path.
+- [x] Seen in a real window: photographed and driven with xdotool on a private Xvfb display,
+      including a real Alt+click on a printed `path:line`.
+- [x] One review round from another provider (Codex, read-only): five findings, all real, all
+      fixed, the two with tests checked by putting the old code back.
+- [ ] Brief for Parker; the workspace 7 window on the build.
 
 ## Surprises and discoveries
 
 - `gh` in the window's PATH is mise's shim, not `~/bin/gh` (the account wrapper), because
   `~/.local/share/mise/shims` comes first. It answers as `parker-brown-family` today. For
-  a read-only view that is acceptable; `TD_GH` names another binary.
-- Alt+click on a code file or a PR URL did nothing before this (the click table answers
+  a read-only view that is acceptable; `TD_GH` names another binary, and `gh` now runs from a
+  checkout of the pull request's repository when one is open, so a wrapper that picks the
+  account by the remote would pick right.
+- Alt+click on a code file or a PR URL did nothing before this (the click table answered
   `Pass`), so the flyout takes a free gesture rather than changing a known one.
+- **Parker's git config prints `c/` and `w/` in diff headers** (`diff.mnemonicPrefix`). A test
+  against a real repository read every changed path as `w/src/a.rs`. Every `git diff` the flyout
+  runs now passes `--src-prefix=a/ --dst-prefix=b/`.
+- **The render's focus plan handed the keyboard straight back to the pane** one frame after the
+  flyout took it, because nothing told it the flyout held the keyboard. The window test caught it;
+  `overlay_owns_keyboard` now counts `flyout.focused`.
+- **The monitors were off overnight**, so a hidden window on the live compositor could not be
+  photographed. The pictures came from a private Xvfb display with software Vulkan (lavapipe),
+  which also let the Alt+click gesture be driven for real.
+- **The Alt+O test used a pull request as its example of a web artifact.** A pull request handed
+  over now opens in the flyout and never leaves TD, so the ask-before-the-browser rule is tested
+  on a web page, and a new test pins the pull request path.
+- **The first width test passed on the old code.** At the 800 px case it chose, the old rule
+  happened to leave the panes about half; the test was rewritten around a 640 px tile, where the
+  old rule left the panes 138 px, and it now fails on the old rule.
+
+## Review round (Codex, read-only, one round)
+
+1. A narrow window let the panel's own minimum push the panes under their reserve. Fixed:
+   `panel_width` keeps the reserve when the window has it and splits evenly when it does not.
+2. A list of only binary files showed `+0 −0`. Fixed: `flyout::totals` keeps "counted nothing"
+   apart from zero and counts the files it could not count.
+3. With the `+` page up, the poll also read the hidden tab behind it. Fixed.
+4. A pull request opened from a link ran `gh` from the home folder. Fixed: from a checkout of that
+   repository when one of the window's panes stands in one.
+5. A quoted path holding `\" ` broke the diff header reader. Fixed, with a test.
+
+Also from my own reading: a line longer than 1000 bytes is cut for drawing (a minified file is
+one line of a megabyte), "show more" grows by 2000 rows a press instead of all at once, a list
+draws at most 1500 files and says how many more, and readings for closed tabs are dropped.
 
 ## Outcome
 
-(written when the work lands)
+Built, tested and photographed on `explore/t3-scuttle`. Not built, on purpose: a live web page
+(CDP), merge/checkout/comment buttons, and an MCP verb for agents. Known gaps: a diff list of more
+than 1500 files is cut rather than virtualised; untracked folders are one row each, not expandable;
+a `gh` that is signed out was not tried for real.
+
+Post-hoc difficulty: **7 / 10** held. The work could have been wrong for a while unnoticed in
+exactly the places the tests and the review found it (a git config, a focus plan, a narrow tile).

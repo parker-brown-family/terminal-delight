@@ -373,12 +373,28 @@ pub fn changed_files(
     out
 }
 
-/// The list's totals: lines added and removed over the files git counted.
-/// Binary files add nothing to either, and say so in their own rows.
-pub fn totals(files: &[FileStat]) -> (u64, u64) {
-    files.iter().fold((0, 0), |(a, r), f| {
-        (a + f.added.unwrap_or(0), r + f.removed.unwrap_or(0))
-    })
+/// A list's totals: lines added and removed over the files git counted, and
+/// how many files it could not count (binaries, folders, new files past the
+/// counted few). `None` when it counted none: a list of nothing but binary
+/// files has no line total, and drawing `+0 −0` for it would be a claim.
+pub struct Totals {
+    pub counted: Option<(u64, u64)>,
+    pub uncounted: usize,
+}
+
+pub fn totals(files: &[FileStat]) -> Totals {
+    let mut counted = None;
+    let mut uncounted = 0;
+    for f in files {
+        match (f.added, f.removed) {
+            (Some(a), Some(r)) => {
+                let (ta, tr) = counted.unwrap_or((0, 0));
+                counted = Some((ta + a, tr + r));
+            }
+            _ => uncounted += 1,
+        }
+    }
+    Totals { counted, uncounted }
 }
 
 /// Lines in a file read whole, the way git would count them as added.
@@ -751,10 +767,25 @@ pub fn parse_unified(text: &str) -> Vec<FileDiff> {
 /// unquoted path holding ` b/`; the `---`/`+++` lines settle those.
 fn split_git_header(rest: &str) -> Option<(String, String)> {
     if let Some(quoted) = rest.strip_prefix('"') {
-        // `"a/..." "b/..."` or `"a/..." b/...`
-        let close = quoted.find("\" ").map(|i| i + 1)?;
+        // `"a/..." "b/..."` or `"a/..." b/...`: the first path ends at the
+        // first quote no backslash escapes, which a plain search for `" `
+        // misreads when the name itself holds `\" `.
+        let mut escaped = false;
+        let mut close = None;
+        for (i, c) in quoted.char_indices() {
+            match c {
+                _ if escaped => escaped = false,
+                '\\' => escaped = true,
+                '"' => {
+                    close = Some(i + 1);
+                    break;
+                }
+                _ => {}
+            }
+        }
+        let close = close?;
         let a = unquote(&rest[..=close]);
-        let b = unquote(rest[close + 2..].trim());
+        let b = unquote(rest.get(close + 1..)?.trim());
         return Some((strip_side(&a), strip_side(&b)));
     }
     let at = rest.find(" b/")?;
@@ -1620,11 +1651,13 @@ mod tests {
         assert_eq!((renamed.added, renamed.removed), (Some(2), Some(0)));
         assert_eq!(files[2].status, Status::Untracked);
         assert_eq!(files[2].added, Some(4));
+        let t = totals(&files);
         assert_eq!(
-            totals(&files),
-            (9, 1),
+            t.counted,
+            Some((9, 1)),
             "the binary file adds nothing to the totals"
         );
+        assert_eq!(t.uncounted, 1);
     }
 
     #[test]
@@ -1632,6 +1665,9 @@ mod tests {
         let files = changed_files("", "", &[("blob.bin".into(), None)]);
         assert_eq!(files[0].added, None);
         assert_eq!(files[0].removed, None);
+        let t = totals(&files);
+        assert_eq!(t.counted, None, "nothing counted is not a total of zero");
+        assert_eq!(t.uncounted, 1);
     }
 
     #[test]
@@ -1747,6 +1783,18 @@ rename to renamed.rs
             "diff --git \"a/sp ace.rs\" \"b/sp ace.rs\"\n--- \"a/sp ace.rs\"\n+++ \"b/sp ace.rs\"\n@@ -1 +1 @@\n-x\n+y\n",
         );
         assert_eq!(files[0].path(), "sp ace.rs");
+    }
+
+    /// A binary or mode-only diff has no `---`/`+++` lines to correct the
+    /// header, so the header alone has to be read right, quotes and all.
+    #[test]
+    fn a_quoted_header_with_an_escaped_quote_names_both_sides() {
+        let files = parse_unified(
+            "diff --git \"a/say \\\" hi.bin\" \"b/say \\\" hi.bin\"\nBinary files differ\n",
+        );
+        assert_eq!(files[0].old_path.as_deref(), Some("say \" hi.bin"));
+        assert_eq!(files[0].path(), "say \" hi.bin");
+        assert!(files[0].binary);
     }
 
     #[test]
