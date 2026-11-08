@@ -10649,6 +10649,133 @@ mod tests {
         });
     }
 
+    /// A line drawn in the dialog is the line the MCP server enforces: no
+    /// shortcut of its own. Every grant here is made by the dialog's keys, and
+    /// every answer is read through the server's own snapshot (`snapshot_of`,
+    /// what a live request is answered from) and the window's own prompt gate
+    /// (`ask_bridge`, where a live `prompt_agent` lands). Read lets the caller
+    /// read and nothing more; only prompt lets it prompt; and an agent the
+    /// caller has no line to stays out of its census.
+    #[gpui::test]
+    fn a_line_drawn_in_the_dialog_is_exactly_what_the_mcp_server_allows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let lead = pool_member(&ws, cx, "Lead");
+        let worker = pool_member(&ws, cx, "Worker");
+        let stranger = pool_member(&ws, cx, "Stranger");
+        ws.update(cx, |ws, _| ws.mcp.enabled = true);
+        let lead_pane = lead.read_with(cx, |v, _| v.pane_id().unwrap());
+        let worker_pid = worker.read_with(cx, |v, _| v.shell_pid().unwrap());
+        let stranger_pid = stranger.read_with(cx, |v, _| v.shell_pid().unwrap());
+
+        // Draw `from -> to` the way a person does: drop, a number, Enter.
+        let relate = |from: &Entity<TerminalView>,
+                      to: &Entity<TerminalView>,
+                      key: &str,
+                      cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                ws.update(cx, |ws, cx| {
+                    let i = tab_holding(ws, to);
+                    assert!(ws.offer_relate(from.clone(), i, None, window, cx));
+                    for k in [key, "enter"] {
+                        assert!(ws.relate_key(&gpui::Keystroke::parse(k).unwrap(), window, cx));
+                    }
+                    assert!(ws.relate.is_none(), "{key}: the line was not drawn");
+                })
+            });
+        };
+        // What the lead sees through the MCP server, as a live request would.
+        let census = |cx: &mut gpui::VisualTestContext| -> Vec<(u64, String)> {
+            let mut snap = ws.update(cx, crate::mcp_transport::snapshot_of);
+            snap.caller = Some(mcp::Caller {
+                session: "t".into(),
+                pane: Some(lead_pane),
+            });
+            let line = serde_json::json!({ "id": 1, "method": "tools/call",
+                "params": { "name": "list_panes", "arguments": {} } })
+            .to_string();
+            let reply: serde_json::Value =
+                serde_json::from_str(&mcp::handle_line(&line, &snap, |_, _| vec![]).unwrap())
+                    .unwrap();
+            reply["result"]["structuredContent"]["panes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    (
+                        p["pid"].as_u64().unwrap(),
+                        p["reach"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        };
+        // The window's prompt gate, as a live `prompt_agent` reaches it.
+        let prompt = |target: u32, cx: &mut gpui::VisualTestContext| {
+            ws.update(cx, |ws, cx| {
+                ws.ask_bridge(
+                    &mcp::AskCall::Prompt(mcp::PromptRequest {
+                        caller_pane: lead_pane,
+                        target,
+                        brief: "check the build".into(),
+                        key: None,
+                    }),
+                    cx,
+                )
+            })
+        };
+        let reach_of = |pid: u32, seen: &[(u64, String)]| {
+            seen.iter()
+                .find(|(p, _)| *p == u64::from(pid))
+                .map(|(_, r)| r.clone())
+        };
+
+        // Nothing drawn: the lead cannot prompt the worker.
+        assert!(matches!(prompt(worker_pid, cx), mcp::AskReply::Refused(_)));
+
+        // READ, from the dialog: the worker is read, and still not prompted.
+        relate(&lead, &worker, "2", cx);
+        // The worker and the stranger are introduced too, so the stranger is
+        // seated in the same org with no line from the lead.
+        relate(&worker, &stranger, "1", cx);
+        let seen = census(cx);
+        assert_eq!(
+            reach_of(worker_pid, &seen).as_deref(),
+            Some("read"),
+            "{seen:?}"
+        );
+        assert_eq!(
+            reach_of(stranger_pid, &seen),
+            None,
+            "an agent the lead has no line to is not in its census: {seen:?}"
+        );
+        assert!(matches!(prompt(worker_pid, cx), mcp::AskReply::Refused(_)));
+        assert!(matches!(
+            prompt(stranger_pid, cx),
+            mcp::AskReply::Refused(_)
+        ));
+
+        // PROMPT, from the dialog: now, and only now, the prompt is taken.
+        relate(&lead, &worker, "4", cx);
+        let seen = census(cx);
+        assert_eq!(
+            reach_of(worker_pid, &seen).as_deref(),
+            Some("prompt"),
+            "{seen:?}"
+        );
+        assert!(
+            matches!(prompt(worker_pid, cx), mcp::AskReply::Prompt(_)),
+            "a prompt line drawn in the dialog lets the lead prompt"
+        );
+        assert!(matches!(
+            prompt(stranger_pid, cx),
+            mcp::AskReply::Refused(_)
+        ));
+    }
+
     /// A draft somebody left half made on the Floor survives a drop.
     #[gpui::test]
     fn a_drop_leaves_the_floors_own_draft_alone(cx: &mut gpui::TestAppContext) {

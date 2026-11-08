@@ -275,7 +275,7 @@ pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::
 }
 
 /// Build a fresh snapshot from the live workspace (runs on the main thread).
-fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot {
+pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot {
     ws.sync_coordination_scope(cx);
     mcp::Snapshot {
         config: ws.mcp.clone(),
