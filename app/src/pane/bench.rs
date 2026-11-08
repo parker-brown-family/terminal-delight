@@ -2650,7 +2650,14 @@ impl TerminalView {
         };
         let doc = self.document_of(&href);
         let revealable = super::reveal_target(&href);
-        match crate::docopen::click_intent(mods, doc.is_some(), true, revealable.is_some(), false) {
+        match crate::docopen::click_intent(
+            mods,
+            doc.is_some(),
+            false,
+            true,
+            revealable.is_some(),
+            false,
+        ) {
             ClickIntent::OpenHere => {
                 if let Some(target) = doc {
                     let _ = self.open_to_read(target, None, cx);
@@ -2667,7 +2674,9 @@ impl TerminalView {
                 }
             }
             ClickIntent::OpenWithDesktop => open_with_system(&href),
-            ClickIntent::CopyChip | ClickIntent::Pass => return false,
+            // The bench's links are never asked about the flyout (`false`
+            // above), so this arm is the table's completeness, not a route.
+            ClickIntent::OpenSide | ClickIntent::CopyChip | ClickIntent::Pass => return false,
         }
         true
     }

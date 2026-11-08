@@ -990,6 +990,7 @@ impl TerminalView {
         let intent = crate::docopen::click_intent(
             mods,
             doc.is_some(),
+            false,
             link.is_some(),
             revealable.is_some(),
             false,

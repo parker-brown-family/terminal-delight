@@ -647,6 +647,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
                     | "n"
                     | "i"
                     | "e"
+                    | "r"
                     | "m"
                     | "z"
                     | "u"

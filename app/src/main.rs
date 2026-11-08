@@ -65,6 +65,8 @@ mod entry;
 mod entry_view;
 mod fav;
 mod feedback;
+mod flyout;
+mod flyout_view;
 mod glyph;
 mod gridwire;
 mod handover;
@@ -2018,6 +2020,9 @@ struct Tab {
     /// chord is then the program's. Persisted with the tab, so it survives a
     /// restart and a reattach. See [`keylayer::TabChord::Pinned`].
     hotkey: Option<char>,
+    /// This task's tabs in the right-bar flyout: the diffs, files and pull
+    /// requests opened beside its conversation (`flyout_view.rs`). Persisted.
+    side: flyout::Side,
 }
 
 impl Tab {
@@ -2025,6 +2030,7 @@ impl Tab {
         Self {
             level: None,
             hotkey: None,
+            side: flyout::Side::default(),
             root,
             name,
             focused: None,
@@ -2047,6 +2053,7 @@ impl Tab {
     /// come and go.
     fn identity(&self) -> TabIdentity {
         TabIdentity {
+            side: self.side.clone(),
             name: self.name.clone(),
             color: self.color,
             text_color: self.text_color,
@@ -2075,6 +2082,8 @@ struct TabIdentity {
     level: Option<attention::Priority>,
     /// Nor has a task whose pane closed stopped being where its hotkey goes.
     hotkey: Option<char>,
+    /// Nor has it lost the diffs and pull requests opened beside it.
+    side: flyout::Side,
 }
 
 impl TabIdentity {
@@ -2084,6 +2093,7 @@ impl TabIdentity {
         Tab {
             level: self.level,
             hotkey: self.hotkey,
+            side: self.side,
             root,
             name: self.name,
             // re-read from the live focus each render; the pane this pointed at
@@ -2918,6 +2928,10 @@ struct StateFile {
     /// the presentation that costs the terminals nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rail_pinned: Option<bool>,
+    /// The right-bar flyout: open or not, and its width once dragged. Absent
+    /// = never opened, which reads as closed at the default width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flyout: Option<flyout::SavedFlyout>,
     /// Whether the bottom slot's allowance rows read as what is left rather
     /// than what is spent. A display flip computed at paint — the record's own
     /// `percent` is always the fraction *spent*, so no config change can ever
@@ -3049,6 +3063,7 @@ impl Default for StateFile {
             // Nobody has chosen, which is not the same as choosing the overlay
             // — it simply resolves to it at load. See the field.
             rail_pinned: None,
+            flyout: None,
             win: None,
             scale: None,
             theme: None,
@@ -3120,6 +3135,10 @@ struct SavedTab {
     /// The letter `alt+shift+<it>` jumps here by; absent = no pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hotkey: Option<char>,
+    /// The task's right-bar flyout tabs; absent = none, as on every file
+    /// written before the flyout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    side: Option<flyout::SavedSide>,
     node: SavedNode,
 }
 
@@ -4750,6 +4769,8 @@ struct Workspace {
     /// The relate dialog: a pane or tab dropped on another tab, asking how the
     /// two agents work together (`relate_view.rs`).
     relate: Option<relate_view::Relate>,
+    /// The right-bar flyout: diffs, files and pull requests beside the panes.
+    flyout: flyout_view::Flyout,
     /// What a person has said about the inbox — snoozes, done marks, which
     /// shelves are open, which face the spine shows — and the file it is kept
     /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
@@ -5656,6 +5677,22 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe(pane, |ws, _pane, _ev: &ToggleInbox, cx| {
         let showing = ws.spine_inbox();
         ws.set_spine_inbox(!showing, cx);
+    })
+    .detach();
+    // ctrl+shift+R in any pane → open or close the right-bar flyout.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, _pane, _ev: &pane::ToggleFlyout, window, cx| {
+            ws.flyout_toggle(window, cx);
+        },
+    )
+    .detach();
+    // Alt+click on a code file or a pull request link → shown in the flyout,
+    // in the task the pane belongs to, with the keyboard left in the pane.
+    cx.subscribe_in(pane, window, |ws, pane, ev: &pane::OpenSide, window, cx| {
+        let task = ws.tab_with_leaf(pane.entity_id()).unwrap_or(ws.active);
+        ws.flyout_show(task, ev.target.clone(), ev.line, false, window, cx);
     })
     .detach();
     // ctrl+shift+E in any pane → the composer, over the main area.
@@ -6721,6 +6758,7 @@ impl Workspace {
             composer: None,
             composer_stash: None,
             relate: None,
+            flyout: flyout_view::Flyout::restore(saved.flyout.as_ref()),
             inbox_store: std::cell::RefCell::new(Self::inbox_load()),
             inbox_tracker: std::cell::RefCell::new(inbox::Tracker::default()),
             inbox_memo: std::cell::RefCell::new(None),
@@ -7085,6 +7123,7 @@ impl Workspace {
                 tab.project = t.project.filter(|p| live_projects.contains(p));
                 tab.level = t.level.map(attention::Priority::from);
                 tab.hotkey = t.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
+                tab.side = flyout::Side::restore(t.side.as_ref());
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -7142,6 +7181,18 @@ impl Workspace {
                     ws.notif = notifpref::load();
                     ws.refresh_dir_logos(cx)
                 })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // The right-bar flyout's poll: the tab on screen is read again when
+        // it is due, and nothing is read while the flyout is shut.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.flyout_kick(false, cx))
                 .is_err()
             {
                 break;
@@ -7661,6 +7712,7 @@ impl Workspace {
             built.project = tab.project.filter(|p| live_projects.contains(p));
             built.level = tab.level.map(attention::Priority::from);
             built.hotkey = tab.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
+            built.side = flyout::Side::restore(tab.side.as_ref());
             self.tabs.push(built);
         }
 
@@ -8872,6 +8924,7 @@ impl Workspace {
                     project: t.project.filter(|_| t.group.is_none()),
                     level: t.level.map(SavedLevel::from),
                     hotkey: t.hotkey,
+                    side: t.side.saved(),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -8904,6 +8957,7 @@ impl Workspace {
             ui: Some(uiconfig::choice(cx)),
             looks: self.looks.clone(),
             rail_pinned: Some(self.rail_pinned),
+            flyout: self.flyout.saved(),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
             // Not written. A narrowing is a gesture, not a preference: nothing
@@ -22032,6 +22086,9 @@ impl Workspace {
             || self.savings_menu
             || self.composer.is_some()
             || self.relate.is_some()
+            // The right-bar flyout after a click on it: without this, the
+            // render's focus plan hands the keyboard straight back to a pane.
+            || self.flyout.focused
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -22374,6 +22431,11 @@ impl Workspace {
             return;
         }
         if self.relate.is_some() && self.relate_key(ks, window, cx) {
+            return;
+        }
+        // The flyout holds the keyboard after a click on it: every plain key
+        // is its own, so none reaches a terminal.
+        if self.flyout_key(ks, window, cx) {
             return;
         }
         // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
@@ -23179,6 +23241,22 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // the flyout's edge is being dragged: dragging left widens it, from
+        // where the grab started, as the left bar's own edge does
+        if let Some((from_x, from_w)) = self.flyout.resize {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.flyout.resize = None;
+                self.save(cx);
+                cx.notify();
+                return;
+            }
+            let s = theme::outer_choice(cx).grade.scale.max(0.1);
+            let delta = (from_x - f32::from(ev.position.x)) / s;
+            self.flyout.width =
+                (from_w + delta).clamp(flyout_view::FLYOUT_MIN, flyout_view::FLYOUT_MAX);
+            cx.notify();
+            return;
+        }
         // the left bar's edge is being dragged: the width follows the cursor
         // exactly, from where the grab started, so the bar cannot drift under a
         // fast drag the way a delta-per-frame resize does
@@ -23515,6 +23593,11 @@ impl Workspace {
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.flyout.resize.take().is_some() {
+            self.save(cx);
+            cx.notify();
+            return;
+        }
         if self.bar_resize.take().is_some() {
             self.save(cx);
             cx.notify();
@@ -24179,6 +24262,7 @@ impl Workspace {
                     // the thing the person promoted this morning.
                     level: t.level,
                     hotkey: t.hotkey,
+                    side: t.side,
                     root,
                     name: t.name,
                     focused: t.focused,
@@ -28561,6 +28645,17 @@ impl Workspace {
             // an empty head keeps the button at the foot
             None => div(),
         };
+        // The flyout's chip sits under the pill, beside the spine it shares
+        // the right edge with, and goes where the pill goes.
+        let head = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(6. * s))
+            .child(head)
+            .when(uiconfig::shown(cx, uiconfig::Key::Spine), |d| {
+                d.child(self.render_flyout_chip(cx))
+            });
         let splits = uiconfig::shown(cx, uiconfig::Key::SplitButtons);
         column
             .child(head)
@@ -32191,6 +32286,9 @@ impl Render for Workspace {
         if self.relate.is_some() && !self.focus_handle.is_focused(window) {
             self.relate = None;
         }
+        // A pane clicked while the flyout held the keyboard: it holds it no
+        // longer, and the pane's typing is the pane's again.
+        self.flyout_lost_focus(window);
         warp::set_suppressed(
             pane_popup_open
                 // PAINT raises a card over EVERY pane at once, each one drawn
@@ -32362,6 +32460,8 @@ impl Render for Workspace {
         }
         // demo/capture hook (TD_RELATE_DEMO): the relate dialog, once.
         self.relate_demo(window, cx);
+        // demo/capture hook (TD_FLYOUT_DEMO): the right-bar flyout, once.
+        self.flyout_demo(window, cx);
         // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
         // cannot click the counter; a number selects that seat without granting access.
         if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
@@ -40159,6 +40259,9 @@ impl Render for Workspace {
             .min_h_0()
             .children(self.render_left_bar(cx))
             .child(screen)
+            // The right-bar flyout, docked: a flex sibling that costs the
+            // terminals its width and covers none of them (`flyout_view.rs`).
+            .children(self.render_flyout(cx))
             // A DOCKED queue sits here, between the panes and the spine, and is
             // a flex sibling like the left bar — so it costs the terminals its
             // width and nothing more. The overlay presentation is not in this
@@ -40233,6 +40336,7 @@ impl Render for Workspace {
                     && (!m.alt || digit)
                     && ws.composer.is_none()
                     && ws.relate.is_none()
+                    && !ws.flyout.focused
                     && (ws.rail_key(key, cx) || ws.art_key(key, cx))
                 {
                     cx.stop_propagation();
@@ -45482,6 +45586,7 @@ mod tests {
     fn tab_of(node: SavedNode) -> SavedTab {
         SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -47115,6 +47220,7 @@ mod tests {
             color: None,
             text_color: None,
             group: None,
+            side: None,
             node: leaf_with(Some(12), "/work", None),
             project: None,
         };
@@ -47377,6 +47483,7 @@ mod tests {
                     text_color: None,
                     group: Some(7),
                     project: None,
+                    side: None,
                     node: leaf_with(None, "/work", None),
                 },
                 SavedTab {
@@ -47387,6 +47494,7 @@ mod tests {
                     text_color: None,
                     group: None,
                     project: Some(3),
+                    side: None,
                     node: leaf_with(None, "/work", None),
                 },
             ],
@@ -47407,6 +47515,62 @@ mod tests {
         assert_eq!(back.left_bar, Some(false));
         assert_eq!(back.left_bar_w, Some(260.0));
         assert_eq!(back.scope, Some(SavedScope::Project(3)));
+    }
+
+    /// The flyout's own state and each task's flyout tabs survive a save,
+    /// and a file written before the flyout opens it closed with no tabs —
+    /// absent, never an empty list written back as an opinion.
+    #[test]
+    fn a_state_file_keeps_the_flyout_and_each_tasks_tabs() {
+        let side = flyout::SavedSide {
+            tabs: vec![
+                flyout::Target::Changes {
+                    repo: "/work".into(),
+                    base: flyout::Base::Uncommitted,
+                },
+                flyout::Target::Pull {
+                    owner: "parker-brown-family".into(),
+                    repo: "terminal-delight".into(),
+                    number: 1400,
+                },
+            ],
+            active: 1,
+        };
+        let state = StateFile {
+            flyout: Some(flyout::SavedFlyout {
+                open: true,
+                width: Some(700.),
+            }),
+            tabs: vec![SavedTab {
+                hotkey: None,
+                level: None,
+                name: Some("diffs".into()),
+                color: None,
+                text_color: None,
+                group: None,
+                project: None,
+                side: Some(side.clone()),
+                node: leaf_with(None, "/work", None),
+            }],
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serialise");
+        let back: StateFile = toml::from_str(&body).expect("read back");
+        assert_eq!(back.flyout, state.flyout);
+        assert_eq!(back.tabs[0].side, Some(side));
+        let restored = flyout::Side::restore(back.tabs[0].side.as_ref());
+        assert_eq!(restored.active, 1);
+
+        let old: StateFile =
+            toml::from_str("active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n")
+                .expect("read an old file");
+        assert_eq!(old.flyout, None, "never opened is not closed-at-zero-width");
+        assert_eq!(old.tabs[0].side, None);
+        let shut = flyout_view::Flyout::restore(old.flyout.as_ref());
+        assert!(!shut.open);
+        assert_eq!(shut.width, flyout_view::FLYOUT_DEFAULT);
+        assert!(shut.saved().is_none(), "an untouched flyout writes nothing");
+        assert!(flyout::Side::restore(None).tabs.is_empty());
     }
 
     /// Every session on this machine predates the tree. Opening one must not
@@ -49461,6 +49625,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -49535,6 +49700,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -49624,6 +49790,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -49690,6 +49857,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -49920,6 +50088,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -50222,6 +50391,7 @@ cwd = "/z"
             color: None,
             text_color: None,
             group: None,
+            side: None,
             node: saved,
             project: None,
         })
@@ -50254,6 +50424,7 @@ cwd = "/z"
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: saved,
                 project: None,
             })
@@ -50592,6 +50763,7 @@ warp = 1.5
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: SavedNode::Leaf {
                     off_limits: false,
                     agents: None,
@@ -50649,6 +50821,7 @@ warp = 1.5
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: SavedNode::Leaf {
                     off_limits: false,
                     agents: None,
@@ -50720,6 +50893,7 @@ warp = 1.5
                     color: Some("#aa3344".into()),
                     text_color: Some("#ffffff".into()),
                     group: Some(7),
+                    side: None,
                     node: leaf(),
                     project: None,
                 },
@@ -50730,6 +50904,7 @@ warp = 1.5
                     color: None,
                     text_color: None,
                     group: None,
+                    side: None,
                     node: leaf(),
                     project: None,
                 },
@@ -51562,6 +51737,7 @@ node = "Leaf"
             track: None,
             tabs: vec![SavedTab {
                 hotkey: None,
+                side: None,
                 level: None,
                 name: None,
                 color: None,

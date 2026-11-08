@@ -15,11 +15,13 @@ use serde::{Deserialize, Serialize};
 mod chrome;
 mod coord;
 mod entry;
+mod flyout;
 mod help;
 mod parts;
 pub use chrome::Chrome;
 pub use coord::Coord;
 pub use entry::Entry;
+pub use flyout::Flyout;
 pub use help::Help;
 pub use parts::Parts;
 
@@ -463,6 +465,9 @@ pub struct Strings {
     /// The entry point: the left spine's INBOX face and the composer that
     /// starts an agent from a sentence.
     pub entry: &'static Entry,
+    /// The right-bar flyout: the chip beside the attention pill and the
+    /// panel of changes, files and pull requests it opens.
+    pub flyout: &'static Flyout,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -821,6 +826,7 @@ pub const EN: Strings = Strings {
     parts: &parts::EN,
     hs: &help::EN,
     entry: &entry::EN,
+    flyout: &flyout::EN,
 };
 
 /// Español.
@@ -1099,6 +1105,7 @@ pub const ES: Strings = Strings {
     parts: &parts::ES,
     hs: &help::ES,
     entry: &entry::ES,
+    flyout: &flyout::ES,
 };
 
 /// Deutsch.
@@ -1377,6 +1384,7 @@ pub const DE: Strings = Strings {
     parts: &parts::DE,
     hs: &help::DE,
     entry: &entry::DE,
+    flyout: &flyout::DE,
 };
 
 /// 中文 (简体).
@@ -1655,6 +1663,7 @@ pub const ZH: Strings = Strings {
     parts: &parts::ZH,
     hs: &help::ZH,
     entry: &entry::ZH,
+    flyout: &flyout::ZH,
 };
 
 /// Français.
@@ -1933,6 +1942,7 @@ pub const FR: Strings = Strings {
     parts: &parts::FR,
     hs: &help::FR,
     entry: &entry::FR,
+    flyout: &flyout::FR,
 };
 
 /// Русский.
@@ -2211,6 +2221,7 @@ pub const RU: Strings = Strings {
     parts: &parts::RU,
     hs: &help::RU,
     entry: &entry::RU,
+    flyout: &flyout::RU,
 };
 
 /// 日本語.
@@ -2489,6 +2500,7 @@ pub const JA: Strings = Strings {
     parts: &parts::JA,
     hs: &help::JA,
     entry: &entry::JA,
+    flyout: &flyout::JA,
 };
 
 /// 한국어.
@@ -2767,6 +2779,7 @@ pub const KO: Strings = Strings {
     parts: &parts::KO,
     hs: &help::KO,
     entry: &entry::KO,
+    flyout: &flyout::KO,
 };
 
 /// हिन्दी.
@@ -3046,6 +3059,7 @@ pub const HI: Strings = Strings {
     parts: &parts::HI,
     hs: &help::HI,
     entry: &entry::HI,
+    flyout: &flyout::HI,
 };
 
 #[cfg(test)]
@@ -3347,6 +3361,8 @@ mod tests {
         "parts.vitals_bar_fatigue",
         // A file's name and a placeholder; only the colon could change.
         "entry.composer_machines_error",
+        // French writes it the same way, and means the same thing.
+        "flyout.pr_description",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -3393,6 +3409,7 @@ mod tests {
             ("parts", include_str!("lang/parts.rs")),
             ("help", include_str!("lang/help.rs")),
             ("entry", include_str!("lang/entry.rs")),
+            ("flyout", include_str!("lang/flyout.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
