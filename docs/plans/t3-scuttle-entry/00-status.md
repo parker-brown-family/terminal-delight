@@ -51,6 +51,21 @@ follower's tree (`~/Work/td-consolidate-lab`).
 - A far agent's state is never read; its row says unknown. Spinning TD itself up on the farbox
   inside gliff's private output needs a workspace rule on the far side and was not attempted.
 
+## Round 2 — Parker's first live test (2026-11-07)
+
+- [x] PROJECT chip leads with *none — don't know yet* (home folder, tab unfiled); opens on none
+  when the person stands in no project
+- [x] The shell line under the chips is gone
+- [x] A launched tab always lands under its project; a missing left-bar project is created
+- [x] Ctrl+V pastes a picture into the composer as a named attachment, sent as paths
+- [x] `~/.config/terminal-delight/machines.toml` written on this box, so the MACHINE chip shows
+  the farbox
+- [x] Drop a pane on another tab, or a tab on the middle of another tab's row: the relate dialog
+  draws a Threshing Floor line through the Floor's own save (`relate_view.rs`,
+  `Workspace::floor_relate`)
+- Asked (built with the default, two-way): join kept as one choice in the dialog rather than
+  removed; an org made by a drop is named after the actor's project
+
 ## Notes for a fresh session
 
 - Research inputs: Theo's video transcript (YouTube `uLGxb4F3SyI`, same cut as the X post),

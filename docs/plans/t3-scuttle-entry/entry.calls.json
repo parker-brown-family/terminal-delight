@@ -170,6 +170,95 @@
       },
       "status": "open",
       "verdict": null
+    },
+    {
+      "id": "call-pane-onto-tab-keeps-join-inside-the-relate-dialo",
+      "at": "2026-11-08T00:23Z",
+      "title": "Pane-onto-tab keeps join inside the relate dialog",
+      "context": null,
+      "chose": "Keep join as one dialog choice",
+      "because": "He said 'I think SCRAP'; keeping it loses nothing and is one link to delete",
+      "passed_over": [
+        "Remove join entirely"
+      ],
+      "undo": "Delete the relate-move link and its key",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null
+    },
+    {
+      "id": "call-an-org-made-by-a-drop-is-named-after-the-actor-s",
+      "at": "2026-11-08T00:23Z",
+      "title": "An org made by a drop is named after the actor's project",
+      "context": null,
+      "chose": "Name orgs after the left-bar project",
+      "because": "Drops within one project then build one org, found again by name",
+      "passed_over": [
+        "One org per drop",
+        "Ask for an org name"
+      ],
+      "undo": "Rename or delete the org on the Floor",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null
+    },
+    {
+      "id": "call-the-composer-creates-a-left-bar-project-when-non",
+      "at": "2026-11-08T00:23Z",
+      "title": "The composer creates a left-bar project when none matches",
+      "context": null,
+      "chose": "Create the project, named for the repo folder",
+      "because": "A chosen project must end with the tab under it; a fresh window has no projects",
+      "passed_over": [
+        "Leave the tab unfiled"
+      ],
+      "undo": "Drag the tab out; delete the project",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
     }
   ]
 }
