@@ -1707,11 +1707,25 @@ impl Workspace {
             }
         }
         if let Some(g) = got {
+            // Pictures, clips and PDFs are the floating square's to draw, and
+            // a text view of one is a screen of nothing.
+            let readable = |p: &&String| {
+                !matches!(
+                    crate::docopen::doc_kind_by_name(Path::new(p.as_str())),
+                    Some(
+                        crate::docopen::DocKind::Image
+                            | crate::docopen::DocKind::Video
+                            | crate::docopen::DocKind::Audio
+                            | crate::docopen::DocKind::Pdf
+                    )
+                )
+            };
             let mut scored: Vec<(i64, &String)> = g
                 .changed
                 .iter()
                 .filter(|c| !c.ends_with('/'))
                 .chain(g.files.iter())
+                .filter(readable)
                 .filter_map(|p| flyout::file_score(p, &q).map(|s| (s, p)))
                 .collect();
             scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
@@ -2823,8 +2837,8 @@ impl Workspace {
                 }
                 drawn += 1;
                 let (bg, sign, sign_ink) = match l.kind {
-                    LineKind::Added => (Some(ink.ok.alpha(0.12)), "+", ink.ok),
-                    LineKind::Removed => (Some(ink.danger.alpha(0.12)), "\u{2212}", ink.danger),
+                    LineKind::Added => (Some(ink.ok.alpha(0.17)), "+", ink.ok),
+                    LineKind::Removed => (Some(ink.danger.alpha(0.17)), "\u{2212}", ink.danger),
                     LineKind::Context => (None, " ", ink.ghost),
                     LineKind::NoNewline => (None, "", ink.faint),
                 };

@@ -440,9 +440,10 @@ pub fn file_score(path: &str, query: &str) -> Option<i64> {
     if let Some(at) = lower.find(&q) {
         return Some(4_000 - at as i64 / 4 + short);
     }
-    // Letters in order, anywhere: `mrs` finds `main.rs`.
+    // Letters in order within the file's own name: `mrs` finds `main.rs`.
+    // Across the whole path they find nearly everything in a large tree.
     let mut gaps = 0i64;
-    let mut it = lower.chars();
+    let mut it = name.chars();
     for c in q.chars() {
         let mut found = false;
         for d in it.by_ref() {
@@ -2004,6 +2005,11 @@ rename to renamed.rs
             "letters in order"
         );
         assert_eq!(file_score("app/src/main.rs", "zzz"), None);
+        assert_eq!(
+            file_score("docs/floor-canvas/layout.png", "flyout"),
+            None,
+            "letters scattered across folders are no match"
+        );
         assert_eq!(file_score("anything", "  "), Some(0));
         assert!(
             file_score("a/flyout_view.rs", "flyout") > file_score("flyout/a.rs", "flyout"),
