@@ -103,6 +103,7 @@ mod prompt;
 mod ptyscan;
 mod readrows;
 mod recover;
+mod relate_view;
 mod restricted;
 mod screenread;
 mod session;
@@ -375,7 +376,7 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 8] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 9] = [
     (
         "render_rail",
         Warped::FlatByDesign {
@@ -431,6 +432,16 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 8] = [
                   under a tube its caret and chips would bow away from where \
                   they are clicked. Bought flat by `composer` in the \
                   suppression list, like the launcher panel it sits beside.",
+        },
+    ),
+    (
+        "relate dialog",
+        Warped::FlatByDesign {
+            flag: "relate",
+            why: "a dialog of verb rows and buttons over every pane of the \
+                  active tab, laid out like the composer page and flattened by \
+                  `relate` in the suppression list for the same reason: under a \
+                  tube its rows would bow away from where they are clicked.",
         },
     ),
     (
@@ -3705,6 +3716,10 @@ type BarBoxes = Arc<Mutex<Vec<(tree::RowId, Bounds<Pixels>)>>>;
 /// Scanned newest-last so the innermost row wins where boxes overlap. A free
 /// function rather than a method because the boxes are the entire input: the
 /// geometry can then be tested without standing up a window.
+/// The part of a tab's row, top to bottom, where a carried tab relates rather
+/// than reorders (`Workspace::bar_relate_drop`).
+const RELATE_BAND: std::ops::Range<f32> = 0.3..0.7;
+
 fn bar_drop_at(rows: &[(tree::RowId, Bounds<Pixels>)], pos: Point<Pixels>) -> Option<tree::Drop> {
     let Some((id, bounds)) = rows.iter().rev().find(|(_, b)| b.contains(&pos)) else {
         return under_the_tree(rows, pos);
@@ -4732,6 +4747,9 @@ struct Workspace {
     /// What was typed into the composer when it was last put away, kept for
     /// the next time it opens.
     composer_stash: Option<(String, Vec<std::path::PathBuf>)>,
+    /// The relate dialog: a pane or tab dropped on another tab, asking how the
+    /// two agents work together (`relate_view.rs`).
+    relate: Option<relate_view::Relate>,
     /// What a person has said about the inbox — snoozes, done marks, which
     /// shelves are open, which face the spine shows — and the file it is kept
     /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
@@ -6698,6 +6716,7 @@ impl Workspace {
             agent_launcher: None,
             composer: None,
             composer_stash: None,
+            relate: None,
             inbox_store: std::cell::RefCell::new(Self::inbox_load()),
             inbox_tracker: std::cell::RefCell::new(inbox::Tracker::default()),
             inbox_memo: std::cell::RefCell::new(None),
@@ -15404,6 +15423,38 @@ impl Workspace {
         bar_drop_at(&rows, pos)
     }
 
+    /// A tab carried over the MIDDLE of another tab's row, when both have an
+    /// agent: a release there opens the relate dialog rather than filing.
+    ///
+    /// The middle band only, so the top and bottom of every row still place
+    /// the tab above or below it as before; and only between agents, so a
+    /// shell tab's row is reordered across its whole height exactly as it was.
+    fn bar_relate_drop(
+        &self,
+        what: BarDragged,
+        pos: Point<Pixels>,
+        cx: &App,
+    ) -> Option<tree::Drop> {
+        let BarDragged::Task(i) = what else {
+            return None;
+        };
+        let j = {
+            let rows = self.bar_bounds.lock().unwrap();
+            let (id, b) = rows.iter().rev().find(|(_, b)| b.contains(&pos))?;
+            let tree::RowId::Task(j) = *id else {
+                return None;
+            };
+            let frac =
+                (f32::from(pos.y) - f32::from(b.origin.y)) / f32::from(b.size.height).max(1.0);
+            (RELATE_BAND.contains(&frac) && j != i).then_some(j)?
+        };
+        let actor = self.tab_agents(i, cx).into_iter().next()?;
+        self.tab_agents(j, cx)
+            .iter()
+            .any(|t| *t != actor)
+            .then_some(tree::Drop::Into(tree::RowId::Task(j)))
+    }
+
     /// Write a task's branch from a resolved [`tree::Place`] — the two fields
     /// that say where it hangs, set together so they cannot disagree.
     fn place_task(&mut self, i: usize, place: tree::Place) {
@@ -21974,6 +22025,7 @@ impl Workspace {
             || self.update_menu
             || self.savings_menu
             || self.composer.is_some()
+            || self.relate.is_some()
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -22087,6 +22139,12 @@ impl Workspace {
         // kept for next time.
         if self.composer.is_some() {
             self.composer_escape();
+            return true;
+        }
+        // The relate dialog draws nothing until it is answered, so Esc is a
+        // plain no.
+        if self.relate.is_some() {
+            self.relate = None;
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -22307,6 +22365,9 @@ impl Workspace {
         // The composer owns every key while it is up: one that fell through
         // would reach a terminal behind a page.
         if self.composer.is_some() && self.composer_key(ks, window, cx) {
+            return;
+        }
+        if self.relate.is_some() && self.relate_key(ks, window, cx) {
             return;
         }
         // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
@@ -23137,7 +23198,11 @@ impl Workspace {
                 return;
             }
             let pos = ev.position;
-            let over = self.resolve_bar_drop(pos);
+            let relate = self
+                .bar_drag
+                .as_ref()
+                .and_then(|d| self.bar_relate_drop(d.what, pos, cx));
+            let over = relate.or_else(|| self.resolve_bar_drop(pos));
             let in_bay = self.point_in_bay(pos);
             if let Some(d) = self.bar_drag.as_mut() {
                 d.at = pos;
@@ -23446,6 +23511,17 @@ impl Workspace {
                 return;
             }
             if drag.engaged {
+                // Over the middle of another tab's row: the two tabs' agents
+                // are being introduced, not filed (`bar_relate_drop`).
+                if let (BarDragged::Task(i), Some(tree::Drop::Into(tree::RowId::Task(j)))) =
+                    (drag.what, drag.over)
+                {
+                    if let Some(actor) = self.tab_agents(i, cx).into_iter().next() {
+                        self.offer_relate(actor, j, None, window, cx);
+                    }
+                    cx.notify();
+                    return;
+                }
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
                         self.save(cx);
@@ -23546,7 +23622,30 @@ impl Workspace {
                     // come back the same way.
                     self.close_pane(drag.id, window, cx);
                 } else if let Some(target) = target {
-                    self.perform_drop(drag.id, target, window, cx);
+                    // A pane dropped on ANOTHER tab with an agent in it asks how
+                    // the two agents work together; moving it in stays one of
+                    // the answers (`relate_view.rs`). No agent on either side,
+                    // and the drop joins the tab as it always did.
+                    let onto = match &target {
+                        DropTarget::Tab { index } | DropTarget::BarTask { index, .. } => {
+                            Some(*index)
+                        }
+                        _ => None,
+                    };
+                    let home = self.tabs.iter().position(|t| {
+                        let mut v = vec![];
+                        t.root.leaves(&mut v);
+                        v.iter().any(|e| e.entity_id() == drag.id)
+                    });
+                    let offered = match (onto, self.pane_by_id(drag.id)) {
+                        (Some(to), Some(pane)) if home != Some(to) => {
+                            self.offer_relate(pane, to, Some((drag.id, target.clone())), window, cx)
+                        }
+                        _ => false,
+                    };
+                    if !offered {
+                        self.perform_drop(drag.id, target, window, cx);
+                    }
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
                     // brand-new window. Guarded so you can't pop out your only
@@ -32048,6 +32147,9 @@ impl Render for Workspace {
         if self.composer.is_some() && !self.focus_handle.is_focused(window) {
             self.composer_put_away();
         }
+        if self.relate.is_some() && !self.focus_handle.is_focused(window) {
+            self.relate = None;
+        }
         warp::set_suppressed(
             pane_popup_open
                 // PAINT raises a card over EVERY pane at once, each one drawn
@@ -32095,6 +32197,7 @@ impl Render for Workspace {
                 || self.agent_launcher.is_some()
                 // The composer is a page over every pane of the active tab.
                 || self.composer.is_some()
+                || self.relate.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -39896,6 +39999,13 @@ impl Render for Workspace {
             // client-server" and "above host debts" are different releases and
             // the caret alone does not name what it is next to.
             let (label, color) = match d.over {
+                Some(tree::Drop::Into(row @ tree::RowId::Task(_))) => {
+                    let (name, c) = named(row);
+                    (
+                        lang::fill(self.lang.strings().entry.drag_relate, &[("name", &name)]),
+                        c,
+                    )
+                }
                 Some(tree::Drop::Into(row)) => {
                     let (name, c) = named(row);
                     (lang::fill(ui.drag_into, &[("name", &name)]), c)
@@ -39971,7 +40081,8 @@ impl Render for Workspace {
             .child(pane_area)
             // The composer lies over the panes inside the screen's own box, so
             // it can cover them without resizing any (`entry_view.rs`).
-            .children(self.render_composer(&th, cx));
+            .children(self.render_composer(&th, cx))
+            .children(self.render_relate(&th, cx));
 
         // The tree and the screen share the space under the mother bar. The bar
         // is `flex_none` at its own width and the screen takes what is left, so
@@ -40057,6 +40168,7 @@ impl Render for Workspace {
                     && !m.platform
                     && (!m.alt || digit)
                     && ws.composer.is_none()
+                    && ws.relate.is_none()
                     && (ws.rail_key(key, cx) || ws.art_key(key, cx))
                 {
                     cx.stop_propagation();
@@ -44898,6 +45010,10 @@ mod tests {
                 cut(include_str!("threshing_floor_view.rs"), "\n#[cfg(test)]"),
             ),
             ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            (
+                "relate_view.rs",
+                cut(include_str!("relate_view.rs"), "\n#[cfg(test)]"),
+            ),
             ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
             ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
             (

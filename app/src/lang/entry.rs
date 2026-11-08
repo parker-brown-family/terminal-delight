@@ -88,6 +88,36 @@ pub struct Entry {
     pub order_returned: &'static str,
     /// Shown when the custom local runner is chosen with a far machine. {machine} is the far machine's name.
     pub composer_far_local: &'static str,
+    /// Dialog opened by dropping a pane or tab onto another tab: its heading.
+    pub relate_title: &'static str,
+    /// Under the heading: what the dialog decides.
+    pub relate_sub: &'static str,
+    /// What the SEE line lets the first agent do to the second.
+    pub relate_see: &'static str,
+    /// What the READ line lets the first agent do to the second.
+    pub relate_read: &'static str,
+    /// What the ASK line lets the first agent do to the second.
+    pub relate_ask: &'static str,
+    /// What the PROMPT line lets the first agent do to the second.
+    pub relate_prompt: &'static str,
+    /// Beside the line already drawn between them. {rung} is its verb.
+    pub relate_now: &'static str,
+    /// Button: turn the relationship round.
+    pub relate_swap: &'static str,
+    /// Button: draw the line.
+    pub relate_save: &'static str,
+    /// Button: close the dialog, drawing nothing.
+    pub relate_cancel: &'static str,
+    /// Button, only after a PANE was dropped: the old landing, moving it into the tab.
+    pub relate_move: &'static str,
+    /// The dialog's keys.
+    pub relate_hint: &'static str,
+    /// Shown when the two are in different orgs on the Threshing Floor.
+    pub relate_split: &'static str,
+    /// Shown when the dialog is asked to draw before a verb is picked.
+    pub relate_none: &'static str,
+    /// Drag chip over the middle of another tab's row. {name} is that tab.
+    pub drag_relate: &'static str,
 }
 
 pub const EN: Entry = Entry {
@@ -133,6 +163,22 @@ pub const EN: Entry = Entry {
     order_returned: "newest first",
     composer_far_local:
         "A local runner runs on this machine only: pick claude or codex for {machine}.",
+    relate_title: "How should these two work together?",
+    relate_sub: "Draws a line on the Threshing Floor: how far the first may reach the second.",
+    relate_see: "sees it in the census",
+    relate_read: "reads its screen and tool calls",
+    relate_ask: "asks it questions, answered by a read-only copy",
+    relate_prompt: "types into its prompt as its next turn",
+    relate_now: "now: {rung}",
+    relate_swap: "⇄ swap",
+    relate_save: "Draw the line",
+    relate_cancel: "Cancel",
+    relate_move: "Move the pane into this tab instead",
+    relate_hint: "1–4 choose · s swap · ↲ draw · esc cancel",
+    relate_split:
+        "These two are in different orgs, so this line is drawn on the Threshing Floor's map.",
+    relate_none: "Pick what the first may do.",
+    drag_relate: "work with {name}",
 };
 
 pub const ES: Entry = Entry {
@@ -176,6 +222,21 @@ pub const ES: Entry = Entry {
     order_rail: "primero el que más espera",
     order_returned: "primero lo más reciente",
     composer_far_local: "Un programa local solo se ejecuta en esta máquina: elige claude o codex para {machine}.",
+    relate_title: "¿Cómo deben trabajar juntos estos dos?",
+    relate_sub: "Traza una línea en el Threshing Floor: hasta dónde el primero puede llegar al segundo.",
+    relate_see: "lo ve en el censo",
+    relate_read: "lee su pantalla y sus llamadas a herramientas",
+    relate_ask: "le hace preguntas, que responde una copia de solo lectura",
+    relate_prompt: "escribe en su prompt como su siguiente turno",
+    relate_now: "ahora: {rung}",
+    relate_swap: "⇄ invertir",
+    relate_save: "Trazar la línea",
+    relate_cancel: "Cancelar",
+    relate_move: "Mover el panel a esta pestaña",
+    relate_hint: "1–4 elegir · s invertir · ↲ trazar · esc cancelar",
+    relate_split: "Estos dos están en organizaciones distintas: esta línea se traza en el mapa del Threshing Floor.",
+    relate_none: "Elige qué puede hacer el primero.",
+    drag_relate: "trabajar con {name}",
 };
 
 pub const DE: Entry = Entry {
@@ -219,6 +280,21 @@ pub const DE: Entry = Entry {
     order_rail: "am längsten wartend zuerst",
     order_returned: "neueste zuerst",
     composer_far_local: "Ein lokales Programm läuft nur auf diesem Rechner: wähl claude oder codex für {machine}.",
+    relate_title: "Wie sollen diese beiden zusammenarbeiten?",
+    relate_sub: "Zieht eine Linie auf dem Threshing Floor: wie weit der Erste den Zweiten erreichen darf.",
+    relate_see: "sieht ihn in der Übersicht",
+    relate_read: "liest seinen Bildschirm und seine Tool-Aufrufe",
+    relate_ask: "stellt ihm Fragen, beantwortet von einer schreibgeschützten Kopie",
+    relate_prompt: "tippt in seinen Prompt, als nächsten Zug",
+    relate_now: "jetzt: {rung}",
+    relate_swap: "⇄ umdrehen",
+    relate_save: "Linie ziehen",
+    relate_cancel: "Abbrechen",
+    relate_move: "Bereich stattdessen in diesen Tab verschieben",
+    relate_hint: "1–4 wählen · s umdrehen · ↲ ziehen · esc abbrechen",
+    relate_split: "Die beiden sind in verschiedenen Orgs: Diese Linie wird auf der Karte des Threshing Floor gezogen.",
+    relate_none: "Wähl, was der Erste darf.",
+    drag_relate: "mit {name} arbeiten",
 };
 
 pub const FR: Entry = Entry {
@@ -262,6 +338,21 @@ pub const FR: Entry = Entry {
     order_rail: "le plus ancien d’abord",
     order_returned: "le plus récent d’abord",
     composer_far_local: "Un programme local ne tourne que sur cette machine : choisissez claude ou codex pour {machine}.",
+    relate_title: "Comment ces deux-là doivent-ils travailler ensemble ?",
+    relate_sub: "Trace une ligne sur le Threshing Floor : jusqu’où le premier peut atteindre le second.",
+    relate_see: "le voit dans le recensement",
+    relate_read: "lit son écran et ses appels d’outils",
+    relate_ask: "lui pose des questions, auxquelles répond une copie en lecture seule",
+    relate_prompt: "écrit dans son prompt, comme son prochain tour",
+    relate_now: "actuellement : {rung}",
+    relate_swap: "⇄ inverser",
+    relate_save: "Tracer la ligne",
+    relate_cancel: "Annuler",
+    relate_move: "Déplacer plutôt le volet dans cet onglet",
+    relate_hint: "1–4 choisir · s inverser · ↲ tracer · esc annuler",
+    relate_split: "Ces deux-là sont dans des orgs différentes : cette ligne se trace sur la carte du Threshing Floor.",
+    relate_none: "Choisissez ce que le premier peut faire.",
+    drag_relate: "travailler avec {name}",
 };
 
 pub const RU: Entry = Entry {
@@ -305,6 +396,21 @@ pub const RU: Entry = Entry {
     order_rail: "сначала дольше ждущие",
     order_returned: "сначала новые",
     composer_far_local: "Локальная программа работает только на этой машине: выберите claude или codex для {machine}.",
+    relate_title: "Как этим двоим работать вместе?",
+    relate_sub: "Проводит линию на Threshing Floor: насколько первый может достать второго.",
+    relate_see: "видит его в списке",
+    relate_read: "читает его экран и вызовы инструментов",
+    relate_ask: "задаёт ему вопросы, на которые отвечает копия только для чтения",
+    relate_prompt: "пишет в его промпт как следующий ход",
+    relate_now: "сейчас: {rung}",
+    relate_swap: "⇄ развернуть",
+    relate_save: "Провести линию",
+    relate_cancel: "Отмена",
+    relate_move: "Лучше перенести панель в эту вкладку",
+    relate_hint: "1–4 выбор · s развернуть · ↲ провести · esc отмена",
+    relate_split: "Эти двое в разных оргах: такую линию проводят на карте Threshing Floor.",
+    relate_none: "Выберите, что может первый.",
+    drag_relate: "работать с {name}",
 };
 
 pub const ZH: Entry = Entry {
@@ -348,6 +454,21 @@ pub const ZH: Entry = Entry {
     order_rail: "等待最久的优先",
     order_returned: "最新的优先",
     composer_far_local: "本地程序只能在这台机器上运行：请为 {machine} 选择 claude 或 codex。",
+    relate_title: "这两个该如何协作？",
+    relate_sub: "在 Threshing Floor 上画一条线：第一个能触及第二个到什么程度。",
+    relate_see: "在名单中看到它",
+    relate_read: "读取它的屏幕和工具调用",
+    relate_ask: "向它提问，由只读副本回答",
+    relate_prompt: "作为下一轮写入它的提示",
+    relate_now: "当前：{rung}",
+    relate_swap: "⇄ 反转",
+    relate_save: "画线",
+    relate_cancel: "取消",
+    relate_move: "改为把窗格移入此标签页",
+    relate_hint: "1–4 选择 · s 反转 · ↲ 画线 · esc 取消",
+    relate_split: "这两个属于不同的组织：这条线要在 Threshing Floor 的地图上画。",
+    relate_none: "先选择第一个能做什么。",
+    drag_relate: "与 {name} 协作",
 };
 
 pub const JA: Entry = Entry {
@@ -391,6 +512,21 @@ pub const JA: Entry = Entry {
     order_rail: "待ち時間の長い順",
     order_returned: "新しい順",
     composer_far_local: "ローカルの実行プログラムはこのマシン専用です。{machine} には claude か codex を選んでください。",
+    relate_title: "この二つをどう連携させますか？",
+    relate_sub: "Threshing Floor に線を引きます：一つ目が二つ目にどこまで届くか。",
+    relate_see: "一覧で見える",
+    relate_read: "画面とツール呼び出しを読む",
+    relate_ask: "質問し、読み取り専用のコピーが答える",
+    relate_prompt: "次のターンとしてプロンプトに書き込む",
+    relate_now: "現在：{rung}",
+    relate_swap: "⇄ 入れ替え",
+    relate_save: "線を引く",
+    relate_cancel: "キャンセル",
+    relate_move: "代わりにペインをこのタブへ移す",
+    relate_hint: "1–4 選択 · s 入れ替え · ↲ 線を引く · esc キャンセル",
+    relate_split: "二つは別の組織にいます。この線は Threshing Floor のマップで引きます。",
+    relate_none: "一つ目にできることを選んでください。",
+    drag_relate: "{name} と連携",
 };
 
 pub const KO: Entry = Entry {
@@ -434,6 +570,21 @@ pub const KO: Entry = Entry {
     order_rail: "오래 기다린 순",
     order_returned: "최신 순",
     composer_far_local: "로컬 실행기는 이 머신에서만 실행됩니다. {machine}에는 claude나 codex를 고르세요.",
+    relate_title: "이 둘은 어떻게 함께 일해야 하나요?",
+    relate_sub: "Threshing Floor에 선을 긋습니다: 첫째가 둘째에게 어디까지 닿을 수 있는지.",
+    relate_see: "목록에서 봅니다",
+    relate_read: "화면과 도구 호출을 읽습니다",
+    relate_ask: "질문하고, 읽기 전용 사본이 답합니다",
+    relate_prompt: "다음 턴으로 프롬프트에 입력합니다",
+    relate_now: "현재: {rung}",
+    relate_swap: "⇄ 뒤집기",
+    relate_save: "선 긋기",
+    relate_cancel: "취소",
+    relate_move: "대신 창을 이 탭으로 옮기기",
+    relate_hint: "1–4 선택 · s 뒤집기 · ↲ 긋기 · esc 취소",
+    relate_split: "둘은 서로 다른 조직에 있습니다. 이 선은 Threshing Floor 지도에서 긋습니다.",
+    relate_none: "첫째가 할 수 있는 일을 고르세요.",
+    drag_relate: "{name}와 함께 일하기",
 };
 
 pub const HI: Entry = Entry {
@@ -478,4 +629,19 @@ pub const HI: Entry = Entry {
     order_rail: "सबसे देर से रुके पहले",
     order_returned: "सबसे नए पहले",
     composer_far_local: "लोकल प्रोग्राम सिर्फ़ इसी मशीन पर चलता है: {machine} के लिए claude या codex चुनें।",
+    relate_title: "ये दोनों साथ कैसे काम करें?",
+    relate_sub: "Threshing Floor पर एक रेखा खींचता है: पहला दूसरे तक कितनी दूर पहुँच सकता है।",
+    relate_see: "उसे सूची में देखता है",
+    relate_read: "उसकी स्क्रीन और टूल कॉल पढ़ता है",
+    relate_ask: "उससे सवाल पूछता है, जिनका जवाब एक केवल-पढ़ने वाली कॉपी देती है",
+    relate_prompt: "अगली बारी के रूप में उसके प्रॉम्प्ट में लिखता है",
+    relate_now: "अभी: {rung}",
+    relate_swap: "⇄ उलटें",
+    relate_save: "रेखा खींचें",
+    relate_cancel: "रद्द करें",
+    relate_move: "इसके बजाय पैन को इस टैब में ले जाएँ",
+    relate_hint: "1–4 चुनें · s उलटें · ↲ खींचें · esc रद्द",
+    relate_split: "ये दोनों अलग-अलग org में हैं, इसलिए यह रेखा Threshing Floor के मैप पर खींची जाती है।",
+    relate_none: "पहले चुनें कि पहला क्या कर सकता है।",
+    drag_relate: "{name} के साथ काम",
 };
