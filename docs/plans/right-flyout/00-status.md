@@ -96,7 +96,8 @@ pages; see the call on native rendering for why this build does not start there.
       including a real Alt+click on a printed `path:line`.
 - [x] One review round from another provider (Codex, read-only): five findings, all real, all
       fixed, the two with tests checked by putting the old code back.
-- [ ] Brief for Parker; the workspace 7 window on the build.
+- [x] Brief for Parker (`~/Work/terminal-delight/reports/2026-11-08-right-bar-flyout.html`); the
+      workspace 7 t3 window relaunched on the build, attached to the same t3 shells.
 
 ## Surprises and discoveries
 
