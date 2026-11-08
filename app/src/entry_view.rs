@@ -1018,17 +1018,7 @@ impl Workspace {
             .flex_col()
             .gap(px(12. * s))
             .p(px(22. * s))
-            .rounded(sk.capped(14.))
-            .bg(th.surface.alpha(0.92))
-            .border(sk.box_border(1.))
-            .border_color(th.accent.alpha(0.35))
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.45),
-                offset: point(px(0.), px(12.)),
-                blur_radius: px(36.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .map(|d| dialog_card(th, &sk, d))
             // A click inside the page is the page's: it must not reach the
             // panes behind it, and it gives the keyboard back to the page.
             .on_mouse_down(
@@ -1104,10 +1094,14 @@ impl Workspace {
 
         Some(
             div()
+                // The card stands over the panes, so the warp's grade is kept
+                // off it, the way every floating card in the house is.
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .id("composer-page")
                 .debug_selector(|| "composer-page".into())
                 .absolute()
                 .inset_0()
+                .occlude()
                 .flex()
                 .items_center()
                 .justify_center()
@@ -1121,6 +1115,27 @@ impl Workspace {
                 .into_any_element(),
         )
     }
+}
+
+/// The frame a centred dialog over the panes wears: the house's floating
+/// card, as the token-savings card has it. A two-pixel accent edge, an opaque
+/// ground, the floating shadows, then the skin's own finish, so a dialog reads
+/// as a box with an edge in every skin. The composer and the relate dialog
+/// share it; before they did, each drew a faint edge of its own over a
+/// see-through ground and the dialog had no visible end.
+pub(crate) fn dialog_card<E>(th: &theme::Theme, sk: &skin::Skin, d: E) -> E
+where
+    E: Styled + ParentElement + gpui::prelude::FluentBuilder,
+{
+    d.relative()
+        .overflow_hidden()
+        .rounded_md()
+        .border(sk.box_border(2.))
+        .border_color(th.accent.alpha(0.85))
+        .bg(darken(th.surface, 0.62))
+        .shadow(float_shadows(th.accent, th.grade.phosphor))
+        .map(|d| sk.popup(sk.finish(d)))
+        .map(|d| sk.chrome(d))
 }
 
 #[cfg(test)]

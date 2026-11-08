@@ -5252,6 +5252,10 @@ struct Workspace {
     bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
     bar_bounds: BarBoxes,
+    /// An INBOX row being dragged onto another agent's row (`inbox_view.rs`).
+    inbox_drag: Option<inbox_view::InboxDrag>,
+    /// Where each INBOX row was drawn last frame, by the pane it stands for.
+    inbox_bounds: inbox_view::InboxBoxes,
     /// Where the bay was drawn this frame, for the same hit-testing. Separate
     /// from `bar_bounds` because the bay is not a tree row and must never be
     /// reachable by the code that walks rows looking for a place to file into.
@@ -6931,6 +6935,8 @@ impl Workspace {
             bar_rename: None,
             bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
+            inbox_drag: None,
+            inbox_bounds: Arc::new(Mutex::new(Vec::new())),
             bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
             tab_digits: saved.tab_digits,
@@ -23189,6 +23195,20 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // an INBOX row carried toward another agent's row: engage past the
+        // same threshold as the tree, so a press on a row is still a click
+        if let Some(d) = self.inbox_drag.as_mut() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.inbox_drag = None;
+            } else {
+                d.at = ev.position;
+                let dx = f32::from(d.at.x) - f32::from(d.start.x);
+                let dy = f32::from(d.at.y) - f32::from(d.start.y);
+                d.engaged |= (dx * dx + dy * dy).sqrt() > 6.0;
+            }
+            cx.notify();
+            return;
+        }
         // a left-bar filing drag: engage past a threshold (so a click on a row
         // is still a click) and resolve which branch a release would file into
         if self.bar_drag.is_some() {
@@ -23500,6 +23520,20 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // an INBOX row let go over another agent's row: the two are introduced
+        // through the relate dialog. Anywhere else, the press was the click
+        // that already went to the row's pane.
+        if let Some(drag) = self.inbox_drag.take() {
+            if drag.engaged {
+                if let Some(to) = self.inbox_relate_target(drag.from, ev.position, cx) {
+                    if let Some(actor) = self.pane_by_id(drag.from) {
+                        self.offer_relate_to(actor, vec![to], None, window, cx);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
         // a left-bar drag lands: file what was grabbed into the branch under the
         // cursor. A drag that never engaged was a click, and the click has
         // already done its work (activate / scope) on the way down.
@@ -23621,6 +23655,13 @@ impl Workspace {
                     // here and a pane closed with alt+w land in one holding and
                     // come back the same way.
                     self.close_pane(drag.id, window, cx);
+                } else if let (Some(to), Some(pane)) = (
+                    self.inbox_relate_target(drag.id, ev.position, cx),
+                    self.pane_by_id(drag.id),
+                ) {
+                    // Onto an agent's INBOX row: that agent, exactly, and no
+                    // move — a row in the inbox is not a place to put a pane.
+                    self.offer_relate_to(pane, vec![to], None, window, cx);
                 } else if let Some(target) = target {
                     // A pane dropped on ANOTHER tab with an agent in it asks how
                     // the two agents work together; moving it in stays one of
@@ -32319,6 +32360,8 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
+        // demo/capture hook (TD_RELATE_DEMO): the relate dialog, once.
+        self.relate_demo(window, cx);
         // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
         // cannot click the counter; a number selects that seat without granting access.
         if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
@@ -40044,7 +40087,28 @@ impl Render for Workspace {
                 .bg(th.accent.alpha(0.9))
                 .text_color(th.bg)
                 .text_size(sk.text_px(10.5))
-                .child(self.lang.strings().ui.drag_moving_subtab)
+                .child(
+                    self.inbox_relate_target(d.id, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| self.lang.strings().ui.drag_moving_subtab.to_string()),
+                )
+        });
+        let inbox_chip = self.inbox_drag.as_ref().filter(|d| d.engaged).map(|d| {
+            div()
+                .absolute()
+                .left(px(f32::from(d.at.x) + 12.))
+                .top(px(f32::from(d.at.y) + 12.))
+                .px_2()
+                .py_0p5()
+                .rounded(sk.radius())
+                .bg(th.accent.alpha(0.9))
+                .text_color(th.bg)
+                .text_size(sk.text_px(10.5))
+                .child(
+                    self.inbox_relate_target(d.from, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| "\u{2026}".to_string()),
+                )
         });
 
         let dragging = self.drag_split;
@@ -40294,6 +40358,7 @@ impl Render for Workspace {
                     .children(group_menu_overlay)
                     .children(bar_chip)
                     .children(drag_chip)
+                    .children(inbox_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
                     // Document gauges must remain clickable while a brief is

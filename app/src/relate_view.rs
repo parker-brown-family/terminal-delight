@@ -25,13 +25,14 @@ const RUNGS: [threshing_floor::Rung; 4] = [
 /// The dialog's state while it is up.
 pub(crate) struct Relate {
     /// The agent the line comes FROM.
-    actor: gpui::WeakEntity<TerminalView>,
-    /// The agents it points AT: every agent pane in the tab dropped onto.
-    targets: Vec<gpui::WeakEntity<TerminalView>>,
+    pub(crate) actor: gpui::WeakEntity<TerminalView>,
+    /// The agents it points AT: every agent pane in the tab dropped onto, or
+    /// the one agent whose INBOX row it was.
+    pub(crate) targets: Vec<gpui::WeakEntity<TerminalView>>,
     rung: Option<threshing_floor::Rung>,
     /// Set when a PANE was dropped: the pane and where it landed, so moving
     /// it into the tab stays one choice.
-    join: Option<(EntityId, DropTarget)>,
+    pub(crate) join: Option<(EntityId, DropTarget)>,
     error: Option<String>,
 }
 
@@ -71,13 +72,30 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> bool {
-        if !actor.read(cx).hosts_agent() {
-            return false;
-        }
         let targets: Vec<Entity<TerminalView>> = self
             .tab_agents(to, cx)
             .into_iter()
             .filter(|t| *t != actor)
+            .collect();
+        self.offer_relate_to(actor, targets, join, window, cx)
+    }
+
+    /// Offer the dialog for a line from `actor` to exactly `targets`: the
+    /// door every drop comes through, a tab's agents or one agent's INBOX row.
+    pub(crate) fn offer_relate_to(
+        &mut self,
+        actor: Entity<TerminalView>,
+        targets: Vec<Entity<TerminalView>>,
+        join: Option<(EntityId, DropTarget)>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        if !actor.read(cx).hosts_agent() {
+            return false;
+        }
+        let targets: Vec<Entity<TerminalView>> = targets
+            .into_iter()
+            .filter(|t| *t != actor && t.read(cx).hosts_agent())
             .collect();
         if targets.is_empty() {
             return false;
@@ -103,6 +121,37 @@ impl Workspace {
         window.focus(&self.focus_handle, cx);
         cx.notify();
         true
+    }
+
+    /// `TD_RELATE_DEMO`: open the dialog once between the first panes of the
+    /// first two tabs, agents or not, so a rig can photograph it without a
+    /// drag. The Floor's and the confirm dialog's demo hooks, for this one.
+    pub(crate) fn relate_demo(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        static SHOWN: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        if std::env::var_os("TD_RELATE_DEMO").is_none()
+            || self.tabs.len() < 2
+            || SHOWN.swap(true, std::sync::atomic::Ordering::Relaxed)
+        {
+            return;
+        }
+        let first = |t: &Tab| {
+            let mut v = Vec::new();
+            t.root.leaves(&mut v);
+            v.first().map(|l| l.downgrade())
+        };
+        let (Some(actor), Some(target)) = (first(&self.tabs[0]), first(&self.tabs[1])) else {
+            return;
+        };
+        self.relate = Some(Relate {
+            actor,
+            targets: vec![target],
+            rung: Some(threshing_floor::Rung::Ask),
+            join: None,
+            error: None,
+        });
+        // The dialog holds the keyboard, as it does when a drop opens it.
+        window.focus(&self.focus_handle, cx);
+        cx.notify();
     }
 
     /// The dialog's keys. Always takes the key while it is up: one that fell
@@ -256,7 +305,9 @@ impl Workspace {
                 .border_color(th.faint.alpha(0.3))
                 .text_size(sk.text_px(12. * s))
                 .text_color(th.text)
-                .child(label)
+                // One line, cut short: a long name wrapped at its narrowest
+                // measure made the card taller than the window.
+                .child(div().w_full().truncate().child(label))
         };
         let mut whom = div().flex_1().min_w_0().flex().flex_col().gap(px(4. * s));
         for t in &r.targets {
@@ -329,6 +380,8 @@ impl Workspace {
                     .child(
                         div()
                             .flex_1()
+                            .min_w_0()
+                            .truncate()
                             .text_size(sk.text_px(10.5 * s))
                             .text_color(th.faint)
                             .child(what),
@@ -357,7 +410,6 @@ impl Workspace {
         let mut buttons = div()
             .flex()
             .flex_row()
-            .flex_wrap()
             .items_center()
             .gap(px(8. * s))
             .child(
@@ -420,23 +472,14 @@ impl Workspace {
 
         let column = div()
             .id("relate-column")
+            .debug_selector(|| "relate-column".into())
             .w_full()
             .max_w(px(640. * s))
             .flex()
             .flex_col()
             .gap(px(12. * s))
             .p(px(22. * s))
-            .rounded(sk.capped(14.))
-            .bg(th.surface.alpha(0.92))
-            .border(sk.box_border(1.))
-            .border_color(th.accent.alpha(0.35))
-            .shadow(vec![BoxShadow {
-                color: hsla(0., 0., 0., 0.45),
-                offset: point(px(0.), px(12.)),
-                blur_radius: px(36.),
-                spread_radius: px(0.),
-                inset: false,
-            }])
+            .map(|d| crate::entry_view::dialog_card(th, &sk, d))
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -474,10 +517,14 @@ impl Workspace {
 
         Some(
             div()
+                // The card stands over the panes, so the warp's grade is kept
+                // off it, the way every floating card in the house is.
+                .on_children_prepainted(keep_panels_from_doc_grade)
                 .id("relate-page")
                 .debug_selector(|| "relate-page".into())
                 .absolute()
                 .inset_0()
+                .occlude()
                 .flex()
                 .items_center()
                 .justify_center()

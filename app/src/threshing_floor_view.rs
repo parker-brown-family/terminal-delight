@@ -10535,6 +10535,120 @@ mod tests {
         });
     }
 
+    /// The dialog is a card the size of what it says, inside the screen, with
+    /// the house edge. Parker's first look found it the height of the window,
+    /// its title pushed off the top and nothing marking where it ended.
+    #[gpui::test]
+    fn the_relate_dialog_is_a_card_that_fits_its_words(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        // Names as long as the ones on Parker's screen: a short name hid it.
+        let lead = pool_member(
+            &ws,
+            cx,
+            "T3 code inspired agent inbox workflow and the composer that files it",
+        );
+        let worker = pool_member(
+            &ws,
+            cx,
+            "Get job application materials together for the remote listing",
+        );
+        cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let to = tab_holding(ws, &worker);
+                assert!(ws.offer_relate(lead.clone(), to, None, window, cx));
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let page = cx.debug_bounds("relate-page").expect("the scrim");
+        let card = cx.debug_bounds("relate-column").expect("the card");
+        assert!(card.top() >= page.top() && card.bottom() <= page.bottom());
+        assert!(
+            card.size.height < page.size.height * 0.75,
+            "the card is the height of its words, not of the window"
+        );
+    }
+
+    /// An agent's row in the INBOX spine relates like a tab does: carried
+    /// onto another agent's row and let go, it opens the dialog for exactly
+    /// those two (Parker: "anything that has an agent in the left spine").
+    #[gpui::test]
+    fn an_inbox_row_dragged_onto_another_agents_row_asks_how_they_relate(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let lead = pool_member(&ws, cx, "Scout");
+        let worker = pool_member(&ws, cx, "Builder");
+        ws.update(cx, |ws, cx| {
+            // The fixture opens the Floor; the gesture is made on the spine.
+            ws.threshing_floor = false;
+            ws.spine_in_scratch = true;
+            ws.set_left_bar(true, cx);
+            ws.set_spine_inbox(true, cx);
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(cx);
+        draw(cx);
+        // Fresh panes rest on SLEEP & QUIET, folded until opened.
+        ws.update(cx, |ws, cx| {
+            if !ws.inbox_store.borrow().is_open(inbox::Shelf::Quiet) {
+                ws.inbox_store.borrow_mut().toggle_open(inbox::Shelf::Quiet);
+                cx.notify();
+            }
+        });
+        draw(cx);
+        let row_of = |cx: &mut gpui::VisualTestContext, leaf: &Entity<TerminalView>| {
+            let id = leaf.entity_id();
+            ws.read_with(cx, |ws, _| {
+                ws.inbox_bounds
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(e, _)| *e == id)
+                    .map(|(_, b)| *b)
+            })
+            .expect("the agent has a row in the inbox")
+        };
+        let from = row_of(cx, &lead).center();
+        let to = row_of(cx, &worker).center();
+        let none = gpui::Modifiers::default();
+        cx.simulate_mouse_down(from, gpui::MouseButton::Left, none);
+        cx.simulate_mouse_move(
+            point(from.x + px(20.), from.y),
+            gpui::MouseButton::Left,
+            none,
+        );
+        cx.simulate_mouse_move(to, gpui::MouseButton::Left, none);
+        draw(cx);
+        cx.simulate_mouse_up(to, gpui::MouseButton::Left, none);
+        draw(cx);
+        ws.read_with(cx, |ws, _| {
+            let r = ws.relate.as_ref().expect("the dialog is up");
+            assert_eq!(r.actor.entity_id(), lead.entity_id());
+            let targets: Vec<_> = r.targets.iter().map(|t| t.entity_id()).collect();
+            assert_eq!(targets, vec![worker.entity_id()], "that agent, exactly");
+            assert!(
+                r.join.is_none(),
+                "an inbox row is not a place to move a pane"
+            );
+        });
+    }
+
     /// A draft somebody left half made on the Floor survives a drop.
     #[gpui::test]
     fn a_drop_leaves_the_floors_own_draft_alone(cx: &mut gpui::TestAppContext) {

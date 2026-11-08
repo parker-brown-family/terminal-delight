@@ -27,6 +27,22 @@ pub(crate) struct InboxMemo {
     panes: Rc<HashMap<u64, EntityId>>,
 }
 
+/// Where each INBOX row was drawn, by the pane it stands for: the hit boxes a
+/// drag reads, rebuilt with the list every frame.
+pub(crate) type InboxBoxes = Arc<Mutex<Vec<(EntityId, Bounds<Pixels>)>>>;
+
+/// An INBOX row carried toward another agent's row. Let go over one and the
+/// two are introduced through the relate dialog (`relate_view.rs`), the same
+/// door a tab dropped on a tab comes through.
+pub(crate) struct InboxDrag {
+    /// The pane the grabbed row stands for.
+    pub(crate) from: EntityId,
+    pub(crate) start: Point<Pixels>,
+    pub(crate) at: Point<Pixels>,
+    /// Past the threshold: until then the press is a click on the row.
+    pub(crate) engaged: bool,
+}
+
 /// Where the inbox's agent badges key their animations: past the strip's and
 /// the tree's ranges, so a pane showing in three places animates three times
 /// rather than sharing one clock between them.
@@ -626,6 +642,52 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The agent whose INBOX row is under `pos`, when it is not `from` and
+    /// both are agents: what a release there would relate `from` to.
+    pub(crate) fn inbox_relate_target(
+        &self,
+        from: EntityId,
+        pos: Point<Pixels>,
+        cx: &App,
+    ) -> Option<Entity<TerminalView>> {
+        let id = self
+            .inbox_bounds
+            .lock()
+            .unwrap()
+            .iter()
+            .rev()
+            .find(|(_, b)| b.contains(&pos))
+            .map(|(id, _)| *id)
+            .filter(|id| *id != from)?;
+        let both = self.pane_by_id(from)?.read(cx).hosts_agent();
+        self.pane_by_id(id)
+            .filter(|to| both && to.read(cx).hosts_agent())
+    }
+
+    /// The drag chip over an agent's row: who the release would introduce.
+    pub(crate) fn inbox_relate_chip(&self, to: &Entity<TerminalView>, cx: &App) -> String {
+        let name = self.pane_name(to, cx);
+        let name = if name.tab.is_empty() {
+            name.full()
+        } else {
+            name.tab
+        };
+        lang::fill(self.lang.strings().entry.drag_relate, &[("name", &name)])
+    }
+
+    /// The row a drag in flight would land on, if any: lit so the drop is
+    /// never a guess.
+    fn inbox_drop_over(&self, cx: &App) -> Option<EntityId> {
+        if let Some(d) = self.inbox_drag.as_ref().filter(|d| d.engaged) {
+            return self
+                .inbox_relate_target(d.from, d.at, cx)
+                .map(|e| e.entity_id());
+        }
+        let d = self.drag_pane.as_ref().filter(|d| d.engaged)?;
+        self.inbox_relate_target(d.id, d.at, cx)
+            .map(|e| e.entity_id())
+    }
+
     /// The rows a person can see, top to bottom: LOOK AT ME, then each open
     /// shelf. The keyboard walks exactly what is drawn, the rail's rule for its
     /// own cursor — "row 4" means the fourth row on screen or nothing.
@@ -813,7 +875,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> Vec<AnyElement> {
         let sk = skin::skin(cx, s);
-        let (shelves, _) = self.inbox_rows(cx);
+        let (shelves, panes) = self.inbox_rows(cx);
+        // Read against last frame's boxes, then rebuilt from this frame's.
+        let over = self.inbox_drop_over(cx);
+        self.inbox_bounds.lock().unwrap().clear();
         let e = self.lang.strings().entry;
         let mut out: Vec<AnyElement> = Vec::new();
         if shelves.is_empty() {
@@ -849,7 +914,18 @@ impl Workspace {
         }
         let mut n = 0usize;
         for row in &shelves.look {
-            out.push(self.inbox_row(row, n, &sk, th, s, cx));
+            out.push(self.inbox_row(
+                row,
+                n,
+                {
+                    let id = panes.get(&row.fact.pane).copied();
+                    (id, id.is_some() && over == id)
+                },
+                &sk,
+                th,
+                s,
+                cx,
+            ));
             n += 1;
         }
         // The folded shelves sit at the foot, the way T3 parks its working,
@@ -869,7 +945,18 @@ impl Workspace {
             out.push(self.inbox_shelf_header(shelf, rows.len(), &sk, th, s, cx));
             if self.inbox_store.borrow().is_open(shelf) {
                 for row in rows {
-                    out.push(self.inbox_row(row, n, &sk, th, s, cx));
+                    out.push(self.inbox_row(
+                        row,
+                        n,
+                        {
+                            let id = panes.get(&row.fact.pane).copied();
+                            (id, id.is_some() && over == id)
+                        },
+                        &sk,
+                        th,
+                        s,
+                        cx,
+                    ));
                     n += 1;
                 }
             }
@@ -1055,10 +1142,13 @@ impl Workspace {
     /// One row: mark, title and when on the first line, where it lives on the
     /// second, the agent's own words on a third when the row wants you. The
     /// verbs appear under the pointer; a click anywhere else goes to the pane.
+    #[allow(clippy::too_many_arguments)]
     fn inbox_row(
         &self,
         row: &inbox::Row,
         n: usize,
+        // The pane the row stands for, and whether a drag would land on it.
+        (id, lit): (Option<EntityId>, bool),
         sk: &skin::Skin,
         th: &theme::Theme,
         s: f32,
@@ -1254,11 +1344,42 @@ impl Workspace {
                 )
             })
             .when(shows_verbs, |d| d.child(actions))
+            // The row a drag would land on, lit in the accent the drag chip
+            // wears, so a drop names who it introduces before it happens.
+            .when(lit, |d| {
+                d.bg(th.accent.alpha(0.18)).shadow(vec![BoxShadow {
+                    color: th.accent.alpha(0.9),
+                    offset: point(px(0.), px(0.)),
+                    blur_radius: px(0.),
+                    spread_radius: px(1.),
+                    inset: true,
+                }])
+            })
+            .when_some(id, |d, id| {
+                let store = self.inbox_bounds.clone();
+                d.child(
+                    div().absolute().inset_0().child(
+                        canvas(
+                            move |bounds, _, _| store.lock().unwrap().push((id, bounds)),
+                            |_, _, _, _| {},
+                        )
+                        .size_full(),
+                    ),
+                )
+            })
             .on_mouse_down(
                 MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     ws.inbox_go(key, pane, cx);
+                    // A press is a click; carried past the threshold it is a
+                    // drag toward another agent's row.
+                    ws.inbox_drag = id.map(|from| InboxDrag {
+                        from,
+                        start: ev.position,
+                        at: ev.position,
+                        engaged: false,
+                    });
                 }),
             );
 

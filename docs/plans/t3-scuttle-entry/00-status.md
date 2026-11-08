@@ -66,6 +66,23 @@ follower's tree (`~/Work/td-consolidate-lab`).
 - Asked (built with the default, two-way): join kept as one choice in the dialog rather than
   removed; an org made by a drop is named after the actor's project
 
+## Round 3 — the dialog looked wrong, and the inbox could not relate (2026-11-08)
+
+- **The dialog had no edge and ran off the screen.** Two causes. Its frame was hand-made: a faint
+  one-pixel edge over a see-through ground, with nothing keeping the warp's grade off it. And two
+  long pane names, wrapped at their narrowest measure, made the card 1,287 px tall in a 886 px
+  screen (measured by `the_relate_dialog_is_a_card_that_fits_its_words`). The composer and the
+  dialog now share `entry_view::dialog_card`, the token-savings card's frame (two-pixel accent
+  edge, opaque ground, floating shadows, the skin's finish), with the scrim's `occlude` and
+  `keep_panels_from_doc_grade`. Names, descriptions and the button row keep to one line.
+- **Seen in a real window**, not only measured: `TD_RELATE_DEMO=1` opens the dialog between the
+  first two tabs' panes once, and a hidden window photographs it (rig and pictures in
+  `~/Work/reports/t3-scuttle/`, outside the repository).
+- **Every agent in the left spine relates.** An INBOX row carried onto another agent's row, or a
+  pane dropped onto one, opens the dialog for exactly that agent (`offer_relate_to`). The row a
+  release would land on is lit, and the drag chip names it. Tested by driving the real press, move
+  and release: `an_inbox_row_dragged_onto_another_agents_row_asks_how_they_relate`.
+
 ## Notes for a fresh session
 
 - Research inputs: Theo's video transcript (YouTube `uLGxb4F3SyI`, same cut as the X post),
