@@ -2522,7 +2522,7 @@ impl Workspace {
                     })
                     .when_some(totals.as_ref().filter(|t| t.uncounted > 0), |d, t| {
                         d.child(small(
-                            format!("+{} {}", t.uncounted, f.binary),
+                            lang::fill(f.uncounted, &[("count", &t.uncounted.to_string())]),
                             ink.faint,
                             sk,
                             s,
