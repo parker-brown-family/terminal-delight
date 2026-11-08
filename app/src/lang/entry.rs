@@ -67,8 +67,9 @@ pub struct Entry {
     pub composer_screen: &'static str,
     /// Shown after Ctrl+Enter. {name} is the new tab's name.
     pub composer_started: &'static str,
-    /// Shown when Enter is pressed with no project chosen.
-    pub composer_no_project: &'static str,
+    /// The PROJECT chip's first choice: no project yet. The agent starts in
+    /// the home folder and its tab is filed under no project.
+    pub project_none: &'static str,
     /// Shown when machines.toml cannot be read. {error} is the reader's message.
     pub composer_machines_error: &'static str,
     /// Under the chips when a far machine is chosen. {machine} is its name.
@@ -120,7 +121,7 @@ pub const EN: Entry = Entry {
     composer_machine: "MACHINE",
     composer_screen: "◫ screen",
     composer_started: "Started in the background: {name}",
-    composer_no_project: "Pick a project first: tab to PROJECT and type its name.",
+    project_none: "none — don’t know yet",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note:
         "Runs over ssh on {machine}. This window cannot read its state, so its row says unknown.",
@@ -165,7 +166,7 @@ pub const ES: Entry = Entry {
     composer_machine: "MÁQUINA",
     composer_screen: "◫ pantalla",
     composer_started: "Iniciado en segundo plano: {name}",
-    composer_no_project: "Elige primero un proyecto: tab hasta PROYECTO y escribe su nombre.",
+    project_none: "ninguno — aún no lo sé",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Se ejecuta por ssh en {machine}. Esta ventana no puede leer su estado, así que su fila dice desconocido.",
     composer_filter: "escribe para buscar un proyecto",
@@ -208,7 +209,7 @@ pub const DE: Entry = Entry {
     composer_machine: "RECHNER",
     composer_screen: "◫ Bildschirm",
     composer_started: "Im Hintergrund gestartet: {name}",
-    composer_no_project: "Wähl zuerst ein Projekt: tab zu PROJEKT und tipp seinen Namen.",
+    project_none: "keins — weiß ich noch nicht",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Läuft per ssh auf {machine}. Dieses Fenster kann seinen Zustand nicht lesen, darum zeigt die Zeile unbekannt.",
     composer_filter: "tippen, um ein Projekt zu finden",
@@ -251,7 +252,7 @@ pub const FR: Entry = Entry {
     composer_machine: "POSTE",
     composer_screen: "◫ écran",
     composer_started: "Lancé en arrière-plan : {name}",
-    composer_no_project: "Choisissez d’abord un projet : tab jusqu’à PROJET et tapez son nom.",
+    project_none: "aucun — je ne sais pas encore",
     composer_machines_error: "machines.toml : {error}",
     composer_far_note: "Tourne par ssh sur {machine}. Cette fenêtre ne peut pas lire son état, sa ligne dit donc inconnu.",
     composer_filter: "tapez pour trouver un projet",
@@ -294,7 +295,7 @@ pub const RU: Entry = Entry {
     composer_machine: "МАШИНА",
     composer_screen: "◫ экран",
     composer_started: "Запущено в фоне: {name}",
-    composer_no_project: "Сначала выберите проект: tab до ПРОЕКТА и введите его имя.",
+    project_none: "нет — пока не знаю",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Работает по ssh на {machine}. Это окно не может прочитать его состояние, поэтому строка говорит «неизвестно».",
     composer_filter: "введите, чтобы найти проект",
@@ -337,7 +338,7 @@ pub const ZH: Entry = Entry {
     composer_machine: "机器",
     composer_screen: "◫ 屏幕",
     composer_started: "已在后台启动：{name}",
-    composer_no_project: "请先选择项目：按 tab 到“项目”，输入它的名字。",
+    project_none: "无——还不确定",
     composer_machines_error: "machines.toml：{error}",
     composer_far_note: "通过 ssh 在 {machine} 上运行。此窗口无法读取它的状态，所以它的行显示未知。",
     composer_filter: "输入以查找项目",
@@ -380,7 +381,7 @@ pub const JA: Entry = Entry {
     composer_machine: "マシン",
     composer_screen: "◫ 画面",
     composer_started: "バックグラウンドで開始：{name}",
-    composer_no_project: "先にプロジェクトを選んでください：tab でプロジェクトへ移り、名前を入力。",
+    project_none: "なし — まだ決めていない",
     composer_machines_error: "machines.toml：{error}",
     composer_far_note: "{machine} 上で ssh 経由で動きます。このウィンドウは状態を読めないため、行は不明と表示します。",
     composer_filter: "入力してプロジェクトを探す",
@@ -423,7 +424,7 @@ pub const KO: Entry = Entry {
     composer_machine: "머신",
     composer_screen: "◫ 화면",
     composer_started: "백그라운드에서 시작됨: {name}",
-    composer_no_project: "먼저 프로젝트를 고르세요: tab으로 프로젝트로 가서 이름을 입력하세요.",
+    project_none: "없음 — 아직 모름",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "{machine}에서 ssh로 실행됩니다. 이 창은 상태를 읽을 수 없어 행에 알 수 없음으로 표시됩니다.",
     composer_filter: "입력해서 프로젝트 찾기",
@@ -466,7 +467,7 @@ pub const HI: Entry = Entry {
     composer_machine: "मशीन",
     composer_screen: "◫ स्क्रीन",
     composer_started: "पीछे शुरू हुआ: {name}",
-    composer_no_project: "पहले प्रोजेक्ट चुनें: tab से प्रोजेक्ट पर जाएँ और उसका नाम लिखें।",
+    project_none: "कोई नहीं — अभी पता नहीं",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note:
         "{machine} पर ssh से चलता है। यह विंडो उसकी स्थिति नहीं पढ़ सकती, इसलिए उसकी पंक्ति अज्ञात दिखाती है।",

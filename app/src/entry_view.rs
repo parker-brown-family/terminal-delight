@@ -18,13 +18,18 @@ use super::*;
 pub(crate) struct Composer {
     /// What the person is asking for.
     pub(crate) text: EditBuffer,
+    /// Pictures pasted in, saved under the session's surfaces; they go with
+    /// the sentence as paths (see [`entry::with_pictures`]).
+    pictures: Vec<std::path::PathBuf>,
     pub(crate) focus: entry::Focus,
     projects: Vec<launcher::Project>,
     /// Typed on the PROJECT chip.
     query: String,
     /// Indices into `projects` that match `query`, best first.
     order: Vec<usize>,
-    /// The chosen project, an index into `projects`.
+    /// The chosen project, an index into `projects`. `None` is a choice of its
+    /// own, *none, don't know yet*: the agent starts in the home folder and
+    /// its tab is filed under no project.
     project: Option<usize>,
     harness: launcher::Harness,
     model: Option<String>,
@@ -49,9 +54,15 @@ impl Composer {
             .map(|p| p.path.as_path())
     }
 
+    /// Where the agent starts: the project, or home when there is none yet.
+    fn cwd(&self) -> std::path::PathBuf {
+        self.project_path()
+            .map(std::path::Path::to_path_buf)
+            .unwrap_or_else(session::home_dir)
+    }
+
     fn catalog(&self) -> model_catalog::Snapshot {
-        self.harness
-            .models(self.project_path().unwrap_or(std::path::Path::new(".")))
+        self.harness.models(&self.cwd())
     }
 
     fn far(&self) -> bool {
@@ -60,8 +71,12 @@ impl Composer {
 
     fn refilter(&mut self) {
         self.order = launcher::filter(&self.projects, &self.query);
+        // A query that matches nothing keeps the last choice rather than
+        // falling to none: a typo is not a decision to have no project.
         if !self.query.is_empty() {
-            self.project = self.order.first().copied();
+            if let Some(&first) = self.order.first() {
+                self.project = Some(first);
+            }
         }
     }
 
@@ -70,11 +85,14 @@ impl Composer {
         match self.focus {
             entry::Focus::Text => {}
             entry::Focus::Project => {
-                let list: Vec<Option<usize>> = if self.order.is_empty() {
-                    vec![None]
-                } else {
-                    self.order.iter().copied().map(Some).collect()
-                };
+                // None leads the list until something is typed.
+                let list: Vec<Option<usize>> = self
+                    .query
+                    .is_empty()
+                    .then_some(None)
+                    .into_iter()
+                    .chain(self.order.iter().copied().map(Some))
+                    .collect();
                 if let Some(next) = entry::cycle(&list, &self.project, back) {
                     self.project = next;
                 }
@@ -169,8 +187,9 @@ impl Workspace {
                     .max_by_key(|(_, p)| p.path.as_os_str().len())
                     .map(|(i, _)| i)
             });
+            // Standing in no project opens on none rather than on whichever
+            // repository sorts first.
             let order = launcher::filter(&projects, "");
-            let project = project.or_else(|| order.first().copied());
             let pref = &self.launch_defaults;
             let config = instance::config_dir();
             let (far, machines_error) = match entry::load_machines(&config) {
@@ -189,8 +208,10 @@ impl Workspace {
                 self.lang.strings().entry.composer_machine,
             )];
             machines.extend(far);
+            let (draft, pictures) = self.composer_stash.take().unwrap_or_default();
             self.composer = Some(Composer {
-                text: EditBuffer::seeded(self.composer_stash.take().unwrap_or_default().as_str()),
+                text: EditBuffer::seeded(&draft),
+                pictures,
                 focus: entry::Focus::Text,
                 projects,
                 query: String::new(),
@@ -228,7 +249,8 @@ impl Workspace {
     pub(crate) fn composer_put_away(&mut self) {
         if let Some(c) = self.composer.take() {
             let text = c.text.text();
-            self.composer_stash = (!text.trim().is_empty()).then_some(text);
+            self.composer_stash =
+                (!text.trim().is_empty() || !c.pictures.is_empty()).then_some((text, c.pictures));
         }
     }
 
@@ -310,9 +332,19 @@ impl Workspace {
                 c.query.clear();
             }
             "v" if m.control && c.focus == entry::Focus::Text => {
-                if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                    c.text.insert_capped(&text, 20_000);
+                match Self::composer_clipboard_picture(cx) {
+                    Some(path) => {
+                        if !c.pictures.contains(&path) {
+                            c.pictures.push(path);
+                        }
+                    }
+                    None => {
+                        if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                            c.text.insert_capped(&text, 20_000);
+                        }
+                    }
                 }
+                c.note = None;
             }
             key => match c.focus {
                 entry::Focus::Text => {
@@ -362,19 +394,14 @@ impl Workspace {
         };
         let e = self.lang.strings().entry;
         let sentence = c.text.text();
-        if sentence.trim().is_empty() {
+        if sentence.trim().is_empty() && c.pictures.is_empty() {
             c.note = Some(e.composer_placeholder.to_string());
             self.composer = Some(c);
             cx.notify();
             return;
         }
-        let Some(cwd) = c.project_path().map(std::path::Path::to_path_buf) else {
-            c.note = Some(e.composer_no_project.to_string());
-            c.focus = entry::Focus::Project;
-            self.composer = Some(c);
-            cx.notify();
-            return;
-        };
+        let cwd = c.cwd();
+        let filed = c.project.is_some();
         let machine = c
             .machines
             .get(c.machine)
@@ -408,9 +435,9 @@ impl Workspace {
             c.effort.clone(),
             c.reach,
             cwd.clone(),
-            &sentence,
+            &entry::with_pictures(&sentence, &c.pictures),
         );
-        let line = match Self::composer_line(&c, &machine, &recipe, true) {
+        let line = match Self::composer_line(&c, &machine, &recipe) {
             Ok(line) => line,
             Err(err) => {
                 c.note = Some(err);
@@ -442,7 +469,11 @@ impl Workspace {
                 }),
             );
         }
-        let seat = self.composer_seat(&cwd, cx);
+        let seat = if filed {
+            self.composer_seat(&cwd, cx)
+        } else {
+            Seat::Loose
+        };
         let before = self.active;
         // Put the composer back BEFORE the tab opens when it is staying, so the
         // new tab's deferred focus sees an overlay holding the keyboard and
@@ -451,6 +482,7 @@ impl Workspace {
         let stays = send == entry::Send::Background;
         if stays {
             c.text = EditBuffer::seeded("");
+            c.pictures.clear();
             c.focus = entry::Focus::Text;
             c.note = Some(lang::fill(
                 e.composer_started,
@@ -484,10 +516,28 @@ impl Workspace {
         cx.notify();
     }
 
-    /// The line a send types, built one way for the send and for the preview
-    /// under the chips. With `write` false the briefing file is only named,
-    /// the way the LAUNCH AGENT panel's preview names it, so drawing the page
-    /// writes nothing.
+    /// A picture on the clipboard, saved under this session's surfaces, or
+    /// `None` when the clipboard holds none. The compositor's clipboard first
+    /// (a screenshot tool's paste), then gpui's, the two routes a pane's paste
+    /// takes.
+    fn composer_clipboard_picture(cx: &mut Context<Self>) -> Option<std::path::PathBuf> {
+        let dir = surfacefeed::session_dir()?.join("composer").join("pastes");
+        if let Some((bytes, ext)) = crate::workbench::clipboard_image() {
+            return crate::workbench::write_paste(&dir, &bytes, ext).map(Into::into);
+        }
+        let item = cx.read_from_clipboard()?;
+        item.entries().iter().find_map(|entry| match entry {
+            gpui::ClipboardEntry::Image(image) => crate::workbench::write_paste(
+                &dir,
+                &image.bytes,
+                crate::workbench::ext_of_image_format(image.format),
+            )
+            .map(Into::into),
+            _ => None,
+        })
+    }
+
+    /// The line a send types.
     ///
     /// A far agent is handed no briefing: the briefing is a file on this
     /// machine and the drop directory it names is this window's, so neither
@@ -497,7 +547,6 @@ impl Workspace {
         c: &Composer,
         machine: &entry::Machine,
         recipe: &launcher::Recipe,
-        write: bool,
     ) -> Result<String, String> {
         if machine.is_far() {
             if c.harness == launcher::Harness::Local {
@@ -514,11 +563,7 @@ impl Workspace {
             ));
         }
         let dir = surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
-        let briefing = if write {
-            recipe.prepare_briefing(&dir, skills::briefing_root().as_deref())?
-        } else {
-            dir.join("briefing.txt")
-        };
+        let briefing = recipe.prepare_briefing(&dir, skills::briefing_root().as_deref())?;
         let adapter = if c.harness == launcher::Harness::Local {
             Some(c.local_adapter.as_ref().map_err(|e| e.clone())?)
         } else {
@@ -527,11 +572,17 @@ impl Workspace {
         recipe.command_line_with_adapter(Some(&briefing), adapter)
     }
 
-    /// Where a composed agent's tab goes: beside the terminals already open in
-    /// that repository, else under the left-bar project of the same name, else
-    /// in the branch the person is standing in — the launcher's answer.
-    fn composer_seat(&self, cwd: &std::path::Path, cx: &App) -> Seat {
+    /// Where a composed agent's tab goes: beside the filed terminals already
+    /// open in that repository, else under the left-bar project of the same
+    /// name, else under a new project named the way *adopt projects from
+    /// folders* names one. Never in whatever branch the person happens to be
+    /// standing in: a project was chosen, so the tab belongs to it, and on a
+    /// fresh window that branch is no branch at all.
+    fn composer_seat(&mut self, cwd: &std::path::Path, cx: &mut Context<Self>) -> Seat {
         for (ti, tab) in self.tabs.iter().enumerate() {
+            if self.place_of(ti).unfiled() {
+                continue;
+            }
             let mut leaves = Vec::new();
             tab.root.leaves(&mut leaves);
             let inside = leaves.iter().any(|leaf| {
@@ -545,13 +596,20 @@ impl Workspace {
         }
         let projects: Vec<(u32, String)> =
             self.projects.iter().map(|p| (p.id, p.label())).collect();
-        if let Some(id) = entry::project_by_name(cwd, &projects) {
-            return Seat::Branch(tree::Place {
-                project: Some(id),
-                initiative: None,
-            });
-        }
-        Seat::Branch(self.place_of(self.active))
+        let id = match entry::project_by_name(cwd, &projects) {
+            Some(id) => id,
+            None => {
+                let id = self.new_project(None, cx);
+                if let Some(p) = self.projects.iter_mut().find(|p| p.id == id) {
+                    p.name = project_name_for(&cwd.to_string_lossy());
+                }
+                id
+            }
+        };
+        Seat::Branch(tree::Place {
+            project: Some(id),
+            initiative: None,
+        })
     }
 
     /// Open a far machine's screen in gliff.
@@ -716,7 +774,7 @@ impl Workspace {
             .project
             .and_then(|i| c.projects.get(i))
             .map(|p| p.name.clone())
-            .unwrap_or_else(|| "\u{2014}".into());
+            .unwrap_or_else(|| e.project_none.into());
         let model_name = c
             .model
             .as_deref()
@@ -835,9 +893,22 @@ impl Workspace {
                         .child(e.composer_filter),
                 );
             }
-            for (row, &i) in c.order.iter().take(8).enumerate() {
-                let p = &c.projects[i];
-                let on = c.project == Some(i);
+            // None leads the list until something is typed, as it leads the
+            // chip's arrow keys.
+            let rows: Vec<Option<usize>> = c
+                .query
+                .is_empty()
+                .then_some(None)
+                .into_iter()
+                .chain(c.order.iter().copied().map(Some))
+                .take(8)
+                .collect();
+            for (row, i) in rows.into_iter().enumerate() {
+                let (name, path) = match i.and_then(|i| c.projects.get(i)) {
+                    Some(p) => (p.name.clone(), p.path.to_string_lossy().to_string()),
+                    None => (e.project_none.to_string(), String::new()),
+                };
+                let on = c.project == i;
                 list = list.child(
                     div()
                         .id(SharedString::from(format!("composer-project-{row}")))
@@ -855,7 +926,7 @@ impl Workspace {
                             div()
                                 .text_size(sk.text_px(11.5 * s))
                                 .text_color(if on { th.text } else { th.text.alpha(0.8) })
-                                .child(p.name.clone()),
+                                .child(name),
                         )
                         .child(
                             div()
@@ -863,14 +934,14 @@ impl Workspace {
                                 .text_color(th.faint)
                                 .overflow_hidden()
                                 .whitespace_nowrap()
-                                .child(p.path.to_string_lossy().to_string()),
+                                .child(path),
                         )
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                                 cx.stop_propagation();
                                 if let Some(c) = ws.composer.as_mut() {
-                                    c.project = Some(i);
+                                    c.project = i;
                                     c.query.clear();
                                     c.focus = entry::Focus::Text;
                                 }
@@ -883,20 +954,52 @@ impl Workspace {
             list
         });
 
-        // What a send will run, whole and never elided, the LAUNCH AGENT
-        // panel's rule. The sentence is left off: it is in the box above, and
-        // the send appends it as the agent's first message.
-        let preview = c.project_path().map(|cwd| {
-            let recipe = entry::recipe(
-                c.harness,
-                c.model.clone(),
-                c.effort.clone(),
-                c.reach,
-                cwd.to_path_buf(),
-                "",
-            );
-            let here = entry::Machine::here(None, e.composer_machine);
-            Self::composer_line(c, machine.unwrap_or(&here), &recipe, false).unwrap_or_else(|e| e)
+        // Pasted pictures, by name, each with its own way out. A name rather
+        // than a thumbnail: a pasted picture is an attachment, and the agent is
+        // the one that looks at it.
+        let pictures = (!c.pictures.is_empty()).then(|| {
+            let mut row = div().flex().flex_row().flex_wrap().gap(px(6. * s));
+            for (n, path) in c.pictures.iter().enumerate() {
+                let name = path
+                    .file_name()
+                    .map(|f| f.to_string_lossy().to_string())
+                    .unwrap_or_default();
+                row = row.child(
+                    sk.chip(false)
+                        .id(SharedString::from(format!("composer-picture-{n}")))
+                        .debug_selector(move || format!("composer-picture-{n}"))
+                        .cursor_pointer()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(6. * s))
+                        .child(
+                            div()
+                                .text_size(sk.text_px(11. * s))
+                                .child(format!("\u{25a3} {name}")),
+                        )
+                        .child(
+                            div()
+                                .text_size(sk.text_px(10. * s))
+                                .text_color(th.faint)
+                                .child("\u{2715}"),
+                        )
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                if let Some(c) = ws.composer.as_mut() {
+                                    if n < c.pictures.len() {
+                                        c.pictures.remove(n);
+                                    }
+                                }
+                                window.focus(&ws.focus_handle, cx);
+                                cx.notify();
+                            }),
+                        ),
+                );
+            }
+            row
         });
         let far_note = machine
             .filter(|m| m.is_far())
@@ -976,15 +1079,8 @@ impl Workspace {
                         }),
                     ),
             )
+            .children(pictures)
             .child(chip_row)
-            .children(preview.map(|line| {
-                div()
-                    .id("composer-preview")
-                    .debug_selector(|| "composer-preview".into())
-                    .text_size(sk.text_px(9.5 * s))
-                    .text_color(th.text.alpha(0.5))
-                    .child(line)
-            }))
             .children(list)
             .children(local_note.map(|n| {
                 div()

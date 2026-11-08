@@ -291,6 +291,29 @@ pub fn cycle<T: Clone + PartialEq>(choices: &[T], current: &T, back: bool) -> Op
     Some(choices[next].clone())
 }
 
+/// The first message, with any pasted pictures named after the sentence.
+///
+/// A picture goes as its path, one per line, the way a pane's paste hands one
+/// to an agent: Claude Code and Codex both open an image they are given the
+/// path of, and a path is the one form that survives the trip through a shell
+/// line and an ssh hop unchanged.
+pub fn with_pictures(sentence: &str, pictures: &[PathBuf]) -> String {
+    let sentence = sentence.trim();
+    if pictures.is_empty() {
+        return sentence.to_string();
+    }
+    let mut out = sentence.to_string();
+    if !out.is_empty() {
+        out.push_str("\n\n");
+    }
+    out.push_str("Pictures pasted with this request:");
+    for p in pictures {
+        out.push('\n');
+        out.push_str(&p.to_string_lossy());
+    }
+    out
+}
+
 /// What the composer would start, before the launcher prepares a briefing for
 /// it. `opener` is the sentence, trimmed; an empty sentence starts an agent
 /// that waits to be told, the way the panel's launch does.
@@ -316,6 +339,24 @@ pub fn recipe(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn pictures_follow_the_sentence_one_path_a_line() {
+        assert_eq!(with_pictures("  fix it ", &[]), "fix it");
+        let pics = [
+            PathBuf::from("/s/pasted-1.png"),
+            PathBuf::from("/s/a b.png"),
+        ];
+        assert_eq!(
+            with_pictures("fix it", &pics),
+            "fix it\n\nPictures pasted with this request:\n/s/pasted-1.png\n/s/a b.png"
+        );
+        // A picture alone is still a request.
+        assert_eq!(
+            with_pictures("", &pics[..1]),
+            "Pictures pasted with this request:\n/s/pasted-1.png"
+        );
+    }
 
     fn far(dest: &str) -> Machine {
         Machine {

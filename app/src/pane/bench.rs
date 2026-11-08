@@ -3348,47 +3348,14 @@ impl TerminalView {
 
     /// Which image type the clipboard is offering, if any.
     pub(super) fn clipboard_image_mime(&self) -> Option<&'static str> {
-        use std::process::Command;
-        // A test's clipboard is gpui's; wl-paste would answer for the person's.
-        if cfg!(test) {
-            return None;
-        }
-        std::env::var_os("WAYLAND_DISPLAY")?;
-        let listed = Command::new("wl-paste").arg("--list-types").output().ok()?;
-        if !listed.status.success() {
-            return None;
-        }
-        let types: Vec<String> = String::from_utf8_lossy(&listed.stdout)
-            .lines()
-            .map(|l| l.trim().to_string())
-            .filter(|l| !l.is_empty())
-            .collect();
-        crate::workbench::best_image_mime(&types)
+        crate::workbench::clipboard_image_mime()
     }
 
     /// Ask the compositor's clipboard for an image, saved, and give its path.
-    ///
-    /// Two subprocesses and only on a paste, which is cheap enough to pay for
-    /// the one thing it buys: the ability to paste a screenshot to an agent.
-    /// `wl-paste` is asked for the type LIST first, so the decision of whether
-    /// this clipboard even holds an image is made on evidence rather than by
-    /// attempting a read and interpreting the failure.
-    ///
-    /// [`None`] whenever this is not a Wayland session, `wl-paste` is not
-    /// installed, or nothing on offer is an image — all three are ordinary,
-    /// and the caller simply pastes text instead.
+    /// See [`crate::workbench::clipboard_image`].
     pub(super) fn clipboard_image_path(&self) -> Option<String> {
-        use std::process::Command;
-        let mime = self.clipboard_image_mime()?;
-        let ext = crate::workbench::ext_of_image_mime(mime)?;
-        let got = Command::new("wl-paste")
-            .args(["--no-newline", "--type", mime])
-            .output()
-            .ok()?;
-        if !got.status.success() || got.stdout.is_empty() {
-            return None;
-        }
-        self.write_paste(&got.stdout, ext)
+        let (bytes, ext) = crate::workbench::clipboard_image()?;
+        self.write_paste(&bytes, ext)
     }
 
     /// Write a pasted image beside the pane's own state and return its path.
@@ -3416,25 +3383,7 @@ impl TerminalView {
     /// sidecar, so the same screenshot pasted twice still resolves to one
     /// file, and the file is still called something a person can say out loud.
     pub(super) fn write_paste(&self, bytes: &[u8], ext: &str) -> Option<String> {
-        use std::hash::{Hash, Hasher};
-        let dir = self.bench_dir()?.join("pastes");
-        std::fs::create_dir_all(&dir).ok()?;
-        let mut h = std::collections::hash_map::DefaultHasher::new();
-        bytes.hash(&mut h);
-        let stamp = dir.join(format!(".{:016x}", h.finish()));
-        if let Ok(known) = std::fs::read_to_string(&stamp) {
-            let path = dir.join(known.trim());
-            if path.exists() {
-                return Some(path.display().to_string());
-            }
-        }
-        let n = (1..)
-            .find(|n| !dir.join(format!("pasted-{n}.{ext}")).exists())
-            .unwrap_or(1);
-        let name = format!("pasted-{n}.{ext}");
-        std::fs::write(dir.join(&name), bytes).ok()?;
-        let _ = std::fs::write(&stamp, &name);
-        Some(dir.join(&name).display().to_string())
+        crate::workbench::write_paste(&self.bench_dir()?.join("pastes"), bytes, ext)
     }
 
     /// Type a line into the composer — without sending it.

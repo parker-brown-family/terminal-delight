@@ -4731,7 +4731,7 @@ struct Workspace {
     composer: Option<entry_view::Composer>,
     /// What was typed into the composer when it was last put away, kept for
     /// the next time it opens.
-    composer_stash: Option<String>,
+    composer_stash: Option<(String, Vec<std::path::PathBuf>)>,
     /// What a person has said about the inbox — snoozes, done marks, which
     /// shelves are open, which face the spine shows — and the file it is kept
     /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
