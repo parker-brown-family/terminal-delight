@@ -372,6 +372,98 @@ fn unbridged(argv: &[String], shim: Option<&Path>) -> Result<Vec<String>, String
     Ok(line)
 }
 
+/// The launch line a sleeping Codex wakes through, read from the one it ran.
+///
+/// The bridge runs the Codex TUI as `codex --remote unix://<run>/codex.sock …`
+/// against an app-server it owns, in a folder pruned once the bridge has
+/// ended. Replaying that socket names a server that is gone, so the wake
+/// starts through the bridge again, which opens a new one (#1386). A line the
+/// bridge did not write comes back unchanged.
+pub fn codex_wake_launch_line(argv: &[String]) -> Vec<String> {
+    let shim = install().ok().map(|root| root.join("bin/codex"));
+    codex_unbridged(argv, shim.as_deref())
+}
+
+/// `unix://<run>/codex.sock` for a folder the bridge made, the endpoint
+/// `run_codex` in bridge.py opens.
+fn bridge_socket(value: &str) -> bool {
+    value
+        .strip_prefix("unix://")
+        .map(Path::new)
+        .is_some_and(|socket| {
+            socket.file_name().is_some_and(|n| n == "codex.sock")
+                && socket.parent().is_some_and(bridge_run)
+        })
+}
+
+fn codex_unbridged(argv: &[String], shim: Option<&Path>) -> Vec<String> {
+    let [program, remote, socket, rest @ ..] = argv else {
+        return argv.to_vec();
+    };
+    if remote != "--remote" || !bridge_socket(socket) {
+        return argv.to_vec();
+    }
+    let program = shim.map_or_else(|| program.clone(), |s| s.to_string_lossy().into_owned());
+    let mut line = vec![program];
+    line.extend(rest.iter().cloned());
+    line
+}
+
+/// A wake line written before wakes went back through the bridge, repaired at
+/// the moment it is needed: `Some` with the line to run instead, or `None`
+/// when the line still starts as written.
+///
+/// A window older than the fix replays a bridged agent's launch line word for
+/// word. Once the folder those words name is pruned, Claude answers "Settings
+/// file not found" and a Codex finds no server. The repaired line starts
+/// through the bridge, which makes a new folder. Any settings of the person's
+/// that lived only in the pruned file are gone by then; the bridge's cleanup
+/// keeps a folder a wake script names, so this is the last resort, not the
+/// usual path.
+pub fn rebridge_lost(argv: &[String]) -> Option<Vec<String>> {
+    let root = install().ok();
+    rebridge_lost_with(argv, root.as_deref())
+}
+
+fn rebridge_lost_with(argv: &[String], root: Option<&Path>) -> Option<Vec<String>> {
+    let through = |name: &str| {
+        root.map_or_else(
+            || argv[0].clone(),
+            |r| r.join("bin").join(name).to_string_lossy().into_owned(),
+        )
+    };
+    match argv {
+        [_, add, run, set, settings, rest @ ..]
+            if add == "--add-dir"
+                && set == "--settings"
+                && bridge_run(Path::new(run))
+                && Path::new(settings) == Path::new(run).join("settings.json")
+                && !Path::new(run).exists() =>
+        {
+            Some(
+                std::iter::once(through("claude"))
+                    .chain(rest.iter().cloned())
+                    .collect(),
+            )
+        }
+        [_, remote, socket, rest @ ..]
+            if remote == "--remote"
+                && bridge_socket(socket)
+                && socket
+                    .strip_prefix("unix://")
+                    .and_then(|s| Path::new(s).parent())
+                    .is_some_and(|run| !run.exists()) =>
+        {
+            Some(
+                std::iter::once(through("codex"))
+                    .chain(rest.iter().cloned())
+                    .collect(),
+            )
+        }
+        _ => None,
+    }
+}
+
 /// Run only on a worker: repository fetch and folder enumeration must not
 /// block a native render or input event.
 pub fn import(source: &str, folder: &str, revision: &str) -> Result<Vec<Source>, String> {
@@ -864,7 +956,7 @@ mod tests {
         // The folder the line named is pruned once the agent has ended; the
         // wake must not depend on it.
         std::fs::remove_dir_all(&state).unwrap();
-        let script = crate::agentrest_io::wake_script(&wake);
+        let script = crate::agentrest_io::wake_script(&wake, None);
         assert!(!script.contains(&*run.to_string_lossy()), "{script}");
     }
 
@@ -979,6 +1071,99 @@ mod tests {
         std::fs::remove_dir_all(&state).unwrap();
     }
 
+    /// The bridge's Codex socket is dropped, and the wake starts through the
+    /// bridge; a socket the bridge did not open is somebody's own, and stays.
+    #[test]
+    fn a_codex_the_bridge_started_wakes_through_the_bridge_and_no_other_does() {
+        let s = |w: &[&str]| w.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        const CODEX: &str = "/data/terminal-delight/skill-manager/k/bin/codex";
+        let runs = "/s/terminal-delight/skill-receipts/runs";
+        let line = |socket: &str| s(&["/usr/bin/codex", "--remote", socket, "--model", "o3"]);
+        let ours = format!("unix://{runs}/88-ab_c/codex.sock");
+        assert_eq!(
+            codex_unbridged(&line(&ours), Some(Path::new(CODEX))),
+            [CODEX, "--model", "o3"]
+        );
+        assert_eq!(
+            codex_unbridged(&line(&ours), None),
+            ["/usr/bin/codex", "--model", "o3"]
+        );
+        for theirs in [
+            format!("unix://{runs}/88-ab_c/other.sock"),
+            format!("unix://{runs}/ab-88/codex.sock"),
+            format!("unix://{runs}/88-ab/deeper/codex.sock"),
+            "unix:///s/terminal-delight/elsewhere/88-ab/codex.sock".to_owned(),
+            format!("ws://{runs}/88-ab/codex.sock"),
+            "ws://127.0.0.1:4500".to_owned(),
+        ] {
+            assert_eq!(
+                codex_unbridged(&line(&theirs), Some(Path::new(CODEX))),
+                line(&theirs)
+            );
+        }
+        // Not first: the bridge always puts its socket first.
+        let later = s(&["/usr/bin/codex", "--model", "o3", "--remote", &ours]);
+        assert_eq!(codex_unbridged(&later, Some(Path::new(CODEX))), later);
+    }
+
+    /// The last resort, for a line an older window wrote: only a bridge folder
+    /// that is really gone is replaced, and only by the matching shim.
+    #[test]
+    fn a_lost_bridge_folder_is_replaced_only_when_it_is_gone() {
+        let state = state("lost");
+        let run = run_in(&state);
+        std::fs::create_dir_all(&run).unwrap();
+        let s = |w: &[&str]| w.iter().map(|x| x.to_string()).collect::<Vec<String>>();
+        let root = Path::new("/data/terminal-delight/skill-manager/k");
+        let settings = format!("{}/settings.json", run.display());
+        let claude = s(&[
+            "/c",
+            "--add-dir",
+            &run.to_string_lossy(),
+            "--settings",
+            &settings,
+            "--resume",
+            SLEEPER,
+        ]);
+        let socket = format!("unix://{}/codex.sock", run.display());
+        let codex = s(&["/x", "--remote", &socket, "resume", SLEEPER]);
+        assert_eq!(rebridge_lost_with(&claude, Some(root)), None, "still there");
+        assert_eq!(rebridge_lost_with(&codex, Some(root)), None, "still there");
+        std::fs::remove_dir_all(&state).unwrap();
+        assert_eq!(
+            rebridge_lost_with(&claude, Some(root)).unwrap(),
+            [
+                &*root.join("bin/claude").to_string_lossy(),
+                "--resume",
+                SLEEPER
+            ]
+        );
+        assert_eq!(
+            rebridge_lost_with(&codex, Some(root)).unwrap(),
+            [
+                &*root.join("bin/codex").to_string_lossy(),
+                "resume",
+                SLEEPER
+            ]
+        );
+        assert_eq!(
+            rebridge_lost_with(&claude, None).unwrap(),
+            ["/c", "--resume", SLEEPER]
+        );
+        let theirs = s(&[
+            "/c",
+            "--add-dir",
+            "/gone/x",
+            "--settings",
+            "/gone/x/settings.json",
+        ]);
+        assert_eq!(
+            rebridge_lost_with(&theirs, Some(root)),
+            None,
+            "not a bridge folder"
+        );
+    }
+
     /// The round trip that failed in the field: the real bridge starts a Claude,
     /// it ends, the next launch prunes its folder, and its wake script starts
     /// it anyway, through the shell, carrying settings the shell could mangle.
@@ -1060,7 +1245,7 @@ mod tests {
         let wake = crate::agentrest::wake_argv(&woke, SLEEPER).unwrap();
         assert_eq!(PathBuf::from(&wake[0]), shim);
         let script = dir.join("wake.sh");
-        std::fs::write(&script, crate::agentrest_io::wake_script(&wake)).unwrap();
+        std::fs::write(&script, crate::agentrest_io::wake_script(&wake, None)).unwrap();
 
         let mut woken = std::process::Command::new("bash");
         woken.arg(&script);
