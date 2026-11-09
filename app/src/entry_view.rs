@@ -25,7 +25,7 @@ pub(crate) struct Composer {
     /// What the scan found, with what was added from the composer
     /// (`projects.toml`) in front; a far one carries its machine.
     pub(crate) projects: Vec<launcher::Project>,
-    /// Typed on the PROJECT chip.
+    /// Typed on the chip that has the keyboard: it narrows that chip's list.
     pub(crate) query: String,
     /// Indices into `projects` that match `query`, best first.
     pub(crate) order: Vec<usize>,
@@ -34,10 +34,10 @@ pub(crate) struct Composer {
     /// own under `~/.scratch`, as a T3 "No project" thread does, and its tab is
     /// filed under no project.
     pub(crate) project: Option<usize>,
-    harness: launcher::Harness,
-    model: Option<String>,
-    effort: Option<String>,
-    reach: launcher::Reach,
+    pub(crate) harness: launcher::Harness,
+    pub(crate) model: Option<String>,
+    pub(crate) effort: Option<String>,
+    pub(crate) reach: launcher::Reach,
     /// This machine first, then any far ones from `machines.toml`.
     pub(crate) machines: Vec<entry::Machine>,
     pub(crate) machine: usize,
@@ -61,6 +61,23 @@ pub(crate) struct Composer {
 
 /// Project rows the PROJECT chip's list draws at once.
 const PROJECT_ROWS: usize = 8;
+
+/// Rows every other chip's list draws at once: one more than the project
+/// list, in the place its add row takes, which has a row's measure. So every
+/// list stands the same height, and the card, which is centred, does not move
+/// while Tab walks the chips.
+const CHOICE_ROWS: usize = PROJECT_ROWS + 1;
+
+/// What a row in a chip's list sets. PROJECT's rows are indices into
+/// `projects` and have a list of their own, with the add row and none.
+#[derive(Clone, Debug, PartialEq)]
+enum Pick {
+    Harness(launcher::Harness),
+    Model(Option<String>),
+    Effort(Option<String>),
+    Reach(launcher::Reach),
+    Machine(usize),
+}
 
 impl Composer {
     fn project_path(&self) -> Option<&std::path::Path> {
@@ -103,87 +120,229 @@ impl Composer {
         self.machines.len() > 1
     }
 
-    fn refilter(&mut self) {
-        self.order = launcher::filter(&self.projects, &self.query);
-        // A query that matches nothing keeps the last choice rather than
-        // falling to none: a typo is not a decision to have no project.
-        if !self.query.is_empty() {
-            if let Some(&first) = self.order.first() {
-                self.project = Some(first);
-                self.follow_project();
+    /// The PROJECT list's rows: none first, then the projects that match.
+    /// None is there while nothing is typed, or when what is typed asks for
+    /// it ("no", "none", its own word), as T3 finds its "No project" row.
+    fn project_rows(&self, l: lang::Lang) -> Vec<Option<usize>> {
+        let e = l.strings().entry;
+        let none = self.query.trim().is_empty()
+            || entry::asks_for_none(
+                &self.query,
+                &[e.project_none, e.project_none_chip, "no project", "none"],
+            );
+        none.then_some(None)
+            .into_iter()
+            .chain(self.order.iter().copied().map(Some))
+            .collect()
+    }
+
+    /// The options of the chip that has the keyboard, other than PROJECT's,
+    /// in the order its arrows step them. A value the chip holds that the
+    /// list does not offer (a model the catalog has not listed) is kept as a
+    /// row of its own, so stepping away from it is a choice and not a loss;
+    /// while the catalog is still being read, it says so rather than calling
+    /// the value unavailable.
+    fn choices(&self, l: lang::Lang) -> Vec<entry::Choice<Pick>> {
+        let p = l.strings().parts;
+        let row = |value, label: String, caption: String| entry::Choice {
+            value,
+            label,
+            caption,
+        };
+        let missing = |catalog: &model_catalog::Snapshot, word: String| -> (String, String) {
+            if catalog.ready {
+                let label = lang::fill(p.model_choice_unavailable, &[("choice", &word)]);
+                (label, String::new())
+            } else {
+                (word, catalog.status.text(l))
             }
+        };
+        match self.focus {
+            entry::Focus::Text | entry::Focus::Project => Vec::new(),
+            entry::Focus::Harness => launcher::Harness::ALL
+                .into_iter()
+                .map(|h| {
+                    // What `local` runs, from local-agent.toml; the other two
+                    // are their own commands.
+                    let caption = match (&self.local_adapter, h) {
+                        (Ok(adapter), launcher::Harness::Local) => adapter.command.join(" "),
+                        _ => String::new(),
+                    };
+                    row(Pick::Harness(h), h.label_in(l).to_string(), caption)
+                })
+                .collect(),
+            entry::Focus::Model => {
+                let catalog = self.catalog();
+                let mut rows: Vec<_> = std::iter::once(None)
+                    .chain(catalog.models.iter().filter_map(|m| m.id.clone()).map(Some))
+                    .map(|id| {
+                        let model = catalog.model(id.as_deref());
+                        let label = model
+                            .map(|m| m.label_in(l))
+                            .unwrap_or_else(|| model_catalog::Model::agent_default().label_in(l));
+                        // The wire id, where the label is not already it.
+                        let caption = model
+                            .and_then(|m| m.resolved_id.clone().or_else(|| m.id.clone()))
+                            .filter(|wire| !wire.eq_ignore_ascii_case(&label))
+                            .unwrap_or_default();
+                        row(Pick::Model(id), label, caption)
+                    })
+                    .collect();
+                if let Some(id) = self
+                    .model
+                    .clone()
+                    .filter(|id| catalog.model(Some(id)).is_none())
+                {
+                    let (label, caption) = missing(&catalog, id.clone());
+                    rows.push(row(Pick::Model(Some(id)), label, caption));
+                }
+                rows
+            }
+            entry::Focus::Effort => {
+                let catalog = self.catalog();
+                // What the model does when it is not told, where it says.
+                let own = catalog
+                    .model(self.model.as_deref())
+                    .and_then(|m| m.default_effort.as_deref())
+                    .map(|e| model_catalog::effort_in(Some(e), l))
+                    .unwrap_or_default();
+                let offered = catalog.efforts(self.model.as_deref());
+                let mut rows: Vec<_> = std::iter::once(None)
+                    .chain(offered.iter().cloned().map(Some))
+                    .map(|effort| {
+                        let caption = if effort.is_none() {
+                            own.clone()
+                        } else {
+                            String::new()
+                        };
+                        let label = model_catalog::effort_in(effort.as_deref(), l);
+                        row(Pick::Effort(effort), label, caption)
+                    })
+                    .collect();
+                if let Some(effort) = self.effort.clone().filter(|e| !offered.contains(e)) {
+                    let word = model_catalog::effort_in(Some(&effort), l);
+                    let (label, caption) = missing(&catalog, word);
+                    rows.push(row(Pick::Effort(Some(effort)), label, caption));
+                }
+                rows
+            }
+            // The flags each one adds, which is what it means; the local
+            // runner's own are local-agent.toml's, so it has only anywhere.
+            entry::Focus::Reach => launcher::Reach::ALL
+                .into_iter()
+                .filter(|r| {
+                    self.harness != launcher::Harness::Local || *r == launcher::Reach::Anywhere
+                })
+                .map(|r| {
+                    row(
+                        Pick::Reach(r),
+                        r.label_in(l).to_string(),
+                        r.flags(self.harness).join(" "),
+                    )
+                })
+                .collect(),
+            entry::Focus::Machine => self
+                .machines
+                .iter()
+                .enumerate()
+                .map(|(i, m)| {
+                    let caption = m
+                        .ssh
+                        .as_ref()
+                        .map(|dest| format!("ssh {dest}"))
+                        .unwrap_or_default();
+                    row(Pick::Machine(i), m.name.clone(), caption)
+                })
+                .collect(),
         }
     }
 
-    /// Step the chip that has the keyboard, forward or back.
-    fn step_chip(&mut self, back: bool) {
-        match self.focus {
-            entry::Focus::Text => {}
-            entry::Focus::Project => {
-                // None leads the list until something is typed.
-                let list: Vec<Option<usize>> = self
-                    .query
-                    .is_empty()
-                    .then_some(None)
-                    .into_iter()
-                    .chain(self.order.iter().copied().map(Some))
-                    .collect();
-                if let Some(next) = entry::cycle(&list, &self.project, back) {
-                    self.project = next;
-                    self.follow_project();
-                }
-            }
-            entry::Focus::Harness => {
-                if let Some(next) = entry::cycle(&launcher::Harness::ALL, &self.harness, back) {
-                    self.harness = next;
-                    // Model lists differ by harness; a model or effort valid for
-                    // one may not exist in the next.
+    /// The value of the chip that has the keyboard, as its list's rows hold
+    /// it; `None` on the sentence and on PROJECT.
+    fn current(&self) -> Option<Pick> {
+        Some(match self.focus {
+            entry::Focus::Text | entry::Focus::Project => return None,
+            entry::Focus::Harness => Pick::Harness(self.harness),
+            entry::Focus::Model => Pick::Model(self.model.clone()),
+            entry::Focus::Effort => Pick::Effort(self.effort.clone()),
+            entry::Focus::Reach => Pick::Reach(self.reach),
+            entry::Focus::Machine => Pick::Machine(self.machine),
+        })
+    }
+
+    /// Take a row of a chip's list. A harness of its own brings its own
+    /// models, so a model or effort chosen for the last one goes; a model of
+    /// its own may not take the effort chosen for the last.
+    fn take(&mut self, pick: Pick) {
+        match pick {
+            Pick::Harness(h) => {
+                if h != self.harness {
+                    self.harness = h;
                     self.model = None;
                     self.effort = None;
-                    if next == launcher::Harness::Local {
+                    if h == launcher::Harness::Local {
                         self.reach = launcher::Reach::Anywhere;
                     }
                 }
             }
-            entry::Focus::Model => {
-                let ids: Vec<Option<String>> = std::iter::once(None)
-                    .chain(
-                        self.catalog()
-                            .models
-                            .iter()
-                            .filter_map(|m| m.id.clone())
-                            .map(Some),
-                    )
-                    .collect();
-                if let Some(next) = entry::cycle(&ids, &self.model, back) {
-                    self.model = next;
+            Pick::Model(id) => {
+                if id != self.model {
+                    self.model = id;
                     self.effort = None;
                 }
             }
-            entry::Focus::Effort => {
-                let efforts: Vec<Option<String>> = std::iter::once(None)
-                    .chain(
-                        self.catalog()
-                            .efforts(self.model.as_deref())
-                            .into_iter()
-                            .map(Some),
-                    )
+            Pick::Effort(effort) => self.effort = effort,
+            Pick::Reach(r) => self.reach = r,
+            Pick::Machine(i) => self.machine = i,
+        }
+        self.note = None;
+    }
+
+    /// What was typed changed: narrow the list, and take its first match, as
+    /// the project list always has. A query that matches nothing keeps the
+    /// last choice: a typo is not a decision.
+    fn refilter(&mut self, l: lang::Lang) {
+        let typed = !self.query.trim().is_empty();
+        if self.focus == entry::Focus::Project {
+            self.order = launcher::filter(&self.projects, &self.query);
+            if typed {
+                if let Some(&first) = self.project_rows(l).first() {
+                    self.project = first;
+                    self.follow_project();
+                }
+            }
+            return;
+        }
+        let all = self.choices(l);
+        if typed {
+            if let Some(&first) = entry::narrow(&all, &self.query).first() {
+                self.take(all[first].value.clone());
+            }
+        }
+    }
+
+    /// Step the chip that has the keyboard, forward or back, through what
+    /// its list shows.
+    fn step_chip(&mut self, back: bool, l: lang::Lang) {
+        match self.focus {
+            entry::Focus::Text => {}
+            entry::Focus::Project => {
+                if let Some(next) = entry::cycle(&self.project_rows(l), &self.project, back) {
+                    self.project = next;
+                    self.follow_project();
+                }
+            }
+            _ => {
+                let all = self.choices(l);
+                let shown: Vec<Pick> = entry::narrow(&all, &self.query)
+                    .into_iter()
+                    .map(|i| all[i].value.clone())
                     .collect();
-                if let Some(next) = entry::cycle(&efforts, &self.effort, back) {
-                    self.effort = next;
-                }
-            }
-            entry::Focus::Reach => {
-                if self.harness != launcher::Harness::Local {
-                    if let Some(next) = entry::cycle(&launcher::Reach::ALL, &self.reach, back) {
-                        self.reach = next;
-                    }
-                }
-            }
-            entry::Focus::Machine => {
-                let all: Vec<usize> = (0..self.machines.len()).collect();
-                if let Some(next) = entry::cycle(&all, &self.machine, back) {
-                    self.machine = next;
+                if let Some(next) = self
+                    .current()
+                    .and_then(|now| entry::cycle(&shown, &now, back))
+                {
+                    self.take(next);
                 }
             }
         }
@@ -366,6 +525,7 @@ impl Workspace {
             return false;
         };
         let far = c.far();
+        let l = self.lang;
         match ks.key.as_str() {
             "escape" => {
                 if c.focus != entry::Focus::Text {
@@ -378,6 +538,12 @@ impl Workspace {
                     self.close_composer(window, cx);
                 }
                 return true;
+            }
+            // Enter on a chip takes what its list has lit and goes back to the
+            // sentence, as T3's pickers do; Ctrl+Enter still starts from there.
+            "enter" if !m.control && c.focus != entry::Focus::Text => {
+                c.focus = entry::Focus::Text;
+                c.query.clear();
             }
             "enter" if m.shift && c.focus == entry::Focus::Text => {
                 c.text.insert("\n");
@@ -416,27 +582,32 @@ impl Workspace {
                     c.text.apply(key, m, ks.key_char.as_deref(), 20_000);
                     c.note = None;
                 }
-                entry::Focus::Project => match key {
-                    "left" | "up" => c.step_chip(true),
-                    "right" | "down" => c.step_chip(false),
-                    // With nothing typed, Backspace takes the project away:
-                    // one key to an agent with no project.
-                    "backspace" if c.query.is_empty() => c.project = None,
-                    "backspace" => {
-                        c.query.pop();
-                        c.refilter();
-                    }
-                    _ => {
-                        if let Some(ch) = ks.key_char.as_deref().filter(|_| !m.control && !m.alt) {
-                            c.query.push_str(ch);
-                            c.refilter();
+                // Every chip's list the same way: the arrows step through it,
+                // typing narrows it and takes its first match.
+                _ => match key {
+                    "left" | "up" => c.step_chip(true, l),
+                    "right" | "down" => c.step_chip(false, l),
+                    // With nothing typed, Backspace on PROJECT takes the
+                    // project away: one key to an agent with no project.
+                    "backspace" if c.query.is_empty() => {
+                        if c.focus == entry::Focus::Project {
+                            c.project = None;
                         }
                     }
-                },
-                _ => match key {
-                    "left" | "up" => c.step_chip(true),
-                    "right" | "down" | "space" => c.step_chip(false),
-                    _ => {}
+                    "backspace" => {
+                        c.query.pop();
+                        c.refilter(l);
+                    }
+                    _ => {
+                        let typed = ks.key_char.as_deref().filter(|_| !m.control && !m.alt);
+                        // A space before any word narrows nothing.
+                        if let Some(ch) =
+                            typed.filter(|ch| !(c.query.is_empty() && ch.trim().is_empty()))
+                        {
+                            c.query.push_str(ch);
+                            c.refilter(l);
+                        }
+                    }
                 },
             },
         }
@@ -952,7 +1123,7 @@ impl Workspace {
         let mut chip_row = div().flex().flex_row().flex_wrap().gap(px(6. * s));
         for (focus, header, value) in chips {
             let on = c.focus == focus;
-            let shown = if on && focus == entry::Focus::Project && !c.query.is_empty() {
+            let shown = if on && !c.query.is_empty() {
                 format!("{value}  \u{2039}{}\u{203a}", c.query)
             } else {
                 value
@@ -978,15 +1149,17 @@ impl Workspace {
                     .child(div().text_size(sk.text_px(11. * s)).child(shown))
                     .on_mouse_down(
                         MouseButton::Left,
-                        cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                        cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
                             cx.stop_propagation();
                             if let Some(c) = ws.composer.as_mut() {
-                                if c.focus == focus && focus != entry::Focus::Project {
-                                    c.step_chip(ev.modifiers.shift);
+                                // A chip opens its list; pressed again, it puts
+                                // the list away, as a dropdown does.
+                                c.focus = if c.focus == focus {
+                                    entry::Focus::Text
                                 } else {
-                                    c.focus = focus;
-                                    c.query.clear();
-                                }
+                                    focus
+                                };
+                                c.query.clear();
                             }
                             window.focus(&ws.focus_handle, cx);
                             cx.notify();
@@ -1032,145 +1205,51 @@ impl Workspace {
                     ),
             );
         }
+        // While a list is open the chips' values change under the keys, and a
+        // value long enough to wrap the row onto a second line, or short enough
+        // to unwrap it, moved the centred card a line at a step. So the row
+        // stands at least two chip lines tall while a chip has the keyboard:
+        // two empty chips share its grid cell, and a cell is as tall as the
+        // taller of what is in it. The chips keep to the top of the cell at
+        // their own height; stretched to it, a lit chip's bar ran two lines.
+        let chip_row = if typing {
+            chip_row.into_any_element()
+        } else {
+            let ghost = || {
+                sk.control_chip(false)
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap(px(5. * s))
+                    .child(div().text_size(sk.text_px(8.5 * s)).child("\u{a0}"))
+                    .child(div().text_size(sk.text_px(11. * s)).child("\u{a0}"))
+            };
+            div()
+                .grid()
+                .grid_cols(1)
+                .child(
+                    div()
+                        .col_start(1)
+                        .row_start(1)
+                        .flex()
+                        .flex_col()
+                        .gap(px(6. * s))
+                        .opacity(0.)
+                        .child(ghost())
+                        .child(ghost()),
+                )
+                .child(chip_row.col_start(1).row_start(1).self_start())
+                .into_any_element()
+        };
 
-        // The PROJECT chip's list, while it has the keyboard: the launcher's
-        // ranking of what was typed, eight at a time.
-        let list = (c.focus == entry::Focus::Project).then(|| {
-            let mut list = div().flex().flex_col().gap(px(1. * s));
-            list = list.child(
-                div()
-                    .id("composer-project-add")
-                    .debug_selector(|| "composer-project-add".into())
-                    .px(px(8. * s))
-                    .py(px(2. * s))
-                    .rounded(sk.radius())
-                    .cursor_pointer()
-                    .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
-                    .text_size(sk.text_px(11.5 * s))
-                    .text_color(th.accent)
-                    .child(e.add_row)
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                            cx.stop_propagation();
-                            ws.add_project_open(cx);
-                            window.focus(&ws.focus_handle, cx);
-                        }),
-                    ),
-            );
-            // One line under it, always drawn: how to look, or that nothing
-            // matched.
-            list = list.child(
-                div()
-                    .text_size(sk.text_px(10. * s))
-                    .text_color(sk.ink.ink_faint)
-                    .child(if c.query.is_empty() {
-                        e.composer_filter
-                    } else if c.order.is_empty() {
-                        ui.la_no_match
-                    } else {
-                        "\u{a0}"
-                    }),
-            );
-            // None leads the list until something is typed, as it leads the
-            // chip's arrow keys.
-            // Eight at a time, the window kept on the chosen project: a list
-            // that always opened at its top hid the choice the chip names
-            // whenever it was the ninth repository or later.
-            let rows: Vec<Option<usize>> = c
-                .query
-                .is_empty()
-                .then_some(None)
-                .into_iter()
-                .chain(c.order.iter().copied().map(Some))
-                .collect();
-            let chosen = rows.iter().position(|r| *r == c.project).unwrap_or(0);
-            let start = chosen.saturating_sub(PROJECT_ROWS - 1);
-            let below = rows.len().saturating_sub(start + PROJECT_ROWS);
-            let drawn = rows.len().saturating_sub(start).min(PROJECT_ROWS);
-            for (row, i) in rows.into_iter().enumerate().skip(start).take(PROJECT_ROWS) {
-                let (name, path) = match i.and_then(|i| c.projects.get(i)) {
-                    Some(p) => (
-                        p.name.clone(),
-                        match &p.machine {
-                            Some(m) => format!("{m} \u{00b7} {}", p.path.to_string_lossy()),
-                            None => p.path.to_string_lossy().to_string(),
-                        },
-                    ),
-                    None => (e.project_none.to_string(), e.project_none_where.to_string()),
-                };
-                let on = c.project == i;
-                list = list.child(
-                    div()
-                        .id(SharedString::from(format!("composer-project-{row}")))
-                        .debug_selector(move || format!("composer-project-{row}"))
-                        .px(px(8. * s))
-                        .py(px(2. * s))
-                        .rounded(sk.radius())
-                        .cursor_pointer()
-                        .when(on, |d| d.bg(th.accent.alpha(0.22)))
-                        .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
-                        .flex()
-                        .flex_row()
-                        .gap(px(8. * s))
-                        .child(
-                            div()
-                                .text_size(sk.text_px(11.5 * s))
-                                .text_color(if on { th.text } else { th.text.alpha(0.8) })
-                                .child(name),
-                        )
-                        .child(
-                            div()
-                                .text_size(sk.text_px(9.5 * s))
-                                // Faint is unreadable on the lit row's wash.
-                                .text_color(if on { sk.ink.ink_dim } else { sk.ink.ink_faint })
-                                .overflow_hidden()
-                                .whitespace_nowrap()
-                                .child(path),
-                        )
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                if let Some(c) = ws.composer.as_mut() {
-                                    c.project = i;
-                                    c.follow_project();
-                                    c.query.clear();
-                                    c.focus = entry::Focus::Text;
-                                }
-                                window.focus(&ws.focus_handle, cx);
-                                cx.notify();
-                            }),
-                        ),
-                );
-            }
-            // Held at eight rows whatever is typed: the card is centred, so a
-            // list that shrank under a filter moved the sentence box up the
-            // screen with every letter.
-            for _ in drawn..PROJECT_ROWS {
-                list = list.child(
-                    div()
-                        .px(px(8. * s))
-                        .py(px(2. * s))
-                        .flex()
-                        .flex_row()
-                        .gap(px(8. * s))
-                        .child(div().text_size(sk.text_px(11.5 * s)).child("\u{a0}"))
-                        .child(div().text_size(sk.text_px(9.5 * s)).child("\u{a0}")),
-                );
-            }
-            list.child(
-                div()
-                    .px(px(8. * s))
-                    .text_size(sk.text_px(9.5 * s))
-                    .text_color(sk.ink.ink_faint)
-                    .child(if below > 0 {
-                        lang::fill(e.add_more, &[("n", &below.to_string())])
-                    } else {
-                        "\u{a0}".to_string()
-                    }),
-            )
-        });
+        // The list of the chip that has the keyboard, under the chips:
+        // PROJECT's is the launcher's ranking of what was typed, with the add
+        // row and none; every other chip lists its own options.
+        let list = match c.focus {
+            entry::Focus::Text => None,
+            entry::Focus::Project => Some(self.composer_project_list(c, th, &sk, s, cx)),
+            _ => Some(self.composer_choice_list(c, th, &sk, s, cx)),
+        };
 
         // Pasted pictures, by name, each with its own way out. A name rather
         // than a thumbnail: a pasted picture is an attachment, and the agent is
@@ -1312,10 +1391,293 @@ impl Workspace {
                 div()
                     .text_size(sk.text_px(9.5 * s))
                     .text_color(sk.ink.ink_faint)
-                    .child(e.composer_hint),
+                    // While a chip has the keyboard, its list's keys: Enter
+                    // there goes back to the sentence rather than starting.
+                    .child(if typing {
+                        e.composer_hint
+                    } else {
+                        e.composer_list_hint
+                    }),
             );
 
         Some(Self::composer_page(th, s, column))
+    }
+
+    /// PROJECT's list: the add row, a status line, then none and the
+    /// projects, held at eight rows whatever is typed.
+    fn composer_project_list(
+        &self,
+        c: &Composer,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let e = self.lang.strings().entry;
+        let ui = self.lang.strings().ui;
+        let mut list = div().flex().flex_col().gap(px(1. * s));
+        list = list.child(
+            div()
+                .id("composer-project-add")
+                .debug_selector(|| "composer-project-add".into())
+                .px(px(8. * s))
+                .py(px(2. * s))
+                .rounded(sk.radius())
+                .cursor_pointer()
+                .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
+                .text_size(sk.text_px(11.5 * s))
+                .text_color(th.accent)
+                .child(e.add_row)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        ws.add_project_open(cx);
+                        window.focus(&ws.focus_handle, cx);
+                    }),
+                ),
+        );
+        let rows = c.project_rows(self.lang);
+        list = list.child(Self::composer_status(
+            sk,
+            s,
+            if c.query.trim().is_empty() {
+                e.composer_filter
+            } else if rows.is_empty() {
+                ui.la_no_match
+            } else {
+                "\u{a0}"
+            },
+        ));
+        // None leads whatever the window shows, as T3's "No project" does:
+        // as the first row of a window kept on the chosen project, it went
+        // out of sight whenever that project was the ninth or later.
+        let pinned = usize::from(rows.first() == Some(&None));
+        let slots = PROJECT_ROWS - pinned;
+        // The rest a window at a time, kept on the chosen project: a list
+        // that always opened at its top hid the choice the chip names
+        // whenever it was the ninth repository or later.
+        let chosen = rows
+            .iter()
+            .skip(pinned)
+            .position(|r| *r == c.project)
+            .unwrap_or(0);
+        let start = pinned + chosen.saturating_sub(slots - 1);
+        let below = rows.len().saturating_sub(start + slots);
+        let window = rows.iter().copied().enumerate().skip(start).take(slots);
+        let mut drawn = 0;
+        for (row, i) in rows.iter().copied().enumerate().take(pinned).chain(window) {
+            let (name, path, key) = match i {
+                // ⌫ is the keyboard's way here while nothing is typed.
+                None => (
+                    e.project_none.to_string(),
+                    e.project_none_where.to_string(),
+                    c.query.is_empty().then_some("\u{232b}"),
+                ),
+                Some(at) => {
+                    let Some(p) = c.projects.get(at) else {
+                        continue;
+                    };
+                    let path = match &p.machine {
+                        Some(m) => format!("{m} \u{00b7} {}", p.path.to_string_lossy()),
+                        None => p.path.to_string_lossy().to_string(),
+                    };
+                    (p.name.clone(), path, None)
+                }
+            };
+            let on = c.project == i;
+            let id: SharedString = match i {
+                None => "composer-project-none".into(),
+                Some(_) => format!("composer-project-{row}").into(),
+            };
+            list = list.child(
+                Self::composer_row(th, sk, s, id, name, path, key, on).on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(c) = ws.composer.as_mut() {
+                            c.project = i;
+                            c.follow_project();
+                            c.query.clear();
+                            c.focus = entry::Focus::Text;
+                        }
+                        window.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                    }),
+                ),
+            );
+            drawn += 1;
+        }
+        // Held at eight rows whatever is typed: the card is centred, so a
+        // list that shrank under a filter moved the sentence box up the
+        // screen with every letter.
+        for _ in drawn..PROJECT_ROWS {
+            list = list.child(Self::composer_blank(sk, s));
+        }
+        list.child(Self::composer_more(sk, s, e, below))
+    }
+
+    /// Any other chip's list: a status line, then its options, held at nine
+    /// rows so it stands as tall as PROJECT's. The chip's value is lit; the
+    /// arrows step it, typing narrows the list, a press takes a row.
+    fn composer_choice_list(
+        &self,
+        c: &Composer,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let e = self.lang.strings().entry;
+        let ui = self.lang.strings().ui;
+        let all = c.choices(self.lang);
+        let shown = entry::narrow(&all, &c.query);
+        let current = c.current();
+        let mut list = div().flex().flex_col().gap(px(1. * s));
+        list = list.child(Self::composer_status(
+            sk,
+            s,
+            if c.query.trim().is_empty() {
+                e.composer_narrow
+            } else if shown.is_empty() {
+                ui.la_no_match
+            } else {
+                "\u{a0}"
+            },
+        ));
+        let chosen = shown
+            .iter()
+            .position(|&i| Some(&all[i].value) == current.as_ref())
+            .unwrap_or(0);
+        let start = chosen.saturating_sub(CHOICE_ROWS - 1);
+        let below = shown.len().saturating_sub(start + CHOICE_ROWS);
+        let mut drawn = 0;
+        for (n, &i) in shown.iter().enumerate().skip(start).take(CHOICE_ROWS) {
+            let choice = &all[i];
+            let on = Some(&choice.value) == current.as_ref();
+            let pick = choice.value.clone();
+            list = list.child(
+                Self::composer_row(
+                    th,
+                    sk,
+                    s,
+                    format!("composer-choice-{n}").into(),
+                    choice.label.clone(),
+                    choice.caption.clone(),
+                    None,
+                    on,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        if let Some(c) = ws.composer.as_mut() {
+                            c.take(pick.clone());
+                            c.query.clear();
+                            c.focus = entry::Focus::Text;
+                        }
+                        window.focus(&ws.focus_handle, cx);
+                        cx.notify();
+                    }),
+                ),
+            );
+            drawn += 1;
+        }
+        for _ in drawn..CHOICE_ROWS {
+            list = list.child(Self::composer_blank(sk, s));
+        }
+        list.child(Self::composer_more(sk, s, e, below))
+    }
+
+    /// A row of a chip's list: its name, a quieter word beside it, and a key
+    /// at its end, lit when it is the chip's value. Both lists draw their rows
+    /// here, so a row has one measure in all of them.
+    #[allow(clippy::too_many_arguments)]
+    fn composer_row(
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        id: SharedString,
+        label: String,
+        caption: String,
+        key: Option<&'static str>,
+        on: bool,
+    ) -> gpui::Stateful<gpui::Div> {
+        let selector = id.to_string();
+        // Faint is unreadable on the lit row's wash.
+        let quiet = if on { sk.ink.ink_dim } else { sk.ink.ink_faint };
+        div()
+            .id(id)
+            .debug_selector(move || selector.clone())
+            .px(px(8. * s))
+            .py(px(2. * s))
+            .rounded(sk.radius())
+            .cursor_pointer()
+            .when(on, |d| d.bg(th.accent.alpha(0.22)))
+            .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
+            .flex()
+            .flex_row()
+            .gap(px(8. * s))
+            .child(
+                div()
+                    .flex_none()
+                    .whitespace_nowrap()
+                    .text_size(sk.text_px(11.5 * s))
+                    .text_color(if on { th.text } else { th.text.alpha(0.8) })
+                    .child(label),
+            )
+            .child(
+                div()
+                    .flex_1()
+                    .min_w(px(0.))
+                    .text_size(sk.text_px(9.5 * s))
+                    .text_color(quiet)
+                    .overflow_hidden()
+                    .whitespace_nowrap()
+                    .child(caption),
+            )
+            .children(key.map(|k| {
+                div()
+                    .flex_none()
+                    .text_size(sk.text_px(9.5 * s))
+                    .text_color(quiet)
+                    .child(k)
+            }))
+    }
+
+    /// A list row's measure with nothing in it, so a short list stands as
+    /// tall as a full one.
+    fn composer_blank(sk: &skin::Skin, s: f32) -> gpui::Div {
+        div()
+            .px(px(8. * s))
+            .py(px(2. * s))
+            .flex()
+            .flex_row()
+            .gap(px(8. * s))
+            .child(div().text_size(sk.text_px(11.5 * s)).child("\u{a0}"))
+            .child(div().text_size(sk.text_px(9.5 * s)).child("\u{a0}"))
+    }
+
+    /// The line over a list's rows, always drawn: how to look, or that
+    /// nothing matched.
+    fn composer_status(sk: &skin::Skin, s: f32, said: &'static str) -> gpui::Div {
+        div()
+            .text_size(sk.text_px(10. * s))
+            .text_color(sk.ink.ink_faint)
+            .child(said)
+    }
+
+    /// The count under a list, always drawn so the list holds its height.
+    fn composer_more(sk: &skin::Skin, s: f32, e: &lang::Entry, below: usize) -> gpui::Div {
+        div()
+            .px(px(8. * s))
+            .text_size(sk.text_px(9.5 * s))
+            .text_color(sk.ink.ink_faint)
+            .child(if below > 0 {
+                lang::fill(e.add_more, &[("n", &below.to_string())])
+            } else {
+                "\u{a0}".to_string()
+            })
     }
 
     /// The page the composer's card, or the add-a-project dialog's, stands

@@ -355,6 +355,42 @@ pub fn cycle<T: Clone + PartialEq>(choices: &[T], current: &T, back: bool) -> Op
     Some(choices[next].clone())
 }
 
+/// One option in the list a chip opens: what it is called, and a quieter
+/// word beside it where one helps (a model's wire id, the flags a reach adds,
+/// a far machine's ssh destination).
+#[derive(Clone, Debug, PartialEq)]
+pub struct Choice<T> {
+    pub value: T,
+    pub label: String,
+    pub caption: String,
+}
+
+/// Which of `choices` match what was typed, in their own order: every word
+/// typed must appear in the label or the caption, in any case. Nothing typed
+/// matches them all. The order is kept rather than ranked because a chip's
+/// options already come in an order that means something (efforts low to
+/// high, the harness's own model list), and a handful of rows needs no ranking.
+pub fn narrow<T>(choices: &[Choice<T>], query: &str) -> Vec<usize> {
+    let words: Vec<String> = query.split_whitespace().map(str::to_lowercase).collect();
+    choices
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| {
+            let said = format!("{} {}", c.label, c.caption).to_lowercase();
+            words.iter().all(|w| said.contains(w.as_str()))
+        })
+        .map(|(i, _)| i)
+        .collect()
+}
+
+/// Whether what was typed asks for no project: the start of one of its
+/// names. T3 finds its "No project" row by "no project" and "none"; the
+/// composer adds the words it shows in the person's own language.
+pub fn asks_for_none(query: &str, names: &[&str]) -> bool {
+    let typed = query.trim().to_lowercase();
+    !typed.is_empty() && names.iter().any(|n| n.to_lowercase().starts_with(&typed))
+}
+
 /// The first message, with any pasted pictures named after the sentence.
 ///
 /// A picture goes as its path, one per line, the way a pane's paste hands one
@@ -690,6 +726,46 @@ mod tests {
         assert_eq!(cycle(&c, &None, true), Some(Some("high")));
         assert_eq!(cycle(&c, &Some("gone"), false), Some(None));
         assert_eq!(cycle::<Option<&str>>(&[], &None, false), None);
+    }
+
+    #[test]
+    fn typed_words_narrow_a_list_in_its_own_order() {
+        let models: Vec<Choice<u8>> = [
+            ("Agent default", ""),
+            ("sol 6", "gpt-6-sol"),
+            ("astra 6", "gpt-6-astra"),
+            ("terra 5.6", "gpt-5.6-terra"),
+        ]
+        .into_iter()
+        .enumerate()
+        .map(|(i, (label, caption))| Choice {
+            value: i as u8,
+            label: label.into(),
+            caption: caption.into(),
+        })
+        .collect();
+        assert_eq!(narrow(&models, ""), vec![0, 1, 2, 3], "nothing typed");
+        assert_eq!(narrow(&models, "  "), vec![0, 1, 2, 3], "only spaces");
+        assert_eq!(narrow(&models, "SOL"), vec![1], "any case");
+        assert_eq!(
+            narrow(&models, "gpt 6"),
+            vec![1, 2, 3],
+            "every word, anywhere"
+        );
+        assert_eq!(narrow(&models, "6 astra"), vec![2], "in any order");
+        assert_eq!(narrow(&models, "5.6"), vec![3], "the caption counts");
+        assert!(narrow(&models, "opus").is_empty());
+    }
+
+    #[test]
+    fn none_answers_to_the_start_of_its_names() {
+        let names = ["No project", "none", "Sin proyecto", "ninguno"];
+        for asked in ["n", "no", "No P", "none", "sin", "ningu", " no "] {
+            assert!(asks_for_none(asked, &names), "{asked:?}");
+        }
+        for not in ["", "  ", "nor", "project", "td", "nones"] {
+            assert!(!asks_for_none(not, &names), "{not:?}");
+        }
     }
 
     #[test]
