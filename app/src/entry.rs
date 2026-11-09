@@ -139,20 +139,84 @@ pub fn valid_destination(dest: &str) -> bool {
 /// runs the quoted command. A `cwd` under this machine's home is written from
 /// `~` — the far box's home is not this one's, and the same repositories live
 /// at the same place under it far more often than at the same absolute path.
-pub fn line_on(machine: &Machine, home: &Path, cwd: &Path, agent_line: &str) -> String {
+/// `make` makes the folder first (`mkdir -p`), for an agent with no project,
+/// whose folder of its own does not exist on the far box until it starts.
+pub fn line_on(machine: &Machine, home: &Path, cwd: &Path, agent_line: &str, make: bool) -> String {
     let Some(dest) = machine.ssh.as_deref() else {
         return agent_line.to_string();
     };
-    let cd = match cwd.strip_prefix(home) {
-        Ok(rel) if rel.as_os_str().is_empty() => "cd ~".to_string(),
+    let target = match cwd.strip_prefix(home) {
+        Ok(rel) if rel.as_os_str().is_empty() => "~".to_string(),
         // `~/` stays outside the quotes so the far shell expands it.
-        Ok(rel) => format!("cd ~/{}", launcher::shell_quote(&rel.to_string_lossy())),
-        Err(_) => format!("cd {}", launcher::shell_quote(&cwd.to_string_lossy())),
+        Ok(rel) => format!("~/{}", launcher::shell_quote(&rel.to_string_lossy())),
+        Err(_) => launcher::shell_quote(&cwd.to_string_lossy()),
+    };
+    let cd = if make {
+        format!("mkdir -p {target} && cd {target}")
+    } else {
+        format!("cd {target}")
     };
     format!(
         "ssh -t {dest} {}",
         launcher::shell_quote(&format!("{cd} && {agent_line}"))
     )
+}
+
+/// Where an agent started with no project works: a folder of its own under
+/// `~/.scratch`, the way T3 Code gives a "No project" thread a scratch folder
+/// instead of the home folder. Hidden, so the PROJECT list's scan of home
+/// passes it by; outside every repository, so the agent inherits no git
+/// state; and outside TD's own data folder, which an uninstall removes along
+/// with whatever the agent made there.
+pub fn scratch_root(home: &Path) -> PathBuf {
+    home.join(".scratch")
+}
+
+/// A projectless agent's folder name: the date, then the first five words of
+/// what was asked, lowercased and joined with dashes, the words at most 48
+/// characters. That is T3's own recipe for a scratch thread's folder
+/// (`folderWords`), with any script's letters kept rather than only ASCII. No
+/// date when the clock cannot say one, rather than a wrong one.
+pub fn scratch_name(sentence: &str, date: Option<&str>) -> String {
+    let words: Vec<String> = sentence
+        .split(|c: char| !c.is_alphanumeric())
+        .filter(|w| !w.is_empty())
+        .take(5)
+        .map(str::to_lowercase)
+        .collect();
+    let mut joined: String = words.join("-").chars().take(48).collect();
+    while joined.ends_with('-') {
+        joined.pop();
+    }
+    match (date, joined.is_empty()) {
+        (Some(d), false) => format!("{d}-{joined}"),
+        (Some(d), true) => d.to_string(),
+        (None, false) => joined,
+        (None, true) => "thread".into(),
+    }
+}
+
+/// Claim a fresh folder under `root`: `name`, else `name-2`, `name-3`…, so
+/// two agents never share one. `create_dir`, not `create_dir_all`, is the
+/// claim: it fails when the name is taken, even by a window racing for it.
+pub fn claim_scratch(root: &Path, name: &str) -> std::io::Result<PathBuf> {
+    std::fs::create_dir_all(root)?;
+    for n in 1..=99u32 {
+        let candidate = if n == 1 {
+            root.join(name)
+        } else {
+            root.join(format!("{name}-{n}"))
+        };
+        match std::fs::create_dir(&candidate) {
+            Ok(()) => return Ok(candidate),
+            Err(e) if e.kind() == std::io::ErrorKind::AlreadyExists => continue,
+            Err(e) => return Err(e),
+        }
+    }
+    Err(std::io::Error::new(
+        std::io::ErrorKind::AlreadyExists,
+        format!("{} has no free name left for {name}", root.display()),
+    ))
 }
 
 /// What shows a far machine's screen: gliff, with a private headless output
@@ -375,6 +439,7 @@ mod tests {
             Path::new("/home/p"),
             Path::new("/home/p/Work/td"),
             "claude 'go'",
+            false,
         );
         assert_eq!(line, "claude 'go'");
         assert_eq!(screen_command(&here), None);
@@ -387,6 +452,7 @@ mod tests {
             Path::new("/home/p"),
             Path::new("/home/p/Work/terminal delight"),
             "claude --model opus 'fix it'",
+            false,
         );
         assert_eq!(
             line,
@@ -404,6 +470,7 @@ mod tests {
             Path::new("/home/p"),
             Path::new("/home/p/it's here"),
             "claude 'a \"quoted\" ask'",
+            false,
         );
         let script = line.replacen("ssh -t", "printf '%s\\n'", 1);
         let out = std::process::Command::new("sh")
@@ -427,12 +494,102 @@ mod tests {
     fn a_path_outside_home_is_written_whole_and_home_itself_is_tilde() {
         let m = far("box");
         assert_eq!(
-            line_on(&m, Path::new("/home/p"), Path::new("/srv/x"), "codex"),
+            line_on(
+                &m,
+                Path::new("/home/p"),
+                Path::new("/srv/x"),
+                "codex",
+                false
+            ),
             "ssh -t box 'cd '\\''/srv/x'\\'' && codex'"
         );
         assert_eq!(
-            line_on(&m, Path::new("/home/p"), Path::new("/home/p"), "codex"),
+            line_on(
+                &m,
+                Path::new("/home/p"),
+                Path::new("/home/p"),
+                "codex",
+                false
+            ),
             "ssh -t box 'cd ~ && codex'"
+        );
+    }
+
+    /// An agent with no project gets a folder of its own, named the way T3
+    /// names a scratch thread's: the date and the first five words.
+    #[test]
+    fn a_projectless_agent_is_named_by_date_and_first_words() {
+        assert_eq!(
+            scratch_name(
+                "Fix the flaky pane test, then tell me why!",
+                Some("2026-11-09")
+            ),
+            "2026-11-09-fix-the-flaky-pane-test"
+        );
+        assert_eq!(
+            scratch_name("Écrire la Note: été 2026", Some("2026-11-09")),
+            "2026-11-09-écrire-la-note-été-2026",
+            "letters of any script are kept"
+        );
+        assert_eq!(scratch_name("   ?!  ", Some("2026-11-09")), "2026-11-09");
+        assert_eq!(
+            scratch_name("look at this", None),
+            "look-at-this",
+            "no clock, no date"
+        );
+        assert_eq!(scratch_name("", None), "thread");
+        let long = scratch_name(&"abcdefghij ".repeat(5), Some("d"));
+        assert!(long.chars().count() <= "d-".len() + 48, "{long}");
+        assert!(!long.ends_with('-'));
+    }
+
+    /// Claiming never reuses a folder: a second agent with the same words on
+    /// the same day gets the next name.
+    #[test]
+    fn a_scratch_folder_is_claimed_once() {
+        let root = std::env::temp_dir().join(format!("td-scratch-claim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let a = claim_scratch(&root, "2026-11-09-fix-it").unwrap();
+        let b = claim_scratch(&root, "2026-11-09-fix-it").unwrap();
+        assert_eq!(a, root.join("2026-11-09-fix-it"));
+        assert_eq!(b, root.join("2026-11-09-fix-it-2"));
+        assert!(a.is_dir() && b.is_dir());
+        assert_eq!(
+            scratch_root(Path::new("/home/p")),
+            Path::new("/home/p/.scratch")
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
+
+    /// On a far machine the folder is made by the line itself, in the far
+    /// account's own home, before the agent starts in it.
+    #[test]
+    fn a_far_projectless_line_makes_its_folder_first() {
+        let line = line_on(
+            &far("box"),
+            Path::new("/home/p"),
+            Path::new("/home/p/.scratch/2026-11-09-fix-it"),
+            "claude 'fix it'",
+            true,
+        );
+        // Through a real shell: the far end gets one command, the folder made
+        // and entered under its own home.
+        let script = line.replacen("ssh -t", "printf '%s\\n'", 1);
+        let out = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(&script)
+            .output()
+            .expect("sh");
+        let words: Vec<String> = String::from_utf8_lossy(&out.stdout)
+            .lines()
+            .map(str::to_string)
+            .collect();
+        assert_eq!(
+            words,
+            [
+                "box",
+                "mkdir -p ~/'.scratch/2026-11-09-fix-it' && cd ~/'.scratch/2026-11-09-fix-it' && claude 'fix it'"
+            ]
         );
     }
 

@@ -67,9 +67,14 @@ pub struct Entry {
     pub composer_screen: &'static str,
     /// Shown after Ctrl+Enter. {name} is the new tab's name.
     pub composer_started: &'static str,
-    /// The PROJECT chip's first choice: no project yet. The agent starts in
-    /// the home folder and its tab is filed under no project.
+    /// The PROJECT chip's first choice: no project yet. The agent starts in a
+    /// new folder of its own under ~/.scratch and its tab is filed under no
+    /// project.
     pub project_none: &'static str,
+    /// Beside *none* in the PROJECT list: where an agent with no project works. Keep the path.
+    pub project_none_where: &'static str,
+    /// Shown when the folder for an agent with no project could not be made. {error} is the system's message.
+    pub composer_scratch_failed: &'static str,
     /// Shown when machines.toml cannot be read. {error} is the reader's message.
     pub composer_machines_error: &'static str,
     /// Under the chips when a far machine is chosen. {machine} is its name.
@@ -264,6 +269,8 @@ pub const EN: Entry = Entry {
     composer_screen: "◫ screen",
     composer_started: "Started in the background: {name}",
     project_none: "none — don’t know yet",
+    project_none_where: "a new folder of its own, in ~/.scratch",
+    composer_scratch_failed: "Could not make a folder for it in ~/.scratch: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note:
         "Runs over ssh on {machine}. This window cannot read its state, so its row says unknown.",
@@ -381,6 +388,8 @@ pub const ES: Entry = Entry {
     composer_screen: "◫ pantalla",
     composer_started: "Iniciado en segundo plano: {name}",
     project_none: "ninguno — aún no lo sé",
+    project_none_where: "una carpeta nueva propia, en ~/.scratch",
+    composer_scratch_failed: "No se pudo crear una carpeta para él en ~/.scratch: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Se ejecuta por ssh en {machine}. Esta ventana no puede leer su estado, así que su fila dice desconocido.",
     composer_filter: "escribe para buscar un proyecto",
@@ -495,6 +504,8 @@ pub const DE: Entry = Entry {
     composer_screen: "◫ Bildschirm",
     composer_started: "Im Hintergrund gestartet: {name}",
     project_none: "keins — weiß ich noch nicht",
+    project_none_where: "ein eigener neuer Ordner, in ~/.scratch",
+    composer_scratch_failed: "In ~/.scratch ließ sich kein Ordner dafür anlegen: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Läuft per ssh auf {machine}. Dieses Fenster kann seinen Zustand nicht lesen, darum zeigt die Zeile unbekannt.",
     composer_filter: "tippen, um ein Projekt zu finden",
@@ -609,6 +620,8 @@ pub const FR: Entry = Entry {
     composer_screen: "◫ écran",
     composer_started: "Lancé en arrière-plan : {name}",
     project_none: "aucun — je ne sais pas encore",
+    project_none_where: "un nouveau dossier à lui, dans ~/.scratch",
+    composer_scratch_failed: "Impossible de lui créer un dossier dans ~/.scratch : {error}",
     composer_machines_error: "machines.toml : {error}",
     composer_far_note: "Tourne par ssh sur {machine}. Cette fenêtre ne peut pas lire son état, sa ligne dit donc inconnu.",
     composer_filter: "tapez pour trouver un projet",
@@ -723,6 +736,8 @@ pub const RU: Entry = Entry {
     composer_screen: "◫ экран",
     composer_started: "Запущено в фоне: {name}",
     project_none: "нет — пока не знаю",
+    project_none_where: "своя новая папка, в ~/.scratch",
+    composer_scratch_failed: "Не удалось создать для него папку в ~/.scratch: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "Работает по ssh на {machine}. Это окно не может прочитать его состояние, поэтому строка говорит «неизвестно».",
     composer_filter: "введите, чтобы найти проект",
@@ -837,6 +852,8 @@ pub const ZH: Entry = Entry {
     composer_screen: "◫ 屏幕",
     composer_started: "已在后台启动：{name}",
     project_none: "无——还不确定",
+    project_none_where: "自己的新文件夹，在 ~/.scratch 下",
+    composer_scratch_failed: "无法在 ~/.scratch 下为它创建文件夹：{error}",
     composer_machines_error: "machines.toml：{error}",
     composer_far_note: "通过 ssh 在 {machine} 上运行。此窗口无法读取它的状态，所以它的行显示未知。",
     composer_filter: "输入以查找项目",
@@ -953,6 +970,8 @@ pub const JA: Entry = Entry {
     composer_screen: "◫ 画面",
     composer_started: "バックグラウンドで開始：{name}",
     project_none: "なし — まだ決めていない",
+    project_none_where: "専用の新しいフォルダー（~/.scratch）",
+    composer_scratch_failed: "~/.scratch にフォルダーを作れませんでした：{error}",
     composer_machines_error: "machines.toml：{error}",
     composer_far_note: "{machine} 上で ssh 経由で動きます。このウィンドウは状態を読めないため、行は不明と表示します。",
     composer_filter: "入力してプロジェクトを探す",
@@ -1067,6 +1086,8 @@ pub const KO: Entry = Entry {
     composer_screen: "◫ 화면",
     composer_started: "백그라운드에서 시작됨: {name}",
     project_none: "없음 — 아직 모름",
+    project_none_where: "전용 새 폴더, ~/.scratch 안",
+    composer_scratch_failed: "~/.scratch에 폴더를 만들지 못했습니다: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note: "{machine}에서 ssh로 실행됩니다. 이 창은 상태를 읽을 수 없어 행에 알 수 없음으로 표시됩니다.",
     composer_filter: "입력해서 프로젝트 찾기",
@@ -1181,6 +1202,8 @@ pub const HI: Entry = Entry {
     composer_screen: "◫ स्क्रीन",
     composer_started: "पीछे शुरू हुआ: {name}",
     project_none: "कोई नहीं — अभी पता नहीं",
+    project_none_where: "अपना नया फ़ोल्डर, ~/.scratch में",
+    composer_scratch_failed: "~/.scratch में इसके लिए फ़ोल्डर नहीं बन सका: {error}",
     composer_machines_error: "machines.toml: {error}",
     composer_far_note:
         "{machine} पर ssh से चलता है। यह विंडो उसकी स्थिति नहीं पढ़ सकती, इसलिए उसकी पंक्ति अज्ञात दिखाती है।",

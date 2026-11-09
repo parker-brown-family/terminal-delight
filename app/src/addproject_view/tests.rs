@@ -745,3 +745,51 @@ fn a_long_machine_list_keeps_the_highlight_in_view(cx: &mut gpui::TestAppContext
     assert!(cx.debug_bounds("add-project-machine-0").is_none());
     ws.read_with(cx, |ws, _| assert_eq!(adding(ws).unwrap().at, 12));
 }
+
+/// One key to an agent with no project: Backspace on the PROJECT chip, with
+/// nothing typed, takes the project away; with letters typed it only takes
+/// a letter. The none row says where such an agent works.
+#[gpui::test]
+fn backspace_on_the_project_chip_starts_from_no_project(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    cx.update(|w, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_composer(w, cx);
+            let c = ws.composer.as_mut().unwrap();
+            c.machines = vec![here()];
+            c.projects.insert(
+                0,
+                launcher::Project {
+                    path: PathBuf::from("/srv/somewhere"),
+                    name: "somewhere".into(),
+                    repo: true,
+                    machine: None,
+                },
+            );
+            c.order = launcher::filter(&c.projects, "");
+            c.project = Some(0);
+            c.focus = entry::Focus::Project;
+            c.query = "so".into();
+        })
+    });
+    redraw(cx);
+    cx.simulate_keystrokes("backspace");
+    ws.read_with(cx, |ws, _| {
+        let c = ws.composer.as_ref().unwrap();
+        assert_eq!(c.query, "s", "a letter first");
+        assert!(c.project.is_some());
+    });
+    cx.simulate_keystrokes("backspace backspace");
+    redraw(cx);
+    ws.read_with(cx, |ws, _| {
+        let c = ws.composer.as_ref().unwrap();
+        assert!(c.query.is_empty());
+        assert_eq!(c.project, None, "then the project itself");
+    });
+    // The list's none row is drawn, and says where the agent will work.
+    assert!(cx.debug_bounds("composer-project-0").is_some());
+}

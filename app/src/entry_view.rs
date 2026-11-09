@@ -30,8 +30,9 @@ pub(crate) struct Composer {
     /// Indices into `projects` that match `query`, best first.
     pub(crate) order: Vec<usize>,
     /// The chosen project, an index into `projects`. `None` is a choice of its
-    /// own, *none, don't know yet*: the agent starts in the home folder and
-    /// its tab is filed under no project.
+    /// own, *none, don't know yet*: the agent starts in a new folder of its
+    /// own under `~/.scratch`, as a T3 "No project" thread does, and its tab is
+    /// filed under no project.
     pub(crate) project: Option<usize>,
     harness: launcher::Harness,
     model: Option<String>,
@@ -53,6 +54,9 @@ pub(crate) struct Composer {
     /// The add-a-project dialog, while it is up over the composer
     /// (`addproject_view.rs`).
     pub(crate) adding: Option<addproject_view::AddProject>,
+    /// Where an agent with no project gets its folder of its own
+    /// ([`entry::scratch_root`]); a test points it somewhere of its own.
+    pub(crate) scratch_root: std::path::PathBuf,
 }
 
 impl Composer {
@@ -62,7 +66,9 @@ impl Composer {
             .map(|p| p.path.as_path())
     }
 
-    /// Where the agent starts: the project, or home when there is none yet.
+    /// Where the agent's project is, or home when there is none yet. A
+    /// projectless agent's own folder is only made when it is sent, so that
+    /// browsing the chips makes nothing on disk.
     fn cwd(&self) -> std::path::PathBuf {
         self.project_path()
             .map(std::path::Path::to_path_buf)
@@ -270,6 +276,7 @@ impl Workspace {
                 local_adapter: launcher::LocalAdapter::load(),
                 note: None,
                 adding: None,
+                scratch_root: entry::scratch_root(&home),
             });
             self.watch_model_catalogs(cx);
         }
@@ -409,6 +416,9 @@ impl Workspace {
                 entry::Focus::Project => match key {
                     "left" | "up" => c.step_chip(true),
                     "right" | "down" => c.step_chip(false),
+                    // With nothing typed, Backspace takes the project away:
+                    // one key to an agent with no project.
+                    "backspace" if c.query.is_empty() => c.project = None,
                     "backspace" => {
                         c.query.pop();
                         c.refilter();
@@ -481,9 +491,38 @@ impl Workspace {
                 return;
             }
         }
+        // No project: a folder of its own, named from the date and the first
+        // words, the way T3 starts a "No project" thread. Here it is claimed
+        // now; on a far machine the ssh line makes it (`line_on`'s `make`).
+        let mut cwd = cwd;
+        let mut claimed: Option<std::path::PathBuf> = None;
+        if c.project.is_none() {
+            let date = crate::handover::local(surfacefeed::now_ms())
+                .map(|t| format!("{:04}-{:02}-{:02}", t.year, t.month, t.day));
+            let name = entry::scratch_name(&sentence, date.as_deref());
+            if machine.is_far() {
+                cwd = entry::scratch_root(&session::home_dir()).join(name);
+            } else {
+                match entry::claim_scratch(&c.scratch_root, &name) {
+                    Ok(dir) => {
+                        cwd = dir.clone();
+                        claimed = Some(dir);
+                    }
+                    Err(err) => {
+                        c.note = Some(lang::fill(
+                            e.composer_scratch_failed,
+                            &[("error", &err.to_string())],
+                        ));
+                        self.composer = Some(c);
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
         // The pane that types the ssh line is this machine's, so it starts in
         // a folder this machine has.
-        let pane_cwd = if far_project.is_some() {
+        let pane_cwd = if far_project.is_some() || (machine.is_far() && c.project.is_none()) {
             session::home_dir()
         } else {
             cwd.clone()
@@ -521,6 +560,11 @@ impl Workspace {
         let line = match Self::composer_line(&c, &machine, &recipe) {
             Ok(line) => line,
             Err(err) => {
+                // Nothing started in it, so the folder claimed for it goes too
+                // (`remove_dir` takes only an empty one).
+                if let Some(dir) = &claimed {
+                    let _ = std::fs::remove_dir(dir);
+                }
                 c.note = Some(err);
                 self.composer = Some(c);
                 cx.notify();
@@ -641,6 +685,7 @@ impl Workspace {
                 &session::home_dir(),
                 &recipe.cwd,
                 &recipe.command_line(None),
+                c.project.is_none(),
             ));
         }
         let dir = surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
@@ -1038,7 +1083,7 @@ impl Workspace {
                             None => p.path.to_string_lossy().to_string(),
                         },
                     ),
-                    None => (e.project_none.to_string(), String::new()),
+                    None => (e.project_none.to_string(), e.project_none_where.to_string()),
                 };
                 let on = c.project == i;
                 list = list.child(
