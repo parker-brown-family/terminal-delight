@@ -798,6 +798,38 @@ impl Workspace {
         cx.notify();
     }
 
+    /// A face button of the spine header: a bezel whose label gives way with
+    /// an ellipsis when the row is short, rather than running under the ◀ at
+    /// the row's end (chalk's wider letters, and Spanish, French or Russian in
+    /// any skin, did).
+    ///
+    /// The face you are on keeps its whole label (`flex_none`); only the other
+    /// one gives way, and only its word: a count never does, because it is
+    /// what the face is there to say (the PROJECTS face's ▼ squeezed INBOX 5
+    /// to "INBOX…").
+    fn spine_face_btn(
+        sk: &skin::Skin,
+        label: &str,
+        count: Option<usize>,
+        active: bool,
+        s: f32,
+    ) -> gpui::Div {
+        sk.bezel(active, s)
+            .when(active, |d| d.flex_none())
+            // Narrower sides than a bezel's own: the row holds two faces, a +
+            // and the ◀ in 208 pixels, and a wide face (chalk's handwriting)
+            // would otherwise give up most of its letters to the padding.
+            .px(px(5. * s))
+            .min_w_0()
+            .overflow_hidden()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(3. * s))
+            .child(div().min_w_0().truncate().child(sk.control_text(label)))
+            .children(count.map(|n| div().flex_none().child(n.to_string())))
+    }
+
     /// The spine header's two faces, PROJECTS and INBOX, the second carrying
     /// how many rows want the person — the same count, by the same rule, as
     /// the number on the closed rail.
@@ -811,11 +843,6 @@ impl Workspace {
         let (shelves, _) = self.inbox_rows(cx);
         let wanting = shelves.wanting();
         let e = self.lang.strings().entry;
-        let inbox_label = if wanting > 0 {
-            format!("{} {wanting}", e.spine_inbox)
-        } else {
-            e.spine_inbox.to_string()
-        };
         div()
             .flex_1()
             .min_w_0()
@@ -823,11 +850,12 @@ impl Workspace {
             .flex_row()
             .items_center()
             .gap(px(3. * s))
-            .child(
-                Self::bezel_btn_s(sk, e.spine_projects, !showing, s * 0.8)
+            // Each face says its whole name on hover, since a short row
+            // shortens the one you are not on.
+            .child(with_tip(
+                Self::spine_face_btn(sk, e.spine_projects, None, !showing, s * 0.8)
                     .id("spine-face-projects")
                     .debug_selector(|| "spine-face-projects".into())
-                    .flex_none()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -835,36 +863,34 @@ impl Workspace {
                             ws.set_spine_inbox(false, cx);
                         }),
                     ),
-            )
+                vec![e.spine_projects.to_string()],
+            ))
             .child(
-                Self::bezel_btn_s(sk, &inbox_label, showing, s * 0.8)
-                    .id("spine-face-inbox")
-                    .debug_selector(|| "spine-face-inbox".into())
-                    .flex_none()
-                    .when(wanting > 0 && !showing, |d| d.text_color(sk.ink.warn))
-                    .on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.set_spine_inbox(true, cx);
-                        }),
-                    ),
-            )
-            .when(showing, |d| {
-                d.child(
-                    Self::bezel_btn_s(sk, e.new_chat, false, s * 0.8)
-                        .id("spine-new-chat")
-                        .debug_selector(|| "spine-new-chat".into())
-                        .flex_none()
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
-                                cx.stop_propagation();
-                                ws.open_composer(window, cx);
-                            }),
-                        ),
+                Self::spine_face_btn(
+                    sk,
+                    e.spine_inbox,
+                    (wanting > 0).then_some(wanting),
+                    showing,
+                    s * 0.8,
                 )
-            })
+                .id("spine-face-inbox")
+                .debug_selector(|| "spine-face-inbox".into())
+                .when(wanting > 0 && !showing, |d| d.text_color(sk.ink.warn))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.set_spine_inbox(true, cx);
+                    }),
+                )
+                .map(|d| {
+                    let name = match wanting {
+                        0 => e.spine_inbox.to_string(),
+                        n => format!("{} {n}", e.spine_inbox),
+                    };
+                    with_tip(d, vec![name])
+                }),
+            )
     }
 
     /// The inbox's rows, top shelf first, for the spine's list.
@@ -893,14 +919,7 @@ impl Workspace {
             );
             return out;
         }
-        out.push(self.inbox_shelf_header(
-            inbox::Shelf::LookAtMe,
-            shelves.wanting(),
-            &sk,
-            th,
-            s,
-            cx,
-        ));
+        out.push(self.inbox_shelf_header(inbox::Shelf::LookAtMe, shelves.wanting(), &sk, s, cx));
         if shelves.look.is_empty() {
             out.push(
                 div()
@@ -942,7 +961,7 @@ impl Workspace {
             if rows.is_empty() {
                 continue;
             }
-            out.push(self.inbox_shelf_header(shelf, rows.len(), &sk, th, s, cx));
+            out.push(self.inbox_shelf_header(shelf, rows.len(), &sk, s, cx));
             if self.inbox_store.borrow().is_open(shelf) {
                 for row in rows {
                     out.push(self.inbox_row(
@@ -971,7 +990,6 @@ impl Workspace {
         shelf: inbox::Shelf,
         count: usize,
         sk: &skin::Skin,
-        th: &theme::Theme,
         s: f32,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -1024,10 +1042,10 @@ impl Workspace {
                 div()
                     .flex_none()
                     .text_size(sk.text_px(CHROME_NAME_PT * s * 0.85))
-                    .text_color(if loud { sk.ink.warn } else { th.faint })
+                    .text_color(if loud { sk.ink.warn } else { sk.ink.ink_faint })
                     .when(count > 0 || shelf.folds(), |d| d.child(count.to_string())),
             )
-            .child(div().h(px(1.)).flex_1().bg(th.faint.alpha(0.25)))
+            .child(div().h(px(1.)).flex_1().bg(sk.ink.rule))
             // LOOK AT ME says which order it is in, and a press switches. The
             // order is the one call in here left open for Parker to make, so
             // both are a press apart rather than one of them hidden.
@@ -1043,7 +1061,7 @@ impl Workspace {
                         .cursor_pointer()
                         .hover(|st| st.bg(hsla(0., 0., 1., 0.08)))
                         .text_size(sk.text_px(CHROME_NAME_PT * s * 0.72))
-                        .text_color(th.faint)
+                        .text_color(sk.ink.ink_faint)
                         .child(match order {
                             inbox::LookOrder::Rail => e.order_rail,
                             inbox::LookOrder::Returned => e.order_returned,
@@ -1206,7 +1224,7 @@ impl Workspace {
             .rounded(sk.radius())
             .bg(th.surface.alpha(0.96))
             .border(sk.box_border(1.))
-            .border_color(th.faint.alpha(0.35));
+            .border_color(sk.ink.edge_rest);
         for (vi, verb) in verbs.iter().copied().enumerate() {
             let (glyph, word) = match verb {
                 Verb::Snooze => ("\u{263e}", e.act_snooze),
@@ -1322,14 +1340,18 @@ impl Workspace {
                             .min_w_0()
                             .truncate()
                             .text_size(sk.text_px(CHROME_NAME_PT * s * 0.8))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(place),
                     )
                     .children(self.inbox_when(row).map(|w| {
                         div()
                             .flex_none()
                             .text_size(sk.text_px(CHROME_NAME_PT * s * 0.8))
-                            .text_color(if row.woke { sk.ink.warn } else { th.faint })
+                            .text_color(if row.woke {
+                                sk.ink.warn
+                            } else {
+                                sk.ink.ink_faint
+                            })
                             .child(w)
                     })),
             )
@@ -1384,7 +1406,7 @@ impl Workspace {
             );
 
         if snoozing {
-            body = body.child(self.inbox_snooze_menu(key, n, sk, th, s, cx));
+            body = body.child(self.inbox_snooze_menu(key, n, sk, s, cx));
         }
         body.into_any_element()
     }
@@ -1397,7 +1419,6 @@ impl Workspace {
         key: inbox::Key,
         n: usize,
         sk: &skin::Skin,
-        th: &theme::Theme,
         s: f32,
         cx: &mut Context<Self>,
     ) -> gpui::Div {
@@ -1413,7 +1434,7 @@ impl Workspace {
             .child(
                 div()
                     .text_size(sk.text_px(CHROME_NAME_PT * s * 0.8))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(e.snooze_title),
             );
         for (wi, (wake, until)) in inbox::Wake::menu(now).into_iter().enumerate() {

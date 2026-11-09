@@ -1,0 +1,313 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-backspace-on-the-project-chip-takes-the-project",
+      "at": "2026-11-09T08:37Z",
+      "title": "Backspace on the PROJECT chip takes the project away",
+      "context": null,
+      "chose": "With nothing typed, Backspace selects none",
+      "because": "One key to a projectless agent from wherever the composer opened.",
+      "passed_over": [],
+      "undo": "Drop the backspace arm.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-secondary-text-on-the-new-surfaces-uses-the-skin",
+      "at": "2026-11-09T08:37Z",
+      "title": "Secondary text on the new surfaces uses the skin's inks",
+      "context": null,
+      "chose": "ink_faint, ink_dim, edge_rest and rule instead of the palette's raw faint",
+      "because": "The hacker design's faint is near black; the side panel already used the inks and stayed readable.",
+      "passed_over": [],
+      "undo": "Revert the colour swaps.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-the-add-button-beside-project-is-drawn-as-a-chip",
+      "at": "2026-11-09T08:37Z",
+      "title": "The add button beside PROJECT is drawn as a chip",
+      "context": null,
+      "chose": "sk.chip with the skin's control word, not a bezel button",
+      "because": "In Parker's own skin chips have no border and buttons do, so it looked heavier than its row.",
+      "passed_over": [],
+      "undo": "Use bezel_btn_s again.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-a-projectless-agent-works-in-its-own-folder-unde",
+      "at": "2026-11-09T08:37Z",
+      "title": "A projectless agent works in its own folder under ~/.scratch",
+      "context": null,
+      "chose": "A new folder per agent under ~/.scratch, named by date and first words",
+      "because": "T3 does this; the home folder made ~ the agent's project; TD's data folder is wiped by an uninstall.",
+      "passed_over": [
+        "The home folder, as before",
+        "~/.local/share/terminal-delight/scratch"
+      ],
+      "undo": "Change entry::scratch_root.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-the-inbox-face-s-new-becomes-the-projects-face-s",
+      "at": "2026-11-09T08:37Z",
+      "title": "The inbox face's + NEW becomes the projects face's +",
+      "context": null,
+      "chose": "A bare + with a tooltip, where the projects face's + sits",
+      "because": "+ NEW ran under the collapse arrow in chalk, and in Spanish, French and Russian in every skin.",
+      "passed_over": [
+        "Truncating + NEW"
+      ],
+      "undo": "Put the label back; the faces still truncate.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-back-from-a-clone-field-opened-on-the-machines-r",
+      "at": "2026-11-09T09:39Z",
+      "title": "Back from a clone field opened on the machines returns to them",
+      "context": null,
+      "chose": "Closing the field goes to where it was opened: the machines, or the folder list",
+      "because": "Back landed on a folder list the person had never seen, so it took two Backs to return.",
+      "passed_over": [
+        "Keep Back on the folder list, so the parent folder can be changed"
+      ],
+      "undo": "Drop the from_machines flag.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    },
+    {
+      "id": "call-both-lists-keep-their-full-height-while-they-nar",
+      "at": "2026-11-09T09:39Z",
+      "title": "Both lists keep their full height while they narrow",
+      "context": null,
+      "chose": "Blank rows hold the project list at eight and the folder list at ten",
+      "because": "Both cards are centred, so a shrinking list moved the sentence box while typing and moved rows under the pointer.",
+      "passed_over": [
+        "Anchor the cards near the top, like a command palette"
+      ],
+      "undo": "Drop the blank rows.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    },
+    {
+      "id": "call-the-project-chip-says-just-none",
+      "at": "2026-11-09T09:39Z",
+      "title": "The PROJECT chip says just none",
+      "context": null,
+      "chose": "A short word on the chip; the list row keeps the full wording",
+      "because": "The full wording wrapped REACH onto a second line at the composer's width.",
+      "passed_over": [],
+      "undo": "Show project_none on the chip again.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    },
+    {
+      "id": "call-the-composer-s-resting-chips-use-the-body-s-dim",
+      "at": "2026-11-09T10:06Z",
+      "title": "The composer's resting chips use the body's dim ink",
+      "context": null,
+      "chose": "ink_dim at rest unless the skin is paper, for the composer's chips only",
+      "because": "The clean design drew them in Faint, below the tabs' 3:1 floor, so they vanished at rest.",
+      "passed_over": [
+        "Change Skin::chip for every chip in the app"
+      ],
+      "undo": "Use sk.chip again in the composer.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    },
+    {
+      "id": "call-failures-in-the-t3-dialogs-wear-the-skin-s-dange",
+      "at": "2026-11-09T10:13Z",
+      "title": "Failures in the T3 dialogs wear the skin's danger ink",
+      "context": null,
+      "chose": "Danger ink for failures, accent kept for guidance, as the side panel does",
+      "because": "The relate dialog's refusal was drawn in the accent, which reads as success in a green design.",
+      "passed_over": [
+        "The warn ink for every note"
+      ],
+      "undo": "Draw the notes in th.accent again.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    },
+    {
+      "id": "call-the-side-panel-does-not-take-the-keyboard-under",
+      "at": "2026-11-09T10:22Z",
+      "title": "The side panel does not take the keyboard under a card",
+      "context": null,
+      "chose": "A press on the panel leaves the keys with the composer or relate dialog",
+      "because": "The card takes every key first, so the lit panel promised typing it never got.",
+      "passed_over": [
+        "Put the card away on a press, which would kill a clone in progress"
+      ],
+      "undo": "Drop the guard in flyout_focus.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "found"
+    }
+  ]
+}

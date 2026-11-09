@@ -1356,7 +1356,17 @@ impl Workspace {
         cx.notify();
     }
 
+    /// The composer and the relate dialog take every key first, so a panel or
+    /// a field lit under one of them promised typing that went to the card.
+    /// They are modal: Esc puts either away, and then the panel can have it.
+    fn card_holds_keys(&self) -> bool {
+        self.composer.is_some() || self.relate.is_some()
+    }
+
     fn flyout_focus(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.card_holds_keys() {
+            return;
+        }
         self.flyout.focused = true;
         window.focus(&self.focus_handle, cx);
         cx.notify();
@@ -1932,6 +1942,9 @@ impl Workspace {
     /// A pull request turns to its files first; a page shows its text, which
     /// is what a find reads.
     fn search_start(&mut self, t: &Target, cx: &mut Context<Self>) {
+        if self.card_holds_keys() {
+            return;
+        }
         match t {
             Target::Pull { .. } => {
                 if !matches!(self.flyout.live.get(t), Some(Live::Pull(p)) if p.face == PullFace::Files)
@@ -7054,6 +7067,90 @@ mod tests {
                 pane.read(cx).handovers().is_opened(&key),
                 "and it counts as opened"
             );
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Under the composer, a press on the panel or on a file's find field
+    /// takes nothing: the composer takes every key first, so a lit field
+    /// promised typing that went to the card (found on the mouse tour). With
+    /// the composer put away, the same press takes the keys.
+    #[gpui::test]
+    fn the_panel_and_its_fields_wait_while_a_card_holds_the_keys(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1400.), px(900.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        draw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-card-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("plan.rs");
+        std::fs::write(&file, "fn one() {}\n").unwrap();
+        let target = Target::File { path: file.clone() };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, target.clone(), Some(1), false, w, cx);
+                ws.flyout.focused = false;
+                ws.open_composer(w, cx);
+            })
+        });
+        draw(cx);
+        draw(cx);
+        let field = cx
+            .debug_bounds("flyout-find")
+            .expect("the find field is drawn");
+        cx.simulate_click(field.center(), gpui::Modifiers::none());
+        draw(cx);
+        ws.read_with(cx, |ws, _| {
+            assert!(!ws.flyout.focused, "the panel waits");
+            assert!(!ws.search_typing(&target), "and so does its field");
+            assert!(ws.composer.is_some(), "the composer stays up");
+        });
+        cx.update(|_, cx| ws.update(cx, |ws, _| ws.composer_put_away()));
+        draw(cx);
+        let field = cx
+            .debug_bounds("flyout-find")
+            .expect("the find field is drawn");
+        cx.simulate_click(field.center(), gpui::Modifiers::none());
+        draw(cx);
+        ws.read_with(cx, |ws, _| {
+            assert!(
+                ws.flyout.focused,
+                "with no card up the panel takes the keys"
+            );
+            assert!(ws.search_typing(&target), "and the field types");
         });
         let _ = std::fs::remove_dir_all(&dir);
     }

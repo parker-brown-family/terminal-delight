@@ -290,8 +290,9 @@ fn a_missing_folder_is_made_only_when_asked_and_then_remembered(cx: &mut gpui::T
     let made = home.path().join("deep/new/thing");
     assert!(!made.exists(), "Enter makes nothing");
     ws.read_with(cx, |ws, _| {
-        let note = browse(ws).unwrap().note.clone().unwrap_or_default();
+        let (note, failed) = browse(ws).unwrap().note.clone().unwrap_or_default();
         assert!(note.contains("does not exist yet"), "{note}");
+        assert!(!failed, "guidance, not a failure");
     });
     cx.simulate_keystrokes("ctrl-enter");
     settle(cx, |ws| adding(ws).is_none(), &ws);
@@ -704,7 +705,7 @@ fn a_plain_enter_never_remakes_a_folder_gone_since_its_listing(cx: &mut gpui::Te
     );
     assert!(!home.path().join("Work/beta").exists(), "not made again");
     ws.read_with(cx, |ws, _| {
-        let note = browse(ws).unwrap().note.clone().unwrap();
+        let (note, _) = browse(ws).unwrap().note.clone().unwrap();
         assert!(note.contains("does not exist yet"), "{note}");
         assert!(adding(ws).is_some(), "the dialog stays, nothing chosen");
     });
@@ -792,4 +793,266 @@ fn backspace_on_the_project_chip_starts_from_no_project(cx: &mut gpui::TestAppCo
     });
     // The list's none row is drawn, and says where the agent will work.
     assert!(cx.debug_bounds("composer-project-0").is_some());
+}
+
+/// The project list draws eight rows and keeps the chosen one among them: a
+/// list that always opened at its top hid the project the chip named whenever
+/// it was the ninth or later. What is below is counted.
+#[gpui::test]
+fn the_project_list_keeps_the_chosen_project_in_view(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    cx.update(|w, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_composer(w, cx);
+            let c = ws.composer.as_mut().unwrap();
+            c.machines = vec![here()];
+            c.projects = (0..14)
+                .map(|n| launcher::Project {
+                    path: PathBuf::from(format!("/srv/p{n:02}")),
+                    name: format!("p{n:02}"),
+                    repo: true,
+                    machine: None,
+                })
+                .collect();
+            c.order = launcher::filter(&c.projects, "");
+            c.project = Some(11);
+            c.focus = entry::Focus::Project;
+        })
+    });
+    redraw(cx);
+    // Row 0 is none, so project 11 is row 12 of 15.
+    assert!(
+        cx.debug_bounds("composer-project-12").is_some(),
+        "the chosen project is drawn"
+    );
+    assert!(
+        cx.debug_bounds("composer-project-0").is_none(),
+        "the window moved down to it"
+    );
+    // Back to the top, none leads again.
+    cx.update(|_, cx| ws.update(cx, |ws, _| ws.composer.as_mut().unwrap().project = None));
+    redraw(cx);
+    assert!(cx.debug_bounds("composer-project-0").is_some());
+    assert!(
+        cx.debug_bounds("composer-project-8").is_none(),
+        "eight at a time"
+    );
+}
+
+/// The INBOX face's header ends in the same + the PROJECTS face's does, and
+/// it opens the composer.
+#[gpui::test]
+fn the_inbox_faces_plus_opens_the_composer(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    // A test window is a scratch window, which draws no spine unless asked.
+    cx.update(|_, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.spine_in_scratch = true;
+            ws.set_spine_inbox(true, cx);
+        })
+    });
+    redraw(cx);
+    let plus = cx
+        .debug_bounds("spine-new-chat")
+        .expect("the INBOX face draws its +");
+    cx.simulate_click(plus.center(), gpui::Modifiers::none());
+    redraw(cx);
+    assert!(
+        ws.read_with(cx, |ws, _| ws.composer.is_some()),
+        "the + opens the composer"
+    );
+}
+
+/// Back from the clone field goes to where it was opened: to the machines
+/// when it was opened from them, which the tour found landing on a folder
+/// list the person had never seen, and to the folder list when it was opened
+/// there.
+#[gpui::test]
+fn back_from_the_clone_field_returns_to_where_it_was_opened(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    let (home, config, bin) = (
+        Scratch::new("home"),
+        Scratch::new("config"),
+        Scratch::new("bin"),
+    );
+    std::fs::create_dir_all(home.path().join("Work/a")).unwrap();
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    std::fs::write(home.path().join(".ssh/config"), "Host lab\n").unwrap();
+    let ssh = fake_ssh(bin.path(), home.path());
+    open(&ws, cx, vec![here()], "", config.path(), home.path(), &ssh);
+    let step = |ws: &Workspace| match adding(ws).map(|a| &a.step) {
+        Some(Step::Machines) => "machines",
+        Some(Step::Folder(b)) if b.new.is_some() => "field",
+        Some(Step::Folder(_)) => "folders",
+        Some(Step::Connecting { .. }) => "connecting",
+        None => "closed",
+    };
+    assert_eq!(ws.read_with(cx, |ws, _| step(ws)), "machines");
+    // From the machines, on this computer; its Back button goes back to them.
+    cx.simulate_keystrokes("n");
+    settle(cx, |ws| step(ws) == "field", &ws);
+    let back = cx
+        .debug_bounds("add-project-back")
+        .expect("the field's Back is drawn");
+    cx.simulate_click(back.center(), gpui::Modifiers::none());
+    redraw(cx);
+    assert_eq!(ws.read_with(cx, |ws, _| step(ws)), "machines");
+    // From a folder, the field closes back onto that folder.
+    cx.simulate_keystrokes("enter");
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.exists() == Some(true)),
+        &ws,
+    );
+    cx.simulate_keystrokes("ctrl-n");
+    redraw(cx);
+    assert_eq!(ws.read_with(cx, |ws, _| step(ws)), "field");
+    cx.simulate_keystrokes("escape");
+    redraw(cx);
+    assert_eq!(ws.read_with(cx, |ws, _| step(ws)), "folders");
+}
+
+/// The folder list keeps its height whatever the folder holds. The card is
+/// centred, so a short folder moved the path field and every row, and the
+/// next click landed on a row nobody was pointing at.
+#[gpui::test]
+fn a_short_folder_leaves_the_dialog_where_it_was(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    let (home, config, bin) = (
+        Scratch::new("home"),
+        Scratch::new("config"),
+        Scratch::new("bin"),
+    );
+    for n in 0..12 {
+        std::fs::create_dir_all(home.path().join(format!("Work/f{n:02}"))).unwrap();
+    }
+    std::fs::create_dir_all(home.path().join("Work/f00/only")).unwrap();
+    let ssh = fake_ssh(bin.path(), home.path());
+    open(&ws, cx, vec![here()], "", config.path(), home.path(), &ssh);
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.rows().len() == 13),
+        &ws,
+    );
+    let field = cx.debug_bounds("add-project-field").expect("the field");
+    let card = cx.debug_bounds("add-project").expect("the card");
+    cx.update(|_, cx| {
+        ws.update(cx, |ws, cx| {
+            if let Some(a) = ws.adding() {
+                if let Step::Folder(b) = &mut a.step {
+                    b.set_field("~/Work/f00/");
+                }
+            }
+            ws.add_project_read(cx);
+        })
+    });
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.rows().len() == 2),
+        &ws,
+    );
+    assert_eq!(
+        cx.debug_bounds("add-project-field"),
+        Some(field),
+        "the field stays put"
+    );
+    assert_eq!(
+        cx.debug_bounds("add-project"),
+        Some(card),
+        "and so does the card"
+    );
+}
+
+/// The composer stays where it is while a filter narrows its project list:
+/// the card is centred, and a list that shrank moved the sentence box up the
+/// screen with each letter typed.
+#[gpui::test]
+fn the_composer_stays_put_while_a_filter_narrows_its_list(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    cx.update(|w, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_composer(w, cx);
+            let c = ws.composer.as_mut().unwrap();
+            c.machines = vec![here()];
+            c.projects = (0..14)
+                .map(|n| launcher::Project {
+                    path: PathBuf::from(format!("/srv/p{n:02}")),
+                    name: format!("p{n:02}"),
+                    repo: true,
+                    machine: None,
+                })
+                .collect();
+            c.order = launcher::filter(&c.projects, "");
+            c.project = None;
+            c.focus = entry::Focus::Project;
+        })
+    });
+    redraw(cx);
+    let open = cx.debug_bounds("composer-text").expect("the sentence box");
+    cx.simulate_keystrokes("p 1 3");
+    redraw(cx);
+    ws.read_with(cx, |ws, _| {
+        assert_eq!(ws.composer.as_ref().unwrap().order.len(), 1, "one match")
+    });
+    assert_eq!(cx.debug_bounds("composer-text"), Some(open), "one match");
+    cx.simulate_keystrokes("q");
+    redraw(cx);
+    ws.read_with(cx, |ws, _| {
+        assert!(ws.composer.as_ref().unwrap().order.is_empty(), "no match")
+    });
+    assert_eq!(cx.debug_bounds("composer-text"), Some(open), "no match");
+}
+
+/// A failure in the dialog is marked as one, so it is drawn in the skin's
+/// danger ink rather than in the accent, which a green design reads as
+/// success; guidance (the folder is not there yet) is not.
+#[gpui::test]
+fn a_failure_in_the_dialog_is_marked_as_one(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    let (home, config, bin) = (
+        Scratch::new("home"),
+        Scratch::new("config"),
+        Scratch::new("bin"),
+    );
+    std::fs::create_dir_all(home.path().join("Work/taken")).unwrap();
+    let ssh = fake_ssh(bin.path(), home.path());
+    open(&ws, cx, vec![here()], "", config.path(), home.path(), &ssh);
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.exists() == Some(true)),
+        &ws,
+    );
+    cx.simulate_keystrokes("ctrl-n");
+    cx.simulate_input("taken");
+    cx.simulate_keystrokes("enter");
+    redraw(cx);
+    ws.read_with(cx, |ws, _| {
+        let (note, failed) = browse(ws).unwrap().note.clone().expect("a note");
+        assert!(note.contains("taken"), "{note}");
+        assert!(failed, "a name already taken is a failure");
+    });
 }

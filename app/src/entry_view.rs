@@ -59,6 +59,9 @@ pub(crate) struct Composer {
     pub(crate) scratch_root: std::path::PathBuf,
 }
 
+/// Project rows the PROJECT chip's list draws at once.
+const PROJECT_ROWS: usize = 8;
+
 impl Composer {
     fn project_path(&self) -> Option<&std::path::Path> {
         self.project
@@ -780,7 +783,7 @@ impl Workspace {
                 .child(div().text_color(sk.ink.warn).child(e.shelf_look))
                 .child(
                     div()
-                        .text_color(th.faint)
+                        .text_color(sk.ink.ink_faint)
                         .child(shelves.wanting().to_string()),
                 ),
         );
@@ -820,7 +823,7 @@ impl Workspace {
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .text_size(sk.text_px(9.5 * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(
                                 row.fact
                                     .line
@@ -832,7 +835,7 @@ impl Workspace {
                         div()
                             .flex_none()
                             .text_size(sk.text_px(9.5 * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(age),
                     )
                     .on_mouse_down(
@@ -908,7 +911,7 @@ impl Workspace {
             .project
             .and_then(|i| c.projects.get(i))
             .map(|p| p.name.clone())
-            .unwrap_or_else(|| e.project_none.into());
+            .unwrap_or_else(|| e.project_none_chip.into());
         let model_name = c
             .model
             .as_deref()
@@ -955,7 +958,7 @@ impl Workspace {
                 value
             };
             chip_row = chip_row.child(
-                sk.chip(on)
+                sk.control_chip(on)
                     .id(SharedString::from(format!("composer-chip-{focus:?}")))
                     .debug_selector(move || format!("composer-chip-{focus:?}"))
                     .cursor_pointer()
@@ -964,9 +967,12 @@ impl Workspace {
                     .items_center()
                     .gap(px(5. * s))
                     .child(
+                        // The chip's own ink, dimmed: a lit chip in some skins
+                        // is a solid fill (hacker's is bright green), and any
+                        // fixed colour vanished on one state or the other.
                         div()
                             .text_size(sk.text_px(8.5 * s))
-                            .text_color(th.faint)
+                            .opacity(0.62)
                             .child(header),
                     )
                     .child(div().text_size(sk.text_px(11. * s)).child(shown))
@@ -987,12 +993,20 @@ impl Workspace {
                         }),
                     ),
             );
-            // Adding a project sits beside the chip that chooses one.
+            // Adding a project sits beside the chip that chooses one, drawn as
+            // a chip so it wears the row's own edge in every skin (a bezel
+            // button had a border where the skin's chips have none).
             if focus == entry::Focus::Project {
                 chip_row = chip_row.child(
-                    Self::bezel_btn_s(&sk, e.add_button, false, s * 0.9)
+                    sk.chip(false)
                         .id("composer-add-project")
                         .debug_selector(|| "composer-add-project".into())
+                        .cursor_pointer()
+                        .text_size(sk.text_px(11. * s))
+                        .text_color(th.accent)
+                        // The skin's own word for a control (terminimalist
+                        // spells controls out), as a bezel button would.
+                        .child(sk.control_text(e.add_button))
                         .on_mouse_down(
                             MouseButton::Left,
                             cx.listener(|ws, _: &MouseDownEvent, window, cx| {
@@ -1022,11 +1036,7 @@ impl Workspace {
         // The PROJECT chip's list, while it has the keyboard: the launcher's
         // ranking of what was typed, eight at a time.
         let list = (c.focus == entry::Focus::Project).then(|| {
-            let mut list = div()
-                .flex()
-                .flex_col()
-                .gap(px(1. * s))
-                .max_h(px(9. * 24. * s));
+            let mut list = div().flex().flex_col().gap(px(1. * s));
             list = list.child(
                 div()
                     .id("composer-project-add")
@@ -1048,33 +1058,37 @@ impl Workspace {
                         }),
                     ),
             );
-            if c.order.is_empty() {
-                list = list.child(
-                    div()
-                        .text_size(sk.text_px(10.5 * s))
-                        .text_color(th.faint)
-                        .child(ui.la_no_match),
-                );
-            }
-            if c.query.is_empty() {
-                list = list.child(
-                    div()
-                        .text_size(sk.text_px(10. * s))
-                        .text_color(th.faint)
-                        .child(e.composer_filter),
-                );
-            }
+            // One line under it, always drawn: how to look, or that nothing
+            // matched.
+            list = list.child(
+                div()
+                    .text_size(sk.text_px(10. * s))
+                    .text_color(sk.ink.ink_faint)
+                    .child(if c.query.is_empty() {
+                        e.composer_filter
+                    } else if c.order.is_empty() {
+                        ui.la_no_match
+                    } else {
+                        "\u{a0}"
+                    }),
+            );
             // None leads the list until something is typed, as it leads the
             // chip's arrow keys.
+            // Eight at a time, the window kept on the chosen project: a list
+            // that always opened at its top hid the choice the chip names
+            // whenever it was the ninth repository or later.
             let rows: Vec<Option<usize>> = c
                 .query
                 .is_empty()
                 .then_some(None)
                 .into_iter()
                 .chain(c.order.iter().copied().map(Some))
-                .take(8)
                 .collect();
-            for (row, i) in rows.into_iter().enumerate() {
+            let chosen = rows.iter().position(|r| *r == c.project).unwrap_or(0);
+            let start = chosen.saturating_sub(PROJECT_ROWS - 1);
+            let below = rows.len().saturating_sub(start + PROJECT_ROWS);
+            let drawn = rows.len().saturating_sub(start).min(PROJECT_ROWS);
+            for (row, i) in rows.into_iter().enumerate().skip(start).take(PROJECT_ROWS) {
                 let (name, path) = match i.and_then(|i| c.projects.get(i)) {
                     Some(p) => (
                         p.name.clone(),
@@ -1108,7 +1122,8 @@ impl Workspace {
                         .child(
                             div()
                                 .text_size(sk.text_px(9.5 * s))
-                                .text_color(th.faint)
+                                // Faint is unreadable on the lit row's wash.
+                                .text_color(if on { sk.ink.ink_dim } else { sk.ink.ink_faint })
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .child(path),
@@ -1129,7 +1144,32 @@ impl Workspace {
                         ),
                 );
             }
-            list
+            // Held at eight rows whatever is typed: the card is centred, so a
+            // list that shrank under a filter moved the sentence box up the
+            // screen with every letter.
+            for _ in drawn..PROJECT_ROWS {
+                list = list.child(
+                    div()
+                        .px(px(8. * s))
+                        .py(px(2. * s))
+                        .flex()
+                        .flex_row()
+                        .gap(px(8. * s))
+                        .child(div().text_size(sk.text_px(11.5 * s)).child("\u{a0}"))
+                        .child(div().text_size(sk.text_px(9.5 * s)).child("\u{a0}")),
+                );
+            }
+            list.child(
+                div()
+                    .px(px(8. * s))
+                    .text_size(sk.text_px(9.5 * s))
+                    .text_color(sk.ink.ink_faint)
+                    .child(if below > 0 {
+                        lang::fill(e.add_more, &[("n", &below.to_string())])
+                    } else {
+                        "\u{a0}".to_string()
+                    }),
+            )
         });
 
         // Pasted pictures, by name, each with its own way out. A name rather
@@ -1159,7 +1199,7 @@ impl Workspace {
                         .child(
                             div()
                                 .text_size(sk.text_px(10. * s))
-                                .text_color(th.faint)
+                                .text_color(sk.ink.ink_faint)
                                 .child("\u{2715}"),
                         )
                         .on_mouse_down(
@@ -1220,7 +1260,7 @@ impl Workspace {
             .child(
                 div()
                     .text_size(sk.text_px(11. * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_dim)
                     .child(e.composer_sub),
             )
             .child(
@@ -1234,7 +1274,7 @@ impl Workspace {
                     .border_color(if typing {
                         th.accent.alpha(0.6)
                     } else {
-                        th.faint.alpha(0.3)
+                        sk.ink.edge_rest
                     })
                     .text_size(sk.text_px(14. * s))
                     .text_color(th.text)
@@ -1258,7 +1298,7 @@ impl Workspace {
             .children(local_note.map(|n| {
                 div()
                     .text_size(sk.text_px(10. * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(n)
             }))
             .children(notes.into_iter().map(|n| {
@@ -1271,7 +1311,7 @@ impl Workspace {
             .child(
                 div()
                     .text_size(sk.text_px(9.5 * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(e.composer_hint),
             );
 
@@ -1376,6 +1416,30 @@ mod tests {
         let view = include_str!("inbox_view.rs");
         let tick = view.find("fn inbox_tick(").expect("inbox_tick");
         assert!(view[tick..tick + 900].contains(".filter(|_| looking)"));
+    }
+
+    /// The T3 scuttle's surfaces draw secondary text, hints and edges in the
+    /// skin's inks (`ink_faint`, `ink_dim`, `edge_rest`, `rule`), which every
+    /// skin derives from the palette's text and can restyle, never in the
+    /// palette's raw `faint`: in the hacker design that colour is #14401f on
+    /// black, and the composer's paths and hints vanished (found by the skin
+    /// sweep, 2026-11-09). The side panel already did; these now do too.
+    #[test]
+    fn the_t3_surfaces_draw_secondary_text_in_the_skins_inks() {
+        for (file, src) in [
+            ("entry_view.rs", include_str!("entry_view.rs")),
+            ("addproject_view.rs", include_str!("addproject_view.rs")),
+            ("relate_view.rs", include_str!("relate_view.rs")),
+            ("inbox_view.rs", include_str!("inbox_view.rs")),
+            ("flyout_view.rs", include_str!("flyout_view.rs")),
+        ] {
+            let body = src.split("#[cfg(test)]").next().unwrap_or(src);
+            let raw = ["th", ".faint"].concat();
+            assert!(
+                !body.contains(&raw),
+                "{file} draws with the palette's raw faint"
+            );
+        }
     }
 
     /// While it is up the composer holds the keyboard, and every gate that
