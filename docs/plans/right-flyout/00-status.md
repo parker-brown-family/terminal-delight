@@ -196,12 +196,61 @@ policy stopped on were asked and answered (both as recommended). Calls: `round2.
   that line. A pull request's Files and Conversation faces wear a one-line header.
 - **Reading files.** A File tab scrolls sideways for long lines instead of cutting them at the edge.
 
+Mid-round he added: *"we have ARTIFACTS as a focal point for our opinionated workflow - so we
+will play into that with the [right] flyout!"* So the `+` page leads with what this task's agents
+handed over (each pane's handover ledger: declared deliverables, bench artifacts, `Deliverable:`
+lines), a handed-over file opens drawn with ✦ on its tab, ↪ on a brief in the panel pastes the notes
+into the agent that handed it over, and the rail's deliverable row gains `◨ side`.
+
 ## Progress (round 2)
 
-- [ ] Model: matcher, per-file pull request read, changed words, find, run overlay (+ tests)
-- [ ] View: tabs, filters and finder, find bar, big pull requests, documents, sticky rows, words
-- [ ] Strings in nine languages
-- [ ] Window tests, full suite, clippy, rustfmt
-- [ ] Photographed on the Xvfb rig (#844 for real)
-- [ ] One Codex review round, said out loud
-- [ ] Follow-up brief; workspace 7 window on the build
+- [x] Model: matcher (fzf-style, one rule: outside the name a gap lands on a word start), per-file
+      pull request read, changed words, find, run overlay, markup and CSS colours (+ tests)
+- [x] View: tabs (× left, state colours, ✦, ◧), filters and finder, find bar, big pull requests,
+      pages through docview's own view, artifacts, rail chip, pinned rows, words, line opens,
+      compact PR header, sideways scroll, left-elided paths, paste into fields
+- [x] Strings in nine languages (21 new, `pr_moved` reworded after review)
+- [x] Window tests, full suite (3,488 passed, 18 ignored), clippy, rustfmt
+- [x] Photographed on the Xvfb rig, #844 for real (`2026-11-08-flyout-round2-evidence/`)
+- [x] One Codex review round, read-only: six findings, all fixed (below)
+- [x] Follow-up brief `~/Work/terminal-delight/reports/2026-11-08-flyout-second-pass.html`;
+      workspace 7 window relaunched on 303bbe85, same t3 host
+
+## Surprises (round 2)
+
+- **The first matcher let `flyout` answer `floor-canvas/layout.png`.** Only the jump into a new
+  folder was checked; the gap inside `layout` landed mid-word. The rule that held: across the whole
+  path every gap lands on a word start; inside the file's own name a gap may land anywhere.
+- **GitHub's per-file list cannot tell a pure move from a changed binary**: both come back renamed,
+  0/0, no patch. Their counts stay unknown (review finding 4).
+- **A just-written stand-in `gh` could not be exec'd** once in a parallel run ("could not start",
+  read as gh missing): another test's forked child held the write fd (ETXTBSY). The fixture now
+  writes under `testsync::forks_and_locks` and waits with `soon` until a probe runs.
+- **The narrative gate read the first draft of the brief as a catalogue** (headings 0.15). Retold as
+  one walk from #844's wall to reading diffs, it read as a journey (headings 0.45, opening 0.59).
+
+## Review round 2 (Codex, read-only, one round)
+
+1. The finder's DP ran on the UI thread with no ceiling. Fixed: a 40M-cell budget per list, then a
+   greedy alignment under the same rules; a query word is cut to 64 letters.
+2. Keys could walk past the 1,500 drawn rows. Fixed (read, not window-tested).
+3. A handover named through a symlink lost its ✦ and its ↪ target. Fixed: `handed()` matches by key,
+   then by canonical path for an entry with the same file name. Test names the brief via a symlink.
+4. A moved file with no patch read +0 −0. Fixed: unknown; `pr_moved` says only what GitHub sent.
+5. Any 406 was retried as a size refusal. Fixed: GitHub's own words only.
+6. Ctrl+Shift+R beat a note's caret. Fixed. Reading it found a worse one: closing a tab dropped
+   unsaved notes on its brief; `flyout_close_tab` now asks `DocumentView::guard_close` first.
+
+Findings 3, 4 and 5 were checked by putting the old code back; so were the left ×, the strewn-letter
+rule and the list narrowing from the build itself.
+
+## Outcome (round 2)
+
+Built, tested, reviewed and photographed on `explore/t3-scuttle` (d6633e8a, 18efb911, 303bbe85).
+Not built: sideways scroll inside diffs, review comments on lines, an MCP verb for an agent to open
+its deliverable in the panel. Not tried for real: a signed-out `gh`; a brief's unsaved-notes guard
+in the panel (wired, untested by a window).
+
+Post-hoc difficulty: **6 / 10** held. The work was visible the moment it went wrong in every place
+but two: the strewn-letter match, which the tests found, and the symlinked handover, which the review
+found.
