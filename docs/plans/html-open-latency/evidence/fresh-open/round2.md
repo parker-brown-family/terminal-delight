@@ -1,0 +1,9 @@
+I found three races in `HEAD~2..HEAD`. The two round-1 fixes narrow their original failure windows, but neither closes every interleaving.
+
+1. **High — CONFIRMED by code trace — `app/src/docview/page.rs:824`**. The new wanted check can pass after capture and decode, then the view can close before the background result resumes the foreground task. Dropping that task prevents the cleanup at line 1003 from running. The opened Chromium page stays in the engine until idle shutdown. The fix needs ownership or cleanup across that handoff, rather than one final flag check.
+
+2. **Medium — CONFIRMED by code trace — `app/src/docview/snapshot.rs:764`**. The ready worker releases the browser lock between checking that its browser is current and publishing the blank page. Idle close can already have read `in_flight == 0` at line 1104; it can then take the browser and clear the ready slot before the worker publishes. Explicit `shutdown()` has the same gap. The result is a ready slot referring to a browser that has closed. A later open discards it, but the claimed ready-page lifecycle invariant does not hold.
+
+3. **Low — CONFIRMED by code trace — `app/src/docview/snapshot.rs:744`**. After the worker publishes a ready page at line 769 and before it clears `making` at line 777, another open can take that page and close it. Its `make_ready()` call sees `making == true` and returns. No worker remains to prepare the next page, so the following open pays the full page setup cost.
+
+I found no further real issue in fresh-context isolation, network blocking, `Pending` reply cleanup, FileChanged retry, hidden-view release, decode fallback, or fragment and saved-scroll handling. I could not establish either known Chromium screenshot uncertainty from this read-only trace. I did not run tests or change files.

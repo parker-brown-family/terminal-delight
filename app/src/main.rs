@@ -8366,6 +8366,10 @@ impl Workspace {
         let Some(file) = asleep.wake_file.to_str() else {
             return;
         };
+        // A script an older build wrote may name what has gone since.
+        if let Some(repaired) = agentrest_io::heal_wake_script(&asleep.wake_file) {
+            eprintln!("terminal-delight: {repaired}");
+        }
         let restore = session::PaneRestore {
             cwd,
             resume: Some(format!("bash {}", agentrest::shell_quote(file))),

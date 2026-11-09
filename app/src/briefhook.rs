@@ -623,8 +623,10 @@ mod tests {
         assert!(typed.contains("WORKBENCH"), "and still the whole briefing");
         let launched = briefing_for(env_of(&[("TD_SESSION", "work"), woke, briefed]), &d, None);
         assert_eq!(launched.as_deref(), Some(crate::surface::WOKE_PARAGRAPH));
-        let script =
-            crate::agentrest_io::wake_script(&["claude".into(), "--resume".into(), "c".into()]);
+        let script = crate::agentrest_io::wake_script(
+            &["claude".into(), "--resume".into(), "c".into()],
+            None,
+        );
         let export = script
             .find(&format!("export {WOKE_ENV}=1"))
             .expect("the wake marks it");

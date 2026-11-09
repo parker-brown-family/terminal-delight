@@ -397,6 +397,45 @@ fn open_if_wanted(
     out
 }
 
+/// A page the engine opened for a view, which closes it if it is dropped
+/// before the view adopts it. The task that would adopt it can be dropped at
+/// any await (the view closed, or a newer render replaced it), and a page
+/// nobody adopted lived on in Chromium until the browser idled out.
+struct Unadopted {
+    engine: Arc<dyn PageEngine>,
+    page: Option<PageId>,
+}
+
+impl Unadopted {
+    fn new(engine: &Arc<dyn PageEngine>, layout: &PageLayout) -> Self {
+        Self {
+            engine: engine.clone(),
+            page: layout.page,
+        }
+    }
+
+    /// The view holds the page now: closing it is the view's.
+    fn adopted(mut self) {
+        self.page = None;
+    }
+}
+
+impl Drop for Unadopted {
+    fn drop(&mut self) {
+        if let Some(page) = self.page.take() {
+            // Off whatever thread dropped it: closing talks to the browser.
+            let engine = self.engine.clone();
+            let spawned = std::thread::Builder::new()
+                .name("td-page-close".into())
+                .spawn(move || engine.close(page));
+            if spawned.is_err() {
+                // No thread to spare: closed here, which only blocks.
+                self.engine.close(page);
+            }
+        }
+    }
+}
+
 /// Every `Arc<RenderImage>` of one render lives in exactly one slot here.
 #[derive(Default)]
 struct TileSet {
@@ -767,6 +806,12 @@ impl PageDoc {
         // after that is closed at once instead of living on in Chromium.
         let wanted = Wanted::new();
         let foreground = super::prepare::foreground(cx);
+        // A page opened for the first time, with no place in it asked for,
+        // is read from the top: its first band is the one wanted first.
+        let top_first =
+            self.current.is_none() && self.pending_top.is_none() && self.pending_fragment.is_none();
+        let started = self.timing.started;
+        let svg = cx.svg_renderer();
         self.work = Some(cx.spawn(async move |this, cx| {
             let _foreground = foreground;
             let wanted = wanted;
@@ -775,20 +820,49 @@ impl PageDoc {
             // Read, hash and look the render up, off the foreground. The
             // notes are read from these same bytes, so what the layer shows
             // belongs to the render it is drawn over.
+            //
+            // A render the cache does not have is opened right here, and a
+            // page read from the top has its first band photographed here
+            // too: each trip back to the foreground in between waited for the
+            // window's next frame, and bought nothing.
             let found = cx
                 .background_spawn({
-                    let (path, root) = (path.clone(), root.clone());
+                    let (path, root, engine, still) =
+                        (path.clone(), root.clone(), engine.clone(), wanted.flag());
                     async move {
                         let bytes = std::fs::read(&path).map_err(|e| (path.display().to_string(), e.to_string()))?;
                         let hash = layout_hash(&bytes);
                         let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
                         let cached = cache::lookup(&root, key);
-                        Ok::<_, (String, String)>((hash, read, key, cached))
+                        let looked = started.elapsed().as_secs_f64() * 1000.0;
+                        let opened = cached.is_none().then(|| {
+                            let req = PageRequest { path: path.clone(), geometry: g, expect: hash };
+                            open_if_wanted(&*engine, &req, &still).map(|mut l| {
+                                let owned = Unadopted::new(&engine, &l);
+                                let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                                l.diagnostics.extend(why.into_iter().flatten());
+                                // Decoded here too: the first screen arrives
+                                // ready to draw.
+                                let first = l
+                                    .page
+                                    .zip(l.bands().first().copied())
+                                    .filter(|_| top_first)
+                                    .and_then(|(id, band)| engine.tile(id, l.generation, band).ok())
+                                    .map(|t| {
+                                        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, t.png.clone())
+                                            .to_image_data(svg)
+                                            .ok();
+                                        (t, image)
+                                    });
+                                (l, first, owned)
+                            })
+                        });
+                        Ok::<_, (String, String)>((hash, read, key, cached, looked, opened))
                     }
                 })
                 .await;
-            let (mut hash, mut read, key, cached) = match found {
+            let (mut hash, mut read, key, cached, looked, mut opened) = match found {
                 Ok(f) => f,
                 Err((at, e)) => {
                     let t = &crate::lang::current().strings().parts;
@@ -804,7 +878,7 @@ impl PageDoc {
             };
             this.update(cx, |view, _| {
                 if let Some(p) = page_of(view) {
-                    p.timing.cache_lookup = Some(p.timing.elapsed());
+                    p.timing.cache_lookup = Some(looked);
                     p.timing.cache_hit = Some(cached.is_some());
                 }
             }).ok();
@@ -850,6 +924,8 @@ impl PageDoc {
             // Render. A file that changed between the read and the load is
             // read again, once.
             let mut layout = None;
+            let mut first_tile = None;
+            let mut owned = None;
             for attempt in 0..2 {
                 let req = PageRequest {
                     path: path.clone(),
@@ -859,15 +935,23 @@ impl PageDoc {
                 let (engine, still, root) = (engine.clone(), wanted.flag(), root.clone());
                 // A film the page carries inside itself is kept as a file
                 // here, off the foreground, before anything can press it.
-                let opened = cx.background_spawn(async move {
-                    let mut l = open_if_wanted(&*engine, &req, &still)?;
-                    let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
-                    l.diagnostics.extend(why.into_iter().flatten());
-                    Ok(l)
-                });
-                match opened.await {
-                    Ok(l) => {
+                let result = match opened.take() {
+                    Some(done) => done,
+                    None => cx
+                        .background_spawn(async move {
+                            let mut l = open_if_wanted(&*engine, &req, &still)?;
+                            let owned = Unadopted::new(&engine, &l);
+                            let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                            l.diagnostics.extend(why.into_iter().flatten());
+                            Ok((l, None, owned))
+                        })
+                        .await,
+                };
+                match result {
+                    Ok((l, first, page)) => {
                         layout = Some(Ok(l));
+                        first_tile = first;
+                        owned = Some(page);
                         break;
                     }
                     Err(EngineError::FileChanged) if attempt == 0 => {
@@ -922,14 +1006,39 @@ impl PageDoc {
                 );
             }
             let adopted = this
-                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx)))
+                .update(cx, |view, cx| {
+                    page_of(view).map(|p| {
+                        p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx);
+                        // In the same update: the view closes it from here on.
+                        if let Some(owned) = owned.take() {
+                            owned.adopted();
+                        }
+                        // The first band came with the layout, decoded: it lands
+                        // in the same update, and is neither asked for nor
+                        // decoded again. One that would not decode lands as a
+                        // PNG, and the usual decode says why.
+                        if let Some((t, image)) = first_tile {
+                            if p.is_current(generation) {
+                                let top = t.band.top_dev;
+                                if image.is_some() {
+                                    if let Some(r) = p.current.as_mut() {
+                                        r.tiles.decoding.insert(top);
+                                    }
+                                }
+                                p.landed(t.band, Arc::from(t.png), cx);
+                                if image.is_some() {
+                                    p.decoded(generation, top, image, cx);
+                                }
+                            }
+                        }
+                    })
+                })
                 .ok()
                 .flatten();
             if adopted.is_none() {
-                // The view went while the page was loading.
-                if let Some(id) = page {
-                    cx.background_spawn(async move { engine.close(id) }).detach();
-                }
+                // The view went while the page was loading: dropping what
+                // it never adopted closes the page.
+                drop(owned);
                 return;
             }
             let Some(page) = page else { return };
