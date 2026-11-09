@@ -94,6 +94,21 @@ panel's search, rows and tabs, every composer chip, the inbox's shelves and face
 - [x] Sweep 2 (after) on the build with the ink fixes
 - [x] Mouse tour of Parker's own look; four more fixes, with tests that fail without them
 - [x] Second tour (clean design, then the inbox in Parker's own skin and chalk); four more fixes
-- [ ] Sweep 4 on the final build; brief; full suite; push; workspace 7
+- [x] Sweep 4 on the final build: 110 shots, none blank, every step reached in every look
+- [x] Full suite in one run, no reruns: 3,529 passed, 0 failed, 18 ignored; clippy and fmt clean
+- [x] Pushed (e3a549c9); brief written; the workspace 7 test window relaunched on the final build
 
 ## Outcome
+
+Sixteen problems fixed: eight from the sweeps, eight from the two mouse tours, which is the
+finding worth keeping: a still photograph cannot show a card that moves, a key that goes
+elsewhere, or a field that lights for nothing. One regression of the pass's own (hacker's lit
+chip swallowing its PROJECT label) was caught by the second sweep. Every fix but the inbox count
+has a test shown to fail without it; the count was checked on the display, as the inbox's
+waiting rows exist only in the demo.
+
+**Post-hoc difficulty: 5 / 10** (scored 4 late). The pass reached two shared primitives, a skin
+method and the side panel's keyboard routing, where a mistake reaches beyond the T3 surfaces; it
+stayed cheap to undo, and every change is a two-way door. Eleven calls wait for Parker's stamp.
+
+Brief: `~/Work/terminal-delight/reports/2026-11-09-t3-polish.html` (local, untracked).
