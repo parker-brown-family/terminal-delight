@@ -134,8 +134,14 @@ pub struct Project {
     /// What the row says — the directory's own name.
     pub name: String,
     /// A git repository, as opposed to a directory that merely exists. Shown,
-    /// not filtered on: plenty of real work happens outside a repo.
+    /// not filtered on: plenty of real work happens outside a repo. For a
+    /// folder on a far machine it is what was seen when it was added, and
+    /// false when nobody saw.
     pub repo: bool,
+    /// The `machines.toml` machine it is on, for a project added from the
+    /// composer on a far machine (`addproject.rs`); `None` is this machine,
+    /// which is every project the scan finds.
+    pub machine: Option<String>,
 }
 
 /// Where to look for projects, in order.
@@ -190,6 +196,7 @@ pub fn scan(roots: &[PathBuf], limit: usize) -> Vec<Project> {
                     repo: path.join(".git").exists(),
                     name: name.to_string(),
                     path,
+                    machine: None,
                 },
             ));
         }
@@ -1285,21 +1292,25 @@ mod tests {
                 path: "/w/zzz-terminal".into(),
                 name: "zzz-terminal".into(),
                 repo: false,
+                machine: None,
             },
             Project {
                 path: "/w/terminal-delight".into(),
                 name: "terminal-delight".into(),
                 repo: true,
+                machine: None,
             },
             Project {
                 path: "/w/term-notes".into(),
                 name: "term-notes".into(),
                 repo: false,
+                machine: None,
             },
             Project {
                 path: "/w/unrelated".into(),
                 name: "unrelated".into(),
                 repo: true,
+                machine: None,
             },
         ];
         let order = filter(&projects, "term");
@@ -1320,6 +1331,7 @@ mod tests {
             path: "/home/parker/INTELLIMASS/scout".into(),
             name: "scout".into(),
             repo: true,
+            machine: None,
         }];
         assert_eq!(filter(&projects, "intellimass").len(), 1);
         assert_eq!(filter(&projects, "nothing-like-it").len(), 0);

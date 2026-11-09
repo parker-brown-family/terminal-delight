@@ -28,6 +28,8 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod addproject;
+mod addproject_view;
 mod admin_view;
 mod agentcfg;
 mod agentrest;
@@ -2177,6 +2179,19 @@ impl EditBuffer {
             chars,
             cursor: len,
             anchor: 0,
+        }
+    }
+
+    /// Seed with the caret after the last character and nothing selected: a
+    /// field still being typed into, such as a path walked folder by folder,
+    /// where the next key adds to what is there rather than replacing it.
+    pub(crate) fn at_end(s: &str) -> Self {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        Self {
+            chars,
+            cursor: len,
+            anchor: len,
         }
     }
 
@@ -32432,6 +32447,7 @@ impl Render for Workspace {
                                 path: cwd,
                                 name: "Native fixture".into(),
                                 repo: false,
+                                machine: None,
                             }],
                             order: vec![0],
                             selected: 0,
