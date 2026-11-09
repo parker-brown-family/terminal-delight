@@ -2006,11 +2006,7 @@ impl Workspace {
                 }
                 _ => {
                     if let Some(c) = typed {
-                        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
-                            f.find.query.push_str(&c);
-                        }
-                        self.refind(t);
-                        self.find_from_top(t);
+                        self.search_type(t, &c);
                     }
                 }
             }
@@ -2035,14 +2031,30 @@ impl Workspace {
             }
             _ => {
                 if let Some(c) = typed {
-                    if let Some(f) = self.list_filter(t) {
-                        f.query.push_str(&c);
-                    }
-                    self.refilter(t, true);
+                    self.search_type(t, &c);
                 }
             }
         }
         cx.notify();
+    }
+
+    /// Text typed or pasted into the tab's filter or find.
+    fn search_type(&mut self, t: &Target, text: &str) {
+        if text.is_empty() {
+            return;
+        }
+        if let Target::File { .. } = t {
+            if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+                f.find.query.push_str(text);
+            }
+            self.refind(t);
+            self.find_from_top(t);
+        } else {
+            if let Some(f) = self.list_filter(t) {
+                f.query.push_str(text);
+            }
+            self.refilter(t, true);
+        }
     }
 
     fn flyout_live(&mut self, t: &Target) -> &mut Live {
@@ -2876,6 +2888,30 @@ impl Workspace {
         if m.control && !m.shift && !m.alt && key == "f" {
             if let Some(t) = &current {
                 self.search_start(t, cx);
+                return true;
+            }
+        }
+        // A paste into a field that has the keys — the + page's finder, a
+        // list's filter, a find — by any of the three chords a person uses:
+        // its first line, as typed.
+        if crate::workbench::is_paste_chord(&ks.key, m.control, m.shift) {
+            let adding = self.flyout_adding();
+            if adding || current.as_ref().is_some_and(|t| self.search_typing(t)) {
+                let line: String = cx
+                    .read_from_clipboard()
+                    .and_then(|item| item.text())
+                    .and_then(|t| t.lines().next().map(|l| l.trim().to_string()))
+                    .unwrap_or_default()
+                    .chars()
+                    .take(200)
+                    .collect();
+                if adding {
+                    self.flyout.query.push_str(&line);
+                    self.flyout.pick = 0;
+                } else if let Some(t) = &current {
+                    self.search_type(t, &line);
+                }
+                cx.notify();
                 return true;
             }
         }
