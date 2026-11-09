@@ -32,11 +32,12 @@ use crate::flyout::{
     Tok,
 };
 use gpui::{
-    uniform_list, FontStyle, FontWeight, HighlightStyle, ScrollStrategy, StyledText,
-    UniformListScrollHandle,
+    uniform_list, Bounds, FontStyle, FontWeight, HighlightStyle, ListHorizontalSizingBehavior,
+    ScrollStrategy, StyledText, UniformListScrollHandle,
 };
-use std::cell::RefCell;
+use std::cell::{Cell, RefCell};
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::ops::Range;
 use std::path::{Path, PathBuf};
 use std::rc::Rc;
 use std::sync::Arc;
@@ -78,6 +79,12 @@ const UNTRACKED_READ: u64 = 2 * 1024 * 1024;
 const FINDER_FILES: usize = 30_000;
 /// Rows the finder lists.
 const FINDER_ROWS: usize = 40;
+/// What the `+` page lists of what this task's agents handed over.
+const ARTIFACT_ROWS: usize = 8;
+/// Places a find in a file counts before it stops counting.
+const FIND_HITS: usize = 10_000;
+/// The longest GitHub's per-file list may take, every page of it.
+const GH_PAGES_BUDGET: Duration = Duration::from_secs(90);
 /// git's empty tree: what a repository with no commits is compared against.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
@@ -137,6 +144,69 @@ pub(crate) struct ChangeList {
     stamps: HashMap<String, u64>,
 }
 
+/// A list's filter: what is typed, whether keys go to it, and what it leaves.
+#[derive(Default)]
+pub(crate) struct Filter {
+    query: String,
+    /// Keys go to the field.
+    typing: bool,
+    /// The rows that answer, as (index into the list, where its letters
+    /// fell), best first. `None` while nothing is typed: every row, in the
+    /// list's own order.
+    hits: Option<Vec<(usize, Vec<usize>)>>,
+}
+
+impl Filter {
+    /// Work out what answers, over the list's paths.
+    fn apply<'a>(&mut self, paths: impl IntoIterator<Item = &'a str>) {
+        self.hits = (!self.query.trim().is_empty()).then(|| {
+            flyout::rank_paths(paths, &self.query)
+                .into_iter()
+                .map(|(i, f)| (i, f.at))
+                .collect()
+        });
+    }
+
+    /// The list's rows in the order drawn: (index into the list, letters lit).
+    fn rows(&self, len: usize) -> Vec<(usize, &[usize])> {
+        match &self.hits {
+            Some(h) => h
+                .iter()
+                .filter(|(i, _)| *i < len)
+                .map(|(i, at)| (*i, at.as_slice()))
+                .collect(),
+            None => (0..len).map(|i| (i, &[][..])).collect(),
+        }
+    }
+}
+
+/// A find in a File tab's text.
+#[derive(Default)]
+pub(crate) struct Find {
+    query: String,
+    typing: bool,
+    /// Every place it appears, as (line index, byte range), up to
+    /// [`FIND_HITS`], in order: shared with the list that lights them.
+    hits: Rc<Vec<(u32, Range<usize>)>>,
+    /// The place last stepped to.
+    at: usize,
+}
+
+/// A File tab's drawn face: the floating square's own document view, for a
+/// page, a Markdown file, a picture or a PDF. The view takes no mouse of its
+/// own (docview's rule), so the panel hands it presses, drags and the wheel.
+pub(crate) struct DocFace {
+    view: Entity<crate::docview::DocumentView>,
+    /// Where the view was last drawn, in window pixels: a press becomes a
+    /// point on the page from it.
+    bounds: Rc<Cell<Option<Bounds<Pixels>>>>,
+    /// A press on the page is held: moves drag it, a release lets go.
+    holding: bool,
+    /// What the view was last told: on screen or not.
+    shown: bool,
+    _subs: Vec<gpui::Subscription>,
+}
+
 #[derive(Default)]
 pub(crate) struct ChangesLive {
     list: Reading<ChangeList>,
@@ -144,8 +214,10 @@ pub(crate) struct ChangesLive {
     open: HashSet<String>,
     /// Extra rows drawn past [`PATCH_ROWS`], per file, from "show more".
     more: HashMap<String, usize>,
+    /// The row the keyboard is on, counted in the order drawn.
     cursor: usize,
     scroll: ScrollHandle,
+    filter: Filter,
 }
 
 pub(crate) struct FileText {
@@ -158,6 +230,8 @@ pub(crate) struct FileText {
     binary: bool,
     /// The file is not tracked by git: every line is new.
     untracked: bool,
+    /// The line drawn widest, which sets how far the list scrolls sideways.
+    widest: usize,
 }
 
 pub(crate) struct FileLive {
@@ -169,6 +243,16 @@ pub(crate) struct FileLive {
     /// The line last asked for, lit until another is.
     lit: Option<u32>,
     stamp: Option<(SystemTime, u64)>,
+    find: Find,
+    /// The page, for a file TD draws: made the first time the tab is shown.
+    face: Option<DocFace>,
+    /// Whether making the face was tried, so a file that cannot have one is
+    /// not asked again every second.
+    face_tried: bool,
+    /// Why the file shows as text only, when it has a kind TD draws.
+    face_note: Option<String>,
+    /// The text is shown in place of the page.
+    source: bool,
 }
 
 impl Default for FileLive {
@@ -180,7 +264,19 @@ impl Default for FileLive {
             jump: None,
             lit: None,
             stamp: None,
+            find: Find::default(),
+            face: None,
+            face_tried: false,
+            face_note: None,
+            source: false,
         }
+    }
+}
+
+impl FileLive {
+    /// The page is what is on screen.
+    fn paged(&self) -> bool {
+        self.face.is_some() && !self.source
     }
 }
 
@@ -195,12 +291,13 @@ pub(crate) enum PullFace {
 #[derive(Default)]
 pub(crate) struct PullLive {
     pull: Reading<flyout::Pull>,
-    diff: Reading<Vec<FileDiff>>,
+    diff: Reading<flyout::PullDiff>,
     face: PullFace,
     open: HashSet<String>,
     more: HashMap<String, usize>,
     cursor: usize,
     scroll: ScrollHandle,
+    filter: Filter,
 }
 
 /// What one target has read. Boxed: the three differ in size by hundreds of
@@ -237,6 +334,18 @@ pub(crate) struct Suggest {
 /// A row of the `+` page, in the order the keyboard walks them.
 #[derive(Clone, Debug, PartialEq)]
 enum AddRow {
+    /// Something an agent of this task handed over: a declared deliverable,
+    /// an artifact on its bench, or a `Deliverable:` line it printed.
+    Artifact {
+        pane: EntityId,
+        key: String,
+        label: String,
+        href: String,
+        at_ms: u64,
+        opened: bool,
+        /// The pane's name, as a person reads it.
+        who: String,
+    },
     Changes(PathBuf),
     Pull {
         owner: String,
@@ -244,7 +353,17 @@ enum AddRow {
         row: PullRow,
         mine: bool,
     },
-    File(PathBuf, String),
+    /// A file, its path in the repository, and the letters a query lit.
+    File(PathBuf, String, Vec<usize>),
+}
+
+/// The finder's rows for one query over one reading, kept so a frame does
+/// not score thirty thousand paths again.
+struct FinderRows {
+    query: String,
+    here: Option<PathBuf>,
+    read_at: Option<Instant>,
+    rows: Vec<AddRow>,
 }
 
 /// The window's flyout: open or not, how wide, whether it holds the keyboard,
@@ -267,6 +386,7 @@ pub(crate) struct Flyout {
     roots: RefCell<HashMap<PathBuf, Option<PathBuf>>>,
     /// When the checkout command was last copied, for the button's "Copied".
     copied: Option<Instant>,
+    finder: RefCell<Option<FinderRows>>,
 }
 
 impl Flyout {
@@ -287,6 +407,7 @@ impl Flyout {
             here: None,
             roots: RefCell::new(HashMap::new()),
             copied: None,
+            finder: RefCell::new(None),
         }
     }
 
@@ -393,6 +514,12 @@ fn gh_program() -> String {
 /// One gh command's stdout, run from `dir` so an account chosen by the
 /// repository's remote is the one asked; its failure in a person's words.
 fn gh(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
+    gh_with(&gh_program(), dir, args, GH_BUDGET)
+}
+
+/// [`gh`], with the program and the time it may take named: a test hands it
+/// a stand-in, and GitHub's per-file list gets the time its pages need.
+fn gh_with(program: &str, dir: &Path, args: &[&str], budget: Duration) -> Result<Vec<u8>, String> {
     let env = [
         ("GH_PROMPT_DISABLED", "1"),
         ("GH_NO_UPDATE_NOTIFIER", "1"),
@@ -400,7 +527,7 @@ fn gh(dir: &Path, args: &[&str]) -> Result<Vec<u8>, String> {
         ("NO_COLOR", "1"),
         ("CLICOLOR", "0"),
     ];
-    match crate::engstate::run_bounded(&gh_program(), dir, args, &env, GH_BUDGET, PATCH_CAP, 8192) {
+    match crate::engstate::run_bounded(program, dir, args, &env, budget, PATCH_CAP, 8192) {
         Ok(r) if r.code == 0 => Ok(r.out),
         Ok(r) => {
             let said = String::from_utf8_lossy(&r.err);
@@ -566,6 +693,7 @@ fn added_file(path: &str, bytes: &[u8]) -> FileDiff {
             old: None,
             new: Some(i as u32 + 1),
             text: l.to_string(),
+            changed: Vec::new(),
         })
         .collect();
     FileDiff {
@@ -642,6 +770,11 @@ fn read_file(
     if lines.last().is_some_and(String::is_empty) {
         lines.pop();
     }
+    let widest = lines
+        .iter()
+        .enumerate()
+        .max_by_key(|(_, l)| l.chars().count().min(LINE_DRAWN))
+        .map_or(0, |(i, _)| i);
     let syntax = flyout::syntax_for(path);
     let starts = match syntax {
         Some(sy) => {
@@ -696,6 +829,7 @@ fn read_file(
             cut: !whole,
             binary,
             untracked,
+            widest,
         },
         marks,
         stamp,
@@ -725,14 +859,38 @@ fn read_pull_diff(
     owner: &str,
     repo: &str,
     number: u64,
-) -> Result<Vec<FileDiff>, String> {
+) -> Result<flyout::PullDiff, String> {
+    read_pull_diff_with(&gh_program(), dir, owner, repo, number)
+}
+
+/// A pull request's files: its whole diff in one piece, or, when GitHub
+/// refuses that for its size (past 20,000 lines it answers 406), its
+/// per-file list, every page, each file with its own patch.
+fn read_pull_diff_with(
+    program: &str,
+    dir: &Path,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<flyout::PullDiff, String> {
     let slug = format!("{owner}/{repo}");
     let n = number.to_string();
-    let out = gh(
+    match gh_with(
+        program,
         dir,
         &["pr", "diff", &n, "--repo", &slug, "--color", "never"],
-    )?;
-    Ok(flyout::parse_unified(&String::from_utf8_lossy(&out)))
+        GH_BUDGET,
+    ) {
+        Ok(out) => Ok(flyout::PullDiff::whole(flyout::parse_unified(
+            &String::from_utf8_lossy(&out),
+        ))),
+        Err(e) if flyout::refused_for_size(&e) => {
+            let path = format!("repos/{owner}/{repo}/pulls/{number}/files?per_page=100");
+            let out = gh_with(program, dir, &["api", "--paginate", &path], GH_PAGES_BUDGET)?;
+            flyout::parse_pull_files(&String::from_utf8_lossy(&out))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn read_suggest(repo: &Path) -> Result<Suggest, String> {
@@ -857,6 +1015,55 @@ pub(crate) fn side_of(token: &str, cwd: Option<&str>) -> Option<SideOpen> {
     })
 }
 
+/// The kind of document a File tab draws as a page rather than as text:
+/// what the floating square draws, but a clip or a sound, which play there.
+fn drawn_kind(path: &Path) -> Option<crate::docopen::DocKind> {
+    use crate::docopen::DocKind;
+    match crate::docopen::doc_kind_by_name(path)? {
+        k @ (DocKind::Markdown | DocKind::Html | DocKind::Image | DocKind::Pdf) => Some(k),
+        DocKind::Video | DocKind::Audio => None,
+    }
+}
+
+/// Where something an agent handed over opens in the flyout: a pull request
+/// as a pull request, a page, a picture or a PDF drawn, a code file as text.
+/// `None` for anything the flyout does not show (a web page, a clip, a file
+/// that is gone), which goes where a handover always went.
+pub(crate) fn artifact_target(href: &str) -> Option<SideOpen> {
+    if let Some((owner, repo, number)) = flyout::pull_of_url(href.trim()) {
+        return Some(SideOpen {
+            target: Target::Pull {
+                owner,
+                repo,
+                number,
+            },
+            line: None,
+        });
+    }
+    let path = crate::handover::file_path(href)?;
+    if !path.is_file() {
+        return None;
+    }
+    if drawn_kind(&path).is_some() {
+        let path = std::fs::canonicalize(&path).unwrap_or(path);
+        return Some(SideOpen {
+            target: Target::File { path },
+            line: None,
+        });
+    }
+    side_of(&path.to_string_lossy(), None)
+}
+
+/// Whether the rail offers "◨ side" for a deliverable, by its address alone:
+/// the rail paints every frame and never touches the disk to decide.
+pub(crate) fn side_offers(href: &str) -> bool {
+    if flyout::pull_of_url(href.trim()).is_some() {
+        return true;
+    }
+    crate::handover::file_path(href)
+        .is_some_and(|p| drawn_kind(&p).is_some() || flyout::syntax_for(&p).is_some())
+}
+
 /// A size in the largest unit that keeps it above one.
 fn human_size(bytes: u64) -> String {
     let mut v = bytes as f64;
@@ -946,12 +1153,33 @@ impl Ink {
 }
 
 /// A line of code, coloured. `inside` carries a block comment across lines.
+/// `marks` are byte ranges of `text` lit with `mark` over the colours: the
+/// words that changed inside a changed line, or the places a find found.
 fn code_text(
     text: &str,
     sy: Option<&'static flyout::Syntax>,
     inside: &mut bool,
     ink: &Ink,
+    marks: &[Range<usize>],
+    mark: HighlightStyle,
 ) -> StyledText {
+    // A tab is drawn as four spaces, so a mark after one moves three bytes
+    // right for each: the marks were found in the text as it was written.
+    let tabs_before = |at: usize| {
+        text[..at.min(text.len())]
+            .bytes()
+            .filter(|b| *b == b'\t')
+            .count()
+            * 3
+    };
+    let mut marks: Vec<Range<usize>> = if text.contains('\t') {
+        marks
+            .iter()
+            .map(|r| r.start + tabs_before(r.start)..r.end + tabs_before(r.end))
+            .collect()
+    } else {
+        marks.to_vec()
+    };
     let mut shown = text.replace('\t', "    ");
     // A minified file is one line of a megabyte, and shaping it every frame
     // would stall the window for text nobody can see past the panel's edge.
@@ -962,13 +1190,98 @@ fn code_text(
         }
         shown.truncate(cut);
         shown.push('\u{2026}');
+        marks.retain(|r| r.start < cut);
+        for r in &mut marks {
+            r.end = r.end.min(cut);
+        }
     }
     let runs = match sy {
         Some(sy) => flyout::tokens(sy, &shown, inside),
         None => Vec::new(),
     };
-    StyledText::new(SharedString::from(shown))
-        .with_highlights(runs.into_iter().map(|(r, t)| (r, ink.tok(t))))
+    let ranges: Vec<Range<usize>> = runs.iter().map(|(r, _)| r.clone()).collect();
+    let pieces = flyout::overlay(&ranges, &marks);
+    StyledText::new(SharedString::from(shown)).with_highlights(pieces.into_iter().map(
+        |(r, run, marked)| {
+            let base = run.map(|k| ink.tok(runs[k].1)).unwrap_or_default();
+            (r, if marked { base.highlight(mark) } else { base })
+        },
+    ))
+}
+
+/// A path, its folders dimmed and the letters a query matched lit.
+fn path_text(path: &str, lit: &[usize], faint: Hsla, accent: Hsla) -> StyledText {
+    let split = path.trim_end_matches('/').rfind('/').map_or(0, |at| at + 1);
+    let runs: Vec<Range<usize>> = (split > 0)
+        .then_some(Range {
+            start: 0,
+            end: split,
+        })
+        .into_iter()
+        .collect();
+    let marks = flyout::letter_ranges(path, lit);
+    StyledText::new(SharedString::from(path.to_string())).with_highlights(
+        flyout::overlay(&runs, &marks)
+            .into_iter()
+            .map(|(r, run, marked)| {
+                let mut st = HighlightStyle::default();
+                if run.is_some() {
+                    st.color = Some(faint);
+                }
+                if marked {
+                    st.color = Some(accent);
+                    st.font_weight = Some(FontWeight::BOLD);
+                }
+                (r, st)
+            }),
+    )
+}
+
+/// A path in at most `fit` characters: whole when it fits, else its end —
+/// the file's name and the folders nearest it — after an ellipsis, cut at a
+/// folder's edge where one is near. The letters a filter lit move with it;
+/// any in the part cut away are dropped.
+fn elide_path(path: &str, fit: usize, lit: &[usize]) -> (String, Vec<usize>) {
+    let n = path.chars().count();
+    if n <= fit || fit < 8 {
+        return (path.to_string(), lit.to_vec());
+    }
+    let keep = fit - 2;
+    let mut cut = path.char_indices().nth(n - keep).map_or(0, |(b, _)| b);
+    let name_at = path.rfind('/').map_or(0, |i| i + 1);
+    if let Some(slash) = path[cut..].find('/') {
+        if cut + slash < name_at {
+            cut += slash;
+        }
+    }
+    let mark = "\u{2026}";
+    let shown = format!("{mark}{}", &path[cut..]);
+    let lit = lit
+        .iter()
+        .filter(|&&a| a >= cut)
+        .map(|&a| a - cut + mark.len())
+        .collect();
+    (shown, lit)
+}
+
+/// Which open file a diff list is scrolled into past its own row, and where
+/// a pinned copy of that row sits: at the top, or pushed up by the file
+/// below as it arrives. Read from the last frame's layout, which a scroll
+/// redraws.
+fn pinned(scroll: &ScrollHandle, row_h: f32, open: impl Fn(usize) -> bool) -> Option<(usize, f32)> {
+    if scroll.children_count() == 0 {
+        return None;
+    }
+    let (pos, _) = scroll.logical_scroll_top();
+    if !open(pos) {
+        return None;
+    }
+    let view = scroll.bounds();
+    let item = scroll.bounds_for_item(pos)?;
+    let off = scroll.offset().y;
+    let top = f32::from(item.top() + off - view.top());
+    let bottom = f32::from(item.bottom() + off - view.top());
+    (top < -1. && bottom > 0.).then(|| (pos, (bottom - row_h).min(0.)))
 }
 
 /// Which list a diff row belongs to, so one renderer serves both the Changes
@@ -985,6 +1298,13 @@ enum Patch<'a> {
     Busy,
     Failed(&'a str),
     Got(&'a FileDiff),
+    /// GitHub sent no patch for this file; its page on GitHub has it.
+    Withheld(Option<String>),
+}
+
+/// A diff list's row height: the list's rows and a pinned copy agree on it.
+fn diff_row_h(sk: &skin::Skin, s: f32) -> f32 {
+    f32::from(sk.text_px(11.5 * s)) * 1.5 + 8. * s
 }
 
 impl Workspace {
@@ -1027,6 +1347,7 @@ impl Workspace {
         self.flyout.open = false;
         self.flyout.adding = false;
         self.flyout.resize = None;
+        self.flyout_faces(cx);
         if self.flyout.focused {
             self.flyout.focused = false;
             self.focus_active(window, cx);
@@ -1068,6 +1389,21 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
+        self.flyout_put(task, target, line, cx);
+        if take_keys {
+            self.flyout_focus(window, cx);
+        }
+    }
+
+    /// [`Self::flyout_show`] without touching the keyboard: for what a page in
+    /// the flyout itself opened, where the keyboard already is.
+    fn flyout_put(
+        &mut self,
+        task: usize,
+        target: Target,
+        line: Option<u32>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(t) = self.tabs.get_mut(task) else {
             return;
         };
@@ -1075,6 +1411,9 @@ impl Workspace {
         self.flyout.open = true;
         self.flyout.adding = false;
         if let (Some(line), Live::File(f)) = (line, self.flyout_live(&target)) {
+            // A line is a place in the text, so a page asked for at a line
+            // shows its source there.
+            f.source = true;
             f.jump = Some(line);
             f.lit = Some(line);
             if f.text.got.is_some() {
@@ -1086,10 +1425,623 @@ impl Workspace {
         if task == self.active {
             self.flyout_read(&target, false, cx);
         }
-        if take_keys {
-            self.flyout_focus(window, cx);
-        }
+        self.flyout_mark_opened(&target, cx);
+        self.flyout_faces(cx);
         self.save(cx);
+        cx.notify();
+    }
+
+    // ---- what agents handed over ------------------------------------------
+
+    /// The pane that handed `path` over, wherever it sits in the window, and
+    /// what it called it: what makes a tab wear ✦, and who its notes go to.
+    fn delivered(&self, path: &Path, cx: &App) -> Option<(Entity<TerminalView>, String)> {
+        let key = path.to_string_lossy();
+        for t in &self.tabs {
+            let mut leaves = Vec::new();
+            t.root.leaves(&mut leaves);
+            for l in leaves {
+                if let Some(h) = l.read(cx).handovers().get(&key) {
+                    return Some((l.clone(), h.label.clone()));
+                }
+            }
+        }
+        None
+    }
+
+    /// The pane `id`, wherever it sits.
+    fn leaf_of(&self, id: EntityId) -> Option<Entity<TerminalView>> {
+        for t in &self.tabs {
+            let mut leaves = Vec::new();
+            t.root.leaves(&mut leaves);
+            if let Some(l) = leaves.into_iter().find(|l| l.entity_id() == id) {
+                return Some(l.clone());
+            }
+        }
+        None
+    }
+
+    /// A file an agent handed over has now been opened, as the header chip
+    /// and the history page count it, whichever road it was opened by.
+    fn flyout_mark_opened(&mut self, target: &Target, cx: &mut Context<Self>) {
+        let Target::File { path } = target else {
+            return;
+        };
+        let key = path.to_string_lossy().into_owned();
+        let mut leaves = Vec::new();
+        for t in &self.tabs {
+            t.root.leaves(&mut leaves);
+        }
+        let holders: Vec<Entity<TerminalView>> = leaves
+            .into_iter()
+            .filter(|l| {
+                let v = l.read(cx);
+                v.handovers().contains(&key) && !v.handovers().is_opened(&key)
+            })
+            .cloned()
+            .collect();
+        for l in holders {
+            l.update(cx, |v, cx| {
+                v.mark_handover_opened(&key);
+                cx.notify();
+            });
+        }
+    }
+
+    /// Who ↪ on a page in the flyout sends to, and the name the bar gives
+    /// them: the agent that handed the file over, wherever it is; else the
+    /// shown task's agent, its focused pane first.
+    fn flyout_notes_target(&self, path: &Path, cx: &App) -> Option<(Entity<TerminalView>, String)> {
+        let name_of = |p: &TerminalView| {
+            p.name
+                .clone()
+                .filter(|n| !n.is_empty())
+                .or_else(|| (!p.title.is_empty()).then(|| p.title.clone()))
+                .unwrap_or_else(|| p.mode.label().to_string())
+        };
+        if let Some((pane, _)) = self.delivered(path, cx) {
+            if pane.read(cx).mode.is_agent() {
+                let who = name_of(pane.read(cx));
+                return Some((pane, who));
+            }
+        }
+        let tab = self.tabs.get(self.active)?;
+        let mut leaves = Vec::new();
+        tab.root.leaves(&mut leaves);
+        let focused = tab
+            .focused
+            .and_then(|id| leaves.iter().find(|l| l.entity_id() == id).copied());
+        let pick = focused
+            .filter(|l| l.read(cx).mode.is_agent())
+            .or_else(|| leaves.iter().find(|l| l.read(cx).mode.is_agent()).copied())?
+            .clone();
+        let who = name_of(pick.read(cx));
+        Some((pick, who))
+    }
+
+    /// ↪ on a page in the flyout: the notes map goes into the agent's prompt
+    /// — pasted, never sent — and the page's bar says where it landed.
+    fn flyout_send_notes(
+        &mut self,
+        key: &Target,
+        ev: &crate::docview::SendNotes,
+        cx: &mut Context<Self>,
+    ) {
+        use crate::docview::notes_ui::{Said, Words};
+        let Target::File { path } = key else {
+            return;
+        };
+        let said = match self.flyout_notes_target(path, cx) {
+            None => Said::Refused(Words::said(|l| l.strings().ui.doc_no_agent_beside.into())),
+            Some((pane, who)) => match pane.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
+                Ok(landed) => notes_landed_said(landed, &who, ev.unsaved, ev.pictures),
+                Err(why) => Said::Refused(why),
+            },
+        };
+        if let Some(view) = self.face_of(key) {
+            view.update(cx, |v, cx| v.notes_said(said, cx));
+        }
+    }
+
+    /// What this task's agents handed over, newest first: the `+` page's
+    /// first rows.
+    fn artifact_rows(&self, cx: &App) -> Vec<AddRow> {
+        let Some(tab) = self.tabs.get(self.active) else {
+            return Vec::new();
+        };
+        let mut leaves = Vec::new();
+        tab.root.leaves(&mut leaves);
+        let mut rows = Vec::new();
+        for l in leaves {
+            let v = l.read(cx);
+            let who = v.handover_pane_name();
+            for h in v.handovers().newest_first() {
+                let key = h.key();
+                rows.push(AddRow::Artifact {
+                    pane: l.entity_id(),
+                    opened: v.handovers().is_opened(&key),
+                    key,
+                    label: h.label.clone(),
+                    href: h.href.clone(),
+                    at_ms: h.at_ms,
+                    who: who.clone(),
+                });
+            }
+        }
+        rows.sort_by_key(|r| match r {
+            AddRow::Artifact { at_ms, .. } => std::cmp::Reverse(*at_ms),
+            _ => std::cmp::Reverse(0),
+        });
+        rows
+    }
+
+    /// Open what an agent handed over: in the flyout when it shows that kind
+    /// of thing, else the road a handover always took from its own pane.
+    fn flyout_open_artifact(
+        &mut self,
+        pane: EntityId,
+        key: &str,
+        href: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        match artifact_target(href) {
+            Some(open) => {
+                let task = self.active;
+                self.flyout_show(task, open.target, open.line, true, window, cx);
+                if let Some(l) = self.leaf_of(pane) {
+                    let key = key.to_string();
+                    l.update(cx, |v, cx| {
+                        v.mark_handover_opened(&key);
+                        cx.notify();
+                    });
+                }
+            }
+            None => {
+                if let Some(l) = self.leaf_of(pane) {
+                    l.update(cx, |v, cx| v.ask_handover_by_key(key, cx));
+                }
+            }
+        }
+    }
+
+    /// "◨ side" on a rail row: the deliverable opens in the flyout of the
+    /// task the person is looking at, as the rail's own click opens it where
+    /// the person already is. Answers whether it opened.
+    pub(crate) fn rail_open_side(
+        &mut self,
+        href: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let Some(open) = artifact_target(href) else {
+            return false;
+        };
+        let task = self.active;
+        self.flyout_show(task, open.target, open.line, true, window, cx);
+        true
+    }
+
+    // ---- pages -------------------------------------------------------------
+
+    /// The page a File tab draws, while it is the page on screen.
+    fn face_of(&self, t: &Target) -> Option<Entity<crate::docview::DocumentView>> {
+        match self.flyout.live.get(t) {
+            Some(Live::File(f)) => f.face.as_ref().map(|d| d.view.clone()),
+            _ => None,
+        }
+    }
+
+    /// The page, when the page (not its source) is on screen.
+    fn paged_face(&self, t: &Target) -> Option<Entity<crate::docview::DocumentView>> {
+        match self.flyout.live.get(t) {
+            Some(Live::File(f)) if f.paged() => f.face.as_ref().map(|d| d.view.clone()),
+            _ => None,
+        }
+    }
+
+    /// The page on screen and a window point on it, as the view's own flat
+    /// point from its top-left.
+    fn face_point(
+        &self,
+        t: &Target,
+        at: Point<Pixels>,
+    ) -> Option<(Entity<crate::docview::DocumentView>, Point<Pixels>)> {
+        let Some(Live::File(f)) = self.flyout.live.get(t) else {
+            return None;
+        };
+        let face = f.face.as_ref().filter(|_| f.paged())?;
+        let b = face.bounds.get()?;
+        Some((
+            face.view.clone(),
+            point(at.x - b.origin.x, at.y - b.origin.y),
+        ))
+    }
+
+    fn face_held(&self, t: &Target) -> bool {
+        matches!(self.flyout.live.get(t), Some(Live::File(f)) if f.face.as_ref().is_some_and(|d| d.holding))
+    }
+
+    fn face_hold(&mut self, t: &Target, held: bool) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            if let Some(face) = f.face.as_mut() {
+                face.holding = held;
+            }
+        }
+    }
+
+    /// Make a File tab's page the first time it is read, for a file TD draws.
+    /// A machine that cannot draw it (no Chromium for a page, no poppler for
+    /// a PDF) shows the text and says why.
+    fn file_face(&mut self, key: &Target, path: &Path, cx: &mut Context<Self>) {
+        use crate::docopen::DocKind;
+        let Some(kind) = drawn_kind(path) else {
+            return;
+        };
+        if !matches!(self.flyout.live.get(key), Some(Live::File(f)) if !f.face_tried) {
+            return;
+        }
+        let l = self.lang;
+        let ready = match kind {
+            DocKind::Html => crate::docview::html_ready(cx).map_err(|u| u.reason_in(l)),
+            DocKind::Pdf => crate::docview::pdf_ready(cx).map_err(|m| m.reason_in(l)),
+            _ => Ok(()),
+        };
+        let face = ready.map(|()| {
+            let doc = crate::docopen::DocTarget {
+                path: path.to_path_buf(),
+                kind,
+            };
+            let view = cx.new(|cx| crate::docview::DocumentView::new(doc, cx));
+            view.update(cx, |v, cx| v.set_seat(crate::docopen::DocSeat::Face, cx));
+            let links = cx.subscribe(&view, |ws, _, ev: &crate::docview::FollowLink, cx| {
+                ws.flyout_follow(ev.clone(), cx)
+            });
+            let k = key.clone();
+            let notes = cx.subscribe(&view, move |ws, _, ev: &crate::docview::SendNotes, cx| {
+                ws.flyout_send_notes(&k, ev, cx)
+            });
+            let k = key.clone();
+            let cannot = cx.subscribe(&view, move |ws, _, ev: &crate::docview::CannotShow, cx| {
+                ws.flyout_cannot(&k, ev.reason.clone(), cx)
+            });
+            DocFace {
+                view,
+                bounds: Rc::new(Cell::new(None)),
+                holding: false,
+                shown: false,
+                _subs: vec![links, notes, cannot],
+            }
+        });
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(key) {
+            f.face_tried = true;
+            match face {
+                Ok(face) => f.face = Some(face),
+                Err(why) => f.face_note = Some(why),
+            }
+        }
+        self.flyout_faces(cx);
+    }
+
+    /// The page said it cannot be drawn after all (a browser that will not
+    /// start): the tab shows the text, saying why, and lets the page go.
+    fn flyout_cannot(&mut self, key: &Target, reason: String, cx: &mut Context<Self>) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(key) {
+            f.face = None;
+            f.face_note = Some(reason);
+        }
+        cx.notify();
+    }
+
+    /// A link pressed on a page in the flyout: a file opens beside it in a new
+    /// tab (drawn, when TD draws it), a pull request as a pull request, and
+    /// anything else in the browser.
+    fn flyout_follow(&mut self, link: crate::docview::FollowLink, cx: &mut Context<Self>) {
+        let Some(open) = artifact_target(&link.target) else {
+            crate::pane::open_with_system(&link.target);
+            return;
+        };
+        let task = self.active;
+        let target = open.target.clone();
+        self.flyout_put(task, open.target, open.line, cx);
+        if let (Some(fragment), Some(view)) = (link.fragment, self.face_of(&target)) {
+            view.update(cx, |v, cx| v.show_fragment(fragment, cx));
+        }
+    }
+
+    /// Tell each page whether it is on screen, and the one that is who its
+    /// ↪ sends to.
+    fn flyout_faces(&mut self, cx: &mut Context<Self>) {
+        let current = (self.flyout.open && !self.flyout_adding())
+            .then(|| self.side_current())
+            .flatten();
+        let beside = match &current {
+            Some(Target::File { path }) => self.flyout_notes_target(path, cx).map(|(_, who)| who),
+            _ => None,
+        };
+        for (t, live) in self.flyout.live.iter_mut() {
+            let Live::File(f) = live else {
+                continue;
+            };
+            let paged = f.paged();
+            let Some(face) = f.face.as_mut() else {
+                continue;
+            };
+            let shown = paged && current.as_ref() == Some(t);
+            if face.shown != shown {
+                face.shown = shown;
+                face.view.update(cx, |v, cx| v.visible(shown, cx));
+            }
+            if shown {
+                let b = beside.clone();
+                face.view.update(cx, |v, cx| v.set_beside(b, cx));
+            }
+        }
+    }
+
+    /// `s`: a page's source, or back to the page.
+    fn flyout_source(&mut self, t: &Target, cx: &mut Context<Self>) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            if f.face.is_some() {
+                f.source = !f.source;
+                if !f.source {
+                    f.find.typing = false;
+                }
+            }
+        }
+        self.flyout_faces(cx);
+        cx.notify();
+    }
+
+    // ---- finding -----------------------------------------------------------
+
+    /// The filter of the list a tab shows, if it shows one.
+    fn list_filter(&mut self, t: &Target) -> Option<&mut Filter> {
+        match self.flyout.live.get_mut(t)? {
+            Live::Changes(c) => Some(&mut c.filter),
+            Live::Pull(p) => Some(&mut p.filter),
+            Live::File(_) => None,
+        }
+    }
+
+    /// Work a list's filter out again, over the list as last read. `fresh`
+    /// when the query changed: the keyboard goes back to the best row.
+    fn refilter(&mut self, t: &Target, fresh: bool) {
+        match self.flyout.live.get_mut(t) {
+            Some(Live::Changes(c)) => {
+                let paths = c
+                    .list
+                    .got
+                    .as_ref()
+                    .map(|l| l.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>())
+                    .unwrap_or_default();
+                c.filter.apply(paths);
+                let n = c
+                    .list
+                    .got
+                    .as_ref()
+                    .map_or(0, |l| c.filter.rows(l.files.len()).len());
+                c.cursor = if fresh {
+                    0
+                } else {
+                    c.cursor.min(n.saturating_sub(1))
+                };
+                // A new query is read from its best answer, at the top.
+                if fresh {
+                    c.scroll.set_offset(point(px(0.), px(0.)));
+                }
+            }
+            Some(Live::Pull(p)) => {
+                let paths = p
+                    .diff
+                    .got
+                    .as_ref()
+                    .map(|d| {
+                        d.files
+                            .iter()
+                            .map(|f| f.stat.path.as_str())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default();
+                p.filter.apply(paths);
+                let n = p
+                    .diff
+                    .got
+                    .as_ref()
+                    .map_or(0, |d| p.filter.rows(d.files.len()).len());
+                p.cursor = if fresh {
+                    0
+                } else {
+                    p.cursor.min(n.saturating_sub(1))
+                };
+                if fresh {
+                    p.scroll.set_offset(point(px(0.), px(0.)));
+                }
+            }
+            _ => {}
+        }
+    }
+
+    /// Find a file's text again: the query changed, or the file did.
+    fn refind(&mut self, t: &Target) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            f.find.hits = Rc::new(match &f.text.got {
+                Some(text) if !f.find.query.is_empty() => {
+                    flyout::find_text(&text.lines, &f.find.query, FIND_HITS)
+                }
+                _ => Vec::new(),
+            });
+            f.find.at = f.find.at.min(f.find.hits.len().saturating_sub(1));
+        }
+    }
+
+    /// Go to the next place found, or the one before, and light it.
+    fn find_step(&mut self, t: &Target, forward: bool) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            let n = f.find.hits.len();
+            if n == 0 {
+                return;
+            }
+            f.find.at = if forward {
+                (f.find.at + 1) % n
+            } else {
+                (f.find.at + n - 1) % n
+            };
+            let line = f.find.hits[f.find.at].0;
+            f.scroll
+                .scroll_to_item(line as usize, ScrollStrategy::Center);
+        }
+    }
+
+    /// The first place found at or below the line on top: where a find
+    /// starts, as a browser's does.
+    fn find_from_top(&mut self, t: &Target) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            let top = list_top(&f.scroll) as u32;
+            if let Some(i) = f.find.hits.iter().position(|(line, _)| *line >= top) {
+                f.find.at = i;
+            } else {
+                f.find.at = 0;
+            }
+            if let Some((line, _)) = f.find.hits.get(f.find.at) {
+                f.scroll
+                    .scroll_to_item(*line as usize, ScrollStrategy::Center);
+            }
+        }
+    }
+
+    /// `/` or Ctrl+F: a list's filter takes the keys, or a find in a file.
+    /// A pull request turns to its files first; a page shows its text, which
+    /// is what a find reads.
+    fn search_start(&mut self, t: &Target, cx: &mut Context<Self>) {
+        match t {
+            Target::Pull { .. } => {
+                if !matches!(self.flyout.live.get(t), Some(Live::Pull(p)) if p.face == PullFace::Files)
+                {
+                    self.pull_face(PullFace::Files, cx);
+                }
+                if let Some(f) = self.list_filter(t) {
+                    f.typing = true;
+                }
+            }
+            Target::Changes { .. } => {
+                if let Some(f) = self.list_filter(t) {
+                    f.typing = true;
+                }
+            }
+            Target::File { .. } => {
+                if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+                    if f.face.is_some() {
+                        f.source = true;
+                    }
+                    f.find.typing = true;
+                }
+                self.flyout_faces(cx);
+            }
+        }
+        cx.notify();
+    }
+
+    /// Whether the tab's filter or find has the keys.
+    fn search_typing(&self, t: &Target) -> bool {
+        match self.flyout.live.get(t) {
+            Some(Live::Changes(c)) => c.filter.typing,
+            Some(Live::Pull(p)) => p.filter.typing && p.face == PullFace::Files,
+            Some(Live::File(f)) => f.find.typing,
+            None => false,
+        }
+    }
+
+    /// Esc on a tab with a filter or a find: put it away. Answers whether
+    /// there was one, so a second Esc gives the keyboard back.
+    fn search_clear(&mut self, t: &Target, cx: &mut Context<Self>) -> bool {
+        let had = match self.flyout.live.get_mut(t) {
+            Some(Live::Changes(c)) => {
+                let had = c.filter.typing || !c.filter.query.is_empty();
+                c.filter.query.clear();
+                c.filter.typing = false;
+                had
+            }
+            Some(Live::Pull(p)) => {
+                let had = p.filter.typing || !p.filter.query.is_empty();
+                p.filter.query.clear();
+                p.filter.typing = false;
+                had
+            }
+            Some(Live::File(f)) => {
+                let had = f.find.typing || !f.find.query.is_empty();
+                f.find = Find::default();
+                had
+            }
+            None => false,
+        };
+        if had {
+            self.refilter(t, true);
+            cx.notify();
+        }
+        had
+    }
+
+    /// Keys while a filter or a find has them: typing narrows or finds,
+    /// arrows choose or step, Enter opens or steps, Esc puts it away.
+    fn search_key(&mut self, t: &Target, ks: &gpui::Keystroke, cx: &mut Context<Self>) {
+        let key = ks.key.as_str();
+        let shift = ks.modifiers.shift;
+        let typed = ks
+            .key_char
+            .as_deref()
+            .filter(|c| !c.is_empty() && !c.chars().any(char::is_control))
+            .map(str::to_string);
+        if let Target::File { .. } = t {
+            match key {
+                "enter" => self.find_step(t, !shift),
+                "down" => self.find_step(t, true),
+                "up" => self.find_step(t, false),
+                "backspace" => {
+                    if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+                        f.find.query.pop();
+                    }
+                    self.refind(t);
+                    self.find_from_top(t);
+                }
+                _ => {
+                    if let Some(c) = typed {
+                        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+                            f.find.query.push_str(&c);
+                        }
+                        self.refind(t);
+                        self.find_from_top(t);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
+        match key {
+            "enter" => {
+                if let Some(f) = self.list_filter(t) {
+                    f.typing = false;
+                }
+                self.flyout_move(t, "enter", false, cx);
+            }
+            "up" | "down" | "pageup" | "pagedown" | "home" | "end" => {
+                self.flyout_move(t, key, false, cx)
+            }
+            "backspace" => {
+                if let Some(f) = self.list_filter(t) {
+                    f.query.pop();
+                }
+                self.refilter(t, true);
+            }
+            _ => {
+                if let Some(c) = typed {
+                    if let Some(f) = self.list_filter(t) {
+                        f.query.push_str(&c);
+                    }
+                    self.refilter(t, true);
+                }
+            }
+        }
         cx.notify();
     }
 
@@ -1138,12 +2090,16 @@ impl Workspace {
         } else if let Some(t) = self.side_current() {
             self.flyout_read(&t, force, cx);
         }
+        self.flyout_faces(cx);
     }
 
     fn flyout_read(&mut self, t: &Target, force: bool, cx: &mut Context<Self>) {
         match t.clone() {
             Target::Changes { repo, base } => self.changes_read(t, repo, base, force, cx),
-            Target::File { path } => self.file_read(t, path, force, cx),
+            Target::File { path } => {
+                self.file_face(t, &path, cx);
+                self.file_read(t, path, force, cx)
+            }
             Target::Pull {
                 owner,
                 repo,
@@ -1202,17 +2158,26 @@ impl Workspace {
             });
         }
         c.list.land(read);
-        // The demo shows a diff open, as a person would have it.
+        self.refilter(key, false);
+        let Some(Live::Changes(c)) = self.flyout.live.get_mut(key) else {
+            return;
+        };
+        // The demo shows a diff open, as a person would have it: the first
+        // rows as drawn, a filter's best first.
         if c.open.is_empty() && std::env::var("TD_FLYOUT_DEMO").is_ok_and(|v| v.contains("expand"))
         {
             if let Some(l) = &c.list.got {
-                for f in l.files.iter().filter(|f| !f.path.ends_with('/')).take(2) {
-                    c.open.insert(f.path.clone());
+                for (i, _) in c
+                    .filter
+                    .rows(l.files.len())
+                    .into_iter()
+                    .filter(|(i, _)| !l.files[*i].path.ends_with('/'))
+                    .take(2)
+                {
+                    c.open.insert(l.files[i].path.clone());
                 }
             }
         }
-        let n = c.list.got.as_ref().map_or(0, |l| l.files.len());
-        c.cursor = c.cursor.min(n.saturating_sub(1));
         let want: Vec<FileStat> = c
             .list
             .got
@@ -1287,9 +2252,12 @@ impl Workspace {
                 .background_spawn(async move { read_file(&path, prev, fresh) })
                 .await;
             this.update(cx, |ws, cx| {
+                let mut again = false;
+                let mut first = false;
                 if let Some(Live::File(f)) = ws.flyout.live.get_mut(&k) {
                     match read {
                         Ok(Some((text, marks, stamp))) => {
+                            first = f.text.got.is_none();
                             f.stamp = Some(stamp);
                             f.marks = Rc::new(marks);
                             f.text.land(Ok(text));
@@ -1299,12 +2267,22 @@ impl Workspace {
                                     ScrollStrategy::Center,
                                 );
                             }
+                            // The file changed under a find: find it again.
+                            again = !f.find.query.is_empty();
                         }
                         Ok(None) => {
                             f.text.busy = false;
                             f.text.at = Some(Instant::now());
                         }
                         Err(e) => f.text.land(Err(e)),
+                    }
+                }
+                if again {
+                    ws.refind(&k);
+                    // A find typed before the text arrived starts at its first
+                    // place; one standing while the file changes stays put.
+                    if first {
+                        ws.find_from_top(&k);
                     }
                 }
                 cx.notify();
@@ -1416,7 +2394,18 @@ impl Workspace {
                 this.update(cx, |ws, cx| {
                     if let Some(Live::Pull(p)) = ws.flyout.live.get_mut(&k) {
                         p.diff.land(read);
+                        // The demo shows a diff open, as a person would have it.
+                        if p.open.is_empty()
+                            && std::env::var("TD_FLYOUT_DEMO").is_ok_and(|v| v.contains("expand"))
+                        {
+                            if let Some(d) = &p.diff.got {
+                                for f in d.files.iter().filter(|f| f.diff.is_some()).take(2) {
+                                    p.open.insert(f.stat.path.clone());
+                                }
+                            }
+                        }
                     }
+                    ws.refilter(&k, false);
                     cx.notify();
                 })
                 .ok();
@@ -1472,6 +2461,9 @@ impl Workspace {
         }
         let mut face = None;
         let mut keys = false;
+        let mut filter = None;
+        let mut find = None;
+        let mut source = false;
         for item in spec.split(';').map(str::trim) {
             let (kind, arg) = item.split_once(':').unwrap_or((item, ""));
             let target = match kind {
@@ -1514,6 +2506,39 @@ impl Workspace {
                     keys = true;
                     None
                 }
+                "filter" => {
+                    filter = Some(arg.to_string());
+                    None
+                }
+                "find" => {
+                    find = Some(arg.to_string());
+                    None
+                }
+                "source" => {
+                    source = true;
+                    None
+                }
+                // `handed:<label>|<address>`: the first pane hands something
+                // over, as a declaration would, so a rig with no agent in it
+                // can show what the + page and a tab make of one.
+                "handed" => {
+                    if let Some((label, href)) = arg.split_once('|') {
+                        let mut leaves = Vec::new();
+                        self.tabs[0].root.leaves(&mut leaves);
+                        if let Some(first) = leaves.first().map(|l| (*l).clone()) {
+                            let (label, href) = (label.to_string(), href.to_string());
+                            first.update(cx, |v, cx| {
+                                v.hand_over(
+                                    Some(label),
+                                    href,
+                                    crate::handover::Source::Declared,
+                                    cx,
+                                );
+                            });
+                        }
+                    }
+                    None
+                }
                 _ => None,
             };
             if let Some(t) = target {
@@ -1523,6 +2548,29 @@ impl Workspace {
         if let (Some(face), Some(t)) = (face, self.tabs[0].side.current().cloned()) {
             if let Live::Pull(p) = self.flyout_live(&t) {
                 p.face = face;
+            }
+        }
+        if let Some(t) = self.tabs[0].side.current().cloned() {
+            match self.flyout_live(&t) {
+                Live::Changes(c) => {
+                    if let Some(q) = &filter {
+                        c.filter.query = q.clone();
+                        c.filter.typing = true;
+                    }
+                }
+                Live::Pull(p) => {
+                    if let Some(q) = &filter {
+                        p.filter.query = q.clone();
+                        p.filter.typing = true;
+                    }
+                }
+                Live::File(f) => {
+                    if let Some(q) = &find {
+                        f.find.query = q.clone();
+                        f.find.typing = true;
+                    }
+                    f.source |= source;
+                }
             }
         }
         self.flyout.open = true;
@@ -1600,12 +2648,13 @@ impl Workspace {
                                 .and_then(|l| l.files.iter().find(|f| f.path == path).cloned());
                         }
                     }
-                    if let Some(i) = c
-                        .list
-                        .got
-                        .as_ref()
-                        .and_then(|l| l.files.iter().position(|f| f.path == path))
-                    {
+                    // The keyboard follows the press, counted as the rows are drawn.
+                    if let Some(i) = c.list.got.as_ref().and_then(|l| {
+                        c.filter
+                            .rows(l.files.len())
+                            .iter()
+                            .position(|(i, _)| l.files[*i].path == path)
+                    }) {
                         c.cursor = i;
                     }
                 }
@@ -1617,6 +2666,14 @@ impl Workspace {
                 if let Some(Live::Pull(p)) = self.flyout.live.get_mut(key) {
                     if !p.open.remove(path) {
                         p.open.insert(path.to_string());
+                    }
+                    if let Some(i) = p.diff.got.as_ref().and_then(|d| {
+                        p.filter
+                            .rows(d.files.len())
+                            .iter()
+                            .position(|(i, _)| d.files[*i].stat.path == path)
+                    }) {
+                        p.cursor = i;
                     }
                 }
             }
@@ -1678,7 +2735,13 @@ impl Workspace {
                     if !p.open.is_empty() {
                         p.open.clear();
                     } else if let Some(d) = &p.diff.got {
-                        p.open = d.iter().take(60).map(|f| f.path().to_string()).collect();
+                        p.open = d
+                            .files
+                            .iter()
+                            .filter(|f| f.diff.is_some())
+                            .take(60)
+                            .map(|f| f.stat.path.clone())
+                            .collect();
                     }
                 }
             }
@@ -1698,7 +2761,15 @@ impl Workspace {
 
     /// Open what an `+` page row names.
     fn add_open(&mut self, row: AddRow, window: &mut Window, cx: &mut Context<Self>) {
+        self.flyout.query.clear();
+        self.flyout.pick = 0;
         let target = match row {
+            AddRow::Artifact {
+                pane, key, href, ..
+            } => {
+                self.flyout_open_artifact(pane, &key, &href, window, cx);
+                return;
+            }
             AddRow::Changes(repo) => Target::Changes {
                 repo,
                 base: Base::Branch,
@@ -1710,110 +2781,49 @@ impl Workspace {
                 repo,
                 number: row.number,
             },
-            AddRow::File(path, _) => Target::File { path },
+            AddRow::File(path, ..) => Target::File { path },
         };
-        self.flyout.query.clear();
-        self.flyout.pick = 0;
         let task = self.active;
         self.flyout_show(task, target, None, true, window, cx);
     }
 
-    /// The `+` page's rows, in the order they are drawn and walked.
-    fn add_rows(&self) -> Vec<AddRow> {
-        let mut rows = Vec::new();
+    /// The `+` page's rows, in the order they are drawn and walked: what this
+    /// task's agents handed over first — the work is what the panel is for —
+    /// then the repository's changes, its pull requests and its files.
+    fn add_rows(&self, cx: &App) -> Vec<AddRow> {
+        let q = self.flyout.query.trim().to_string();
+        let mut rows: Vec<AddRow> = self
+            .artifact_rows(cx)
+            .into_iter()
+            .filter(|r| match r {
+                AddRow::Artifact { label, href, .. } => {
+                    q.is_empty()
+                        || flyout::find_path(label, &q).is_some()
+                        || flyout::find_path(href, &q).is_some()
+                }
+                _ => false,
+            })
+            .take(ARTIFACT_ROWS)
+            .collect();
         let Some(here) = self.flyout.here.clone() else {
             return rows;
         };
-        let q = self.flyout.query.trim().to_string();
-        let got = self.flyout.suggest.get(&here).and_then(|s| s.got.as_ref());
-        if q.is_empty() {
-            rows.push(AddRow::Changes(here.clone()));
-            if let Some(g) = got {
-                if let Some((owner, repo)) = &g.slug {
-                    if let Some(mine) = &g.branch_pull {
-                        rows.push(AddRow::Pull {
-                            owner: owner.clone(),
-                            repo: repo.clone(),
-                            row: mine.clone(),
-                            mine: true,
-                        });
-                    }
-                    for p in &g.pulls {
-                        if g.branch_pull.as_ref().is_some_and(|m| m.number == p.number) {
-                            continue;
-                        }
-                        rows.push(AddRow::Pull {
-                            owner: owner.clone(),
-                            repo: repo.clone(),
-                            row: p.clone(),
-                            mine: false,
-                        });
-                    }
-                }
-                for c in g.changed.iter().filter(|c| !c.ends_with('/')).take(12) {
-                    rows.push(AddRow::File(here.join(c), c.clone()));
-                }
-            }
-            return rows;
-        }
-        // Typing: a pull request by number first, then files by score.
-        if let (Some(g), Ok(n)) = (got, q.trim_start_matches('#').parse::<u64>()) {
-            if let Some((owner, repo)) = &g.slug {
-                let row = g
-                    .pulls
-                    .iter()
-                    .chain(g.branch_pull.iter())
-                    .find(|p| p.number == n)
-                    .cloned()
-                    .unwrap_or(PullRow {
-                        number: n,
-                        title: String::new(),
-                        head: None,
-                        author: None,
-                        draft: false,
-                        updated_ms: None,
-                    });
-                rows.push(AddRow::Pull {
-                    owner: owner.clone(),
-                    repo: repo.clone(),
-                    row,
-                    mine: false,
-                });
+        let reading = self.flyout.suggest.get(&here);
+        let read_at = reading.and_then(|r| r.at);
+        if let Some(c) = self.flyout.finder.borrow().as_ref() {
+            if c.query == q && c.here.as_ref() == Some(&here) && c.read_at == read_at {
+                rows.extend(c.rows.iter().cloned());
+                return rows;
             }
         }
-        if let Some(g) = got {
-            // Pictures, clips and PDFs are the floating square's to draw, and
-            // a text view of one is a screen of nothing.
-            let readable = |p: &&String| {
-                !matches!(
-                    crate::docopen::doc_kind_by_name(Path::new(p.as_str())),
-                    Some(
-                        crate::docopen::DocKind::Image
-                            | crate::docopen::DocKind::Video
-                            | crate::docopen::DocKind::Audio
-                            | crate::docopen::DocKind::Pdf
-                    )
-                )
-            };
-            let mut scored: Vec<(i64, &String)> = g
-                .changed
-                .iter()
-                .filter(|c| !c.ends_with('/'))
-                .chain(g.files.iter())
-                .filter(readable)
-                .filter_map(|p| flyout::file_score(p, &q).map(|s| (s, p)))
-                .collect();
-            scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
-            let mut seen = HashSet::new();
-            for (_, p) in scored {
-                if seen.insert(p.clone()) {
-                    rows.push(AddRow::File(here.join(p), p.clone()));
-                }
-                if rows.len() >= FINDER_ROWS {
-                    break;
-                }
-            }
-        }
+        let rest = repo_rows(&here, reading.and_then(|r| r.got.as_ref()), &q);
+        *self.flyout.finder.borrow_mut() = Some(FinderRows {
+            query: q,
+            here: Some(here),
+            read_at,
+            rows: rest.clone(),
+        });
+        rows.extend(rest);
         rows
     }
 
@@ -1837,6 +2847,19 @@ impl Workspace {
             self.flyout_toggle(window, cx);
             return true;
         }
+        let current = if self.flyout_adding() {
+            None
+        } else {
+            self.side_current()
+        };
+        // A note being written on a page has every key, chords and all:
+        // what is typed there is the note's.
+        if let Some(view) = current.as_ref().and_then(|t| self.paged_face(t)) {
+            if view.read(cx).has_caret() {
+                view.update(cx, |v, cx| v.key(ks, cx));
+                return true;
+            }
+        }
         if m.control && !m.shift && !m.alt && key == "w" {
             let at = self.side().map_or(0, |s| s.active);
             self.flyout_close_tab(at, cx);
@@ -1850,12 +2873,31 @@ impl Workspace {
             cx.notify();
             return true;
         }
+        if m.control && !m.shift && !m.alt && key == "f" {
+            if let Some(t) = &current {
+                self.search_start(t, cx);
+                return true;
+            }
+        }
         if m.control || m.alt || m.platform {
             return false;
         }
         if key == "escape" {
+            // A page's own note box or dialog closes first, then a filter or
+            // a find, then the + page; then the keyboard goes back.
+            if let Some(view) = current.as_ref().and_then(|t| self.paged_face(t)) {
+                if view.update(cx, |v, cx| v.key(ks, cx)) {
+                    return true;
+                }
+            }
+            if let Some(t) = &current {
+                if self.search_clear(t, cx) {
+                    return true;
+                }
+            }
             if self.flyout.adding && self.side().is_some_and(|s| !s.tabs.is_empty()) {
                 self.flyout.adding = false;
+                self.flyout_faces(cx);
                 cx.notify();
             } else {
                 self.flyout_unfocus(window, cx);
@@ -1866,11 +2908,19 @@ impl Workspace {
             self.add_key(ks, window, cx);
             return true;
         }
-        let Some(t) = self.side_current() else {
+        let Some(t) = current else {
             return true;
         };
+        if self.search_typing(&t) {
+            self.search_key(&t, ks, cx);
+            return true;
+        }
         let char = ks.key_char.as_deref().unwrap_or(key);
+        let found =
+            matches!(self.flyout.live.get(&t), Some(Live::File(f)) if !f.find.hits.is_empty());
         match char {
+            "/" => self.search_start(&t, cx),
+            "s" => self.flyout_source(&t, cx),
             "[" => {
                 if let Some(s) = self.side_mut() {
                     s.step(false);
@@ -1917,6 +2967,8 @@ impl Workspace {
                 let i = (d.as_bytes()[0] - b'1') as usize;
                 self.flyout_activate(i, cx);
             }
+            // A find put away still steps with Enter, as a browser's does.
+            _ if key == "enter" && found => self.find_step(&t, !m.shift),
             _ => self.flyout_move(&t, key, m.shift, cx),
         }
         cx.notify();
@@ -1934,6 +2986,19 @@ impl Workspace {
         };
         match t {
             Target::File { .. } => {
+                if let Some(view) = self.paged_face(t) {
+                    use crate::keylayer::{GlowMove, Paging};
+                    view.update(cx, |v, cx| match key {
+                        "up" | "k" => v.glow(GlowMove::Step(-1), cx),
+                        "down" | "j" => v.glow(GlowMove::Step(1), cx),
+                        "pageup" => v.page(Paging::PageUp, cx),
+                        "pagedown" | "space" => v.page(Paging::PageDown, cx),
+                        "home" => v.page(Paging::Top, cx),
+                        "end" => v.page(Paging::Bottom, cx),
+                        _ => {}
+                    });
+                    return;
+                }
                 if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
                     let n = f.text.got.as_ref().map_or(0, |x| x.lines.len());
                     let top = list_top(&f.scroll);
@@ -1964,12 +3029,19 @@ impl Workspace {
                     }
                     return;
                 }
+                // The rows as drawn: a filter's best first, else the list's order.
                 let (paths, cursor, scroll) = match self.flyout.live.get(t) {
                     Some(Live::Changes(c)) => (
                         c.list
                             .got
                             .as_ref()
-                            .map(|l| l.files.iter().map(|f| f.path.clone()).collect::<Vec<_>>())
+                            .map(|l| {
+                                c.filter
+                                    .rows(l.files.len())
+                                    .into_iter()
+                                    .map(|(i, _)| l.files[i].path.clone())
+                                    .collect::<Vec<_>>()
+                            })
                             .unwrap_or_default(),
                         c.cursor,
                         c.scroll.clone(),
@@ -1978,7 +3050,13 @@ impl Workspace {
                         p.diff
                             .got
                             .as_ref()
-                            .map(|d| d.iter().map(|f| f.path().to_string()).collect::<Vec<_>>())
+                            .map(|d| {
+                                p.filter
+                                    .rows(d.files.len())
+                                    .into_iter()
+                                    .map(|(i, _)| d.files[i].stat.path.clone())
+                                    .collect::<Vec<_>>()
+                            })
                             .unwrap_or_default(),
                         p.cursor,
                         p.scroll.clone(),
@@ -2017,6 +3095,11 @@ impl Workspace {
                             if wants {
                                 let path = path.clone();
                                 self.diff_toggle(&owner, &path, cx);
+                                // Opened from the keyboard: its row goes to the
+                                // top, so what opened is on screen under it.
+                                if !open {
+                                    scroll.scroll_to_top_of_item(cursor);
+                                }
                             }
                         }
                         return;
@@ -2036,7 +3119,7 @@ impl Workspace {
     /// The `+` page's keys: typing filters, arrows choose, Enter opens.
     fn add_key(&mut self, ks: &gpui::Keystroke, window: &mut Window, cx: &mut Context<Self>) {
         let key = ks.key.as_str();
-        let rows = self.add_rows();
+        let rows = self.add_rows(cx);
         match key {
             "up" => self.flyout.pick = self.flyout.pick.saturating_sub(1),
             "down" => self.flyout.pick = (self.flyout.pick + 1).min(rows.len().saturating_sub(1)),
@@ -2109,6 +3192,52 @@ impl Workspace {
                 _ => t.short_name(),
             },
             _ => t.short_name(),
+        }
+    }
+
+    /// A tab's tooltip: the whole of its identity, and who handed it over.
+    fn tab_tip(&self, t: &Target, cx: &App) -> Vec<String> {
+        let mut lines = vec![self.tab_identity(t)];
+        if let Target::File { path } = t {
+            if let Some((pane, label)) = self.delivered(path, cx) {
+                let who = pane.read(cx).handover_pane_name();
+                lines.push(lang::fill(
+                    self.lang.strings().flyout.delivered_by,
+                    &[("who", &who), ("label", &label)],
+                ));
+            }
+        }
+        lines
+    }
+
+    /// A tab's kind mark and its colour: a pull request's ⇄ in its state's
+    /// colour, as GitHub colours its own; a file an agent handed over wears ✦.
+    fn tab_glyph(
+        &self,
+        t: &Target,
+        lit: bool,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &App,
+    ) -> (&'static str, Hsla) {
+        let plain = if lit { th.accent } else { sk.ink.ink_dim };
+        match (t, self.flyout.live.get(t)) {
+            (Target::Pull { .. }, Some(Live::Pull(p))) => (
+                t.glyph(),
+                match p.pull.got.as_ref().map(|x| x.state) {
+                    Some(PullState::Open) => sk.ink.ok,
+                    Some(PullState::Draft) => sk.ink.ink_faint,
+                    Some(PullState::Merged) => th.ansi[13],
+                    Some(PullState::Closed) => sk.ink.danger,
+                    Some(PullState::Unknown) | None => plain,
+                },
+            ),
+            (Target::File { path }, _) if self.delivered(path, cx).is_some() => {
+                ("\u{2726}", th.accent)
+            }
+            // A file drawn as a page, as the + page marks one.
+            (Target::File { path }, _) if drawn_kind(path).is_some() => ("\u{25e7}", plain),
+            _ => (t.glyph(), plain),
         }
     }
 
@@ -2276,27 +3405,59 @@ impl Workspace {
         for (i, t) in tabs.iter().enumerate() {
             let lit = i == active && !adding;
             let colour = self.target_colour(t, cx);
+            let (glyph, glyph_ink) = self.tab_glyph(t, lit, th, sk, cx);
+            let group = SharedString::from(format!("flyout-tab-g-{i}"));
+            // The tab's ✕, at its left: quiet until the pointer is on the tab,
+            // red when it is on the ✕ itself. Its press stops there, so it
+            // closes the tab without showing it first.
+            let close = div()
+                .id(SharedString::from(format!("flyout-tab-x-{i}")))
+                .debug_selector(move || format!("flyout-tab-x-{i}"))
+                .flex_none()
+                .size(px(15. * s))
+                .flex()
+                .items_center()
+                .justify_center()
+                .rounded(sk.radius())
+                .text_size(sk.text_px(11. * s))
+                .text_color(if lit {
+                    sk.ink.ink_faint
+                } else {
+                    sk.ink.ink_ghost
+                })
+                .group_hover(group.clone(), |st| st.text_color(sk.ink.ink_dim))
+                .hover(|st| st.text_color(sk.ink.danger).bg(sk.ink.hover))
+                .child("\u{d7}")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.flyout_close_tab(i, cx);
+                    }),
+                );
             let tab = div()
                 .id(SharedString::from(format!("flyout-tab-{i}")))
                 .debug_selector(move || format!("flyout-tab-{i}"))
-                .group(SharedString::from(format!("flyout-tab-g-{i}")))
+                .group(group)
                 .flex()
                 .flex_row()
                 .flex_none()
                 .items_center()
-                .gap(px(5. * s))
-                .px(px(7. * s))
-                .py(px(3. * s))
-                .max_w(px(200. * s))
+                .gap(px(4. * s))
+                .pl(px(3. * s))
+                .pr(px(8. * s))
+                .py(px(2. * s))
+                .max_w(px(220. * s))
                 .map(|d| sk.choice(d, lit))
                 .cursor_pointer()
+                .child(with_tip(close, vec![f.close_tab.into()]))
                 .child(div().flex_none().size(px(6. * s)).rounded_full().bg(colour))
                 .child(
                     div()
                         .flex_none()
                         .text_size(sk.text_px(11. * s))
-                        .text_color(if lit { th.accent } else { sk.ink.ink_dim })
-                        .child(t.glyph()),
+                        .text_color(glyph_ink)
+                        .child(glyph),
                 )
                 .child(
                     div()
@@ -2304,30 +3465,6 @@ impl Workspace {
                         .truncate()
                         .text_size(sk.text_px(11. * s))
                         .child(self.tab_label(t)),
-                )
-                .child(
-                    div()
-                        .id(SharedString::from(format!("flyout-tab-x-{i}")))
-                        .flex_none()
-                        .px(px(2. * s))
-                        .text_size(sk.text_px(10. * s))
-                        .text_color(if lit {
-                            sk.ink.ink_faint
-                        } else {
-                            gpui::transparent_black()
-                        })
-                        .group_hover(SharedString::from(format!("flyout-tab-g-{i}")), |st| {
-                            st.text_color(sk.ink.ink_faint)
-                        })
-                        .hover(|st| st.text_color(sk.ink.danger))
-                        .child("\u{d7}")
-                        .on_mouse_down(
-                            MouseButton::Left,
-                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                                cx.stop_propagation();
-                                ws.flyout_close_tab(i, cx);
-                            }),
-                        ),
                 )
                 .on_mouse_down(
                     MouseButton::Left,
@@ -2342,7 +3479,7 @@ impl Workspace {
                         ws.flyout_close_tab(i, cx);
                     }),
                 );
-            strip = strip.child(with_tip(tab, vec![self.tab_identity(t)]));
+            strip = strip.child(with_tip(tab, self.tab_tip(t, cx)));
         }
         let button = |id: &'static str, glyph: &'static str, lit: bool| {
             div()
@@ -2391,12 +3528,132 @@ impl Workspace {
             ))
     }
 
+    /// The field over a list or a file: what is typed, a caret while it has
+    /// the keys, how much answers, and a ✕ that puts it away. Idle, it says
+    /// what it does and that `/` starts it. A press on it gives it the keys.
+    #[allow(clippy::too_many_arguments)]
+    fn search_field(
+        &self,
+        id: &'static str,
+        query: &str,
+        typing: bool,
+        placeholder: &str,
+        count: Option<String>,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let caret = if typing && self.flyout.focused {
+            "\u{258f}"
+        } else {
+            ""
+        };
+        let active = typing || !query.is_empty();
+        div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .flex_none()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(6. * s))
+            .mx(px(8. * s))
+            .my(px(4. * s))
+            .px(px(8. * s))
+            .py(px(3. * s))
+            .rounded(sk.radius())
+            .border_1()
+            .border_color(if typing {
+                th.accent.alpha(0.6)
+            } else {
+                sk.ink.rule
+            })
+            .bg(sk.ink.panel_sunken)
+            .text_size(sk.text_px(11. * s))
+            .cursor(gpui::CursorStyle::IBeam)
+            .child(
+                div()
+                    .flex_none()
+                    .text_color(sk.ink.ink_faint)
+                    .child("\u{2315}"),
+            )
+            .child(if query.is_empty() {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(sk.ink.ink_ghost)
+                    .child(format!("{caret}{placeholder}"))
+            } else {
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .truncate()
+                    .text_color(th.text)
+                    .child(format!("{query}{caret}"))
+            })
+            .when_some(count, |d, c| d.child(small(c, sk.ink.ink_faint, sk, s)))
+            .when(!active, |d| {
+                d.child(
+                    div()
+                        .flex_none()
+                        .px(px(4. * s))
+                        .rounded(sk.radius())
+                        .border_1()
+                        .border_color(sk.ink.rule)
+                        .text_size(sk.text_px(9. * s))
+                        .text_color(sk.ink.ink_faint)
+                        .child("/"),
+                )
+            })
+            .when(active, |d| {
+                d.child(
+                    div()
+                        .id(SharedString::from(format!("{id}-clear")))
+                        .flex_none()
+                        .px(px(3. * s))
+                        .rounded(sk.radius())
+                        .text_color(sk.ink.ink_faint)
+                        .cursor_pointer()
+                        .hover(|st| st.text_color(sk.ink.danger).bg(sk.ink.hover))
+                        .child("\u{d7}")
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                if let Some(t) = ws.side_current() {
+                                    ws.search_clear(&t, cx);
+                                }
+                            }),
+                        ),
+                )
+            })
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    if let Some(t) = ws.side_current() {
+                        ws.search_start(&t, cx);
+                    }
+                }),
+            )
+    }
+
     fn flyout_foot(&self, sk: &skin::Skin, s: f32) -> gpui::Div {
         let f = self.lang.strings().flyout;
-        let words = if self.flyout_adding() {
-            f.keys_add
-        } else {
-            f.keys
+        // The keys of what is on screen: the + page, a field taking keys, a
+        // file, a list, or a pull request's other faces.
+        let words = match (self.flyout_adding(), self.side_current()) {
+            (true, _) | (_, None) => f.keys_add,
+            (_, Some(t)) if self.search_typing(&t) => match t {
+                Target::File { .. } => f.keys_find,
+                _ => f.keys_filter,
+            },
+            (_, Some(Target::File { .. })) => f.keys_file,
+            (_, Some(t @ Target::Pull { .. })) if !matches!(self.flyout.live.get(&t), Some(Live::Pull(p)) if p.face == PullFace::Files) => {
+                f.keys
+            }
+            (_, Some(_)) => f.keys_list,
         };
         div()
             .flex_none()
@@ -2433,7 +3690,7 @@ impl Workspace {
                 self.changes_body(&t, repo, *base, c, th, sk, s, cx)
             }
             (Target::File { path }, Some(Live::File(fl))) => {
-                self.file_body(path, fl, th, sk, s, cx)
+                self.file_body(&t, path, fl, th, sk, s, cx)
             }
             (Target::Pull { .. }, Some(Live::Pull(p))) => self.pull_body(&t, p, th, sk, s, cx),
             _ => note(f.reading, sk.ink.ink_faint, sk, s).into_any_element(),
@@ -2600,10 +3857,33 @@ impl Workspace {
             }
             _ => {}
         }
+        let order = list
+            .map(|l| c.filter.rows(l.files.len()))
+            .unwrap_or_default();
+        let field = list.filter(|l| !l.files.is_empty()).map(|l| {
+            self.search_field(
+                "flyout-filter",
+                &c.filter.query,
+                c.filter.typing,
+                f.filter_files,
+                c.filter.hits.as_ref().map(|_| {
+                    lang::fill(
+                        f.filter_count,
+                        &[
+                            ("shown", &order.len().to_string()),
+                            ("total", &l.files.len().to_string()),
+                        ],
+                    )
+                }),
+                th,
+                sk,
+                s,
+                cx,
+            )
+        });
         let mut rows = div()
             .id("flyout-changes")
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .overflow_y_scroll()
             .track_scroll(&c.scroll)
             .flex()
@@ -2611,7 +3891,8 @@ impl Workspace {
             .px(px(4. * s))
             .pb(px(10. * s));
         if let Some(l) = list {
-            for (i, file) in l.files.iter().enumerate().take(LIST_ROWS) {
+            for (pos, (i, lit)) in order.iter().enumerate().take(LIST_ROWS) {
+                let file = &l.files[*i];
                 let patch = match c.patches.get(&file.path) {
                     None => Patch::Unread,
                     Some(r) => match (&r.got, &r.error) {
@@ -2622,13 +3903,14 @@ impl Workspace {
                 };
                 rows = rows.child(self.diff_file(
                     &owner,
-                    i,
+                    pos,
                     file,
+                    lit,
                     Some(repo),
                     patch,
                     c.open.contains(&file.path),
                     c.more.get(&file.path).copied().unwrap_or(0),
-                    i == c.cursor && self.flyout.focused,
+                    pos == c.cursor && self.flyout.focused,
                     &ink,
                     th,
                     sk,
@@ -2636,8 +3918,11 @@ impl Workspace {
                     cx,
                 ));
             }
+            if order.is_empty() && !l.files.is_empty() {
+                rows = rows.child(note(f.add_no_files, ink.faint, sk, s));
+            }
         }
-        if let Some(rest) = list.map(|l| l.files.len()).filter(|n| *n > LIST_ROWS) {
+        if let Some(rest) = Some(order.len()).filter(|n| *n > LIST_ROWS) {
             rows = rows.child(note(
                 &lang::fill(f.more_files, &[("count", &(rest - LIST_ROWS).to_string())]),
                 ink.faint,
@@ -2645,6 +3930,29 @@ impl Workspace {
                 s,
             ));
         }
+        // The open file the list is scrolled into keeps its row at the top.
+        let row_h = diff_row_h(sk, s);
+        let pin = list.and_then(|l| {
+            let (pos, y) = pinned(&c.scroll, row_h, |pos| {
+                order
+                    .get(pos)
+                    .is_some_and(|(i, _)| c.open.contains(&l.files[*i].path))
+            })?;
+            let (i, lit) = order[pos];
+            Some(self.diff_pin(
+                &owner,
+                pos,
+                &l.files[i],
+                lit,
+                Some(repo),
+                y,
+                &ink,
+                th,
+                sk,
+                s,
+                cx,
+            ))
+        });
         div()
             .flex_1()
             .min_h_0()
@@ -2652,7 +3960,77 @@ impl Workspace {
             .flex_col()
             .child(head)
             .children(notes)
-            .child(rows)
+            .children(field)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(rows)
+                    .children(pin),
+            )
+            .into_any_element()
+    }
+
+    /// A pinned copy of an open file's row, over the top of its list: a press
+    /// folds the file and brings its own row back to the top.
+    #[allow(clippy::too_many_arguments)]
+    fn diff_pin(
+        &self,
+        owner: &DiffOwner,
+        pos: usize,
+        file: &FileStat,
+        lit: &[usize],
+        repo: Option<&Path>,
+        y: f32,
+        ink: &Ink,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let fold = owner.clone();
+        let path = file.path.clone();
+        div()
+            .absolute()
+            .left_0()
+            .right_0()
+            .top(px(y))
+            .px(px(4. * s))
+            .bg(sk.region_face(darken(th.surface, 0.45)))
+            .border_b_1()
+            .border_color(sk.ink.rule)
+            .shadow(vec![BoxShadow {
+                color: gpui::black().alpha(0.35),
+                offset: point(px(0.), px(2. * s)),
+                blur_radius: px(6. * s),
+                spread_radius: px(0.),
+                inset: false,
+            }])
+            .child(
+                self.diff_row(
+                    owner,
+                    "flyout-pin",
+                    pos,
+                    file,
+                    lit,
+                    repo,
+                    true,
+                    false,
+                    ink,
+                    th,
+                    sk,
+                    s,
+                    cx,
+                )
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.diff_fold_to(&fold, &path, pos, cx);
+                    }),
+                ),
+            )
             .into_any_element()
     }
 
@@ -2661,8 +4039,9 @@ impl Workspace {
     fn diff_file(
         &self,
         owner: &DiffOwner,
-        i: usize,
+        pos: usize,
         file: &FileStat,
+        lit: &[usize],
         repo: Option<&Path>,
         patch: Patch<'_>,
         open: bool,
@@ -2676,32 +4055,131 @@ impl Workspace {
     ) -> AnyElement {
         let f = self.lang.strings().flyout;
         let dir = file.path.ends_with('/');
-        let (mark_ink, mark) = match file.status {
-            Status::Added | Status::Untracked => (ink.ok, file.status.mark()),
-            Status::Deleted => (ink.danger, file.status.mark()),
-            Status::Modified => (ink.warn, file.status.mark()),
-            Status::Renamed | Status::Copied | Status::TypeChanged => {
-                (sk.ink.ink_dim, file.status.mark())
-            }
-            Status::Unknown => (ink.faint, file.status.mark()),
+        let path = file.path.clone();
+        let toggle_owner = owner.clone();
+        let open_on_disk = repo.map(|r| r.join(&file.path));
+        let row = self
+            .diff_row(
+                owner,
+                "flyout-file",
+                pos,
+                file,
+                lit,
+                repo,
+                open,
+                cursor,
+                ink,
+                th,
+                sk,
+                s,
+                cx,
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
+                    if ev.click_count >= 2 {
+                        if let Some(p) = open_on_disk.clone() {
+                            let task = ws.active;
+                            ws.flyout_show(task, Target::File { path: p }, None, true, window, cx);
+                            return;
+                        }
+                    }
+                    if !dir {
+                        ws.diff_toggle(&toggle_owner, &path, cx);
+                    }
+                }),
+            );
+        let mut out = div().flex().flex_col().child(row);
+        if open && !dir {
+            out = out.child(match patch {
+                Patch::Unread | Patch::Busy => {
+                    note(f.reading, sk.ink.ink_faint, sk, s).into_any_element()
+                }
+                Patch::Failed(e) => note(e, ink.danger, sk, s).into_any_element(),
+                Patch::Got(d) if d.binary => {
+                    note(f.file_binary, ink.faint, sk, s).into_any_element()
+                }
+                Patch::Got(d) => {
+                    let at = match (owner, repo) {
+                        (DiffOwner::Changes(_), Some(r)) if file.status != Status::Deleted => {
+                            Some(r.join(&file.path))
+                        }
+                        _ => None,
+                    };
+                    self.diff_hunks(owner, &file.path, d, more, at, ink, th, sk, s, cx)
+                }
+                Patch::Withheld(url) => {
+                    // What GitHub's per-file list says about a file it sent no
+                    // patch for: only moved (a real zero), too large to send
+                    // (counted), or nothing counted at all (binary, most likely).
+                    let said = match (file.added, file.removed) {
+                        (Some(0), Some(0)) => f.pr_moved,
+                        (Some(_), _) | (_, Some(_)) => f.pr_withheld,
+                        (None, None) => f.pr_no_patch,
+                    };
+                    div()
+                        .flex()
+                        .flex_row()
+                        .items_center()
+                        .gap(px(8. * s))
+                        .pr(px(10. * s))
+                        .child(div().flex_1().child(note(said, ink.faint, sk, s)))
+                        .when_some(url, |d, url| {
+                            d.child(
+                                div()
+                                    .id(SharedString::from(format!("flyout-withheld-{pos}")))
+                                    .flex_none()
+                                    .px(px(6. * s))
+                                    .rounded(sk.radius())
+                                    .text_size(sk.text_px(10. * s))
+                                    .text_color(th.accent)
+                                    .cursor_pointer()
+                                    .hover(|st| st.bg(sk.ink.hover))
+                                    .child(format!("{} \u{2197}", f.pr_on_github))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |_ws, _: &MouseDownEvent, _w, _cx| {
+                                            crate::pane::open_with_system(&url);
+                                        }),
+                                    ),
+                            )
+                        })
+                        .into_any_element()
+                }
+            });
+        }
+        out.into_any_element()
+    }
+
+    /// A diff list's row for one file: fold mark, status, path (folders dim,
+    /// a filter's letters lit), old name, counts, and ↗ to open it. `id`
+    /// keeps the list's rows and a pinned copy apart.
+    #[allow(clippy::too_many_arguments)]
+    fn diff_row(
+        &self,
+        _owner: &DiffOwner,
+        id: &'static str,
+        pos: usize,
+        file: &FileStat,
+        lit: &[usize],
+        repo: Option<&Path>,
+        open: bool,
+        cursor: bool,
+        ink: &Ink,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Stateful<gpui::Div> {
+        let f = self.lang.strings().flyout;
+        let dir = file.path.ends_with('/');
+        let mark_ink = match file.status {
+            Status::Added | Status::Untracked => ink.ok,
+            Status::Deleted => ink.danger,
+            Status::Modified => ink.warn,
+            Status::Renamed | Status::Copied | Status::TypeChanged => sk.ink.ink_dim,
+            Status::Unknown => ink.faint,
         };
-        // The folders dim, the file's own name bright.
-        let split = file
-            .path
-            .trim_end_matches('/')
-            .rfind('/')
-            .map_or(0, |at| at + 1);
-        let path_text = StyledText::new(SharedString::from(file.path.clone())).with_highlights(
-            (split > 0).then(|| {
-                (
-                    0..split,
-                    HighlightStyle {
-                        color: Some(sk.ink.ink_faint),
-                        ..Default::default()
-                    },
-                )
-            }),
-        );
         let counts: AnyElement = if dir {
             small(f.untracked_dir, ink.faint, sk, s).into_any_element()
         } else if file.binary() {
@@ -2712,33 +4190,24 @@ impl Workspace {
                 .flex_row()
                 .gap(px(5. * s))
                 .flex_none()
-                .child(small(
-                    format!("+{}", file.added.unwrap_or(0)),
-                    ink.ok,
-                    sk,
-                    s,
-                ))
-                .child(small(
-                    format!("\u{2212}{}", file.removed.unwrap_or(0)),
-                    ink.danger,
-                    sk,
-                    s,
-                ))
+                .when_some(file.added, |d, a| {
+                    d.child(small(format!("+{a}"), ink.ok, sk, s))
+                })
+                .when_some(file.removed, |d, r| {
+                    d.child(small(format!("\u{2212}{r}"), ink.danger, sk, s))
+                })
                 .into_any_element()
         };
-        let path = file.path.clone();
-        let toggle_owner = owner.clone();
         let file_path = repo.map(|r| r.join(&file.path));
-        let open_owner_file = file_path.clone();
-        let row = div()
-            .id(SharedString::from(format!("flyout-file-{i}")))
-            .debug_selector(move || format!("flyout-file-{i}"))
+        div()
+            .id(SharedString::from(format!("{id}-{pos}")))
+            .debug_selector(move || format!("{id}-{pos}"))
+            .h(px(diff_row_h(sk, s)))
             .flex()
             .flex_row()
             .items_center()
             .gap(px(6. * s))
             .px(px(6. * s))
-            .py(px(4. * s))
             .rounded(sk.radius())
             .cursor_pointer()
             .hover(|st| st.bg(sk.ink.hover))
@@ -2771,7 +4240,7 @@ impl Workspace {
                     .w(px(11. * s))
                     .text_size(sk.text_px(11. * s))
                     .text_color(mark_ink)
-                    .child(mark),
+                    .child(file.status.mark()),
             )
             .child(
                 div()
@@ -2780,7 +4249,13 @@ impl Workspace {
                     .truncate()
                     .text_size(sk.text_px(11.5 * s))
                     .text_color(th.text)
-                    .child(path_text),
+                    .child({
+                        // A deep path keeps its end: the file's name and the
+                        // folders nearest it, which is what was looked for.
+                        let taken = if file.old_path.is_some() { 300. } else { 160. };
+                        let (shown, lit) = elide_path(&file.path, self.path_fit(sk, s, taken), lit);
+                        path_text(&shown, &lit, sk.ink.ink_faint, th.accent)
+                    }),
             )
             .when_some(file.old_path.clone(), |d, old| {
                 d.child(
@@ -2799,7 +4274,7 @@ impl Workspace {
                 |d, p| {
                     d.child(with_tip(
                         div()
-                            .id(SharedString::from(format!("flyout-file-open-{i}")))
+                            .id(SharedString::from(format!("{id}-open-{pos}")))
                             .flex_none()
                             .px(px(3. * s))
                             .rounded(sk.radius())
@@ -2826,35 +4301,30 @@ impl Workspace {
                     ))
                 },
             )
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, ev: &MouseDownEvent, window, cx| {
-                    if ev.click_count >= 2 {
-                        if let Some(p) = open_owner_file.clone() {
-                            let task = ws.active;
-                            ws.flyout_show(task, Target::File { path: p }, None, true, window, cx);
-                            return;
-                        }
-                    }
-                    if !dir {
-                        ws.diff_toggle(&toggle_owner, &path, cx);
-                    }
-                }),
-            );
-        let mut out = div().flex().flex_col().child(row);
-        if open && !dir {
-            out = out.child(match patch {
-                Patch::Unread | Patch::Busy => {
-                    note(f.reading, sk.ink.ink_faint, sk, s).into_any_element()
-                }
-                Patch::Failed(e) => note(e, ink.danger, sk, s).into_any_element(),
-                Patch::Got(d) if d.binary => {
-                    note(f.file_binary, ink.faint, sk, s).into_any_element()
-                }
-                Patch::Got(d) => self.diff_hunks(owner, &file.path, d, more, ink, th, sk, s, cx),
-            });
+    }
+
+    /// About how many characters of a path fit in a row of the panel once
+    /// `taken` pixels (at chrome size) go to the row's other parts. An
+    /// estimate from the font's size; the row still truncates what is left.
+    fn path_fit(&self, sk: &skin::Skin, s: f32, taken: f32) -> usize {
+        let char_px = f32::from(sk.text_px(11.5 * s)) * 0.62;
+        ((self.flyout_px(s) - taken * s) / char_px).max(16.) as usize
+    }
+
+    /// Fold an open file from its pinned row, and bring its own row back to
+    /// the top of the list, where the press was.
+    fn diff_fold_to(&mut self, owner: &DiffOwner, path: &str, pos: usize, cx: &mut Context<Self>) {
+        let scroll = match owner {
+            DiffOwner::Changes(k) | DiffOwner::Pull(k) => match self.flyout.live.get(k) {
+                Some(Live::Changes(c)) => Some(c.scroll.clone()),
+                Some(Live::Pull(p)) => Some(p.scroll.clone()),
+                _ => None,
+            },
+        };
+        self.diff_toggle(owner, path, cx);
+        if let Some(scroll) = scroll {
+            scroll.scroll_to_top_of_item(pos);
         }
-        out.into_any_element()
     }
 
     #[allow(clippy::too_many_arguments)]
@@ -2864,6 +4334,7 @@ impl Workspace {
         path: &str,
         d: &FileDiff,
         more: usize,
+        open_at: Option<PathBuf>,
         ink: &Ink,
         th: &theme::Theme,
         sk: &skin::Skin,
@@ -2888,6 +4359,11 @@ impl Workspace {
             .max(2) as f32;
         let num_w = px(digits * f32::from(code_px) * 0.62 + 6. * s);
         let font = SharedString::from(th.font_family.clone());
+        // Words that changed inside a changed line, lit over its tint.
+        let word = |c: Hsla| HighlightStyle {
+            background_color: Some(c.alpha(0.42)),
+            ..Default::default()
+        };
         let mut block = div()
             .flex()
             .flex_col()
@@ -2928,11 +4404,16 @@ impl Workspace {
                     break 'hunks;
                 }
                 drawn += 1;
-                let (bg, sign, sign_ink) = match l.kind {
-                    LineKind::Added => (Some(ink.ok.alpha(0.17)), "+", ink.ok),
-                    LineKind::Removed => (Some(ink.danger.alpha(0.17)), "\u{2212}", ink.danger),
-                    LineKind::Context => (None, " ", ink.ghost),
-                    LineKind::NoNewline => (None, "", ink.faint),
+                let (bg, sign, sign_ink, mark) = match l.kind {
+                    LineKind::Added => (Some(ink.ok.alpha(0.17)), "+", ink.ok, word(ink.ok)),
+                    LineKind::Removed => (
+                        Some(ink.danger.alpha(0.17)),
+                        "\u{2212}",
+                        ink.danger,
+                        word(ink.danger),
+                    ),
+                    LineKind::Context => (None, " ", ink.ghost, HighlightStyle::default()),
+                    LineKind::NoNewline => (None, "", ink.faint, HighlightStyle::default()),
                 };
                 let num = |n: Option<u32>| {
                     div()
@@ -2944,13 +4425,38 @@ impl Workspace {
                         .text_color(ink.ghost)
                         .child(n.map(|n| n.to_string()).unwrap_or_default())
                 };
+                // A new line's number opens the file there, in its own tab.
+                let new_num = match (&open_at, l.new) {
+                    (Some(file), Some(n)) => {
+                        let file = file.clone();
+                        num(l.new)
+                            .cursor_pointer()
+                            .hover(|st| st.text_color(th.accent))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                    cx.stop_propagation();
+                                    let task = ws.active;
+                                    ws.flyout_show(
+                                        task,
+                                        Target::File { path: file.clone() },
+                                        Some(n),
+                                        true,
+                                        window,
+                                        cx,
+                                    );
+                                }),
+                            )
+                    }
+                    _ => num(l.new),
+                };
                 let code: AnyElement = if l.kind == LineKind::NoNewline {
                     div()
                         .text_color(ink.faint)
                         .child(l.text.clone())
                         .into_any_element()
                 } else {
-                    code_text(&l.text, sy, &mut inside, ink).into_any_element()
+                    code_text(&l.text, sy, &mut inside, ink, &l.changed, mark).into_any_element()
                 };
                 block = block.child(
                     div()
@@ -2960,7 +4466,7 @@ impl Workspace {
                         .items_center()
                         .when_some(bg, |d, b| d.bg(b))
                         .child(num(l.old))
-                        .child(num(l.new))
+                        .child(new_num)
                         .child(
                             div()
                                 .flex_none()
@@ -3008,14 +4514,16 @@ impl Workspace {
 
     // ---- the File tab ----------------------------------------------------
 
+    #[allow(clippy::too_many_arguments)]
     fn file_body(
         &self,
+        key: &Target,
         path: &Path,
         fl: &FileLive,
         th: &theme::Theme,
         sk: &skin::Skin,
         s: f32,
-        _cx: &mut Context<Self>,
+        cx: &mut Context<Self>,
     ) -> AnyElement {
         let f = self.lang.strings().flyout;
         let ink = Ink::of(th, sk);
@@ -3036,6 +4544,40 @@ impl Workspace {
             .unwrap_or_default();
         let text = fl.text.got.as_ref();
         let changed = fl.marks.len();
+        let paged = fl.paged();
+        // Page | Source, for a file TD draws: the page by default.
+        let switch = fl.face.is_some().then(|| {
+            let chip = |page: bool, word: &'static str| {
+                let lit = page == paged;
+                let k = key.clone();
+                div()
+                    .id(SharedString::from(format!("flyout-face-page-{page}")))
+                    .debug_selector(move || format!("flyout-face-page-{page}"))
+                    .px(px(7. * s))
+                    .py(px(1. * s))
+                    .map(|d| sk.choice(d, lit))
+                    .text_size(sk.text_px(10. * s))
+                    .cursor_pointer()
+                    .child(word)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            let now_paged =
+                                matches!(ws.flyout.live.get(&k), Some(Live::File(f)) if f.paged());
+                            if now_paged != page {
+                                ws.flyout_source(&k, cx);
+                            }
+                        }),
+                    )
+            };
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(3. * s))
+                .flex_none()
+                .child(chip(true, f.face_page))
+                .child(chip(false, f.face_source))
+        });
         let head = div()
             .flex_none()
             .flex()
@@ -3061,7 +4603,8 @@ impl Workspace {
                             .child(name),
                     )
                     .child(div().flex_1())
-                    .when_some(text, |d, t| {
+                    .children(switch)
+                    .when_some(text.filter(|_| !paged), |d, t| {
                         d.child(small(
                             lang::fill(f.lines, &[("count", &t.lines.len().to_string())]),
                             ink.faint,
@@ -3096,7 +4639,28 @@ impl Workspace {
                         ))
                     }),
             );
+        if let (true, Some(face)) = (paged, fl.face.as_ref()) {
+            return div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(head)
+                .child(self.page_host(face, cx))
+                .into_any_element();
+        }
         let mut notes: Vec<AnyElement> = Vec::new();
+        if let Some(why) = &fl.face_note {
+            notes.push(
+                note(
+                    &lang::fill(f.face_cannot, &[("why", why)]),
+                    ink.faint,
+                    sk,
+                    s,
+                )
+                .into_any_element(),
+            );
+        }
         if let Some(e) = &fl.text.error {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
@@ -3127,6 +4691,34 @@ impl Workspace {
                 .into_any_element(),
             );
         }
+        let find = &fl.find;
+        let field = (!t.binary).then(|| {
+            let count = if find.query.is_empty() {
+                None
+            } else if find.hits.is_empty() {
+                Some(f.find_none.to_string())
+            } else {
+                let mut total = find.hits.len().to_string();
+                if find.hits.len() >= FIND_HITS {
+                    total.push('+');
+                }
+                Some(lang::fill(
+                    f.find_count,
+                    &[("at", &(find.at + 1).to_string()), ("count", &total)],
+                ))
+            };
+            self.search_field(
+                "flyout-find",
+                &find.query,
+                find.typing,
+                f.find_file,
+                count,
+                th,
+                sk,
+                s,
+                cx,
+            )
+        });
         let code_px = sk.text_px(11. * s);
         let row_h = f32::from(code_px) * 1.5;
         let digits = t.lines.len().max(1).to_string().len().max(3) as f32;
@@ -3135,8 +4727,14 @@ impl Workspace {
         let starts = t.starts.clone();
         let sy = t.syntax;
         let marks = fl.marks.clone();
+        let hits = find.hits.clone();
+        let here = hits.get(find.at).map(|(line, _)| *line);
         let lit = fl.lit;
         let binary = t.binary;
+        let found = HighlightStyle {
+            background_color: Some(th.accent.alpha(0.32)),
+            ..Default::default()
+        };
         let font = SharedString::from(th.font_family.clone());
         let list = uniform_list(
             "flyout-file-lines",
@@ -3152,12 +4750,20 @@ impl Workspace {
                             Some(Mark::Modified) => Some(ink.warn),
                             Some(Mark::RemovedAbove) | None => None,
                         };
+                        // The places a find found on this line, all lit; the
+                        // line of the one stepped to washed like a line asked for.
+                        let from = hits.partition_point(|(l, _)| (*l as usize) < i);
+                        let on_line: Vec<Range<usize>> = hits[from..]
+                            .iter()
+                            .take_while(|(l, _)| *l as usize == i)
+                            .map(|(_, r)| r.clone())
+                            .collect();
                         div()
                             .h(px(row_h))
                             .flex()
                             .flex_row()
                             .items_center()
-                            .when(lit == Some(n), |d| d.bg(ink.lit))
+                            .when(lit == Some(n) || here == Some(i as u32), |d| d.bg(ink.lit))
                             .child(
                                 div()
                                     .flex_none()
@@ -3182,17 +4788,27 @@ impl Workspace {
                             )
                             .child(
                                 div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
+                                    .flex_none()
+                                    .pr(px(12. * s))
                                     .whitespace_nowrap()
                                     .text_color(ink.text)
-                                    .child(code_text(&lines[i], sy, &mut inside, &ink)),
+                                    .child(code_text(
+                                        &lines[i],
+                                        sy,
+                                        &mut inside,
+                                        &ink,
+                                        &on_line,
+                                        found,
+                                    )),
                             )
                     })
                     .collect::<Vec<_>>()
             },
         )
+        // Long lines scroll sideways rather than stop at the panel's edge:
+        // every row is as wide as the widest.
+        .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
+        .with_width_from_item(Some(t.widest))
         .track_scroll(&fl.scroll)
         .size_full();
         div()
@@ -3202,6 +4818,7 @@ impl Workspace {
             .flex_col()
             .child(head)
             .children(notes)
+            .children(field)
             .child(
                 div()
                     .flex_1()
@@ -3210,6 +4827,87 @@ impl Workspace {
                     .text_size(code_px)
                     .bg(darken(th.bg, 0.25).alpha(0.9))
                     .child(list),
+            )
+            .into_any_element()
+    }
+
+    /// Where a File tab's page is drawn: the document view itself, with a
+    /// canvas noting where it lies, and the panel handing it the wheel and
+    /// the pointer, since the view listens to nothing (docview's rule).
+    fn page_host(&self, face: &DocFace, cx: &mut Context<Self>) -> AnyElement {
+        let bounds = face.bounds.clone();
+        div()
+            .id("flyout-page")
+            .debug_selector(|| "flyout-page".into())
+            .relative()
+            .flex_1()
+            .min_h_0()
+            .overflow_hidden()
+            .child(
+                canvas(move |b, _, _| bounds.set(Some(b)), |_, _, _, _| {})
+                    .absolute()
+                    .inset_0(),
+            )
+            .child(face.view.clone())
+            .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                let Some(view) = ws.side_current().and_then(|t| ws.paged_face(&t)) else {
+                    return;
+                };
+                cx.stop_propagation();
+                if ev.modifiers.control {
+                    let notches = theme::wheel_notches(ev.delta);
+                    view.update(cx, |v, cx| {
+                        v.zoom_by_wheel(notches, cx);
+                    });
+                } else {
+                    let delta = ev.delta;
+                    view.update(cx, |v, cx| v.wheel(delta, cx));
+                }
+            }))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, ev: &MouseDownEvent, window, cx| {
+                    let Some(t) = ws.side_current() else {
+                        return;
+                    };
+                    let Some((view, at)) = ws.face_point(&t, ev.position) else {
+                        return;
+                    };
+                    let mods = ev.modifiers;
+                    let held = view.update(cx, |v, cx| v.press(at, mods, window, cx));
+                    ws.face_hold(&t, held);
+                }),
+            )
+            .on_mouse_move(cx.listener(|ws, ev: &MouseMoveEvent, _w, cx| {
+                let Some(t) = ws.side_current() else {
+                    return;
+                };
+                let Some((view, at)) = ws.face_point(&t, ev.position) else {
+                    return;
+                };
+                if ws.face_held(&t) {
+                    if ev.pressed_button == Some(MouseButton::Left) {
+                        view.update(cx, |v, cx| v.drag(at, cx));
+                    } else {
+                        ws.face_hold(&t, false);
+                        view.update(cx, |v, cx| v.release(cx));
+                    }
+                }
+                view.update(cx, |v, cx| v.hover(Some(at), cx));
+            }))
+            .on_mouse_up(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseUpEvent, _w, cx| {
+                    let Some(t) = ws.side_current() else {
+                        return;
+                    };
+                    if ws.face_held(&t) {
+                        ws.face_hold(&t, false);
+                        if let Some(view) = ws.paged_face(&t) {
+                            view.update(cx, |v, cx| v.release(cx));
+                        }
+                    }
+                }),
             )
             .into_any_element()
     }
@@ -3246,6 +4944,85 @@ impl Workspace {
             Some(PullState::Unknown) | None => (f.pr_unknown, ink.faint),
         };
         let open_url = url.clone();
+        let state_pill = |word: &'static str| {
+            div()
+                .flex_none()
+                .px(px(7. * s))
+                .py(px(1. * s))
+                .rounded(sk.radius_pill())
+                .border_1()
+                .border_color(state_ink.alpha(0.7))
+                .bg(state_ink.alpha(0.14))
+                .text_size(sk.text_px(10. * s))
+                .text_color(state_ink)
+                .child(word)
+        };
+        // Reading the files or the conversation, the header is one line, so
+        // the diff gets the room; Overview keeps all of it.
+        if p.face != PullFace::Overview {
+            let mut notes: Vec<AnyElement> = Vec::new();
+            if let Some(e) = &p.pull.error {
+                notes.push(note(e, ink.danger, sk, s).into_any_element());
+            }
+            let line = div()
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap(px(7. * s))
+                .px(px(12. * s))
+                .pt(px(8. * s))
+                .pb(px(6. * s))
+                .child(
+                    div()
+                        .id("flyout-pr-link")
+                        .flex_none()
+                        .text_size(sk.text_px(11. * s))
+                        .text_color(sk.ink.ink_dim)
+                        .cursor_pointer()
+                        .hover(|st| st.text_color(th.accent))
+                        .child(format!("#{number}"))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_ws, _: &MouseDownEvent, _w, _cx| {
+                                crate::pane::open_with_system(&open_url);
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .truncate()
+                        .text_size(sk.text_px(12.5 * s))
+                        .text_color(th.text)
+                        .child(pull.map(|x| x.title.clone()).unwrap_or_default()),
+                )
+                .when_some(pull.and_then(|x| x.additions), |d, n| {
+                    d.child(small(format!("+{n}"), ink.ok, sk, s))
+                })
+                .when_some(pull.and_then(|x| x.deletions), |d, n| {
+                    d.child(small(format!("\u{2212}{n}"), ink.danger, sk, s))
+                })
+                .when(pull.is_some(), |d| d.child(state_pill(state_word)));
+            let faces = self.pull_faces(p, pull, sk, s, cx);
+            let content: AnyElement = match (p.face, pull) {
+                (PullFace::Files, _) => self.pull_files(key, p, &ink, th, sk, s, cx),
+                (PullFace::Conversation, Some(x)) => self.pull_conversation(x, p, &ink, th, sk, s),
+                _ => note(f.reading, ink.faint, sk, s).into_any_element(),
+            };
+            return div()
+                .flex_1()
+                .min_h_0()
+                .flex()
+                .flex_col()
+                .child(line)
+                .children(notes)
+                .child(faces)
+                .child(content)
+                .into_any_element();
+        }
+        let open_url = url.clone();
         let head = div()
             .flex_none()
             .flex()
@@ -3278,21 +5055,7 @@ impl Workspace {
                             ),
                     )
                     .child(div().flex_1())
-                    .when(pull.is_some(), |d| {
-                        d.child(
-                            div()
-                                .flex_none()
-                                .px(px(7. * s))
-                                .py(px(1. * s))
-                                .rounded(sk.radius_pill())
-                                .border_1()
-                                .border_color(state_ink.alpha(0.7))
-                                .bg(state_ink.alpha(0.14))
-                                .text_size(sk.text_px(10. * s))
-                                .text_color(state_ink)
-                                .child(state_word),
-                        )
-                    }),
+                    .when(pull.is_some(), |d| d.child(state_pill(state_word))),
             )
             .when_some(pull, |d, x| {
                 d.child(
@@ -3348,7 +5111,36 @@ impl Workspace {
         if pull.is_none() && p.pull.error.is_none() {
             notes.push(note(f.reading, ink.faint, sk, s).into_any_element());
         }
-        let faces = div()
+        let faces = self.pull_faces(p, pull, sk, s, cx);
+        let content: AnyElement = match (p.face, pull) {
+            (PullFace::Files, _) => self.pull_files(key, p, &ink, th, sk, s, cx),
+            (PullFace::Overview, Some(x)) => self.pull_overview(x, p, &ink, th, sk, s, cx),
+            (PullFace::Conversation, Some(x)) => self.pull_conversation(x, p, &ink, th, sk, s),
+            (_, None) => div().into_any_element(),
+        };
+        div()
+            .flex_1()
+            .min_h_0()
+            .flex()
+            .flex_col()
+            .child(head)
+            .children(notes)
+            .child(faces)
+            .child(content)
+            .into_any_element()
+    }
+
+    /// Overview, Files and Conversation, with what each holds.
+    fn pull_faces(
+        &self,
+        p: &PullLive,
+        pull: Option<&flyout::Pull>,
+        sk: &skin::Skin,
+        s: f32,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let f = self.lang.strings().flyout;
+        div()
             .flex_none()
             .flex()
             .flex_row()
@@ -3393,23 +5185,7 @@ impl Workspace {
                             }),
                         )
                 }),
-            );
-        let content: AnyElement = match (p.face, pull) {
-            (PullFace::Files, _) => self.pull_files(key, p, &ink, th, sk, s, cx),
-            (PullFace::Overview, Some(x)) => self.pull_overview(x, p, &ink, th, sk, s, cx),
-            (PullFace::Conversation, Some(x)) => self.pull_conversation(x, p, &ink, th, sk, s),
-            (_, None) => div().into_any_element(),
-        };
-        div()
-            .flex_1()
-            .min_h_0()
-            .flex()
-            .flex_col()
-            .child(head)
-            .children(notes)
-            .child(faces)
-            .child(content)
-            .into_any_element()
+            )
     }
 
     fn pull_actions(
@@ -3699,41 +5475,140 @@ impl Workspace {
     ) -> AnyElement {
         let f = self.lang.strings().flyout;
         let owner = DiffOwner::Pull(key.clone());
-        let mut col = div()
+        let column = div().flex_1().min_h_0().flex().flex_col();
+        let Some(d) = &p.diff.got else {
+            return column
+                .child(match &p.diff.error {
+                    Some(e) => note(e, ink.danger, sk, s),
+                    None => note(f.reading, ink.faint, sk, s),
+                })
+                .into_any_element();
+        };
+        let files_url = key.url().map(|u| format!("{u}/files"));
+        let order = p.filter.rows(d.files.len());
+        let mut notes: Vec<AnyElement> = Vec::new();
+        if let Some(e) = &p.diff.error {
+            notes.push(note(e, ink.danger, sk, s).into_any_element());
+        }
+        if d.by_file {
+            notes.push(note(f.pr_by_file, ink.faint, sk, s).into_any_element());
+        }
+        // GitHub lists at most 3,000 files: past that, say how many it left out.
+        let listed = d.files.len() as u64;
+        if let Some(total) = p.pull.got.as_ref().and_then(|x| x.changed_files) {
+            if d.by_file && total > listed {
+                notes.push(
+                    note(
+                        &lang::fill(f.pr_unlisted, &[("count", &(total - listed).to_string())]),
+                        ink.warn,
+                        sk,
+                        s,
+                    )
+                    .into_any_element(),
+                );
+            }
+        }
+        let field = (!d.files.is_empty()).then(|| {
+            self.search_field(
+                "flyout-filter",
+                &p.filter.query,
+                p.filter.typing,
+                f.filter_files,
+                p.filter.hits.as_ref().map(|_| {
+                    lang::fill(
+                        f.filter_count,
+                        &[
+                            ("shown", &order.len().to_string()),
+                            ("total", &d.files.len().to_string()),
+                        ],
+                    )
+                }),
+                th,
+                sk,
+                s,
+                cx,
+            )
+        });
+        let mut rows = div()
             .id("flyout-pr-files")
-            .flex_1()
-            .min_h_0()
+            .size_full()
             .overflow_y_scroll()
             .track_scroll(&p.scroll)
             .flex()
             .flex_col()
             .px(px(4. * s))
-            .py(px(6. * s));
-        match (&p.diff.got, &p.diff.error) {
-            (Some(diffs), _) => {
-                for (i, d) in diffs.iter().enumerate() {
-                    let stat = d.stat();
-                    col = col.child(self.diff_file(
-                        &owner,
-                        i,
-                        &stat,
-                        None,
-                        Patch::Got(d),
-                        p.open.contains(d.path()),
-                        p.more.get(d.path()).copied().unwrap_or(0),
-                        i == p.cursor && self.flyout.focused,
-                        ink,
-                        th,
-                        sk,
-                        s,
-                        cx,
-                    ));
-                }
-            }
-            (None, Some(e)) => col = col.child(note(e, ink.danger, sk, s)),
-            (None, None) => col = col.child(note(f.reading, ink.faint, sk, s)),
+            .py(px(4. * s));
+        for (pos, (i, lit)) in order.iter().enumerate().take(LIST_ROWS) {
+            let file = &d.files[*i];
+            let patch = match &file.diff {
+                Some(diff) => Patch::Got(diff),
+                None => Patch::Withheld(files_url.clone()),
+            };
+            rows = rows.child(self.diff_file(
+                &owner,
+                pos,
+                &file.stat,
+                lit,
+                None,
+                patch,
+                p.open.contains(&file.stat.path),
+                p.more.get(&file.stat.path).copied().unwrap_or(0),
+                pos == p.cursor && self.flyout.focused,
+                ink,
+                th,
+                sk,
+                s,
+                cx,
+            ));
         }
-        col.into_any_element()
+        if order.is_empty() && !d.files.is_empty() {
+            rows = rows.child(note(f.add_no_files, ink.faint, sk, s));
+        }
+        if order.len() > LIST_ROWS {
+            rows = rows.child(note(
+                &lang::fill(
+                    f.more_files,
+                    &[("count", &(order.len() - LIST_ROWS).to_string())],
+                ),
+                ink.faint,
+                sk,
+                s,
+            ));
+        }
+        let row_h = diff_row_h(sk, s);
+        let pin = pinned(&p.scroll, row_h, |pos| {
+            order
+                .get(pos)
+                .is_some_and(|(i, _)| p.open.contains(&d.files[*i].stat.path))
+        })
+        .map(|(pos, y)| {
+            let (i, lit) = order[pos];
+            self.diff_pin(
+                &owner,
+                pos,
+                &d.files[i].stat,
+                lit,
+                None,
+                y,
+                ink,
+                th,
+                sk,
+                s,
+                cx,
+            )
+        });
+        column
+            .children(notes)
+            .children(field)
+            .child(
+                div()
+                    .relative()
+                    .flex_1()
+                    .min_h_0()
+                    .child(rows)
+                    .children(pin),
+            )
+            .into_any_element()
     }
 
     // ---- the + page ------------------------------------------------------
@@ -3747,7 +5622,7 @@ impl Workspace {
     ) -> AnyElement {
         let f = self.lang.strings().flyout;
         let ink = Ink::of(th, sk);
-        let rows = self.add_rows();
+        let rows = self.add_rows(cx);
         let here = self.flyout.here.clone();
         let suggest = here.as_ref().and_then(|h| self.flyout.suggest.get(h));
         let got = suggest.and_then(|r| r.got.as_ref());
@@ -3788,9 +5663,6 @@ impl Workspace {
             .flex_col()
             .px(px(6. * s))
             .pb(px(10. * s));
-        if here.is_none() {
-            list = list.child(note(f.add_no_repo, ink.faint, sk, s));
-        }
         let section = |w: &str| {
             div()
                 .px(px(6. * s))
@@ -3803,24 +5675,59 @@ impl Workspace {
         let mut last: Option<&'static str> = None;
         for (i, row) in rows.iter().enumerate() {
             let kind = match row {
+                AddRow::Artifact { .. } => "a",
                 AddRow::Changes(_) => "c",
                 AddRow::Pull { .. } => "p",
                 AddRow::File(..) => "f",
             };
             if last != Some(kind) {
                 match kind {
+                    "a" => list = list.child(section(f.add_delivered)),
                     "p" => list = list.child(section(f.add_pulls)),
                     "f" => list = list.child(section(f.add_files)),
+                    // The repository's own rows after what was delivered.
+                    "c" if last.is_some() => list = list.child(section(f.add_repo)),
                     _ => {}
                 }
                 last = Some(kind);
             }
             let lit = i == self.flyout.pick;
-            let (glyph, glyph_ink, title, detail): (&str, Hsla, String, String) = match row {
+            let plain = |t: String| div().child(t).into_any_element();
+            let (glyph, glyph_ink, title, detail, unread): (
+                &str,
+                Hsla,
+                AnyElement,
+                Option<AnyElement>,
+                bool,
+            ) = match row {
+                AddRow::Artifact {
+                    label,
+                    href,
+                    at_ms,
+                    opened,
+                    who,
+                    ..
+                } => (
+                    "\u{2726}",
+                    th.accent,
+                    plain(label.clone()),
+                    Some(plain(
+                        [
+                            who.clone(),
+                            crate::handover::kind_of(href),
+                            when_label(Some(*at_ms as i64), self.lang),
+                        ]
+                        .into_iter()
+                        .filter(|w| !w.is_empty())
+                        .collect::<Vec<_>>()
+                        .join(" \u{b7} "),
+                    )),
+                    !opened,
+                ),
                 AddRow::Changes(repo) => (
                     "\u{b1}",
                     ink.ok,
-                    lang::fill(
+                    plain(lang::fill(
                         f.add_changes,
                         &[(
                             "repo",
@@ -3829,17 +5736,18 @@ impl Workspace {
                                 .map(|n| n.to_string_lossy().into_owned())
                                 .unwrap_or_default(),
                         )],
-                    ),
-                    match got.and_then(|g| g.branch.as_deref()) {
+                    )),
+                    Some(plain(match got.and_then(|g| g.branch.as_deref()) {
                         Some(b) => format!("{b} \u{b7} {}", f.add_changes_sub),
                         None => f.add_changes_sub.to_string(),
-                    },
+                    })),
+                    false,
                 ),
                 AddRow::Pull { row, mine, .. } => (
                     "\u{21c4}",
                     th.ansi[13],
-                    format!("#{} {}", row.number, row.title),
-                    if *mine {
+                    plain(format!("#{} {}", row.number, row.title)),
+                    Some(plain(if *mine {
                         f.add_branch_pull.to_string()
                     } else {
                         [
@@ -3855,14 +5763,34 @@ impl Workspace {
                         .filter(|w| !w.is_empty())
                         .collect::<Vec<_>>()
                         .join(" \u{b7} ")
-                    },
+                    })),
+                    false,
                 ),
-                AddRow::File(_, rel) => (
-                    "\u{25a4}",
-                    sk.ink.ink_dim,
-                    rel.rsplit('/').next().unwrap_or(rel).to_string(),
-                    rel.clone(),
-                ),
+                AddRow::File(_, rel, at) => {
+                    // The name lit where the query fell in it, and the
+                    // whole path under it lit the same.
+                    let name_at = rel.rfind('/').map_or(0, |i| i + 1);
+                    let in_name: Vec<usize> = at
+                        .iter()
+                        .filter(|i| **i >= name_at)
+                        .map(|i| i - name_at)
+                        .collect();
+                    (
+                        if drawn_kind(Path::new(rel)).is_some() {
+                            "\u{25e7}"
+                        } else {
+                            "\u{25a4}"
+                        },
+                        sk.ink.ink_dim,
+                        path_text(&rel[name_at..], &in_name, sk.ink.ink_faint, th.accent)
+                            .into_any_element(),
+                        Some({
+                            let (shown, lit) = elide_path(rel, self.path_fit(sk, s, 90.), at);
+                            path_text(&shown, &lit, sk.ink.ink_faint, th.accent).into_any_element()
+                        }),
+                        false,
+                    )
+                }
             };
             let open_row = row.clone();
             list = list.child(
@@ -3900,7 +5828,7 @@ impl Workspace {
                                     .text_color(th.text)
                                     .child(title),
                             )
-                            .when(!detail.is_empty(), |d| {
+                            .when_some(detail, |d, detail| {
                                 d.child(
                                     div()
                                         .truncate()
@@ -3910,6 +5838,16 @@ impl Workspace {
                                 )
                             }),
                     )
+                    // Not opened yet: the dot the header chip counts.
+                    .when(unread, |d| {
+                        d.child(
+                            div()
+                                .flex_none()
+                                .size(px(6. * s))
+                                .rounded_full()
+                                .bg(th.accent),
+                        )
+                    })
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
@@ -3917,6 +5855,10 @@ impl Workspace {
                         }),
                     ),
             );
+        }
+        // Under what this task's agents delivered, which needs no repository.
+        if here.is_none() {
+            list = list.child(note(f.add_no_repo, ink.faint, sk, s));
         }
         if !query.is_empty() && !rows.iter().any(|r| matches!(r, AddRow::File(..))) && got.is_some()
         {
@@ -3978,6 +5920,96 @@ fn panel_width(want: f32, room: f32, s: f32) -> f32 {
     } else {
         want.min(room / 2.).max(0.)
     }
+}
+
+/// The `+` page's rows for a repository: with nothing typed, its changes,
+/// its pull requests and the files changed in it; typing, a pull request by
+/// its number, then files by how well they answer, best first.
+fn repo_rows(here: &Path, got: Option<&Suggest>, q: &str) -> Vec<AddRow> {
+    let mut rows = Vec::new();
+    if q.is_empty() {
+        rows.push(AddRow::Changes(here.to_path_buf()));
+        if let Some(g) = got {
+            if let Some((owner, repo)) = &g.slug {
+                if let Some(mine) = &g.branch_pull {
+                    rows.push(AddRow::Pull {
+                        owner: owner.clone(),
+                        repo: repo.clone(),
+                        row: mine.clone(),
+                        mine: true,
+                    });
+                }
+                for p in &g.pulls {
+                    if g.branch_pull.as_ref().is_some_and(|m| m.number == p.number) {
+                        continue;
+                    }
+                    rows.push(AddRow::Pull {
+                        owner: owner.clone(),
+                        repo: repo.clone(),
+                        row: p.clone(),
+                        mine: false,
+                    });
+                }
+            }
+            for c in g.changed.iter().filter(|c| !c.ends_with('/')).take(12) {
+                rows.push(AddRow::File(here.join(c), c.clone(), Vec::new()));
+            }
+        }
+        return rows;
+    }
+    if let (Some(g), Ok(n)) = (got, q.trim_start_matches('#').parse::<u64>()) {
+        if let Some((owner, repo)) = &g.slug {
+            let row = g
+                .pulls
+                .iter()
+                .chain(g.branch_pull.iter())
+                .find(|p| p.number == n)
+                .cloned()
+                .unwrap_or(PullRow {
+                    number: n,
+                    title: String::new(),
+                    head: None,
+                    author: None,
+                    draft: false,
+                    updated_ms: None,
+                });
+            rows.push(AddRow::Pull {
+                owner: owner.clone(),
+                repo: repo.clone(),
+                row,
+                mine: false,
+            });
+        }
+    }
+    if let Some(g) = got {
+        // Clips and sounds are the floating square's to play; a picture, a
+        // PDF and a page the flyout draws now, so they are found here too.
+        let shown = |p: &&String| {
+            !matches!(
+                crate::docopen::doc_kind_by_name(Path::new(p.as_str())),
+                Some(crate::docopen::DocKind::Video | crate::docopen::DocKind::Audio)
+            )
+        };
+        let mut scored: Vec<(i64, &String, Vec<usize>)> = g
+            .changed
+            .iter()
+            .filter(|c| !c.ends_with('/'))
+            .chain(g.files.iter())
+            .filter(shown)
+            .filter_map(|p| flyout::find_path(p, q).map(|f| (f.score, p, f.at)))
+            .collect();
+        scored.sort_by(|a, b| b.0.cmp(&a.0).then(a.1.cmp(b.1)));
+        let mut seen = HashSet::new();
+        for (_, p, at) in scored {
+            if seen.insert(p.clone()) {
+                rows.push(AddRow::File(here.join(p), p.clone(), at));
+            }
+            if rows.len() >= FINDER_ROWS {
+                break;
+            }
+        }
+    }
+    rows
 }
 
 /// The first line a virtual list shows, from its offset and its row height:
@@ -4324,7 +6356,7 @@ mod tests {
         assert_eq!(picked, mine.root);
         assert_eq!(
             gh_dir(
-                &[other.root.clone()],
+                std::slice::from_ref(&other.root),
                 "parker-brown-family",
                 "terminal-delight"
             ),
@@ -4467,6 +6499,471 @@ mod tests {
             assert!(ws.flyout.open);
         });
         assert!(pane_focused(cx), "the pane has the keyboard again");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A stand-in `gh`: answers `pr diff` with `diff_says` (an exit code and
+    /// what it prints), answers `api` with two pages of GitHub's per-file
+    /// list, and writes every call it gets to `calls`.
+    fn fake_gh(dir: &Path, diff_code: i32, diff_out: &str) -> PathBuf {
+        let calls = dir.join("calls");
+        let page = dir.join("pages.json");
+        std::fs::write(
+            &page,
+            r#"[{"filename":"src/a.rs","status":"modified","additions":1,"deletions":1,"patch":"@@ -1 +1 @@\n-x\n+y"}][{"filename":"big.json","status":"added","additions":30000,"deletions":0}]"#,
+        )
+        .unwrap();
+        let out = dir.join("diff.out");
+        std::fs::write(&out, diff_out).unwrap();
+        let script = dir.join("gh");
+        let _fork = crate::testsync::forks_and_locks();
+        std::fs::write(
+            &script,
+            format!(
+                "#!/bin/sh\n[ \"$1\" = probe ] && exit 0\necho \"$*\" >> '{calls}'\ncase \"$1 $2\" in\n  \"pr diff\") \
+                 if [ {code} -eq 0 ]; then cat '{out}'; else cat '{out}' >&2; fi; exit {code};;\n  \
+                 \"api --paginate\") cat '{page}';;\n  *) exit 2;;\nesac\n",
+                calls = calls.display(),
+                code = diff_code,
+                out = out.display(),
+                page = page.display(),
+            ),
+        )
+        .unwrap();
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        drop(_fork);
+        // A file just written cannot be run while a child forked on another
+        // thread still holds it open for writing (ETXTBSY): wait until it can.
+        assert!(
+            crate::testsync::soon(|| Command::new(&script).arg("probe").status().is_ok()),
+            "the stand-in gh never became runnable"
+        );
+        script
+    }
+
+    /// GitHub refuses a whole diff past 20,000 lines with a 406: the files are
+    /// then read from its per-file list, every page, each with its own patch,
+    /// and a file it sent no patch for keeps its counts and no diff. A diff
+    /// that comes whole never asks the list, and any other failure is said as
+    /// it is rather than retried.
+    #[test]
+    fn a_refused_pull_request_diff_is_read_file_by_file() {
+        let base = std::env::temp_dir().join(format!("td-flyout-gh-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let refused = base.join("refused");
+        std::fs::create_dir_all(&refused).unwrap();
+        let gh = fake_gh(
+            &refused,
+            1,
+            "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum \
+             number of lines (20000) (https://api.github.com/repos/o/r/pulls/9)\n",
+        );
+        let d = read_pull_diff_with(&gh.to_string_lossy(), &refused, "o", "r", 9).unwrap();
+        assert!(d.by_file);
+        assert_eq!(d.files.len(), 2);
+        assert_eq!(d.files[0].stat.path, "src/a.rs");
+        assert_eq!(d.files[0].diff.as_ref().map(|x| x.hunks.len()), Some(1));
+        assert_eq!(d.files[1].stat.added, Some(30000));
+        assert!(d.files[1].diff.is_none(), "withheld, not an empty diff");
+        let calls = std::fs::read_to_string(refused.join("calls")).unwrap();
+        let calls: Vec<&str> = calls.lines().collect();
+        assert_eq!(calls.len(), 2, "{calls:?}");
+        assert!(calls[0].starts_with("pr diff 9 --repo o/r"), "{calls:?}");
+        assert_eq!(
+            calls[1],
+            "api --paginate repos/o/r/pulls/9/files?per_page=100"
+        );
+
+        let whole = base.join("whole");
+        std::fs::create_dir_all(&whole).unwrap();
+        let gh = fake_gh(
+            &whole,
+            0,
+            "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1 +1 @@\n-a\n+b\n",
+        );
+        let d = read_pull_diff_with(&gh.to_string_lossy(), &whole, "o", "r", 9).unwrap();
+        assert!(!d.by_file);
+        assert_eq!(d.files.len(), 1);
+        let calls = std::fs::read_to_string(whole.join("calls")).unwrap();
+        assert_eq!(calls.lines().count(), 1, "a whole diff never asks the list");
+
+        let missing = base.join("missing");
+        std::fs::create_dir_all(&missing).unwrap();
+        let gh = fake_gh(&missing, 1, "HTTP 404: Not Found\n");
+        let e = read_pull_diff_with(&gh.to_string_lossy(), &missing, "o", "r", 9).unwrap_err();
+        assert!(e.contains("404"), "{e}");
+        let calls = std::fs::read_to_string(missing.join("calls")).unwrap();
+        assert_eq!(
+            calls.lines().count(),
+            1,
+            "a refusal for another reason is not retried"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// What an agent handed over opens in the flyout when the flyout shows
+    /// that kind of thing — a pull request, a page, a code file — and goes
+    /// its usual road otherwise; the rail offers "◨ side" by the address alone.
+    #[test]
+    fn a_handed_over_artifact_opens_in_the_flyout_by_its_kind() {
+        let dir = std::env::temp_dir().join(format!("td-flyout-art-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("brief.html");
+        let code = dir.join("main.rs");
+        let clip = dir.join("cut.mp4");
+        for p in [&page, &code, &clip] {
+            std::fs::write(p, "x\n").unwrap();
+        }
+        let url = "https://github.com/parker-brown-family/terminal-delight/pull/844";
+        assert_eq!(
+            artifact_target(url).map(|o| o.target),
+            Some(Target::Pull {
+                owner: "parker-brown-family".into(),
+                repo: "terminal-delight".into(),
+                number: 844
+            })
+        );
+        let canon = |p: &Path| std::fs::canonicalize(p).unwrap();
+        assert_eq!(
+            artifact_target(&format!("file://{}", page.display())).map(|o| o.target),
+            Some(Target::File { path: canon(&page) }),
+            "a page is drawn in the flyout"
+        );
+        assert_eq!(
+            artifact_target(&code.to_string_lossy()).map(|o| o.target),
+            Some(Target::File { path: canon(&code) })
+        );
+        assert_eq!(
+            artifact_target(&clip.to_string_lossy()),
+            None,
+            "a clip plays in the square"
+        );
+        assert_eq!(
+            artifact_target(&dir.join("gone.html").to_string_lossy()),
+            None
+        );
+        assert_eq!(artifact_target("https://example.com/notes"), None);
+
+        assert!(side_offers(url));
+        assert!(side_offers("/home/p/reports/a.html"));
+        assert!(side_offers("file:///home/p/reports/a%20brief.md"));
+        assert!(side_offers("/home/p/src/main.rs"));
+        assert!(!side_offers("/home/p/cut.mp4"));
+        assert!(!side_offers("https://example.com/notes"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A path too long for its row keeps its end — the file's name and the
+    /// folders nearest it — and the letters a filter lit stay lit there.
+    #[test]
+    fn a_deep_path_keeps_its_end_and_its_lit_letters() {
+        let p = "mobile/app/android/app/src/main/kotlin/ca/brownfamilysports/terminal_delight/MainActivity.kt";
+        let at = flyout::find_path(p, "mainact").unwrap().at;
+        let (shown, lit) = elide_path(p, 40, &at);
+        assert!(shown.starts_with("\u{2026}/"), "{shown}");
+        assert!(
+            shown.ends_with("terminal_delight/MainActivity.kt"),
+            "{shown}"
+        );
+        assert!(shown.chars().count() <= 40, "{shown}");
+        let lit_text: String = lit
+            .iter()
+            .map(|&i| shown[i..].chars().next().unwrap())
+            .collect();
+        assert_eq!(lit_text, "MainAct");
+        assert_eq!(
+            elide_path("a/b.rs", 40, &[2]),
+            ("a/b.rs".to_string(), vec![2])
+        );
+    }
+
+    /// A window with the flyout open: a fixture shared by the window tests.
+    fn flyout_window(
+        cx: &mut gpui::TestAppContext,
+    ) -> (gpui::Entity<Workspace>, &mut gpui::VisualTestContext) {
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1400.), px(900.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        (ws, cx)
+    }
+
+    fn redraw(cx: &mut gpui::VisualTestContext) {
+        for _ in 0..2 {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        }
+        cx.run_until_parked();
+    }
+
+    /// A tab's ✕ sits at its left and closes it. A Markdown file opens as a
+    /// page drawn by the floating square's own view, `s` shows its text, and
+    /// `/` finds in the text, every place counted, Enter stepping on.
+    #[gpui::test]
+    fn a_tab_closes_from_its_left_and_a_page_shows_its_source_and_finds(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-page-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let code = dir.join("code.rs");
+        let notes = dir.join("notes.md");
+        std::fs::write(&code, "fn main() {}\n").unwrap();
+        std::fs::write(&notes, "# Notes\n\none\ntwo\nthree two\n").unwrap();
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, Target::File { path: code.clone() }, None, true, w, cx);
+                ws.flyout_show(
+                    task,
+                    Target::File {
+                        path: notes.clone(),
+                    },
+                    None,
+                    true,
+                    w,
+                    cx,
+                );
+            })
+        });
+        redraw(cx);
+        let page = Target::File {
+            path: notes.clone(),
+        };
+        ws.read_with(cx, |ws, _| {
+            let Some(Live::File(f)) = ws.flyout.live.get(&page) else {
+                panic!("no reading for the page");
+            };
+            assert!(f.face.is_some() && f.paged(), "a Markdown file opens drawn");
+        });
+        assert!(
+            cx.debug_bounds("flyout-page").is_some(),
+            "the page is drawn in the panel"
+        );
+        let tab = cx.debug_bounds("flyout-tab-0").expect("tab drawn");
+        let x = cx
+            .debug_bounds("flyout-tab-x-0")
+            .expect("its close mark drawn");
+        assert!(
+            x.left() - tab.left() < px(10.) && x.right() < tab.center().x,
+            "the close mark sits at the tab's left: {x:?} in {tab:?}"
+        );
+
+        cx.simulate_keystrokes("s");
+        redraw(cx);
+        assert!(cx.debug_bounds("flyout-page").is_none(), "s shows the text");
+        assert!(
+            cx.debug_bounds("flyout-find").is_some(),
+            "with a find over it"
+        );
+        cx.simulate_keystrokes("/ t w o");
+        redraw(cx);
+        ws.read_with(cx, |ws, _| {
+            let Some(Live::File(f)) = ws.flyout.live.get(&page) else {
+                panic!();
+            };
+            assert!(f.find.typing);
+            assert_eq!(f.find.query, "two");
+            assert_eq!(f.find.hits.len(), 2, "{:?}", f.find.hits);
+        });
+        let at = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+                Some(Live::File(f)) => f.find.at,
+                _ => usize::MAX,
+            })
+        };
+        let first = at(cx);
+        cx.simulate_keystrokes("enter");
+        assert_eq!(at(cx), (first + 1) % 2, "Enter steps to the next place");
+        cx.simulate_keystrokes("escape");
+        ws.read_with(cx, |ws, _| {
+            let Some(Live::File(f)) = ws.flyout.live.get(&page) else {
+                panic!();
+            };
+            assert!(
+                f.find.query.is_empty() && !f.find.typing,
+                "Esc puts the find away"
+            );
+            assert!(ws.flyout.focused, "and keeps the keyboard for a second Esc");
+        });
+
+        cx.simulate_click(x.center(), gpui::Modifiers::none());
+        redraw(cx);
+        ws.read_with(cx, |ws, _| {
+            let tabs = &ws.side().unwrap().tabs;
+            assert_eq!(tabs, &vec![page.clone()], "the ✕ closed the first tab");
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `/` over a Changes list narrows it as letters are typed, best match
+    /// first, and Esc gives every file back.
+    #[gpui::test]
+    fn a_changes_list_narrows_to_the_best_match_as_letters_are_typed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let repo = Repo::new();
+        repo.write("app/src/main.rs", "fn main() {}\n");
+        repo.write("app/src/flyout_view.rs", "fn view() {}\n");
+        repo.write("docs/fly/overview.md", "# fly\n");
+        repo.commit();
+        repo.write("app/src/main.rs", "fn main() { go() }\n");
+        repo.write("app/src/flyout_view.rs", "fn view() { draw() }\n");
+        repo.write("docs/fly/overview.md", "# fly over\n");
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let key = Target::Changes {
+            repo: repo.root.clone(),
+            base: Base::Uncommitted,
+        };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, key.clone(), None, true, w, cx);
+            })
+        });
+        redraw(cx);
+        let rows = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| match ws.flyout.live.get(&key) {
+                Some(Live::Changes(c)) => c
+                    .list
+                    .got
+                    .as_ref()
+                    .map(|l| {
+                        c.filter
+                            .rows(l.files.len())
+                            .into_iter()
+                            .map(|(i, _)| l.files[i].path.clone())
+                            .collect::<Vec<_>>()
+                    })
+                    .unwrap_or_default(),
+                _ => Vec::new(),
+            })
+        };
+        assert_eq!(rows(cx).len(), 3, "every changed file, before typing");
+        assert!(
+            cx.debug_bounds("flyout-filter").is_some(),
+            "the filter is offered"
+        );
+        cx.simulate_keystrokes("/ f l y v");
+        redraw(cx);
+        assert_eq!(
+            rows(cx),
+            ["app/src/flyout_view.rs"],
+            "letters strewn into another folder's words are no match"
+        );
+        cx.simulate_keystrokes("backspace backspace");
+        redraw(cx);
+        let r = rows(cx);
+        assert_eq!(r.len(), 2, "{r:?}");
+        assert_eq!(
+            r[0], "app/src/flyout_view.rs",
+            "the name that starts with it first"
+        );
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert_eq!(rows(cx).len(), 3, "Esc gives every file back");
+    }
+
+    /// What an agent of the task handed over leads the `+` page, unopened;
+    /// Enter opens it drawn beside the conversation, its tab knows who handed
+    /// it over, and the pane's chip counts it opened.
+    #[gpui::test]
+    fn what_an_agent_handed_over_leads_the_plus_page_and_opens_drawn(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-handed-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let brief = dir.join("brief.md");
+        std::fs::write(&brief, "# The brief\n\nWhat was made.\n").unwrap();
+        let brief = std::fs::canonicalize(&brief).unwrap();
+        let key = brief.to_string_lossy().into_owned();
+        let pane = ws.read_with(cx, |ws, _| {
+            let mut leaves = Vec::new();
+            ws.tabs[ws.active].root.leaves(&mut leaves);
+            leaves[0].clone()
+        });
+        cx.update(|w, cx| {
+            pane.update(cx, |v, cx| {
+                v.hand_over(
+                    Some("The brief".into()),
+                    format!("file://{key}"),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+            });
+            ws.update(cx, |ws, cx| ws.flyout_toggle(w, cx));
+        });
+        redraw(cx);
+        let rows = ws.read_with(cx, |ws, cx| ws.add_rows(cx));
+        assert!(
+            matches!(&rows[0], AddRow::Artifact { label, opened: false, .. } if label == "The brief"),
+            "the handover leads the + page, not yet opened: {:?}",
+            rows.first()
+        );
+        cx.simulate_keystrokes("enter");
+        redraw(cx);
+        let target = Target::File {
+            path: brief.clone(),
+        };
+        ws.read_with(cx, |ws, cx| {
+            assert_eq!(ws.side_current(), Some(target.clone()));
+            let Some(Live::File(f)) = ws.flyout.live.get(&target) else {
+                panic!("no reading for the brief");
+            };
+            assert!(f.paged(), "a Markdown brief opens drawn");
+            assert_eq!(
+                ws.delivered(&brief, cx).map(|(_, label)| label),
+                Some("The brief".into()),
+                "the tab knows who handed it over"
+            );
+            assert_eq!(
+                ws.tab_glyph(&target, true, &theme::theme(cx), &skin::skin(cx, 1.), cx)
+                    .0,
+                "\u{2726}"
+            );
+            assert!(
+                pane.read(cx).handovers().is_opened(&key),
+                "and it counts as opened"
+            );
+        });
         let _ = std::fs::remove_dir_all(&dir);
     }
 }

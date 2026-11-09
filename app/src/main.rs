@@ -12643,37 +12643,7 @@ impl Workspace {
         let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
             None => Said::Refused(Words::said(|l| l.strings().ui.doc_no_agent_beside.into())),
             Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
-                Ok(landed) => {
-                    // `who` is compared in English — "agent" is the word
-                    // `send_label` answers with when nothing names the pane —
-                    // and only the sentence drawn from it is translated. One
-                    // whole phrase per case, because "whose" and "which place"
-                    // agree with each other differently in every language.
-                    // Said in the reader's language for the bar and in
-                    // English for the notes report.
-                    let named = who != "agent";
-                    let unsaved_n = ev.unsaved;
-                    let pictures_n = ev.pictures;
-                    Said::Done(Words::said(|l| {
-                        let ui = l.strings().ui;
-                        let (place, chars) = match landed {
-                            pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
-                            pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
-                            pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
-                            pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
-                        };
-                        let prompt = lang::fill(place, &[("who", &who)]);
-                        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
-                        lang::fill(
-                            ui.doc_landed_in,
-                            &[
-                                ("place", &prompt),
-                                ("chars", &chars.to_string()),
-                                ("unsaved", &unsaved),
-                            ],
-                        )
-                    }))
-                }
+                Ok(landed) => notes_landed_said(landed, &who, ev.unsaved, ev.pictures),
                 Err(why) => Said::Refused(why),
             },
         };
@@ -29281,6 +29251,30 @@ impl Workspace {
                                     }),
                                 )
                         }))
+                        // "◨ side": the same deliverable in the right-bar
+                        // flyout of the task on screen, docked beside the
+                        // conversation and covering none of it. Offered by the
+                        // address alone, as "⇲ beside" is.
+                        .children(flyout_view::side_offers(&d.href).then(|| {
+                            let side = d.href.clone();
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .border(sk.box_border(1.))
+                                .border_color(hsla(0.58, 0.72, 0.62, 0.6))
+                                .child(SharedString::from(self.lang.strings().flyout.rail_chip))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        ws.rail_cursor = row_index;
+                                        if ws.rail_open_side(&side, window, cx) {
+                                            ws.rail_close();
+                                        }
+                                        cx.notify();
+                                    }),
+                                )
+                        }))
                         // Its own click, and it stops there. Opening what a turn
                         // produced and visiting the terminal that produced it are
                         // two different acts, and reading never does the second.
@@ -30837,6 +30831,43 @@ struct SlotTooltip {
 /// Hang a plain hover card on `el`: the first line is the heading, the rest
 /// read under it. One place hangs these, so the glass guard counts one site
 /// however many buttons say what they do.
+/// What a brief's notes bar says once ↪ has put its map into an agent's
+/// prompt: where it landed, how many characters, and what of it is unsaved.
+/// `who` is compared in English — "agent" is the word `send_label` answers
+/// with when nothing names the pane — and only the sentence drawn from it is
+/// translated. One whole phrase per case, because "whose" and "which place"
+/// agree with each other differently in every language. Said in the reader's
+/// language for the bar and in English for the notes report. Shared by a
+/// pane's documents and the flyout's pages.
+fn notes_landed_said(
+    landed: pane::NotesLanded,
+    who: &str,
+    unsaved_n: usize,
+    pictures_n: Option<usize>,
+) -> docview::notes_ui::Said {
+    use docview::notes_ui::{Said, Words};
+    let named = who != "agent";
+    Said::Done(Words::said(|l| {
+        let ui = l.strings().ui;
+        let (place, chars) = match landed {
+            pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
+            pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
+            pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
+            pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
+        };
+        let prompt = lang::fill(place, &[("who", who)]);
+        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
+        lang::fill(
+            ui.doc_landed_in,
+            &[
+                ("place", &prompt),
+                ("chars", &chars.to_string()),
+                ("unsaved", &unsaved),
+            ],
+        )
+    }))
+}
+
 fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful<gpui::Div> {
     el.tooltip(move |_w, cx| {
         cx.new(|_| SlotTooltip {

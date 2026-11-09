@@ -3363,6 +3363,8 @@ mod tests {
         "entry.composer_machines_error",
         // French writes it the same way, and means the same thing.
         "flyout.pr_description",
+        // French says "Page" for a page.
+        "flyout.face_page",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,

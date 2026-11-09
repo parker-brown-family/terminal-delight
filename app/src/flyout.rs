@@ -433,47 +433,319 @@ pub fn status_paths(out: &str) -> Vec<String> {
     paths
 }
 
-/// How well `path` answers a typed `query`, higher being better; `None` when
-/// it does not answer it at all. The file's own name counts for more than its
-/// folders, and letters in order count for something.
-pub fn file_score(path: &str, query: &str) -> Option<i64> {
-    let q = query.trim().to_lowercase();
-    if q.is_empty() {
-        return Some(0);
+// ---------------------------------------------------------------------------
+// Finding: a path by a few of its letters, and text inside a file
+// ---------------------------------------------------------------------------
+
+/// A path that answers a typed query: how well, and where its letters fell.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct Found {
+    /// Higher is better. Comparable only between answers to one query.
+    pub score: i64,
+    /// Byte offsets of the matched characters, ascending, each once: what a
+    /// row lights.
+    pub at: Vec<usize>,
+}
+
+/// One letter matched.
+const SCORE_MATCH: i32 = 16;
+/// Starting a gap between two matched letters, and each letter it runs on.
+const GAP_START: i32 = -3;
+const GAP_EXTEND: i32 = -1;
+/// A letter at the very start, or after a space.
+const BONUS_START: i32 = 10;
+/// A letter just after a `/`: the start of a folder's or the file's name.
+const BONUS_FOLDER: i32 = 9;
+/// A letter after `_`, `-`, `.` or another mark: the start of a word.
+const BONUS_WORD: i32 = 8;
+/// `fooBar`'s `B`, `v2`'s `2`.
+const BONUS_CAMEL: i32 = 7;
+/// What each letter of a run is worth at least.
+const BONUS_RUN: i32 = 4;
+/// The first letter of a word counts double: where it starts says the most.
+const FIRST_LETTER: i32 = 2;
+/// A word that fits inside the file's own name, over one that needs folders.
+const BONUS_NAME: i64 = 30;
+const NO: i32 = i32::MIN / 4;
+
+/// What a letter at `c` is worth for where it stands.
+fn letter_bonus(prev: Option<char>, c: char) -> i32 {
+    let word = |x: char| x.is_alphanumeric();
+    match prev {
+        None => BONUS_START,
+        Some('/') => BONUS_FOLDER,
+        Some(p) if p.is_whitespace() => BONUS_START,
+        Some(p) if !word(p) && word(c) => BONUS_WORD,
+        Some(p) if p.is_lowercase() && c.is_uppercase() => BONUS_CAMEL,
+        Some(p) if !p.is_ascii_digit() && c.is_ascii_digit() => BONUS_CAMEL,
+        _ if !word(c) => BONUS_WORD,
+        _ => 0,
     }
-    let lower = path.to_lowercase();
-    let name = lower.rsplit('/').next().unwrap_or(&lower);
-    let short = -(path.len() as i64) / 8;
-    if name == q {
-        return Some(10_000 + short);
+}
+
+/// The best way the letters of `term` fall, in order, in `text`: the score
+/// and the index of each letter. Scored the way fzf's second algorithm
+/// scores — letters at the start of words and in runs are worth more, gaps
+/// cost — with one rule of ours: unless `mid_gaps`, a letter after a gap must
+/// start a word. Inside a file's own name a gap may land anywhere (`mn` finds
+/// `main.rs`); across a whole path, letters strewn into the middle of other
+/// folders' words are not what anybody typed: `flyout` does not answer
+/// `floor-canvas/layout.png`, but `srcfly` answers `src/flyout.rs`.
+fn align(
+    text: &[char],
+    bonus: &[i32],
+    term: &[char],
+    sensitive: bool,
+    mid_gaps: bool,
+) -> Option<(i32, Vec<usize>)> {
+    let (n, m) = (text.len(), term.len());
+    if m == 0 {
+        return Some((0, Vec::new()));
     }
-    if name.starts_with(&q) {
-        return Some(8_000 + short);
+    if m > n {
+        return None;
     }
-    if let Some(at) = name.find(&q) {
-        return Some(6_000 - at as i64 + short);
+    let same = |a: char, b: char| a == b || !sensitive && a.to_lowercase().eq(b.to_lowercase());
+    // Most paths in a large tree do not hold the letters at all: say so in
+    // one pass before scoring the ones that do.
+    let mut j = 0;
+    for &c in text {
+        if j < m && same(c, term[j]) {
+            j += 1;
+        }
     }
-    if let Some(at) = lower.find(&q) {
-        return Some(4_000 - at as i64 / 4 + short);
+    if j < m {
+        return None;
     }
-    // Letters in order within the file's own name: `mrs` finds `main.rs`.
-    // Across the whole path they find nearly everything in a large tree.
-    let mut gaps = 0i64;
-    let mut it = name.chars();
-    for c in q.chars() {
-        let mut found = false;
-        for d in it.by_ref() {
-            if d == c {
-                found = true;
-                break;
+    let mut score = vec![NO; m * n];
+    let mut from = vec![usize::MAX; m * n];
+    let mut run = vec![0i32; m * n];
+    for j in 0..m {
+        // The best place the previous letter could sit before a gap, worth a
+        // little less for each step the gap runs on.
+        let (mut gap, mut gap_at) = (NO, usize::MAX);
+        for i in 0..n {
+            if j > 0 {
+                if gap > NO {
+                    gap += GAP_EXTEND;
+                }
+                if i >= 2 && score[(j - 1) * n + i - 2] > NO {
+                    let s = score[(j - 1) * n + i - 2] + GAP_START;
+                    if s > gap {
+                        gap = s;
+                        gap_at = i - 2;
+                    }
+                }
             }
-            gaps += 1;
-        }
-        if !found {
-            return None;
+            if !same(text[i], term[j]) {
+                continue;
+            }
+            let b = bonus[i];
+            let at = j * n + i;
+            if j == 0 {
+                score[at] = SCORE_MATCH + b * FIRST_LETTER;
+                run[at] = b;
+                continue;
+            }
+            if i >= 1 && score[at - n - 1] > NO {
+                let carried = run[at - n - 1].max(b).max(BONUS_RUN);
+                score[at] = score[at - n - 1] + SCORE_MATCH + carried;
+                from[at] = i - 1;
+                run[at] = carried;
+            }
+            if gap > NO && (mid_gaps || b > 0) && gap + SCORE_MATCH + b > score[at] {
+                score[at] = gap + SCORE_MATCH + b;
+                from[at] = gap_at;
+                run[at] = b;
+            }
         }
     }
-    Some(2_000 - gaps.min(1_900) + short)
+    let last = (m - 1) * n;
+    let (end, best) = (0..n)
+        .map(|i| (i, score[last + i]))
+        .max_by_key(|&(i, s)| (s, std::cmp::Reverse(i)))?;
+    if best <= NO {
+        return None;
+    }
+    let mut at = vec![0; m];
+    let mut i = end;
+    for j in (0..m).rev() {
+        at[j] = i;
+        if j > 0 {
+            i = from[j * n + i];
+        }
+    }
+    Some((best, at))
+}
+
+/// How well `path` answers `query`, fzf-style: each word of the query is its
+/// letters in order, anywhere in the path; a capital makes that word
+/// case-sensitive. A word that fits in the file's own name is read there and
+/// counts for more, and a name that is the query, or starts with it, comes
+/// first. `None` when it does not answer; an empty query answers everything.
+pub fn find_path(path: &str, query: &str) -> Option<Found> {
+    let terms: Vec<&str> = query.split_whitespace().collect();
+    if terms.is_empty() {
+        return Some(Found::default());
+    }
+    let chars: Vec<(usize, char)> = path.char_indices().collect();
+    let text: Vec<char> = chars.iter().map(|&(_, c)| c).collect();
+    let bonus: Vec<i32> = (0..text.len())
+        .map(|i| letter_bonus(i.checked_sub(1).map(|p| text[p]), text[i]))
+        .collect();
+    let name_at = text.iter().rposition(|&c| c == '/').map_or(0, |i| i + 1);
+    let mut score = 0i64;
+    let mut at = std::collections::BTreeSet::new();
+    for term in &terms {
+        let letters: Vec<char> = term.chars().collect();
+        let sensitive = term.chars().any(char::is_uppercase);
+        let in_name = align(
+            &text[name_at..],
+            &bonus[name_at..],
+            &letters,
+            sensitive,
+            true,
+        );
+        let (s, idx) = match in_name {
+            Some((s, idx)) => (
+                i64::from(s) + BONUS_NAME,
+                idx.into_iter().map(|i| i + name_at).collect::<Vec<_>>(),
+            ),
+            None => {
+                let (s, idx) = align(&text, &bonus, &letters, sensitive, false)?;
+                (i64::from(s), idx)
+            }
+        };
+        score += s;
+        at.extend(idx.into_iter().map(|i| chars[i].0));
+    }
+    let name = &path[chars.get(name_at).map_or(path.len(), |&(b, _)| b)..];
+    let q = query.trim();
+    let stem = name.rsplit_once('.').map_or(name, |(s, _)| s);
+    if name.eq_ignore_ascii_case(q) || stem.eq_ignore_ascii_case(q) {
+        score += 100;
+    } else if name.len() >= q.len()
+        && name.is_char_boundary(q.len())
+        && name[..q.len()].eq_ignore_ascii_case(q)
+    {
+        score += 40;
+    }
+    // A tie goes to the shorter path: fewer places for the letters to fall.
+    score -= (text.len() / 10) as i64;
+    Some(Found {
+        score,
+        at: at.into_iter().collect(),
+    })
+}
+
+/// `paths` that answer `query`, best first, ties by path: for a list being
+/// filtered. Each comes with its index in `paths` and where its letters fell.
+pub fn rank_paths<'a>(
+    paths: impl IntoIterator<Item = &'a str>,
+    query: &str,
+) -> Vec<(usize, Found)> {
+    let mut hits: Vec<(usize, &str, Found)> = paths
+        .into_iter()
+        .enumerate()
+        .filter_map(|(i, p)| find_path(p, query).map(|f| (i, p, f)))
+        .collect();
+    hits.sort_by(|a, b| b.2.score.cmp(&a.2.score).then_with(|| a.1.cmp(b.1)));
+    hits.into_iter().map(|(i, _, f)| (i, f)).collect()
+}
+
+/// Every place `query` appears in `lines`, as (line index, byte range): a
+/// literal search, case-blind unless the query holds a capital, as a person
+/// expects of find. At most `cap` places, so a search for `e` in a large file
+/// stops counting rather than stalling the window.
+pub fn find_text(lines: &[String], query: &str, cap: usize) -> Vec<(u32, Range<usize>)> {
+    let q = query.as_bytes();
+    if q.is_empty() {
+        return Vec::new();
+    }
+    let sensitive = query.chars().any(char::is_uppercase);
+    let mut out = Vec::new();
+    for (n, line) in lines.iter().enumerate() {
+        let b = line.as_bytes();
+        let mut i = 0;
+        while i + q.len() <= b.len() {
+            let hit = if sensitive {
+                &b[i..i + q.len()] == q
+            } else {
+                b[i..i + q.len()].eq_ignore_ascii_case(q)
+            };
+            // A match of whole UTF-8 text starts on a character boundary, so
+            // the range can be sliced and lit.
+            if hit {
+                out.push((n as u32, i..i + q.len()));
+                if out.len() >= cap {
+                    return out;
+                }
+                i += q.len();
+            } else {
+                i += 1;
+            }
+        }
+    }
+    out
+}
+
+/// Pieces of a line's styling with marks laid over it: each piece is a byte
+/// range, the run it came from (its index in `runs`), and whether a mark
+/// covers it. Both lists are sorted and do not overlap themselves; what comes
+/// back is sorted, does not overlap, and leaves out what neither covers.
+pub fn overlay(
+    runs: &[Range<usize>],
+    marks: &[Range<usize>],
+) -> Vec<(Range<usize>, Option<usize>, bool)> {
+    let mut cuts: Vec<usize> = runs
+        .iter()
+        .chain(marks)
+        .flat_map(|r| [r.start, r.end])
+        .collect();
+    cuts.sort_unstable();
+    cuts.dedup();
+    let mut out: Vec<(Range<usize>, Option<usize>, bool)> = Vec::new();
+    let (mut ri, mut mi) = (0, 0);
+    for w in cuts.windows(2) {
+        let (a, b) = (w[0], w[1]);
+        while ri < runs.len() && runs[ri].end <= a {
+            ri += 1;
+        }
+        while mi < marks.len() && marks[mi].end <= a {
+            mi += 1;
+        }
+        let run = (ri < runs.len() && runs[ri].start <= a).then_some(ri);
+        let marked = mi < marks.len() && marks[mi].start <= a;
+        if run.is_none() && !marked {
+            continue;
+        }
+        match out.last_mut() {
+            Some((r, last_run, last_mark))
+                if r.end == a && *last_run == run && *last_mark == marked =>
+            {
+                r.end = b;
+            }
+            _ => out.push((a..b, run, marked)),
+        }
+    }
+    out
+}
+
+/// Single characters at byte offsets `at` of `text`, as ranges, joined where
+/// they touch: a finder's matched letters, ready to light.
+pub fn letter_ranges(text: &str, at: &[usize]) -> Vec<Range<usize>> {
+    let mut out: Vec<Range<usize>> = Vec::new();
+    for &i in at {
+        let Some(c) = text.get(i..).and_then(|t| t.chars().next()) else {
+            continue;
+        };
+        let r = i..i + c.len_utf8();
+        match out.last_mut() {
+            Some(last) if last.end == r.start => last.end = r.end,
+            _ => out.push(r),
+        }
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -497,6 +769,10 @@ pub struct DiffLine {
     /// Its number in the new file; `None` on a removed line.
     pub new: Option<u32>,
     pub text: String,
+    /// The words that changed inside a changed line, as byte ranges of
+    /// `text`: empty for a line with no partner to compare with, or one too
+    /// unlike its partner to say. Filled by [`mark_words`].
+    pub changed: Vec<Range<usize>>,
 }
 
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -758,9 +1034,184 @@ pub fn parse_unified(text: &str) -> Vec<FileDiff> {
             old,
             new,
             text: body.to_string(),
+            changed: Vec::new(),
         });
     }
+    for f in &mut files {
+        mark_words(f);
+    }
     files
+}
+
+/// One file's hunks from a bare patch, as GitHub's per-file list sends it:
+/// `@@` headers and the lines under them, no `diff --git` above.
+pub fn parse_patch(patch: &str) -> Vec<Hunk> {
+    // A patch's lines all start with ` `, `+`, `-`, `\` or `@@`, so the one
+    // header line put on top can never be mistaken for one of them.
+    parse_unified(&format!("diff --git a/_ b/_\n{patch}"))
+        .pop()
+        .map(|f| f.hunks)
+        .unwrap_or_default()
+}
+
+// ---------------------------------------------------------------------------
+// Inside a changed line: which words changed
+// ---------------------------------------------------------------------------
+
+/// A line cut into words, runs of space, and single marks, as byte ranges.
+fn words_of(line: &str) -> Vec<Range<usize>> {
+    let mut out = Vec::new();
+    let mut it = line.char_indices().peekable();
+    while let Some((i, c)) = it.next() {
+        let mut end = i + c.len_utf8();
+        let kind = |c: char| {
+            if c.is_alphanumeric() || c == '_' {
+                0
+            } else if c.is_whitespace() {
+                1
+            } else {
+                2
+            }
+        };
+        let k = kind(c);
+        if k != 2 {
+            while let Some(&(j, d)) = it.peek() {
+                if kind(d) != k {
+                    break;
+                }
+                end = j + d.len_utf8();
+                it.next();
+            }
+        }
+        out.push(i..end);
+    }
+    out
+}
+
+/// Byte ranges of the words that changed in an old line and in its new one.
+type WordChanges = (Vec<Range<usize>>, Vec<Range<usize>>);
+
+/// The words of a line too long to compare word by word cheaply.
+const WORDS_COMPARED: usize = 400;
+
+/// Which words of `old` and of `new` changed between them, as byte ranges in
+/// each: what is lit inside a red row and the green row that replaced it.
+/// `None` when the two share too little to be read as one line edited, where
+/// lighting nearly every word would say nothing the row's colour does not.
+pub fn changed_words(old: &str, new: &str) -> Option<WordChanges> {
+    let (a, b) = (words_of(old), words_of(new));
+    if a.len() > WORDS_COMPARED || b.len() > WORDS_COMPARED || a.is_empty() || b.is_empty() {
+        return None;
+    }
+    let wa: Vec<&str> = a.iter().map(|r| &old[r.clone()]).collect();
+    let wb: Vec<&str> = b.iter().map(|r| &new[r.clone()]).collect();
+    // The longest run of words the two lines share, in order.
+    let (n, m) = (wa.len(), wb.len());
+    let mut lcs = vec![0u16; (n + 1) * (m + 1)];
+    for i in (0..n).rev() {
+        for j in (0..m).rev() {
+            lcs[i * (m + 1) + j] = if wa[i] == wb[j] {
+                lcs[(i + 1) * (m + 1) + j + 1] + 1
+            } else {
+                lcs[(i + 1) * (m + 1) + j].max(lcs[i * (m + 1) + j + 1])
+            };
+        }
+    }
+    let (mut keep_a, mut keep_b) = (vec![false; n], vec![false; m]);
+    let (mut i, mut j) = (0, 0);
+    while i < n && j < m {
+        if wa[i] == wb[j] {
+            keep_a[i] = true;
+            keep_b[j] = true;
+            i += 1;
+            j += 1;
+        } else if lcs[(i + 1) * (m + 1) + j] >= lcs[i * (m + 1) + j + 1] {
+            i += 1;
+        } else {
+            j += 1;
+        }
+    }
+    // Shared text, by length, against the two lines' own: a line that kept
+    // under a third of itself was rewritten, not edited.
+    let shared: usize = a
+        .iter()
+        .zip(&keep_a)
+        .filter(|(r, k)| **k && !old[(*r).clone()].trim().is_empty())
+        .map(|(r, _)| r.len())
+        .sum();
+    let solid = |s: &str| s.chars().filter(|c| !c.is_whitespace()).count().max(1);
+    if shared * 3 < solid(old).max(solid(new)) {
+        return None;
+    }
+    let ranges = |words: &[Range<usize>], keep: &[bool], text: &str| {
+        let mut out: Vec<Range<usize>> = Vec::new();
+        for (r, k) in words.iter().zip(keep) {
+            if *k {
+                continue;
+            }
+            match out.last_mut() {
+                Some(last) if last.end == r.start => last.end = r.end,
+                // A single space between two changed words joins them, so a
+                // phrase reads as one change rather than two.
+                Some(last)
+                    if text[last.end..r.start].trim().is_empty() && r.start - last.end <= 1 =>
+                {
+                    last.end = r.end;
+                }
+                _ => out.push(r.clone()),
+            }
+        }
+        // Space at either end of a change is not part of what changed.
+        out.into_iter()
+            .filter_map(|r| {
+                let piece = &text[r.clone()];
+                let start = r.start + (piece.len() - piece.trim_start().len());
+                let end = r.end - (piece.len() - piece.trim_end().len());
+                (start < end).then_some(start..end)
+            })
+            .collect::<Vec<_>>()
+    };
+    Some((ranges(&a, &keep_a, old), ranges(&b, &keep_b, new)))
+}
+
+/// Lines compared word by word in one file, at most: past it, rows are
+/// tinted whole, as they always were.
+const PAIRS_COMPARED: usize = 2000;
+
+/// Pair each removed line with the added line that replaced it — within a run
+/// of removals followed at once by a run of additions, the n-th of one with
+/// the n-th of the other — and mark the words that changed in each.
+pub fn mark_words(d: &mut FileDiff) {
+    let mut pairs = 0;
+    for h in &mut d.hunks {
+        let mut i = 0;
+        while i < h.lines.len() {
+            if h.lines[i].kind != LineKind::Removed {
+                i += 1;
+                continue;
+            }
+            let r0 = i;
+            while i < h.lines.len() && h.lines[i].kind == LineKind::Removed {
+                i += 1;
+            }
+            let a0 = i;
+            while i < h.lines.len() && h.lines[i].kind == LineKind::Added {
+                i += 1;
+            }
+            for k in 0..(a0 - r0).min(i - a0) {
+                if pairs >= PAIRS_COMPARED {
+                    return;
+                }
+                pairs += 1;
+                if let Some((was, now)) =
+                    changed_words(&h.lines[r0 + k].text, &h.lines[a0 + k].text)
+                {
+                    h.lines[r0 + k].changed = was;
+                    h.lines[a0 + k].changed = now;
+                }
+            }
+        }
+    }
 }
 
 /// `a/x b/y` from a `diff --git` line, quoted or not. Ambiguous for an
@@ -1214,6 +1665,127 @@ pub fn parse_pull_rows(json: &str) -> Result<Vec<PullRow>, String> {
         .collect())
 }
 
+// ---------------------------------------------------------------------------
+// A pull request's files: whole, or one at a time when GitHub refuses
+// ---------------------------------------------------------------------------
+
+/// A pull request's changed files as read: from `gh pr diff` in one piece,
+/// or from GitHub's per-file list when it refuses the whole diff for its size.
+#[derive(Clone, Debug, Default, PartialEq, Eq)]
+pub struct PullDiff {
+    pub files: Vec<PullFileDiff>,
+    /// Read file by file, because GitHub would not send the whole diff.
+    pub by_file: bool,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct PullFileDiff {
+    pub stat: FileStat,
+    /// `None` when GitHub sent no patch for the file: too large to show, or
+    /// binary. Never an empty diff standing in for one it did not send.
+    pub diff: Option<FileDiff>,
+}
+
+impl PullDiff {
+    /// From `gh pr diff`, every file with its hunks.
+    pub fn whole(diffs: Vec<FileDiff>) -> PullDiff {
+        PullDiff {
+            files: diffs
+                .into_iter()
+                .map(|d| PullFileDiff {
+                    stat: d.stat(),
+                    diff: Some(d),
+                })
+                .collect(),
+            by_file: false,
+        }
+    }
+}
+
+/// Whether gh's failure to read a whole diff was GitHub refusing it for its
+/// size, which reading it file by file gets round: past 20,000 lines or 300
+/// files it answers 406, and a diff that takes too long to make, 422.
+pub fn refused_for_size(err: &str) -> bool {
+    err.contains("HTTP 406")
+        || err.contains("exceeded the maximum number")
+        || err.contains("too long to generate")
+        || err.contains("too_large")
+}
+
+/// GitHub's per-file list of a pull request (`gh api --paginate
+/// repos/{o}/{r}/pulls/{n}/files`): one JSON array a page, the pages
+/// printed one after another, or wrapped in one more array by `--slurp`.
+pub fn parse_pull_files(json: &str) -> Result<PullDiff, String> {
+    let mut files = Vec::new();
+    let mut pages = 0;
+    for page in serde_json::Deserializer::from_str(json).into_iter::<Value>() {
+        let page = page.map_err(|e| e.to_string())?;
+        pages += 1;
+        let rows = page.as_array().ok_or("GitHub did not answer with a list")?;
+        for row in rows {
+            // `--slurp` puts each page inside one more list.
+            match row.as_array() {
+                Some(inner) => files.extend(inner.iter().filter_map(pull_file)),
+                None => files.extend(pull_file(row)),
+            }
+        }
+    }
+    if pages == 0 {
+        return Err("GitHub's answer was empty".into());
+    }
+    Ok(PullDiff {
+        files,
+        by_file: true,
+    })
+}
+
+/// One row of the per-file list.
+fn pull_file(v: &Value) -> Option<PullFileDiff> {
+    let path = s(v, "filename")?;
+    let status = match s(v, "status").as_deref() {
+        Some("added") => Status::Added,
+        Some("removed") => Status::Deleted,
+        Some("modified") => Status::Modified,
+        Some("renamed") => Status::Renamed,
+        Some("copied") => Status::Copied,
+        Some("changed") => Status::TypeChanged,
+        Some("unchanged") => Status::Modified,
+        _ => Status::Unknown,
+    };
+    let old_path =
+        s(v, "previous_filename").filter(|_| matches!(status, Status::Renamed | Status::Copied));
+    let (added, removed) = (n(v, "additions"), n(v, "deletions"));
+    let patch = s(v, "patch");
+    // GitHub sends nothing to count for a binary file and reports its counts
+    // as 0, so with no patch and no change counted they are unknown, not zero;
+    // a file only moved has nothing inside to count, and that zero is real.
+    let moved = matches!(status, Status::Renamed | Status::Copied);
+    let counted = patch.is_some() || added.unwrap_or(0) + removed.unwrap_or(0) > 0 || moved;
+    let diff = patch.map(|p| {
+        let mut d = FileDiff {
+            old_path: old_path
+                .clone()
+                .or_else(|| (status != Status::Added).then(|| path.clone())),
+            new_path: (status != Status::Deleted).then(|| path.clone()),
+            status,
+            binary: false,
+            hunks: parse_patch(&p),
+        };
+        mark_words(&mut d);
+        d
+    });
+    Some(PullFileDiff {
+        stat: FileStat {
+            path,
+            old_path,
+            status,
+            added: if counted { added } else { None },
+            removed: if counted { removed } else { None },
+        },
+        diff,
+    })
+}
+
 /// `2026-11-07T23:01:02Z` (or with an offset, or fractional seconds) as
 /// milliseconds since the epoch. `None` for anything else.
 pub fn rfc3339_ms(t: &str) -> Option<i64> {
@@ -1490,6 +2062,92 @@ const MARKUP: Syntax = Syntax {
     types: false,
 };
 
+/// One run of markup at `i`, when markup reads it differently from code: a
+/// tag's name (`<div`, `</p`, `<!doctype`) as a keyword, an attribute's name
+/// as a type, a quoted value inside a tag as a string, and quotes in prose as
+/// nothing at all. `None` leaves the character to the common rules.
+fn markup_run(line: &str, i: usize, in_tag: &mut bool) -> Option<(usize, Option<Tok>)> {
+    let b = line.as_bytes();
+    let name = |mut j: usize| {
+        while j < b.len()
+            && (b[j].is_ascii_alphanumeric() || matches!(b[j], b'-' | b'_' | b':' | b'.'))
+        {
+            j += 1;
+        }
+        j
+    };
+    match b[i] {
+        b'<' => {
+            let mut j = i + 1;
+            if j < b.len() && matches!(b[j], b'/' | b'!' | b'?') {
+                j += 1;
+            }
+            if name(j) == j {
+                return None;
+            }
+            *in_tag = true;
+            // The `<` stays plain, and the name after it is read next.
+            Some((j, None))
+        }
+        b'>' => {
+            *in_tag = false;
+            None
+        }
+        b'"' | b'\'' if !*in_tag => Some((i + 1, None)),
+        c if *in_tag && (c.is_ascii_alphabetic() || c == b'_') => {
+            let end = name(i);
+            let prev = line[..i].trim_end();
+            // Right after `<` or `</` it is the tag's own name.
+            let tok = if prev.ends_with('<')
+                || prev.ends_with("</")
+                || prev.ends_with("<!")
+                || prev.ends_with("<?")
+            {
+                Tok::Keyword
+            } else {
+                Tok::Type
+            };
+            Some((end, Some(tok)))
+        }
+        b'\'' if *in_tag => {
+            let close = line[i + 1..]
+                .find('\'')
+                .map_or(line.len(), |at| i + 1 + at + 1);
+            Some((close, Some(Tok::String)))
+        }
+        _ => None,
+    }
+}
+
+/// One run of CSS at `i`: a property's name before its `:` as a type, and a
+/// colour such as `#5a3320` as a number. A selector's `a:hover` is told apart
+/// by the `{` its line opens.
+fn css_run(line: &str, i: usize) -> Option<(usize, Tok)> {
+    let b = line.as_bytes();
+    if b[i] == b'#' {
+        let mut j = i + 1;
+        while j < b.len() && b[j].is_ascii_hexdigit() {
+            j += 1;
+        }
+        let digits = j - i - 1;
+        let word_ends =
+            j >= b.len() || !(b[j].is_ascii_alphanumeric() || b[j] == b'_' || b[j] == b'-');
+        return (matches!(digits, 3 | 4 | 6 | 8) && word_ends).then_some((j, Tok::Number));
+    }
+    if !(b[i].is_ascii_alphabetic() || b[i] == b'-')
+        || i > 0 && (b[i - 1].is_ascii_alphanumeric() || b[i - 1] == b'-')
+    {
+        return None;
+    }
+    let mut j = i;
+    while j < b.len() && (b[j].is_ascii_alphanumeric() || b[j] == b'-' || b[j] == b'_') {
+        j += 1;
+    }
+    let after = line[j..].trim_start();
+    let property = after.starts_with(':') && !after.starts_with("::") && !line.contains('{');
+    property.then_some((j, Tok::Type))
+}
+
 /// The colourer for a file, by its name. `None` for a file read as plain text.
 pub fn syntax_for(path: &Path) -> Option<&'static Syntax> {
     let name = path.file_name()?.to_str()?.to_ascii_lowercase();
@@ -1535,6 +2193,9 @@ fn ident_char(c: char) -> bool {
 pub fn tokens(sy: &Syntax, line: &str, inside: &mut bool) -> Vec<(Range<usize>, Tok)> {
     let mut out = Vec::new();
     let mut i = 0;
+    // Markup only: between a tag's `<` and its `>`, where names are
+    // attributes and quotes are values. Prose outside a tag has no strings.
+    let mut in_tag = false;
     let b = line.as_bytes();
     while i < line.len() {
         if *inside {
@@ -1567,6 +2228,21 @@ pub fn tokens(sy: &Syntax, line: &str, inside: &mut bool) -> Vec<(Range<usize>, 
             return out;
         }
         let c = rest.chars().next().unwrap_or(' ');
+        if std::ptr::eq(sy, &MARKUP) {
+            if let Some((end, tok)) = markup_run(line, i, &mut in_tag) {
+                if let Some(tok) = tok {
+                    out.push((i..end, tok));
+                }
+                i = end;
+                continue;
+            }
+        } else if std::ptr::eq(sy, &CSS) {
+            if let Some((end, tok)) = css_run(line, i) {
+                out.push((i..end, tok));
+                i = end;
+                continue;
+            }
+        }
         if sy.quotes.contains(&c) {
             // A Rust lifetime ('a) is not a string: only a quote that closes
             // within a few characters counts as a char literal there.
@@ -2038,30 +2714,322 @@ rename to renamed.rs
         assert_eq!(status_paths(out), ["src/a.rs", "new.rs", "notes/", "b.rs"]);
     }
 
+    fn score(path: &str, query: &str) -> Option<i64> {
+        find_path(path, query).map(|f| f.score)
+    }
+
+    fn ranked<'a>(paths: &[&'a str], query: &str) -> Vec<&'a str> {
+        rank_paths(paths.iter().copied(), query)
+            .into_iter()
+            .map(|(i, _)| paths[i])
+            .collect()
+    }
+
     #[test]
     fn the_finder_ranks_a_files_own_name_above_its_folders() {
-        let mut paths = vec![
-            "app/src/main.rs",
+        let paths = [
             "docs/main/notes.md",
             "app/src/domain.rs",
+            "app/src/main.rs",
             "app/src/flyout_view.rs",
         ];
-        paths.sort_by_key(|p| std::cmp::Reverse(file_score(p, "main")));
-        assert_eq!(paths[0], "app/src/main.rs");
+        assert_eq!(ranked(&paths, "main")[0], "app/src/main.rs");
         assert!(
-            file_score("app/src/main.rs", "mrs").is_some(),
+            score("app/src/main.rs", "mrs").is_some(),
             "letters in order"
         );
-        assert_eq!(file_score("app/src/main.rs", "zzz"), None);
-        assert_eq!(
-            file_score("docs/floor-canvas/layout.png", "flyout"),
-            None,
-            "letters scattered across folders are no match"
-        );
-        assert_eq!(file_score("anything", "  "), Some(0));
+        assert_eq!(score("app/src/main.rs", "zzz"), None);
+        assert_eq!(score("anything", "  "), Some(0));
         assert!(
-            file_score("a/flyout_view.rs", "flyout") > file_score("flyout/a.rs", "flyout"),
+            score("a/flyout_view.rs", "flyout") > score("flyout/a.rs", "flyout"),
             "a name that starts with the query beats a folder holding it"
+        );
+        assert!(
+            score("app/src/view.rs", "view") > score("app/src/overview.rs", "view"),
+            "a name the word starts beats one it sits inside"
+        );
+    }
+
+    #[test]
+    fn a_finder_word_crosses_folders_only_where_a_word_starts() {
+        assert_eq!(
+            score("docs/floor-canvas/layout.png", "flyout"),
+            None,
+            "letters strewn into the middle of other folders' words are no match"
+        );
+        assert!(
+            score("app/src/flyout.rs", "srcfly").is_some(),
+            "folder, then a name"
+        );
+        assert!(
+            score("app/src/flyout.rs", "src/fly").is_some(),
+            "with the slash typed"
+        );
+        assert!(
+            score("app/src/flyout_view.rs", "flyview").is_some(),
+            "two words of one name"
+        );
+        assert!(
+            score("app/src/main.rs", "mn").is_some(),
+            "a gap inside one name is fine"
+        );
+        let paths = [
+            "app/src/flyout.rs",
+            "app/src/fly/overview.rs",
+            "app/src/flyout_view.rs",
+        ];
+        assert_eq!(
+            ranked(&paths, "flyview")[0],
+            "app/src/flyout_view.rs",
+            "both words in the one name beat letters spread over a folder and a name"
+        );
+    }
+
+    #[test]
+    fn the_finder_lights_the_letters_it_matched_at_the_starts_of_words() {
+        let path = "app/src/build_ui.rs";
+        let f = find_path(path, "ui").unwrap();
+        assert_eq!(
+            letter_ranges(path, &f.at),
+            vec![14..16],
+            "the `ui` after the underscore, not the one inside `build`"
+        );
+        let path = "app/src/flyout_view.rs";
+        let f = find_path(path, "fv").unwrap();
+        let lit: Vec<&str> = letter_ranges(path, &f.at)
+            .into_iter()
+            .map(|r| &path[r])
+            .collect();
+        assert_eq!(lit, ["f", "v"]);
+        assert!(f.at.windows(2).all(|w| w[0] < w[1]), "ascending, each once");
+    }
+
+    #[test]
+    fn a_capital_makes_a_finder_word_case_sensitive_and_every_word_must_answer() {
+        assert!(score("src/View.rs", "View").is_some());
+        assert_eq!(score("src/view.rs", "View"), None);
+        assert!(
+            score("src/View.rs", "view").is_some(),
+            "lower case is blind to case"
+        );
+        assert!(
+            score("app/src/flyout_view.rs", "view fly").is_some(),
+            "either order"
+        );
+        assert_eq!(
+            score("app/src/flyout_view.rs", "view zz"),
+            None,
+            "every word"
+        );
+        let f = find_path("app/src/flyout_view.rs", "view fly").unwrap();
+        assert_eq!(f.at.len(), 7, "both words lit");
+    }
+
+    #[test]
+    fn find_in_a_file_is_literal_and_blind_to_case_without_a_capital() {
+        let lines: Vec<String> = ["let Main = main();", "// MAIN", "nothing"]
+            .iter()
+            .map(|s| s.to_string())
+            .collect();
+        assert_eq!(
+            find_text(&lines, "main", 100),
+            vec![(0, 4..8), (0, 11..15), (1, 3..7)]
+        );
+        assert_eq!(
+            find_text(&lines, "Main", 100),
+            vec![(0, 4..8)],
+            "a capital means exactly"
+        );
+        assert_eq!(
+            find_text(&lines, "m.in", 100),
+            vec![],
+            "literal: no patterns"
+        );
+        assert_eq!(find_text(&lines, "main", 2).len(), 2, "stops at the cap");
+        assert!(find_text(&lines, "", 100).is_empty());
+        let wide = vec!["héllo héllo".to_string()];
+        assert_eq!(find_text(&wide, "héllo", 10), vec![(0, 0..6), (0, 7..13)]);
+    }
+
+    #[test]
+    fn overlay_cuts_runs_where_marks_begin_and_end() {
+        // `let x = "hi";` with a keyword run and a string run, and a mark over
+        // the end of the keyword through the start of the string.
+        let runs = [0..3, 8..12];
+        let marks = [Range { start: 2, end: 9 }];
+        assert_eq!(
+            overlay(&runs, &marks),
+            vec![
+                (0..2, Some(0), false),
+                (2..3, Some(0), true),
+                (3..8, None, true),
+                (8..9, Some(1), true),
+                (9..12, Some(1), false),
+            ]
+        );
+        assert_eq!(
+            overlay(&runs, &[]),
+            vec![(0..3, Some(0), false), (8..12, Some(1), false)]
+        );
+        assert_eq!(
+            overlay(&[], &[Range { start: 4, end: 6 }]),
+            vec![(4..6, None, true)]
+        );
+        assert_eq!(letter_ranges("abcd", &[0, 1, 3]), vec![0..2, 3..4]);
+    }
+
+    #[test]
+    fn a_changed_line_lights_the_words_that_changed_and_a_rewritten_one_lights_nothing() {
+        let (was, now) = changed_words(
+            "    let total = count_lines(&bytes);",
+            "    let total = count_lines(&head);",
+        )
+        .unwrap();
+        let old = "    let total = count_lines(&bytes);";
+        let new = "    let total = count_lines(&head);";
+        assert_eq!(
+            was.iter().map(|r| &old[r.clone()]).collect::<Vec<_>>(),
+            ["bytes"]
+        );
+        assert_eq!(
+            now.iter().map(|r| &new[r.clone()]).collect::<Vec<_>>(),
+            ["head"]
+        );
+        assert_eq!(
+            changed_words("fn main() {}", "SELECT * FROM users WHERE id = 1;"),
+            None,
+            "nothing kept: a rewrite, not an edit"
+        );
+        // A phrase changed reads as one change.
+        let (_, now) = changed_words("the quick fox", "the slow red fox").unwrap();
+        assert_eq!(now.len(), 1, "{now:?}");
+    }
+
+    #[test]
+    fn a_diff_pairs_each_removed_line_with_the_one_that_replaced_it() {
+        let text = "diff --git a/x.rs b/x.rs\n--- a/x.rs\n+++ b/x.rs\n@@ -1,3 +1,3 @@\n \
+                    keep\n-let a = 1;\n-let b = 2;\n+let a = 10;\n+let b = 2; // same\n";
+        let d = &parse_unified(text)[0];
+        let lines = &d.hunks[0].lines;
+        let lit = |i: usize| -> Vec<&str> {
+            lines[i]
+                .changed
+                .iter()
+                .map(|r| &lines[i].text[r.clone()])
+                .collect()
+        };
+        assert_eq!(lit(1), ["1"]);
+        assert_eq!(lit(3), ["10"]);
+        assert!(lit(0).is_empty(), "context is never lit");
+    }
+
+    #[test]
+    fn a_bare_patch_from_github_is_read_into_hunks() {
+        let hunks =
+            parse_patch("@@ -1,2 +1,2 @@ fn x\n-old\n+new\n same\n\\ No newline at end of file");
+        assert_eq!(hunks.len(), 1);
+        assert_eq!(hunks[0].section, "fn x");
+        assert_eq!(hunks[0].lines.len(), 4);
+        assert_eq!(hunks[0].lines[1].new, Some(1));
+        assert!(parse_patch("").is_empty());
+    }
+
+    #[test]
+    fn githubs_per_file_list_is_read_across_pages_keeping_unknown_counts_unknown() {
+        // Two pages as `gh api --paginate` prints them: one array after another.
+        let pages = r#"[
+          {"filename":"src/a.rs","status":"modified","additions":1,"deletions":1,"changes":2,
+           "patch":"@@ -1 +1 @@\n-a\n+b"},
+          {"filename":"logo.png","status":"added","additions":0,"deletions":0,"changes":0}
+        ][
+          {"filename":"big.json","status":"added","additions":90000,"deletions":0,"changes":90000},
+          {"filename":"new/name.rs","previous_filename":"old/name.rs","status":"renamed",
+           "additions":0,"deletions":0,"changes":0}
+        ]"#;
+        let d = parse_pull_files(pages).unwrap();
+        assert!(d.by_file);
+        let paths: Vec<&str> = d.files.iter().map(|f| f.stat.path.as_str()).collect();
+        assert_eq!(paths, ["src/a.rs", "logo.png", "big.json", "new/name.rs"]);
+        assert_eq!(d.files[0].diff.as_ref().unwrap().hunks[0].lines.len(), 2);
+        assert_eq!(
+            (d.files[1].stat.added, d.files[1].diff.is_none()),
+            (None, true),
+            "a binary file's counts are unknown, not zero"
+        );
+        assert_eq!(
+            (d.files[2].stat.added, d.files[2].diff.is_none()),
+            (Some(90000), true),
+            "withheld for its size: counted, with no patch"
+        );
+        assert_eq!(d.files[3].stat.old_path.as_deref(), Some("old/name.rs"));
+        assert_eq!(d.files[3].stat.added, Some(0), "only moved: a real zero");
+        // `--slurp` wraps the pages in one more array.
+        let slurped = format!("[{}]", pages.replacen("][", "],[", 1));
+        assert_eq!(parse_pull_files(&slurped).unwrap().files.len(), 4);
+        assert!(parse_pull_files("").is_err());
+        assert!(parse_pull_files("{\"message\":\"Not Found\"}").is_err());
+    }
+
+    #[test]
+    fn a_refusal_for_size_is_told_apart_from_other_failures() {
+        assert!(refused_for_size(
+            "could not find pull request diff: HTTP 406: Sorry, the diff exceeded the maximum \
+             number of lines (20000) (https://api.github.com/repos/o/r/pulls/844)"
+        ));
+        assert!(refused_for_size(
+            "HTTP 422: Server Error: Sorry, this diff is taking too long to generate."
+        ));
+        assert!(!refused_for_size("HTTP 404: Not Found"));
+        assert!(!refused_for_size(
+            "gh is not signed in. Run `gh auth login` in a terminal."
+        ));
+    }
+
+    #[test]
+    fn markup_colours_tags_and_attributes_and_css_its_properties() {
+        let lit = |sy: &Syntax, line: &str| -> Vec<(String, Tok)> {
+            let mut inside = false;
+            tokens(sy, line, &mut inside)
+                .into_iter()
+                .map(|(r, t)| (line[r].to_string(), t))
+                .collect()
+        };
+        let html = syntax_for(Path::new("tv.html")).unwrap();
+        assert_eq!(
+            lit(
+                html,
+                r#"<link rel="icon" href='/f.svg'>it's "plain" prose</link>"#
+            ),
+            vec![
+                ("link".into(), Tok::Keyword),
+                ("rel".into(), Tok::Type),
+                ("\"icon\"".into(), Tok::String),
+                ("href".into(), Tok::Type),
+                ("'/f.svg'".into(), Tok::String),
+                ("link".into(), Tok::Keyword),
+            ],
+            "quotes in prose are not strings"
+        );
+        assert_eq!(
+            lit(html, "<!doctype html>")[0],
+            ("doctype".into(), Tok::Keyword)
+        );
+        assert_eq!(lit(html, "a < b"), vec![], "a lone < opens no tag");
+        let css = syntax_for(Path::new("site.css")).unwrap();
+        let got = lit(css, "  background-color: #5a3320; /* wood */");
+        assert_eq!(
+            &got[..2],
+            &[
+                ("background-color".to_string(), Tok::Type),
+                ("#5a3320".to_string(), Tok::Number),
+            ]
+        );
+        assert!(got[2..].iter().all(|(_, t)| *t == Tok::Comment), "{got:?}");
+        assert!(
+            !lit(css, "a:hover, .tv { color: red }")
+                .iter()
+                .any(|(w, t)| w == "a" && *t == Tok::Type),
+            "a selector is not a property"
         );
     }
 

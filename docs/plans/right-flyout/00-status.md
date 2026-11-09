@@ -148,3 +148,60 @@ a `gh` that is signed out was not tried for real.
 
 Post-hoc difficulty: **7 / 10** held. The work could have been wrong for a while unnoticed in
 exactly the places the tests and the review found it (a git config, a focus plan, a narrow tile).
+
+---
+
+# Round 2: what Parker found trying it, and a second pass
+
+**Difficulty: 6 / 10**, scored before any code: four asks against code already standing, each
+visible the moment it is wrong, but one of them hosts the floating square's document view in a
+new place, and that view is strict about where it is drawn. Six buys one plan page and one
+approval; Parker's "do another pass and make it better" is the approval, and the two calls the
+policy stopped on were asked and answered (both as recommended). Calls: `round2.calls.json`.
+
+## What he said (2026-11-08, afternoon, testing on workspace 7)
+
+> files need search --- fuzzy style --- PR [#844: "could not find pull request diff: HTTP 406:
+> Sorry, the diff exceeded the maximum number of lines (20000)"] not sure if that can be
+> solved... then also the draft [its tab] the tab gets an x to close on the left hand of the tab
+
+> [tv.html in a File tab, shown as source] html does not render
+
+> [#752's Files face] looks good for other stuff
+
+> Great - I mean - do another pass and ... make it better? spend LOTS of tokens doing really
+> really good work!
+
+## The plan
+
+- **Big pull requests.** GitHub refuses one whole diff past 20,000 lines (HTTP 406), but its
+  per-file list (`pulls/{n}/files`, up to 3,000 files, 100 a page) carries each file's own patch.
+  When `gh pr diff` is refused for size, the Files face reads that list instead. A file GitHub
+  sends no patch for (too large, or binary) is listed with its counts and says so, with a way to
+  GitHub; more than 3,000 files says how many were not listed.
+- **Search, fuzzy.** One matcher in `flyout.rs`, fzf-style: every letter of each word in order,
+  anywhere in the path; word starts, runs and the file's own name score high, gaps cost; a capital
+  makes a word case-sensitive. Used by the `+` page's finder, and by a filter over the Changes list
+  and a pull request's Files list (`/`, Ctrl+F or a click; best match first, matched letters lit,
+  Enter opens the best, Esc clears). Inside a File tab, `/` finds text literally, every hit lit,
+  Enter and Shift+Enter step, a count beside it.
+- **Tabs.** The × sits at the left of every tab, quiet until the pointer is on it. A pull
+  request's ⇄ takes its state's colour (open, draft, merged, closed), as GitHub colours its icon.
+- **Documents drawn.** A File tab on an HTML page, a Markdown file, a picture or a PDF hosts the
+  floating square's own `DocumentView` (the same engine, headless Chromium for pages), with `s`
+  flipping to the source. Links in a page open beside it: a file in a new tab, a pull request as
+  a pull request, anything else in the browser. Without Chromium, the source shows with the reason.
+- **Reading diffs.** The file a diff list is scrolled into keeps its row pinned at the top. Words
+  that changed inside a changed line are lit. A line number in the Changes tab opens the file at
+  that line. A pull request's Files and Conversation faces wear a one-line header.
+- **Reading files.** A File tab scrolls sideways for long lines instead of cutting them at the edge.
+
+## Progress (round 2)
+
+- [ ] Model: matcher, per-file pull request read, changed words, find, run overlay (+ tests)
+- [ ] View: tabs, filters and finder, find bar, big pull requests, documents, sticky rows, words
+- [ ] Strings in nine languages
+- [ ] Window tests, full suite, clippy, rustfmt
+- [ ] Photographed on the Xvfb rig (#844 for real)
+- [ ] One Codex review round, said out loud
+- [ ] Follow-up brief; workspace 7 window on the build
