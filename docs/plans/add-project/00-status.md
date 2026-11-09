@@ -96,7 +96,8 @@ palette has.
 - [x] Six mutations, each caught; real ssh to farbox tried once by hand (read-only
       listing: 0.30 s, then 0.06 s over the shared connection, nothing hung)
 - [x] One Codex review round (read-only, said out loud): seven findings, all fixed
-- [ ] Brief, push, the test window on workspace 7
+- [x] Brief (`reports/2026-11-08-add-a-project.html`), pushed, the test window on workspace 7
+      reopened on this build (its terminal host and the t3 shells kept)
 
 ## Surprises
 
@@ -136,3 +137,16 @@ My own reading before the round added two: a run dropped with the composer now k
 its program, and a run stopped with Esc never becomes the project.
 
 ## Outcome
+
+**Post-hoc: 6 / 10; the score held.** One plan page was the right size: the two asks it
+raised came back as the recommendation both times, and everything after was carried
+under "do not ask any questions". What the score did not predict was where the work
+would be wrong: not in the dialog's logic, which held through six mutations, but in the
+corners a second reader found (a config's `accept-new`, an `Include` inside a block, a
+name with a line break, a listing gone stale, two writers at once) and in a layout that
+only a photograph showed. The suite was run three times on a machine at a load average
+of 40 to 70 from other agents; each run failed one or two different timing tests in
+areas this work does not touch. Three of the four passed every time alone; the fourth,
+which reads a printed link off a terminal screen, failed once in three alone too and was
+filed as issue 1398 (the handover scan reads before the wrapped half arrives).
+
