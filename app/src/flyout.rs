@@ -578,12 +578,73 @@ fn align(
     Some((best, at))
 }
 
+/// [`align`] without the table: each letter at the first place it can go,
+/// scored the same way. What a list too large to score exactly gets once the
+/// exact scoring has spent its budget, so a pasted query over a huge tree
+/// cannot stall the window; it can miss a better alignment, never a rule.
+fn align_greedy(
+    text: &[char],
+    bonus: &[i32],
+    term: &[char],
+    sensitive: bool,
+    mid_gaps: bool,
+) -> Option<(i32, Vec<usize>)> {
+    let same = |a: char, b: char| a == b || !sensitive && a.to_lowercase().eq(b.to_lowercase());
+    let mut at: Vec<usize> = Vec::with_capacity(term.len());
+    let (mut score, mut run, mut i) = (0i32, 0i32, 0usize);
+    for &c in term {
+        let prev = at.last().copied();
+        while i < text.len()
+            && !(same(text[i], c) && (prev.is_none_or(|p| p + 1 == i) || mid_gaps || bonus[i] > 0))
+        {
+            i += 1;
+        }
+        if i >= text.len() {
+            return None;
+        }
+        let b = bonus[i];
+        match prev {
+            None => {
+                score += SCORE_MATCH + b * FIRST_LETTER;
+                run = b;
+            }
+            Some(p) if p + 1 == i => {
+                run = run.max(b).max(BONUS_RUN);
+                score += SCORE_MATCH + run;
+            }
+            Some(p) => {
+                score += GAP_START + GAP_EXTEND * (i - p - 2) as i32 + SCORE_MATCH + b;
+                run = b;
+            }
+        }
+        at.push(i);
+        i += 1;
+    }
+    Some((score, at))
+}
+
+/// The longest word of a query that is matched letter by letter: past it, a
+/// word is cut, since nobody types more of a path than this to find it.
+const TERM_LETTERS: usize = 64;
+/// Table cells [`rank_paths`] may spend scoring exactly, over a whole list.
+const EXACT_CELLS: u64 = 40_000_000;
+
+/// One way of aligning a word: exactly ([`align`]) or greedily.
+type Align = fn(&[char], &[i32], &[char], bool, bool) -> Option<(i32, Vec<usize>)>;
+
 /// How well `path` answers `query`, fzf-style: each word of the query is its
 /// letters in order, anywhere in the path; a capital makes that word
 /// case-sensitive. A word that fits in the file's own name is read there and
 /// counts for more, and a name that is the query, or starts with it, comes
 /// first. `None` when it does not answer; an empty query answers everything.
 pub fn find_path(path: &str, query: &str) -> Option<Found> {
+    let mut unlimited = u64::MAX;
+    find_path_within(path, query, &mut unlimited)
+}
+
+/// [`find_path`] scoring exactly while `budget` (table cells) lasts, and
+/// greedily after: what a list shares across all its paths.
+fn find_path_within(path: &str, query: &str, budget: &mut u64) -> Option<Found> {
     let terms: Vec<&str> = query.split_whitespace().collect();
     if terms.is_empty() {
         return Some(Found::default());
@@ -597,9 +658,18 @@ pub fn find_path(path: &str, query: &str) -> Option<Found> {
     let mut score = 0i64;
     let mut at = std::collections::BTreeSet::new();
     for term in &terms {
-        let letters: Vec<char> = term.chars().collect();
-        let sensitive = term.chars().any(char::is_uppercase);
-        let in_name = align(
+        let letters: Vec<char> = term.chars().take(TERM_LETTERS).collect();
+        let sensitive = letters.iter().any(|c| c.is_uppercase());
+        let mut exact = |n: usize| -> Align {
+            let cells = (n * letters.len()) as u64;
+            if *budget >= cells {
+                *budget -= cells;
+                align
+            } else {
+                align_greedy
+            }
+        };
+        let in_name = exact(text.len() - name_at)(
             &text[name_at..],
             &bonus[name_at..],
             &letters,
@@ -612,7 +682,7 @@ pub fn find_path(path: &str, query: &str) -> Option<Found> {
                 idx.into_iter().map(|i| i + name_at).collect::<Vec<_>>(),
             ),
             None => {
-                let (s, idx) = align(&text, &bonus, &letters, sensitive, false)?;
+                let (s, idx) = exact(text.len())(&text, &bonus, &letters, sensitive, false)?;
                 (i64::from(s), idx)
             }
         };
@@ -644,10 +714,11 @@ pub fn rank_paths<'a>(
     paths: impl IntoIterator<Item = &'a str>,
     query: &str,
 ) -> Vec<(usize, Found)> {
+    let mut budget = EXACT_CELLS;
     let mut hits: Vec<(usize, &str, Found)> = paths
         .into_iter()
         .enumerate()
-        .filter_map(|(i, p)| find_path(p, query).map(|f| (i, p, f)))
+        .filter_map(|(i, p)| find_path_within(p, query, &mut budget).map(|f| (i, p, f)))
         .collect();
     hits.sort_by(|a, b| b.2.score.cmp(&a.2.score).then_with(|| a.1.cmp(b.1)));
     hits.into_iter().map(|(i, _, f)| (i, f)).collect()
@@ -1706,8 +1777,9 @@ impl PullDiff {
 /// size, which reading it file by file gets round: past 20,000 lines or 300
 /// files it answers 406, and a diff that takes too long to make, 422.
 pub fn refused_for_size(err: &str) -> bool {
-    err.contains("HTTP 406")
-        || err.contains("exceeded the maximum number")
+    // GitHub's own words, not the status alone: a 406 for any other reason
+    // is shown as it is rather than retried as if it were this one.
+    err.contains("exceeded the maximum number")
         || err.contains("too long to generate")
         || err.contains("too_large")
 }
@@ -1757,10 +1829,10 @@ fn pull_file(v: &Value) -> Option<PullFileDiff> {
     let (added, removed) = (n(v, "additions"), n(v, "deletions"));
     let patch = s(v, "patch");
     // GitHub sends nothing to count for a binary file and reports its counts
-    // as 0, so with no patch and no change counted they are unknown, not zero;
-    // a file only moved has nothing inside to count, and that zero is real.
-    let moved = matches!(status, Status::Renamed | Status::Copied);
-    let counted = patch.is_some() || added.unwrap_or(0) + removed.unwrap_or(0) > 0 || moved;
+    // as 0, so with no patch and no change counted they are unknown, not zero.
+    // That holds for a moved file too: GitHub answers a pure move and a moved
+    // binary that changed alike, so neither is drawn as +0 −0.
+    let counted = patch.is_some() || added.unwrap_or(0) + removed.unwrap_or(0) > 0;
     let diff = patch.map(|p| {
         let mut d = FileDiff {
             old_path: old_path
@@ -2773,6 +2845,22 @@ rename to renamed.rs
             score("app/src/main.rs", "mn").is_some(),
             "a gap inside one name is fine"
         );
+        // Past its budget a list is scored greedily: the same rules, so the
+        // strewn letters stay refused and an honest match still answers.
+        let mut spent = 0;
+        assert_eq!(
+            find_path_within("docs/floor-canvas/layout.png", "flyout", &mut spent),
+            None
+        );
+        let path = "app/src/flyout_view.rs";
+        let greedy = find_path_within(path, "flyview", &mut spent).unwrap();
+        assert_eq!(
+            letter_ranges(path, &greedy.at)
+                .into_iter()
+                .map(|r| &path[r])
+                .collect::<Vec<_>>(),
+            ["fly", "view"]
+        );
         let paths = [
             "app/src/flyout.rs",
             "app/src/fly/overview.rs",
@@ -2962,7 +3050,10 @@ rename to renamed.rs
             "withheld for its size: counted, with no patch"
         );
         assert_eq!(d.files[3].stat.old_path.as_deref(), Some("old/name.rs"));
-        assert_eq!(d.files[3].stat.added, Some(0), "only moved: a real zero");
+        assert_eq!(
+            d.files[3].stat.added, None,
+            "moved with no patch: a pure move and a changed binary look alike, so unknown"
+        );
         // `--slurp` wraps the pages in one more array.
         let slurped = format!("[{}]", pages.replacen("][", "],[", 1));
         assert_eq!(parse_pull_files(&slurped).unwrap().files.len(), 4);
@@ -2980,6 +3071,10 @@ rename to renamed.rs
             "HTTP 422: Server Error: Sorry, this diff is taking too long to generate."
         ));
         assert!(!refused_for_size("HTTP 404: Not Found"));
+        assert!(
+            !refused_for_size("HTTP 406: Not Acceptable"),
+            "the status alone is not the reason"
+        );
         assert!(!refused_for_size(
             "gh is not signed in. Run `gh auth login` in a terminal."
         ));

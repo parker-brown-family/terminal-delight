@@ -1433,20 +1433,45 @@ impl Workspace {
 
     // ---- what agents handed over ------------------------------------------
 
-    /// The pane that handed `path` over, wherever it sits in the window, and
-    /// what it called it: what makes a tab wear ✦, and who its notes go to.
-    fn delivered(&self, path: &Path, cx: &App) -> Option<(Entity<TerminalView>, String)> {
+    /// Every handover of `path` in the window: the pane, the ledger's own
+    /// key for it, and what the agent called it. A ledger keys a file by the
+    /// path the agent wrote, which can name it differently from the flyout (a
+    /// symlink, a `..`), so a key that does not match is tried again by the
+    /// file it names — only for an entry with the same file name, which keeps
+    /// it to a string compare on every other.
+    fn handed(&self, path: &Path, cx: &App) -> Vec<(Entity<TerminalView>, String, String)> {
         let key = path.to_string_lossy();
+        let name = path.file_name();
+        let mut out = Vec::new();
         for t in &self.tabs {
             let mut leaves = Vec::new();
             t.root.leaves(&mut leaves);
             for l in leaves {
-                if let Some(h) = l.read(cx).handovers().get(&key) {
-                    return Some((l.clone(), h.label.clone()));
+                for h in l.read(cx).handovers().newest_first() {
+                    let k = h.key();
+                    let same = k == key
+                        || h.path().is_some_and(|p| {
+                            p.file_name() == name
+                                && std::fs::canonicalize(&p).ok().is_some_and(|c| {
+                                    std::fs::canonicalize(path).ok().as_ref() == Some(&c)
+                                })
+                        });
+                    if same {
+                        out.push((l.clone(), k, h.label.clone()));
+                    }
                 }
             }
         }
-        None
+        out
+    }
+
+    /// The pane that handed `path` over, wherever it sits in the window, and
+    /// what it called it: what makes a tab wear ✦, and who its notes go to.
+    fn delivered(&self, path: &Path, cx: &App) -> Option<(Entity<TerminalView>, String)> {
+        self.handed(path, cx)
+            .into_iter()
+            .next()
+            .map(|(pane, _, label)| (pane, label))
     }
 
     /// The pane `id`, wherever it sits.
@@ -1467,20 +1492,13 @@ impl Workspace {
         let Target::File { path } = target else {
             return;
         };
-        let key = path.to_string_lossy().into_owned();
-        let mut leaves = Vec::new();
-        for t in &self.tabs {
-            t.root.leaves(&mut leaves);
-        }
-        let holders: Vec<Entity<TerminalView>> = leaves
+        let unread: Vec<(Entity<TerminalView>, String)> = self
+            .handed(path, cx)
             .into_iter()
-            .filter(|l| {
-                let v = l.read(cx);
-                v.handovers().contains(&key) && !v.handovers().is_opened(&key)
-            })
-            .cloned()
+            .filter(|(l, key, _)| !l.read(cx).handovers().is_opened(key))
+            .map(|(l, key, _)| (l, key))
             .collect();
-        for l in holders {
+        for (l, key) in unread {
             l.update(cx, |v, cx| {
                 v.mark_handover_opened(&key);
                 cx.notify();
@@ -2608,6 +2626,33 @@ impl Workspace {
     }
 
     fn flyout_close_tab(&mut self, i: usize, cx: &mut Context<Self>) {
+        // A brief with notes not yet saved into its file keeps itself open
+        // once, saying what would be lost, as it does in a pane; the tab is
+        // shown so that is seen. Only when no other task shows the same
+        // file, since closing one of two tabs loses nothing.
+        if let Some(t) = self.side().and_then(|s| s.tabs.get(i)).cloned() {
+            let elsewhere = self
+                .tabs
+                .iter()
+                .enumerate()
+                .any(|(k, tab)| k != self.active && tab.side.tabs.contains(&t));
+            if !elsewhere {
+                if let Some(view) = self.face_of(&t) {
+                    if view.update(cx, |v, cx| v.guard_close(cx)) {
+                        if let Some(side) = self.side_mut() {
+                            side.active = i;
+                        }
+                        self.flyout.adding = false;
+                        if let Some(Live::File(f)) = self.flyout.live.get_mut(&t) {
+                            f.source = false;
+                        }
+                        self.flyout_faces(cx);
+                        cx.notify();
+                        return;
+                    }
+                }
+            }
+        }
         let gone = self.side_mut().and_then(|s| s.close(i));
         // Drop what it read when no task still shows it.
         if let Some(t) = gone {
@@ -2855,22 +2900,22 @@ impl Workspace {
         }
         let m = &ks.modifiers;
         let key = ks.key.as_str();
-        if m.control && m.shift && key == "r" {
-            self.flyout_toggle(window, cx);
-            return true;
-        }
         let current = if self.flyout_adding() {
             None
         } else {
             self.side_current()
         };
-        // A note being written on a page has every key, chords and all:
-        // what is typed there is the note's.
+        // A note being written on a page has every key, chords and all —
+        // Ctrl+Shift+R too, which would take the note away mid-word.
         if let Some(view) = current.as_ref().and_then(|t| self.paged_face(t)) {
             if view.read(cx).has_caret() {
                 view.update(cx, |v, cx| v.key(ks, cx));
                 return true;
             }
+        }
+        if m.control && m.shift && key == "r" {
+            self.flyout_toggle(window, cx);
+            return true;
         }
         if m.control && !m.shift && !m.alt && key == "w" {
             let at = self.side().map_or(0, |s| s.active);
@@ -3108,6 +3153,8 @@ impl Workspace {
                     }
                     _ => return,
                 };
+                // Only the rows drawn can be walked to.
+                let paths = &paths[..paths.len().min(LIST_ROWS)];
                 let n = paths.len();
                 let to = match key {
                     "up" | "k" => cursor.saturating_sub(1),
@@ -4148,8 +4195,9 @@ impl Workspace {
                     // What GitHub's per-file list says about a file it sent no
                     // patch for: only moved (a real zero), too large to send
                     // (counted), or nothing counted at all (binary, most likely).
+                    let moved = matches!(file.status, Status::Renamed | Status::Copied);
                     let said = match (file.added, file.removed) {
-                        (Some(0), Some(0)) => f.pr_moved,
+                        (None, None) if moved => f.pr_moved,
                         (Some(_), _) | (_, Some(_)) => f.pr_withheld,
                         (None, None) => f.pr_no_patch,
                     };
@@ -4218,6 +4266,10 @@ impl Workspace {
         };
         let counts: AnyElement = if dir {
             small(f.untracked_dir, ink.faint, sk, s).into_any_element()
+        } else if file.binary() && matches!(file.status, Status::Renamed | Status::Copied) {
+            // Moved, with nothing counted: the old name beside it says what
+            // is known, and "binary" would claim what is not.
+            div().into_any_element()
         } else if file.binary() {
             small(f.binary, ink.faint, sk, s).into_any_element()
         } else {
@@ -6946,11 +6998,14 @@ mod tests {
         let (ws, cx) = flyout_window(cx);
         redraw(cx);
         let dir = std::env::temp_dir().join(format!("td-flyout-handed-{}", std::process::id()));
-        std::fs::create_dir_all(&dir).unwrap();
-        let brief = dir.join("brief.md");
-        std::fs::write(&brief, "# The brief\n\nWhat was made.\n").unwrap();
-        let brief = std::fs::canonicalize(&brief).unwrap();
-        let key = brief.to_string_lossy().into_owned();
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(dir.join("real")).unwrap();
+        std::fs::write(dir.join("real/brief.md"), "# The brief\n\nWhat was made.\n").unwrap();
+        // The agent names the file through a symlinked folder; the flyout
+        // opens the file itself. The two must still be one handover.
+        std::os::unix::fs::symlink(dir.join("real"), dir.join("link")).unwrap();
+        let brief = std::fs::canonicalize(dir.join("real/brief.md")).unwrap();
+        let key = dir.join("link/brief.md").to_string_lossy().into_owned();
         let pane = ws.read_with(cx, |ws, _| {
             let mut leaves = Vec::new();
             ws.tabs[ws.active].root.leaves(&mut leaves);
