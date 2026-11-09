@@ -154,7 +154,7 @@ fn plain_alias(pattern: &str) -> bool {
 /// for ssh.
 pub fn parse_ssh_config(text: &str, read: &mut dyn FnMut(&str) -> Vec<String>) -> SshHosts {
     let mut hosts: Vec<SshHost> = Vec::new();
-    collect_hosts(text, read, &mut hosts, 0);
+    collect_hosts(text, read, &mut hosts, 0, None);
     let mut out = SshHosts::default();
     for host in hosts {
         if host.is_git_host() {
@@ -166,11 +166,15 @@ pub fn parse_ssh_config(text: &str, read: &mut dyn FnMut(&str) -> Vec<String>) -
     out
 }
 
+/// `inherited` is the block an `Include` stood in: what the included file
+/// says before its own first `Host` line belongs to that block, as it does for
+/// ssh, so a `User git` kept in an included file still marks a git remote.
 fn collect_hosts(
     text: &str,
     read: &mut dyn FnMut(&str) -> Vec<String>,
     hosts: &mut Vec<SshHost>,
     depth: usize,
+    inherited: Option<usize>,
 ) {
     // ssh stops at sixteen; a loop of includes should not hang a dialog.
     if depth > 8 {
@@ -178,7 +182,7 @@ fn collect_hosts(
     }
     // The block being read: an index into `hosts`, or none for a block that
     // names no alias of its own.
-    let mut current: Option<usize> = None;
+    let mut current: Option<usize> = inherited;
     for line in text.lines() {
         match config_line(line) {
             None => {}
@@ -204,7 +208,7 @@ fn collect_hosts(
             Some(ConfigLine::Include(paths)) => {
                 for path in paths {
                     for included in read(&path) {
-                        collect_hosts(&included, read, hosts, depth + 1);
+                        collect_hosts(&included, read, hosts, depth + 1, current);
                     }
                 }
             }
@@ -305,7 +309,10 @@ pub fn hosts_not_added(hosts: &[SshHost], machines: &[Machine]) -> Vec<SshHost> 
 ///
 /// `BatchMode` so nothing ever waits on a password or a host-key question in
 /// a terminal nobody can see: a host that needs one is refused with ssh's own
-/// reason, and the person is told how to answer it once themselves. A short
+/// reason, and the person is told how to answer it once themselves.
+/// `StrictHostKeyChecking=yes` because `BatchMode` only stops the asking: a
+/// config that says `accept-new` would still take an unseen key without a
+/// word, and this dialog promises never to (Codex's review, round one). A short
 /// connect timeout so an unreachable machine says so in seconds. And, when
 /// there is a private runtime folder, a shared connection: browsing a far
 /// folder is one ssh call per folder, and without it every call pays a whole
@@ -314,6 +321,8 @@ pub fn ssh_args(dest: &str, control_dir: Option<&Path>) -> Vec<String> {
     let mut args: Vec<String> = [
         "-o",
         "BatchMode=yes",
+        "-o",
+        "StrictHostKeyChecking=yes",
         "-o",
         "ConnectTimeout=8",
         "-o",
@@ -366,15 +375,19 @@ const HOME_OF: &str = r#"home_of() { case $1 in "~") printf '%s' "$HOME" ;; "~/"
 "#;
 
 /// Lists the folders in `$1`: `at <absolute path>` first, then one line per
-/// folder, `g` for a git checkout and `d` for the rest; or `missing`.
+/// folder, `g` for a git checkout and `d` for the rest; or `missing`. A name
+/// holding a line break is left out: printed, it would read as two folders,
+/// and a row would open one that is not there (Codex's review, round one).
 pub fn list_script() -> String {
     format!(
         r#"{HOME_OF}d=$(home_of "$1")
 if [ ! -e "$d" ]; then echo missing; exit 0; fi
 cd -- "$d" || exit 3
 printf 'at %s\n' "$(pwd)"
+nl='
+'
 for e in * .*; do
-  case $e in .|..) continue ;; esac
+  case $e in .|..|*"$nl"*) continue ;; esac
   [ -d "$e" ] || continue
   if [ -e "$e/.git" ]; then printf 'g %s\n' "$e"; else printf 'd %s\n' "$e"; fi
 done
@@ -382,12 +395,16 @@ done
     )
 }
 
-/// Makes `$1` (and any folder above it that is missing), then says where it
-/// is and whether it is a git checkout.
+/// Makes `$1` (and any folder above it that is missing) when `$2` is `make`,
+/// then says where it is and whether it is a git checkout. With `$2` anything
+/// else it only looks, and says `missing` when nothing is there: a plain Enter
+/// adds what is there, read at the moment of adding, and never makes a folder
+/// a stale listing said existed (Codex's review, round one).
 pub fn make_script() -> String {
     format!(
         r#"{HOME_OF}d=$(home_of "$1")
-mkdir -p -- "$d" && cd -- "$d" || exit 3
+if [ "$2" = make ]; then mkdir -p -- "$d" || exit 3; elif [ ! -d "$d" ]; then echo missing; exit 0; fi
+cd -- "$d" || exit 3
 printf 'at %s\n' "$(pwd)"
 if [ -e .git ]; then echo git; fi
 "#
@@ -531,11 +548,13 @@ pub fn list_local(dir: &Path) -> Result<Listing, String> {
     let mut folders = Vec::new();
     for entry in entries.flatten() {
         let path = entry.path();
-        if !path.is_dir() {
+        let name = entry.file_name().to_string_lossy().to_string();
+        // Left out on both sides alike; see `list_script`.
+        if !path.is_dir() || name.contains(['\n', '\r']) {
             continue;
         }
         folders.push(Folder {
-            name: entry.file_name().to_string_lossy().to_string(),
+            name,
             git: path.join(".git").exists(),
         });
     }
@@ -555,15 +574,19 @@ pub fn list_local(dir: &Path) -> Result<Listing, String> {
 }
 
 /// Read what [`make_script`], [`clone_script`] and [`init_script`] print: the
-/// folder's absolute path, and whether it is a git checkout.
-pub fn parse_made(out: &str) -> Result<(String, bool), String> {
+/// folder's absolute path and whether it is a git checkout, `Ok(None)` when
+/// the make script only looked and found nothing there.
+pub fn parse_made(out: &str) -> Result<Option<(String, bool)>, String> {
+    if out.lines().next() == Some("missing") {
+        return Ok(None);
+    }
     let mut lines = out.lines();
     let path = lines
         .next()
         .and_then(|l| l.strip_prefix("at "))
         .filter(|p| p.starts_with('/'))
         .ok_or_else(|| format!("unexpected answer: {}", last_line(out)))?;
-    Ok((path.to_string(), lines.any(|l| l == "git")))
+    Ok(Some((path.to_string(), lines.any(|l| l == "git"))))
 }
 
 /// The path field, read: the folder whose contents are listed (everything up
@@ -841,7 +864,21 @@ pub fn load_projects(config: &Path) -> Result<Vec<Added>, String> {
 /// Append a block to a TOML file, made with `header` if it is not there yet,
 /// through a temporary file and a rename so a reader never sees half of it.
 /// What is already in the file, comments included, is kept as written.
+///
+/// Two windows adding at once take turns on a lock file beside it, and each
+/// writes a temp file of its own, so neither loses the other's line (Codex's
+/// review, round one). The lock is released when the file closes.
 fn append_block(path: &Path, header: &str, block: &str) -> Result<(), String> {
+    if let Some(dir) = path.parent() {
+        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
+    }
+    let lock = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(path.with_extension("toml.lock"))
+        .map_err(|e| e.to_string())?;
+    lock.lock().map_err(|e| e.to_string())?;
     let existing = match std::fs::read_to_string(path) {
         Ok(text) => text,
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => header.to_string(),
@@ -855,12 +892,19 @@ fn append_block(path: &Path, header: &str, block: &str) -> Result<(), String> {
         text.push('\n');
     }
     text.push_str(block);
-    if let Some(dir) = path.parent() {
-        std::fs::create_dir_all(dir).map_err(|e| e.to_string())?;
-    }
-    let tmp = path.with_extension("toml.tmp");
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    let tmp = path.with_extension(format!(
+        "toml.{}-{}.tmp",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ));
     std::fs::write(&tmp, &text).map_err(|e| e.to_string())?;
-    std::fs::rename(&tmp, path).map_err(|e| e.to_string())
+    let renamed = std::fs::rename(&tmp, path).map_err(|e| e.to_string());
+    if renamed.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    renamed
 }
 
 /// Remember an added project, once: the same folder on the same machine is

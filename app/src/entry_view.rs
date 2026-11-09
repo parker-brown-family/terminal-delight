@@ -551,7 +551,7 @@ impl Workspace {
             );
         }
         let seat = if filed {
-            self.composer_seat(&cwd, cx)
+            self.composer_seat(&cwd, far_project.is_some(), cx)
         } else {
             Seat::Loose
         };
@@ -659,8 +659,12 @@ impl Workspace {
     /// folders* names one. Never in whatever branch the person happens to be
     /// standing in: a project was chosen, so the tab belongs to it, and on a
     /// fresh window that branch is no branch at all.
-    fn composer_seat(&mut self, cwd: &std::path::Path, cx: &mut Context<Self>) -> Seat {
-        for (ti, tab) in self.tabs.iter().enumerate() {
+    ///
+    /// A far project's folder is on another machine, so no terminal here is
+    /// standing in it, whatever path the two share: its tab is filed by name
+    /// only (Codex's review, round one).
+    fn composer_seat(&mut self, cwd: &std::path::Path, far: bool, cx: &mut Context<Self>) -> Seat {
+        for (ti, tab) in self.tabs.iter().enumerate().filter(|_| !far) {
             if self.place_of(ti).unfiled() {
                 continue;
             }

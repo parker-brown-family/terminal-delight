@@ -665,3 +665,83 @@ fn escape_walks_back_one_step_and_both_doors_open_the_dialog(cx: &mut gpui::Test
         "the ＋ opens it"
     );
 }
+
+/// A plain Enter adds only what is there at the moment of adding: a folder
+/// deleted after its listing was read is not made again behind the person's
+/// back (Codex's review, round one).
+#[gpui::test]
+fn a_plain_enter_never_remakes_a_folder_gone_since_its_listing(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    let (home, config, bin) = (
+        Scratch::new("home"),
+        Scratch::new("config"),
+        Scratch::new("bin"),
+    );
+    std::fs::create_dir_all(home.path().join("Work/beta")).unwrap();
+    let ssh = fake_ssh(bin.path(), home.path());
+    open(&ws, cx, vec![here()], "", config.path(), home.path(), &ssh);
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.rows().len() == 2),
+        &ws,
+    );
+    cx.simulate_keystrokes("b e t a");
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.exists() == Some(true)),
+        &ws,
+    );
+    std::fs::remove_dir(home.path().join("Work/beta")).unwrap();
+    cx.simulate_keystrokes("enter");
+    settle(
+        cx,
+        |ws| browse(ws).is_some_and(|b| b.work.is_none() && b.note.is_some()),
+        &ws,
+    );
+    assert!(!home.path().join("Work/beta").exists(), "not made again");
+    ws.read_with(cx, |ws, _| {
+        let note = browse(ws).unwrap().note.clone().unwrap();
+        assert!(note.contains("does not exist yet"), "{note}");
+        assert!(adding(ws).is_some(), "the dialog stays, nothing chosen");
+    });
+}
+
+/// A long ssh config scrolls: the highlighted machine is always drawn, and
+/// what is below the window is counted (Codex's review, round one).
+#[gpui::test]
+fn a_long_machine_list_keeps_the_highlight_in_view(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    let (home, config, bin) = (
+        Scratch::new("home"),
+        Scratch::new("config"),
+        Scratch::new("bin"),
+    );
+    std::fs::create_dir_all(home.path().join(".ssh")).unwrap();
+    let hosts: String = (1..=12).map(|n| format!("Host box{n}\n")).collect();
+    std::fs::write(home.path().join(".ssh/config"), hosts).unwrap();
+    let ssh = fake_ssh(bin.path(), home.path());
+    open(&ws, cx, vec![here()], "", config.path(), home.path(), &ssh);
+    assert!(cx.debug_bounds("add-project-machine-0").is_some());
+    assert!(
+        cx.debug_bounds("add-project-machine-8").is_none(),
+        "eight at a time"
+    );
+    for _ in 0..12 {
+        cx.simulate_keystrokes("down");
+    }
+    redraw(cx);
+    assert!(
+        cx.debug_bounds("add-project-machine-12").is_some(),
+        "the last machine, highlighted, is drawn"
+    );
+    assert!(cx.debug_bounds("add-project-machine-0").is_none());
+    ws.read_with(cx, |ws, _| assert_eq!(adding(ws).unwrap().at, 12));
+}

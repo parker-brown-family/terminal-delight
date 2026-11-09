@@ -162,10 +162,8 @@ fn every_ssh_call_is_batch_mode_and_ends_its_options_before_the_host() {
     let opts = args[..at].join(" ");
     assert!(opts.contains("BatchMode=yes"));
     assert!(opts.contains("ControlPath=/run/user/1000/td-ssh-%C"));
-    assert!(
-        !opts.contains("StrictHostKeyChecking"),
-        "no key is accepted for anybody"
-    );
+    // Asked for nothing, and no unseen key taken, whatever the config says.
+    assert!(opts.contains("StrictHostKeyChecking=yes"));
     assert!(!ssh_args("h", None).join(" ").contains("Control"));
 }
 
@@ -265,6 +263,8 @@ fn the_far_listing_script_reads_a_real_folder_through_a_shell_line() {
     std::fs::create_dir_all(work.join("checkout/.git")).unwrap();
     std::fs::create_dir_all(work.join(".cache")).unwrap();
     std::fs::write(work.join("a file"), "").unwrap();
+    // Printed, this name would read as two folders, `foo` and `bar`.
+    std::fs::create_dir_all(work.join("foo\nd bar")).unwrap();
     let (ok, out, err) = run_far(&list_script(), &["~/Work/"], home.path());
     assert!(ok, "{err}");
     let listing = parse_listing(&out).unwrap();
@@ -298,13 +298,24 @@ fn the_far_listing_script_reads_a_real_folder_through_a_shell_line() {
 #[test]
 fn the_far_scripts_make_a_folder_start_a_repository_and_clone_one() {
     let home = Scratch::new("t4");
-    // Make, twice: the second finds it there.
-    for _ in 0..2 {
-        let (ok, out, err) = run_far(&make_script(), &["~/Work/new one/deep"], home.path());
+    // Only looking, a folder that is not there is said to be missing, and
+    // nothing is made.
+    let (ok, out, err) = run_far(
+        &make_script(),
+        &["~/Work/new one/deep", "look"],
+        home.path(),
+    );
+    assert!(ok, "{err}");
+    assert_eq!(parse_made(&out), Ok(None));
+    assert!(!home.path().join("Work/new one").exists());
+    // Make, twice: the second finds it there; then looking finds it too.
+    for how in ["make", "make", "look"] {
+        let (ok, out, err) = run_far(&make_script(), &["~/Work/new one/deep", how], home.path());
         assert!(ok, "{err}");
+        let at = home.path().join("Work/new one/deep");
         assert_eq!(
-            out.lines().next(),
-            Some(format!("at {}", home.path().join("Work/new one/deep").display()).as_str())
+            parse_made(&out),
+            Ok(Some((at.to_string_lossy().to_string(), false)))
         );
     }
     // Start empty: a repository, and a folder holding anything is refused.
@@ -573,4 +584,67 @@ fn folder_names_refuse_what_would_hide_or_read_as_an_option() {
     ] {
         assert!(!folder_name_ok(bad), "{bad:?}");
     }
+}
+
+/// An `Include` inside a `Host` block belongs to that block, as it does for
+/// ssh: a `User git` kept in the included file still marks a git remote
+/// (Codex's review, round one).
+#[test]
+fn an_include_inside_a_host_block_speaks_for_that_block() {
+    let mut read = |pattern: &str| match pattern {
+        "github.conf" => vec!["  HostName github.com\n  User git\n".to_string()],
+        "lab.conf" => vec!["  HostName lab.lan\nHost inner\n  User me\n".to_string()],
+        _ => Vec::new(),
+    };
+    let hosts = parse_ssh_config(
+        "Host github-bfs\n  Include github.conf\nHost lab\n  Include lab.conf\n  User outer\n",
+        &mut read,
+    );
+    let aliases: Vec<&str> = hosts.hosts.iter().map(SshHost::alias).collect();
+    assert_eq!(aliases, ["lab", "inner"]);
+    assert_eq!(hosts.git_hosts, 1, "github-bfs, through its include");
+    assert_eq!(hosts.hosts[0].hostname.as_deref(), Some("lab.lan"));
+    assert_eq!(hosts.hosts[1].user.as_deref(), Some("me"));
+}
+
+/// Two windows adding at the same moment both keep their line: writers take
+/// turns on a lock, each with a temp file of its own (Codex's review, round
+/// one).
+#[test]
+fn projects_added_at_the_same_moment_are_all_kept() {
+    let config = Scratch::new("t20");
+    let dir = config.path().to_path_buf();
+    let writers: Vec<_> = (0..8)
+        .map(|n| {
+            let dir = dir.clone();
+            std::thread::spawn(move || {
+                let added = Added {
+                    path: format!("/srv/p{n}"),
+                    machine: None,
+                    git: None,
+                };
+                remember_project(&dir, &added)
+            })
+        })
+        .collect();
+    for w in writers {
+        assert_eq!(w.join().unwrap(), Ok(true));
+    }
+    let mut paths: Vec<String> = load_projects(&dir)
+        .unwrap()
+        .into_iter()
+        .map(|a| a.path)
+        .collect();
+    paths.sort();
+    assert_eq!(
+        paths,
+        (0..8).map(|n| format!("/srv/p{n}")).collect::<Vec<_>>()
+    );
+    let left: Vec<String> = std::fs::read_dir(&dir)
+        .unwrap()
+        .flatten()
+        .map(|e| e.file_name().to_string_lossy().to_string())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(left.is_empty(), "no temp file is left behind: {left:?}");
 }

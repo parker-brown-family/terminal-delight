@@ -22,6 +22,9 @@ use std::sync::{Arc, Mutex};
 /// Folder rows drawn at once; the arrows and the wheel move the window.
 const FOLDER_ROWS: usize = 10;
 
+/// Machine rows drawn at once, for a long ssh config.
+const MACHINE_ROWS: usize = 8;
+
 /// What the dialog has heard about reaching a far machine.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub(crate) enum Seen {
@@ -210,6 +213,8 @@ pub(crate) struct AddProject {
     pub(crate) step: Step,
     places: Vec<Place>,
     at: usize,
+    /// The first machine row drawn.
+    top: usize,
     git_hosts: usize,
     ssh_error: Option<String>,
     note: Option<String>,
@@ -225,6 +230,17 @@ pub(crate) struct AddProject {
     /// A repository named in the composer's sentence, for the clone field.
     offered: Option<String>,
     checks: Vec<gpui::Task<()>>,
+}
+
+impl AddProject {
+    /// Keep the highlighted machine inside the drawn window.
+    fn follow(&mut self) {
+        if self.at < self.top {
+            self.top = self.at;
+        } else if self.at >= self.top + MACHINE_ROWS {
+            self.top = self.at + 1 - MACHINE_ROWS;
+        }
+    }
 }
 
 /// What a run made or picked.
@@ -344,6 +360,20 @@ fn list_on(
     }
 }
 
+/// Why a run did not land.
+enum Fail {
+    /// A plain Enter's add found nothing there at the moment of adding.
+    Missing,
+    /// Anything else, as the program said it.
+    Said(String),
+}
+
+impl From<String> for Fail {
+    fn from(said: String) -> Fail {
+        Fail::Said(said)
+    }
+}
+
 /// What a run needs to know about where it runs.
 #[derive(Clone)]
 struct Runner {
@@ -361,8 +391,8 @@ impl Runner {
         args: &[&str],
         progress: &Mutex<String>,
         child: &Mutex<Option<std::process::Child>>,
-        here: impl FnOnce(&Mutex<String>, &Mutex<Option<std::process::Child>>) -> Result<Made, String>,
-    ) -> Result<Made, String> {
+        here: impl FnOnce(&Mutex<String>, &Mutex<Option<std::process::Child>>) -> Result<Made, Fail>,
+    ) -> Result<Made, Fail> {
         let Some(dest) = self.machine.ssh.as_deref() else {
             return here(progress, child);
         };
@@ -370,7 +400,7 @@ impl Runner {
         cmd.args(ap::ssh_args(dest, self.control.as_deref()))
             .arg(ap::remote_command(script, args));
         let out = run_watched(cmd, progress, child)?;
-        let (path, git) = ap::parse_made(&out)?;
+        let (path, git) = ap::parse_made(&out)?.ok_or(Fail::Missing)?;
         Ok(Made {
             path,
             git,
@@ -392,18 +422,31 @@ impl Runner {
         }
     }
 
-    /// Make the folder (and any missing above it) and say what is there.
+    /// Make the folder (and any missing above it) when `create`, or only
+    /// look, and say what is there.
     fn make(
         &self,
         target: &str,
+        create: bool,
         progress: &Mutex<String>,
         child: &Mutex<Option<std::process::Child>>,
-    ) -> Result<Made, String> {
-        self.run(&ap::make_script(), &[target], progress, child, |_, _| {
-            let path = ap::expand_home(target, &self.home);
-            std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
-            Ok(self.local(&path, path.join(".git").exists()))
-        })
+    ) -> Result<Made, Fail> {
+        let how = if create { "make" } else { "look" };
+        self.run(
+            &ap::make_script(),
+            &[target, how],
+            progress,
+            child,
+            |_, _| {
+                let path = ap::expand_home(target, &self.home);
+                if create {
+                    std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
+                } else if !path.is_dir() {
+                    return Err(Fail::Missing);
+                }
+                Ok(self.local(&path, path.join(".git").exists()))
+            },
+        )
     }
 
     fn clone_into(
@@ -412,7 +455,7 @@ impl Runner {
         dest: &str,
         progress: &Mutex<String>,
         child: &Mutex<Option<std::process::Child>>,
-    ) -> Result<Made, String> {
+    ) -> Result<Made, Fail> {
         self.run(
             &ap::clone_script(),
             &[url, dest],
@@ -435,7 +478,7 @@ impl Runner {
         dest: &str,
         progress: &Mutex<String>,
         child: &Mutex<Option<std::process::Child>>,
-    ) -> Result<Made, String> {
+    ) -> Result<Made, Fail> {
         self.run(
             &ap::init_script(),
             &[dest],
@@ -445,7 +488,7 @@ impl Runner {
                 let path = ap::expand_home(dest, &self.home);
                 let full = std::fs::read_dir(&path).is_ok_and(|mut d| d.next().is_some());
                 if full {
-                    return Err(format!("not empty: {}", path.display()));
+                    return Err(Fail::Said(format!("not empty: {}", path.display())));
                 }
                 std::fs::create_dir_all(&path).map_err(|e| e.to_string())?;
                 let mut cmd = std::process::Command::new("git");
@@ -523,6 +566,7 @@ impl Workspace {
             step: Step::Machines,
             places,
             at: 0,
+            top: 0,
             git_hosts: hosts.git_hosts,
             ssh_error,
             note: None,
@@ -786,7 +830,7 @@ impl Workspace {
         let label = lang::fill(e.add_making, &[("path", &target)]);
         let t = target.clone();
         self.add_project_work(label, target, cx, move |progress, child| {
-            runner.make(&t, progress, child)
+            runner.make(&t, create, progress, child)
         });
     }
 
@@ -859,7 +903,7 @@ impl Workspace {
         label: String,
         target: String,
         cx: &mut Context<Self>,
-        job: impl FnOnce(&Mutex<String>, &Mutex<Option<std::process::Child>>) -> Result<Made, String>
+        job: impl FnOnce(&Mutex<String>, &Mutex<Option<std::process::Child>>) -> Result<Made, Fail>
             + Send
             + 'static,
     ) {
@@ -910,7 +954,7 @@ impl Workspace {
         )
     }
 
-    fn add_project_made(&mut self, made: Result<Made, String>, cx: &mut Context<Self>) {
+    fn add_project_made(&mut self, made: Result<Made, Fail>, cx: &mut Context<Self>) {
         let e = self.lang.strings().entry;
         let Some(a) = self.adding() else {
             return;
@@ -928,7 +972,11 @@ impl Workspace {
         }
         match made {
             Ok(made) => self.add_project_take(made, cx),
-            Err(err) => {
+            Err(Fail::Missing) => {
+                let target = work.as_ref().map(|w| w.target.clone()).unwrap_or_default();
+                b.note = Some(lang::fill(e.add_enter_creates, &[("path", &target)]));
+            }
+            Err(Fail::Said(err)) => {
                 let host = b.machine.ssh.clone().unwrap_or_default();
                 let said = if host.is_empty() {
                     ap::last_line(&err)
@@ -1083,10 +1131,12 @@ impl Workspace {
                 match key {
                     "up" => {
                         a.at = a.at.saturating_sub(1);
+                        a.follow();
                         Act::None
                     }
                     "down" => {
                         a.at = (a.at + 1).min(last);
+                        a.follow();
                         Act::None
                     }
                     "enter" => Act::Pick {
@@ -1454,8 +1504,22 @@ impl Workspace {
                 col = col
                     .child(title(e.add_title.to_string()))
                     .child(sub(e.add_where.to_string()));
-                let mut rows = list_box();
-                for (i, place) in a.places.iter().enumerate() {
+                let mut rows = list_box()
+                    .id("add-project-machines")
+                    .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
+                        cx.stop_propagation();
+                        let dy = f32::from(ev.delta.pixel_delta(px(20.)).y);
+                        let Some(a) = ws.adding() else { return };
+                        let max = a.places.len().saturating_sub(MACHINE_ROWS);
+                        let steps = (dy.abs() / 20.).ceil().max(1.) as usize;
+                        a.top = if dy < 0. {
+                            (a.top + steps).min(max)
+                        } else {
+                            a.top.saturating_sub(steps)
+                        };
+                        cx.notify();
+                    }));
+                for (i, place) in a.places.iter().enumerate().skip(a.top).take(MACHINE_ROWS) {
                     let (glyph, name, detail) = match place {
                         Place::Here(m) => (
                             "\u{25a3}",
@@ -1508,6 +1572,17 @@ impl Workspace {
                                 window.focus(&ws.focus_handle, cx);
                             }),
                         ),
+                    );
+                }
+                let below = a.places.len().saturating_sub(a.top + MACHINE_ROWS);
+                if below > 0 {
+                    rows = rows.child(
+                        div()
+                            .px(px(10. * s))
+                            .py(px(2. * s))
+                            .text_size(sk.text_px(9.5 * s))
+                            .text_color(th.faint)
+                            .child(lang::fill(e.add_more, &[("n", &below.to_string())])),
                     );
                 }
                 col = col.child(rows);

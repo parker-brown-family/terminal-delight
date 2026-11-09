@@ -91,7 +91,12 @@ palette has.
 - [x] Strings in nine languages (56)
 - [x] Window tests with a stand-in `ssh` that runs the far script on this box: six, end
       to end (pick, make, far, new host, clone and start, Esc and both doors)
-- [ ] Photos on the private display; one Codex review round; brief
+- [x] Photos on the private display (a stand-in home and a stand-in `ssh`; one real
+      clone of the public repository into the stand-in home), reshot after the layout fix
+- [x] Six mutations, each caught; real ssh to farbox tried once by hand (read-only
+      listing: 0.30 s, then 0.06 s over the shared connection, nothing hung)
+- [x] One Codex review round (read-only, said out loud): seven findings, all fixed
+- [ ] Brief, push, the test window on workspace 7
 
 ## Surprises
 
@@ -103,5 +108,31 @@ palette has.
   was left alone.
 - gpui's test keystrokes carry no typed character until `with_simulated_ime` gives them
   one, which is why the window tests can type paths and URLs at all.
+
+## Review round one (Codex, read-only)
+
+Seven findings, each checked against the code and fixed, with a test where a test can
+reach it. It found no shell-word injection in the far scripts or their quoting.
+
+1. A host whose ssh config says `StrictHostKeyChecking accept-new` would have had an
+   unseen key taken: `BatchMode` stops the asking, not the accepting. Every call now
+   carries `StrictHostKeyChecking=yes`.
+2. An `Include` inside a `Host` block lost its keys, so `User git` kept in an included
+   file let a git remote through as a machine. The included file now starts inside the
+   block it stood in.
+3. A far folder whose name holds a line break printed as two folders, and a row could
+   open one that is not there. Such names are left out on both sides.
+4. A plain Enter trusted a listing read earlier: a folder deleted since would have been
+   made again. The add now looks at the moment of adding, and only Ctrl+Enter or the
+   button makes anything.
+5. Two windows adding at once could lose a line or collide on one temp file. Writers
+   take turns on a lock file, each with its own temp file.
+6. A far project's tab could be filed beside a local terminal standing at the same
+   path. A far project is filed by name only.
+7. A long ssh config ran off the card with the highlight out of sight. The machine
+   list keeps a window of eight, follows the highlight, and counts what is below.
+
+My own reading before the round added two: a run dropped with the composer now kills
+its program, and a run stopped with Esc never becomes the project.
 
 ## Outcome
