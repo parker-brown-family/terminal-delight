@@ -86,7 +86,7 @@ anywhere (`searchSettings`).
   page carries a row that hands off to the panel it still lives in, so nothing is lost.
 - [ ] 2 — move notifications, keybindings, maintenance, plugins and the archive onto native
   pages; the old glyph menus open Settings at their page.
-- [ ] 4 — **Code › Worktrees, with T3's Cleanup** (Parker, 2026-11-09, mid-build: *"oh and
+- [x] 4 — **Code › Worktrees, with T3's Cleanup** (Parker, 2026-11-09, mid-build: *"oh and
   the worktree cleanup -- yeah we should go for that 100% <3"*). T3's rules: delete worktrees
   whose threads were deleted, whose pull request is merged and commits are in the default
   branch, that sat inactive N days, that settled N days ago, that have no commits past the
@@ -105,6 +105,13 @@ anywhere (`searchSettings`).
   fixture with TD_SETTINGS_PAGE / TD_SETTINGS_QUERY. Rig `~/Work/td-t3-scuttle/rig/settings-shoot.sh`.
   Suite 3,542 / 0, clippy clean.
 
+- 2026-11-09 slice 4 built: `wtclean.rs` (porcelain list, facts, the guards, T3's three rules,
+  scan and remove), Code › Worktrees in the book (T3's Cleanup rows with the days stepper, then
+  a Review that lists each candidate with its reasons and the ignored files that go with it,
+  and a remove button that arms on the first press). Rules are saved in `worktrees.toml`, all
+  off until switched on. On this machine, every rule on: 136 worktrees in 148 repositories,
+  95 candidates (photographed on the test display; nothing removed).
+
 ## Surprises and discoveries
 
 - **Letters typed into the search also reached the shell.** `overlay_owns_keyboard` only stops
@@ -116,5 +123,10 @@ anywhere (`searchSettings`).
 - **The book bowed with the CRT tube** until it joined `warp::set_suppressed`. The guard test
   `every_overlay_esc_can_close_also_flattens_the_glass` would have failed on it, and then
   misread `settings_last` inside `close_popups` as a panel; that logic moved to `settings_peel`.
+
+- **"In use" had to mean more than this window's panes.** An agent in another window, a Codex
+  session or a shell can stand in a fresh worktree with no commits, which is exactly what the
+  unchanged rule takes. Every process's cwd from `/proc` now keeps a worktree, at the look and
+  again just before removal.
 
 ## Outcome

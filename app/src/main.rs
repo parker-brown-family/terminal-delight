@@ -120,6 +120,7 @@ mod uninstall;
 mod update;
 mod update_view;
 mod wirecheck;
+mod wtclean;
 use skin::parts::{
     color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
 };
@@ -5057,6 +5058,10 @@ struct Workspace {
     /// (`settings_view.rs`), and the page it was last on.
     settings: Option<settings::Book>,
     settings_last: Option<settings::Page>,
+    /// The Worktrees page's cleanup switches (`worktrees.toml`) and its
+    /// review of what they would remove.
+    wt_prefs: wtclean::Prefs,
+    wt_review: settings_view::WtReview,
     skills_prefs: skills::Prefs,
     skills_error: Option<String>,
     skills_form: Option<SkillsForm>,
@@ -6897,6 +6902,8 @@ impl Workspace {
             agents_menu: false,
             settings: None,
             settings_last: None,
+            wt_prefs: wtclean::load(&instance::config_dir()),
+            wt_review: Default::default(),
             skills_prefs: skills::load().unwrap_or_default(),
             skills_error: None,
             skills_form: None,
@@ -32541,8 +32548,7 @@ impl Render for Workspace {
                         let page = std::env::var("TD_SETTINGS_PAGE")
                             .ok()
                             .and_then(|p| settings::Page::from_id(&p));
-                        self.settings =
-                            Some(settings::Book::at(page.unwrap_or(settings::Page::General)));
+                        self.open_settings(Some(page.unwrap_or(settings::Page::General)), cx);
                         if let Ok(q) = std::env::var("TD_SETTINGS_QUERY") {
                             if let Some(b) = self.settings.as_mut() {
                                 b.query = q;

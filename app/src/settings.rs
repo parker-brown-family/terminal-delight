@@ -27,6 +27,7 @@ pub enum Page {
     Providers,
     Threads,
     Projects,
+    Worktrees,
     Environments,
     Access,
     Maintenance,
@@ -56,7 +57,7 @@ pub const GROUPS: &[(Option<Heading>, &[Page])] = &[
         ],
     ),
     (Some(Heading::Agents), &[Page::Providers, Page::Threads]),
-    (Some(Heading::Code), &[Page::Projects]),
+    (Some(Heading::Code), &[Page::Projects, Page::Worktrees]),
     (
         Some(Heading::Connections),
         &[Page::Environments, Page::Access],
@@ -83,6 +84,7 @@ impl Page {
             Page::Providers => "providers",
             Page::Threads => "threads",
             Page::Projects => "projects",
+            Page::Worktrees => "worktrees",
             Page::Environments => "environments",
             Page::Access => "access",
             Page::Maintenance => "maintenance",
@@ -98,7 +100,7 @@ impl Page {
 
     /// The nav glyph: the nearest single character to the lucide icon T3
     /// gives the same page (Settings2, Palette, Bell, Keyboard, Bot,
-    /// MessagesSquare, PanelsTopLeft, Server, ShieldCheck, Wrench,
+    /// MessagesSquare, PanelsTopLeft, FolderTree, Server, ShieldCheck, Wrench,
     /// FlaskConical, Info, Archive).
     pub fn glyph(self) -> &'static str {
         match self {
@@ -109,6 +111,7 @@ impl Page {
             Page::Providers => "\u{1f916}",     // 🤖
             Page::Threads => "\u{1f4ac}",       // 💬
             Page::Projects => "\u{25a6}",       // ▦
+            Page::Worktrees => "\u{1f5c2}",     // 🗂
             Page::Environments => "\u{1f5a7}",  // 🖧
             Page::Access => "\u{1f6e1}",        // 🛡
             Page::Maintenance => "\u{1f527}",   // 🔧

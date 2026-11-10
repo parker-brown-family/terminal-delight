@@ -11,6 +11,54 @@
 
 use super::*;
 use crate::settings::{self, Book, Heading, Item, Page};
+use crate::wtclean;
+use std::collections::BTreeSet;
+use std::path::{Path, PathBuf};
+use std::time::SystemTime;
+
+/// The Worktrees page's review: what the last look found, and whether the
+/// remove button has been pressed once.
+#[derive(Default)]
+pub(crate) struct WtReview {
+    pub(crate) busy: bool,
+    /// Every worktree found, and how many repositories were looked in.
+    pub(crate) got: Option<Result<(Vec<wtclean::Facts>, usize), String>>,
+    /// The remove button has been pressed once; the next press removes.
+    pub(crate) armed: bool,
+    /// What the last removal did.
+    pub(crate) said: Option<String>,
+    pub(crate) task: Option<gpui::Task<()>>,
+    /// Tests only: the directories and home to look in, instead of the
+    /// window's panes and the person's own projects.
+    pub(crate) fixture: Option<(Vec<PathBuf>, PathBuf)>,
+}
+
+/// Every repository the window's panes are in and every local project the
+/// composer lists, each worktree in them read. Runs off the window's thread.
+fn wt_gather(cwds: &[PathBuf], home: &Path) -> Result<(Vec<wtclean::Facts>, usize), String> {
+    let mut dirs: Vec<PathBuf> = cwds
+        .iter()
+        .map(|c| std::fs::canonicalize(c).unwrap_or_else(|_| c.clone()))
+        .collect();
+    // Anything running in a worktree keeps it, not only this window's panes.
+    let mut cwds = dirs.clone();
+    cwds.extend(wtclean::process_cwds());
+    dirs.extend(
+        launcher::scan(&launcher::default_roots(home), 1000)
+            .into_iter()
+            .filter(|p| p.repo && p.machine.is_none())
+            .map(|p| p.path),
+    );
+    let repos: BTreeSet<PathBuf> = dirs.iter().filter_map(|d| wtclean::repo_of(d)).collect();
+    let cwds = cwds;
+    let mut facts = Vec::new();
+    for r in &repos {
+        if let Ok(mut f) = wtclean::scan(r, &cwds) {
+            facts.append(&mut f);
+        }
+    }
+    Ok((facts, repos.len()))
+}
 
 /// What an Open button does once the book has closed.
 type Then = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
@@ -26,6 +74,137 @@ impl Workspace {
         let page = page.or(self.settings_last).unwrap_or(Page::General);
         self.settings = Some(Book::at(page));
         self.settings_last = Some(page);
+        self.settings_landed(cx);
+        cx.notify();
+    }
+
+    /// A page came on screen. The Worktrees page looks for worktrees the
+    /// first time it shows, so the review is there without a press.
+    fn settings_landed(&mut self, cx: &mut Context<Self>) {
+        if self.settings.as_ref().map(|b| b.page) == Some(Page::Worktrees)
+            && self.wt_review.got.is_none()
+            && !self.wt_review.busy
+        {
+            self.wt_look(cx);
+        }
+    }
+
+    fn wt_cwds(&self, cx: &App) -> Vec<PathBuf> {
+        self.every_view()
+            .iter()
+            .filter_map(|v| v.read(cx).current_cwd().map(PathBuf::from))
+            .collect()
+    }
+
+    /// Where to look: the panes' directories and home, or a test's.
+    fn wt_where(&self, cx: &App) -> (Vec<PathBuf>, PathBuf) {
+        match &self.wt_review.fixture {
+            Some((cwds, home)) => (cwds.clone(), home.clone()),
+            None => (self.wt_cwds(cx), session::home_dir()),
+        }
+    }
+
+    fn wt_save(&mut self) {
+        self.wt_review.armed = false;
+        if let Err(e) = wtclean::save(&instance::config_dir(), &self.wt_prefs) {
+            self.wt_review.said = Some(e);
+        }
+    }
+
+    /// Look for worktrees, off the window's thread.
+    pub(crate) fn wt_look(&mut self, cx: &mut Context<Self>) {
+        if self.wt_review.busy {
+            return;
+        }
+        let (cwds, home) = self.wt_where(cx);
+        self.wt_review.busy = true;
+        self.wt_review.armed = false;
+        let task = cx.spawn(async move |this, cx| {
+            let got = cx
+                .background_spawn(async move { wt_gather(&cwds, &home) })
+                .await;
+            this.update(cx, |ws, cx| {
+                ws.wt_review.busy = false;
+                ws.wt_review.got = Some(got);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.wt_review.task = Some(task);
+        cx.notify();
+    }
+
+    /// The candidates under the switches as they stand now.
+    fn wt_doomed(&self) -> Vec<(PathBuf, PathBuf)> {
+        let Some(Ok((facts, _))) = &self.wt_review.got else {
+            return Vec::new();
+        };
+        let now = SystemTime::now();
+        facts
+            .iter()
+            .filter(|f| wtclean::judge(f, &self.wt_prefs, now).removes())
+            .map(|f| (f.repo.clone(), f.path.clone()))
+            .collect()
+    }
+
+    /// The remove button: the first press arms it, the second removes every
+    /// candidate with plain `git worktree remove` and looks again. A pane
+    /// that moved into a candidate since the look keeps it.
+    pub(crate) fn wt_remove_press(&mut self, cx: &mut Context<Self>) {
+        let doomed = self.wt_doomed();
+        if doomed.is_empty() || self.wt_review.busy {
+            return;
+        }
+        if !self.wt_review.armed {
+            self.wt_review.armed = true;
+            cx.notify();
+            return;
+        }
+        self.wt_review.armed = false;
+        self.wt_review.busy = true;
+        let (cwds, home) = self.wt_where(cx);
+        let s = self.lang.strings().settings;
+        let task = cx.spawn(async move |this, cx| {
+            let (removed, refused, got) = cx
+                .background_spawn(async move {
+                    let mut canon: Vec<PathBuf> = cwds
+                        .iter()
+                        .map(|c| std::fs::canonicalize(c).unwrap_or_else(|_| c.clone()))
+                        .collect();
+                    canon.extend(wtclean::process_cwds());
+                    let mut removed = 0usize;
+                    let mut refused: Vec<String> = Vec::new();
+                    for (repo, path) in doomed {
+                        if canon.iter().any(|c| c.starts_with(&path)) {
+                            continue;
+                        }
+                        match wtclean::remove(&repo, &path) {
+                            Ok(()) => removed += 1,
+                            Err(e) => refused.push(format!("{}: {e}", path.display())),
+                        }
+                    }
+                    (removed, refused, wt_gather(&cwds, &home))
+                })
+                .await;
+            this.update(cx, |ws, cx| {
+                let mut said = lang::fill(s.wt_removed, &[("n", &removed.to_string())]);
+                if let Some(first) = refused.first() {
+                    said = format!(
+                        "{said} \u{b7} {}",
+                        lang::fill(
+                            s.wt_failed,
+                            &[("n", &refused.len().to_string()), ("first", first)]
+                        )
+                    );
+                }
+                ws.wt_review.busy = false;
+                ws.wt_review.said = Some(said);
+                ws.wt_review.got = Some(got);
+                cx.notify();
+            })
+            .ok();
+        });
+        self.wt_review.task = Some(task);
         cx.notify();
     }
 
@@ -69,6 +248,7 @@ impl Workspace {
             b.pick = 0;
         }
         self.settings_last = Some(page);
+        self.settings_landed(cx);
         cx.notify();
     }
 
@@ -151,6 +331,7 @@ impl Workspace {
                 }
             }
         }
+        self.settings_landed(cx);
         cx.notify();
         true
     }
@@ -195,6 +376,7 @@ fn page_name_in(l: lang::Lang, p: Page) -> &'static str {
         Page::Providers => s.p_providers,
         Page::Threads => s.p_threads,
         Page::Projects => s.p_projects,
+        Page::Worktrees => s.p_worktrees,
         Page::Environments => s.p_environments,
         Page::Access => s.p_access,
         Page::Maintenance => s.p_maintenance,
@@ -251,6 +433,26 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
             s.r_add_project_sub,
         ),
         (Page::Projects, s.s_projects, s.r_projects_file, ""),
+        (
+            Page::Worktrees,
+            s.s_cleanup,
+            s.r_wt_merged,
+            s.r_wt_merged_sub,
+        ),
+        (
+            Page::Worktrees,
+            s.s_cleanup,
+            s.r_wt_inactive,
+            s.r_wt_inactive_sub,
+        ),
+        (
+            Page::Worktrees,
+            s.s_cleanup,
+            s.r_wt_unchanged,
+            s.r_wt_unchanged_sub,
+        ),
+        (Page::Worktrees, s.s_cleanup, s.r_wt_keep, s.r_wt_keep_sub),
+        (Page::Worktrees, s.s_wt_review, s.r_wt_scan, ""),
         (Page::Environments, s.s_machines, s.r_machines, ""),
         (Page::Access, s.s_access, s.r_server, s.r_server_sub),
         (Page::Access, s.s_access, s.r_expose, s.r_expose_sub),
@@ -435,6 +637,302 @@ impl Workspace {
                 }),
             )
             .into_any_element()
+    }
+
+    /// A button that acts inside the book.
+    fn st_button(
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        id: &'static str,
+        label: String,
+        lit: bool,
+        flip: Flip,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let acc = th.accent;
+        div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .flex_shrink_0()
+            .px_3()
+            .py_1()
+            .rounded(sk.radius())
+            .border(sk.box_border(1.))
+            .border_color(if lit { acc } else { th.text.alpha(0.22) })
+            .when(lit, |d| d.bg(acc.alpha(0.18)))
+            .text_size(sk.text_px(9.5))
+            .text_color(th.text.alpha(0.9))
+            .cursor_pointer()
+            .hover(move |st| st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
+            .child(SharedString::from(label))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    flip(ws, cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// The Worktrees page: T3's Cleanup rules, then the review of what they
+    /// would remove, with the remove button that needs a second press.
+    fn wt_page(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        sk1: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> Vec<AnyElement> {
+        let s = self.lang.strings().settings;
+        let p = &self.wt_prefs;
+        let acc = th.accent;
+        let step = |id: &'static str, label: &str, delta: i32| {
+            div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .px_2()
+                .rounded(sk.radius())
+                .border(sk.box_border(1.))
+                .border_color(th.text.alpha(0.22))
+                .text_size(sk.text_px(10.))
+                .cursor_pointer()
+                .hover(move |st| st.bg(acc.alpha(0.14)))
+                .child(SharedString::from(label.to_string()))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        let d = ws.wt_prefs.days() as i32 + delta;
+                        ws.wt_prefs.inactive_days = Some(d.clamp(1, 365) as u32);
+                        ws.wt_save();
+                        cx.notify();
+                    }),
+                )
+        };
+        let stepper = div()
+            .flex()
+            .items_center()
+            .gap_2()
+            .child(step("st-wt-days-less", "\u{2212}", -1))
+            .child(
+                div()
+                    .min_w(px(52.))
+                    .text_size(sk.text_px(9.5))
+                    .text_color(th.text)
+                    .child(SharedString::from(lang::fill(
+                        s.wt_days,
+                        &[("n", &p.days().to_string())],
+                    ))),
+            )
+            .child(step("st-wt-days-more", "+", 1));
+        let cleanup = vec![
+            Self::st_row(
+                th,
+                sk,
+                s.r_wt_merged,
+                Some(s.r_wt_merged_sub.into()),
+                Some(self.st_switch(
+                    th,
+                    sk1,
+                    "st-wt-merged",
+                    p.merged_on(),
+                    |ws, _| {
+                        ws.wt_prefs.merged = Some(!ws.wt_prefs.merged_on());
+                        ws.wt_save();
+                    },
+                    cx,
+                )),
+            ),
+            Self::st_row(
+                th,
+                sk,
+                s.r_wt_inactive,
+                Some(s.r_wt_inactive_sub.into()),
+                Some(
+                    div()
+                        .flex()
+                        .items_center()
+                        .gap_4()
+                        .child(stepper)
+                        .child(self.st_switch(
+                            th,
+                            sk1,
+                            "st-wt-inactive",
+                            p.inactive_on(),
+                            |ws, _| {
+                                ws.wt_prefs.inactive = Some(!ws.wt_prefs.inactive_on());
+                                ws.wt_save();
+                            },
+                            cx,
+                        ))
+                        .into_any_element(),
+                ),
+            ),
+            Self::st_row(
+                th,
+                sk,
+                s.r_wt_unchanged,
+                Some(s.r_wt_unchanged_sub.into()),
+                Some(self.st_switch(
+                    th,
+                    sk1,
+                    "st-wt-unchanged",
+                    p.unchanged_on(),
+                    |ws, _| {
+                        ws.wt_prefs.unchanged = Some(!ws.wt_prefs.unchanged_on());
+                        ws.wt_save();
+                    },
+                    cx,
+                )),
+            ),
+            Self::st_row(
+                th,
+                sk,
+                s.r_wt_keep,
+                Some(s.r_wt_keep_sub.into()),
+                Some(Self::st_value(th, sk, s.wt_always.into())),
+            ),
+        ];
+        // The review.
+        let r = &self.wt_review;
+        let home = session::home_dir();
+        let short = |path: &Path| match path.strip_prefix(&home) {
+            Ok(rest) => format!("~/{}", rest.display()),
+            Err(_) => path.display().to_string(),
+        };
+        let now = SystemTime::now();
+        let mut review = Vec::new();
+        let (status, judged): (String, Vec<(&wtclean::Facts, wtclean::Verdict)>) =
+            match (&r.got, r.busy) {
+                (_, true) => (s.wt_busy.into(), Vec::new()),
+                (None, false) => (s.wt_never.into(), Vec::new()),
+                (Some(Err(e)), false) => (e.clone(), Vec::new()),
+                (Some(Ok((facts, repos))), false) => {
+                    let judged: Vec<_> = facts
+                        .iter()
+                        .filter(|f| !f.primary)
+                        .map(|f| (f, wtclean::judge(f, p, now)))
+                        .collect();
+                    let remove = judged.iter().filter(|(_, v)| v.removes()).count();
+                    (
+                        lang::fill(
+                            s.wt_found,
+                            &[
+                                ("n", &judged.len().to_string()),
+                                ("repos", &repos.to_string()),
+                                ("remove", &remove.to_string()),
+                            ],
+                        ),
+                        judged,
+                    )
+                }
+            };
+        review.push(Self::st_row(
+            th,
+            sk,
+            s.r_wt_scan,
+            Some(status),
+            Some(Self::st_button(
+                th,
+                sk,
+                "st-wt-look",
+                s.wt_look.into(),
+                false,
+                |ws, cx| ws.wt_look(cx),
+                cx,
+            )),
+        ));
+        let mut kept: std::collections::BTreeMap<wtclean::Keep, usize> = Default::default();
+        let mut n_remove = 0usize;
+        for (f, v) in &judged {
+            match v {
+                wtclean::Verdict::Keep(k) => *kept.entry(*k).or_default() += 1,
+                wtclean::Verdict::Remove(whys) => {
+                    n_remove += 1;
+                    let mut sub: Vec<String> = Vec::new();
+                    if let Some(b) = &f.branch {
+                        sub.push(b.clone());
+                    }
+                    for w in whys {
+                        sub.push(match w {
+                            wtclean::Why::Merged => s.wt_why_merged.into(),
+                            wtclean::Why::Inactive { days } => {
+                                lang::fill(s.wt_why_inactive, &[("n", &days.to_string())])
+                            }
+                            wtclean::Why::Unchanged => lang::fill(
+                                s.wt_why_unchanged,
+                                &[("base", f.base.as_deref().unwrap_or("?"))],
+                            ),
+                        });
+                    }
+                    let mut text = sub.join(" \u{b7} ");
+                    if !f.ignored.is_empty() {
+                        text = format!(
+                            "{text}\n{}",
+                            lang::fill(s.wt_ignored, &[("names", &f.ignored.join(", "))])
+                        );
+                    }
+                    review.push(Self::st_row(th, sk, &short(&f.path), Some(text), None));
+                }
+            }
+        }
+        if !kept.is_empty() {
+            let list: Vec<String> = kept
+                .iter()
+                .map(|(k, n)| {
+                    let word = match k {
+                        wtclean::Keep::Changes => s.wt_keep_changes,
+                        wtclean::Keep::Occupied => s.wt_keep_occupied,
+                        wtclean::Keep::Locked => s.wt_keep_locked,
+                        wtclean::Keep::Unread => s.wt_keep_unread,
+                        wtclean::Keep::NoRule | wtclean::Keep::Primary => s.wt_keep_norule,
+                    };
+                    lang::fill(word, &[("n", &n.to_string())])
+                })
+                .collect();
+            review.push(Self::st_row(
+                th,
+                sk,
+                &lang::fill(s.wt_kept, &[("list", &list.join(", "))]),
+                None,
+                None,
+            ));
+        }
+        if !p.any_on() {
+            review.push(Self::st_row(th, sk, s.wt_rules_off, None, None));
+        }
+        if n_remove > 0 {
+            let label = if r.armed {
+                lang::fill(s.wt_remove_again, &[("n", &n_remove.to_string())])
+            } else {
+                lang::fill(s.wt_remove, &[("n", &n_remove.to_string())])
+            };
+            review.push(
+                div()
+                    .flex()
+                    .justify_end()
+                    .px_3()
+                    .py_2()
+                    .child(Self::st_button(
+                        th,
+                        sk,
+                        "st-wt-remove",
+                        label,
+                        r.armed,
+                        |ws, cx| ws.wt_remove_press(cx),
+                        cx,
+                    )),
+            );
+        }
+        if let Some(said) = &r.said {
+            review.push(Self::st_row(th, sk, said, None, None));
+        }
+        vec![
+            Self::st_section(th, sk, "st-sec-cleanup", s.s_cleanup, cleanup),
+            Self::st_section(th, sk, "st-sec-wt-review", s.s_wt_review, review),
+        ]
     }
 
     /// A read-only value on the right of a row.
@@ -793,6 +1291,7 @@ impl Workspace {
                     ],
                 )]
             }
+            Page::Worktrees => self.wt_page(th, sk, sk1, cx),
             Page::Environments => {
                 let config = instance::config_dir();
                 let path = entry::machines_path(&config);
@@ -1097,7 +1596,13 @@ impl Workspace {
                         .text_size(sk.text_px(11.))
                         .child(sk.control(glyph, word)),
                 )
-                .child(SharedString::from(label.to_string()))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w(px(0.))
+                        .truncate()
+                        .child(SharedString::from(label.to_string())),
+                )
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
@@ -1499,5 +2004,105 @@ mod tests {
             Some(Page::Projects),
             "and reopens where it was"
         );
+    }
+
+    /// The Worktrees page on a real repository: the look finds both linked
+    /// worktrees, the clean one is the only candidate, the first press only
+    /// arms the button, and the second removes the clean worktree and leaves
+    /// the one with an untracked file, and the branch, where they were.
+    ///
+    /// Mutation-tested: removing on the first press fails the "armed, not
+    /// removed" assertion.
+    #[gpui::test]
+    fn the_worktree_review_removes_only_the_clean_one_and_only_on_a_second_press(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let dir = std::env::temp_dir().join(format!("td-wtview-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let repo = dir.join("repo");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |args: &[&str], at: &Path| {
+            let ok = std::process::Command::new("git")
+                .args(args)
+                .current_dir(at)
+                .env("GIT_AUTHOR_NAME", "t")
+                .env("GIT_AUTHOR_EMAIL", "t@t")
+                .env("GIT_COMMITTER_NAME", "t")
+                .env("GIT_COMMITTER_EMAIL", "t@t")
+                .output()
+                .unwrap()
+                .status
+                .success();
+            assert!(ok, "git {args:?}");
+        };
+        git(&["init", "-q", "-b", "main"], &repo);
+        std::fs::write(repo.join("a"), "a").unwrap();
+        git(&["add", "a"], &repo);
+        git(&["commit", "-q", "-m", "a"], &repo);
+        git(&["worktree", "add", "-q", "-b", "clean", "../clean"], &repo);
+        git(&["worktree", "add", "-q", "-b", "messy", "../messy"], &repo);
+        std::fs::write(dir.join("messy/new"), "x").unwrap();
+
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        let empty_home = dir.join("home");
+        std::fs::create_dir_all(&empty_home).unwrap();
+        ws.update(cx, |ws, cx| {
+            ws.wt_review.fixture = Some((vec![repo.clone()], empty_home.clone()));
+            ws.wt_prefs = wtclean::Prefs {
+                unchanged: Some(true),
+                ..Default::default()
+            };
+            ws.open_settings(Some(Page::Worktrees), cx);
+        });
+        let settled = |cx: &mut gpui::VisualTestContext| {
+            for _ in 0..500 {
+                redraw(cx);
+                if ws.read_with(cx, |ws, _| !ws.wt_review.busy) {
+                    return;
+                }
+                std::thread::sleep(std::time::Duration::from_millis(10));
+            }
+            panic!("the review never settled");
+        };
+        settled(cx);
+        let found = ws.read_with(cx, |ws, _| match &ws.wt_review.got {
+            Some(Ok((facts, repos))) => (facts.len(), *repos),
+            other => panic!("no reading: {:?}", other.as_ref().map(|r| r.as_ref().err())),
+        });
+        assert_eq!(found, (3, 1), "the main checkout and two linked worktrees");
+        let button = cx
+            .debug_bounds("st-wt-remove")
+            .expect("a candidate brings the remove button");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.wt_review.armed),
+            "the first press arms"
+        );
+        assert!(dir.join("clean").exists(), "armed, not removed");
+        let button = cx.debug_bounds("st-wt-remove").expect("still there, armed");
+        cx.simulate_click(button.center(), gpui::Modifiers::none());
+        settled(cx);
+        assert!(!dir.join("clean").exists(), "the second press removes");
+        assert!(
+            dir.join("messy/new").exists(),
+            "the untracked file's tree stays"
+        );
+        let said = ws.read_with(cx, |ws, _| ws.wt_review.said.clone().unwrap_or_default());
+        assert!(said.starts_with('1'), "{said}");
+        let branches = std::process::Command::new("git")
+            .args(["branch", "--list", "clean"])
+            .current_dir(&repo)
+            .output()
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&branches.stdout).contains("clean"),
+            "the branch is kept"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 }
