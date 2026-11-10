@@ -12765,18 +12765,70 @@ impl Workspace {
             ));
             return;
         }
+        let doc = match request.target {
+            mcp::Opening::Side(target) => {
+                let said = self.mcp_open_side(leaf.entity_id(), target, cx);
+                let _ = reply.send(said);
+                return;
+            }
+            mcp::Opening::Doc(doc) => doc,
+        };
         match request.placement {
             mcp::Placement::Beside => leaf.update(cx, |v, cx| {
-                v.request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)
+                v.request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)
             }),
-            mcp::Placement::Here => {
-                let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+            mcp::Placement::Here | mcp::Placement::Side => {
+                let said = leaf.update(cx, |v, cx| v.open_here(doc, cx));
                 if said.starts_with("held ") {
                     self.art_held(cx);
                 }
                 let _ = reply.send(said);
             }
         }
+    }
+
+    /// `open_document` with placement "side": what the agent made becomes a
+    /// tab in the side panel of the tab its own pane is in, and the keyboard
+    /// stays where it is. On screen and not being read, the panel opens on
+    /// it. While the person reads another tab of that panel, or its `+` page,
+    /// it goes in beside and the answer is "held" — the same courtesy as the
+    /// square, which an agent never replaces. In a tab that is not on screen
+    /// it waits in that tab's panel, and the panel's open state, which is the
+    /// window's, is left alone.
+    fn mcp_open_side(
+        &mut self,
+        pane: EntityId,
+        target: flyout::Target,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let Some(task) = self.tab_with_leaf(pane) else {
+            return "err your pane is not in a tab of this window".into();
+        };
+        let name = target.short_name();
+        if task != self.active {
+            self.tabs[task].side.open(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "ok side — {name} waits in your tab's side panel; your tab is not on screen"
+            );
+        }
+        let reading = self.flyout.open
+            && (self.flyout.adding
+                || self.tabs[task]
+                    .side
+                    .current()
+                    .is_some_and(|t| !t.same_tab(&target)));
+        if reading {
+            self.tabs[task].side.add(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "held side — {name} is a tab in your side panel, beside what the person is reading"
+            );
+        }
+        self.flyout_put(task, target, None, cx);
+        format!("ok side — {name} is open in the side panel beside your pane")
     }
 
     /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
@@ -46973,12 +47025,10 @@ mod tests {
             "the pane is the one the request names, which is the caller: {open}"
         );
         assert!(
-            open.contains(
-                "request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)"
-            ),
+            open.contains("request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)"),
             "beside goes through the pane's own request: {open}"
         );
-        assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        assert!(open.contains(".open_here(doc, cx)"), "{open}");
         // A held open is news on the window: the 📜 bumps and keeps a dot.
         // Mutation-tested: the `art_held` call taken out fails this.
         assert!(

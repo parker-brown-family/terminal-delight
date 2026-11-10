@@ -157,6 +157,25 @@ impl Side {
         Some(gone)
     }
 
+    /// Add `t` without taking the person's eyes off the tab they are on: a
+    /// new tab goes after the current one and the current one stays current;
+    /// a tab already showing it takes it in place. For what an agent sends
+    /// while the person is reading something else here. Returns the tab's
+    /// index.
+    pub fn add(&mut self, t: Target) -> usize {
+        if let Some(i) = self.tabs.iter().position(|have| have.same_tab(&t)) {
+            self.tabs[i] = t;
+            return i;
+        }
+        let at = if self.tabs.is_empty() {
+            0
+        } else {
+            (self.active + 1).min(self.tabs.len())
+        };
+        self.tabs.insert(at, t);
+        at
+    }
+
     pub fn current(&self) -> Option<&Target> {
         self.tabs.get(self.active)
     }
@@ -2708,6 +2727,33 @@ rename to renamed.rs
         side.close(0);
         assert!(side.current().is_none());
         assert_eq!(side.saved(), None, "no tabs saves nothing");
+    }
+
+    /// What an agent adds while the person reads another tab lands beside
+    /// it and leaves the person where they were; a tab already showing the
+    /// same thing is reused, not doubled.
+    ///
+    /// Mutation-tested: `add` moving `active` to the new tab fails the
+    /// second assertion.
+    #[test]
+    fn an_added_tab_goes_beside_the_one_being_read_and_does_not_take_over() {
+        let file = |p: &str| Target::File { path: p.into() };
+        let mut side = Side::default();
+        assert_eq!(side.add(file("/r/a.md")), 0, "an empty side takes it first");
+        assert_eq!(side.current(), Some(&file("/r/a.md")));
+        side.open(file("/r/b.rs"));
+        side.step(false);
+        assert_eq!(side.current(), Some(&file("/r/a.md")));
+        let at = side.add(file("/r/c.html"));
+        assert_eq!(at, 1, "right after the tab being read");
+        assert_eq!(
+            side.current(),
+            Some(&file("/r/a.md")),
+            "the reader stays put"
+        );
+        assert_eq!(side.add(file("/r/b.rs")), 2, "already there: reused");
+        assert_eq!(side.tabs.len(), 3);
+        assert_eq!(side.active, 0);
     }
 
     #[test]
