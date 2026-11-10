@@ -122,7 +122,8 @@ impl Fx {
                 self.jiggle_px = 0.;
                 changed = true;
             } else if self.jiggle_px == 0. && t >= self.next_jiggle_at {
-                let dir = if self.rand() > 1.0 { 1. } else { -1. };
+                // `rand()` is roughly [0, 1), so 0.5 is a fair coin: up or down.
+                let dir = if self.rand() > 0.5 { 1. } else { -1. };
                 self.jiggle_px = dir * (1.0 + self.rand()).min(2.0) * th.jiggle;
                 self.jiggle_until = t + 0.09;
                 self.next_jiggle_at = t + 6.0 + self.rand() * 3.0;

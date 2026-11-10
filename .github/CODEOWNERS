@@ -1,5 +1,5 @@
-# Every file is owned by Parker. Combined with "Require review from Code
-# Owners" branch protection on main, this means ONLY @parker-brown-family
-# can approve (and therefore gate the merge of) any PR — a maintainer cannot
-# self-merge, and a non-owner approval does not satisfy the requirement.
+# Every file is owned by Parker, so GitHub asks him for review on every PR.
+# This is not a merge gate: branch protection on main requires status checks
+# and no approving review (merge-on-green), so CODEOWNERS only routes review
+# requests.
 * @parker-brown-family

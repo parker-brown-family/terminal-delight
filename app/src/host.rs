@@ -58,8 +58,9 @@ use crate::session::PaneRuntime;
 /// How many chunks may queue for a client before it is considered gone.
 ///
 /// A client that cannot keep up must not become the terminal's problem: the
-/// PTY reader shares this thread with every other pane, so back-pressure here
-/// would be a slow window stalling fast ones. Past this depth the stream is
+/// pane's reader (its own `td-pump` thread, `vt/pump.rs`) is what sends into
+/// this queue, so back-pressure here would stall the pane's reads, and with
+/// them the program, behind a slow window. Past this depth the stream is
 /// dropped, the client sees its socket close, and it re-attaches — which costs
 /// a snapshot and is always correct, because a snapshot is the truth.
 const SINK_DEPTH: usize = 512;
