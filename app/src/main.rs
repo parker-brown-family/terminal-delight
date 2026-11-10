@@ -61,6 +61,8 @@ mod docopen;
 mod docview;
 mod emphasis;
 mod engstate;
+mod entry;
+mod entry_view;
 mod fav;
 mod feedback;
 mod glyph;
@@ -72,6 +74,8 @@ mod host;
 mod hostctl;
 mod hostproto;
 mod hud;
+mod inbox;
+mod inbox_view;
 mod instance;
 mod keylayer;
 mod lang;
@@ -99,6 +103,7 @@ mod prompt;
 mod ptyscan;
 mod readrows;
 mod recover;
+mod relate_view;
 mod restricted;
 mod screenread;
 mod session;
@@ -148,9 +153,9 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
-    OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
-    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
+    OpenAgentPanel, OpenComposer, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp,
+    OpenLogoPicker, OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav,
+    ReopenClosed, RequestCloseTab, TerminalView, ToggleInbox, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -371,7 +376,7 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 9] = [
     (
         "render_rail",
         Warped::FlatByDesign {
@@ -419,6 +424,26 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
         },
     ),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
+    (
+        "composer page",
+        Warped::FlatByDesign {
+            flag: "composer",
+            why: "a page of text and chips over every pane of the active tab: \
+                  under a tube its caret and chips would bow away from where \
+                  they are clicked. Bought flat by `composer` in the \
+                  suppression list, like the launcher panel it sits beside.",
+        },
+    ),
+    (
+        "relate dialog",
+        Warped::FlatByDesign {
+            flag: "relate",
+            why: "a dialog of verb rows and buttons over every pane of the \
+                  active tab, laid out like the composer page and flattened by \
+                  `relate` in the suppression list for the same reason: under a \
+                  tube its rows would bow away from where they are clicked.",
+        },
+    ),
     (
         "sticky note",
         Warped::Predistorted("drawn through the pane's own map; hit-tested flat"),
@@ -3691,6 +3716,10 @@ type BarBoxes = Arc<Mutex<Vec<(tree::RowId, Bounds<Pixels>)>>>;
 /// Scanned newest-last so the innermost row wins where boxes overlap. A free
 /// function rather than a method because the boxes are the entire input: the
 /// geometry can then be tested without standing up a window.
+/// The part of a tab's row, top to bottom, where a carried tab relates rather
+/// than reorders (`Workspace::bar_relate_drop`).
+const RELATE_BAND: std::ops::Range<f32> = 0.3..0.7;
+
 fn bar_drop_at(rows: &[(tree::RowId, Bounds<Pixels>)], pos: Point<Pixels>) -> Option<tree::Drop> {
     let Some((id, bounds)) = rows.iter().rev().find(|(_, b)| b.contains(&pos)) else {
         return under_the_tree(rows, pos);
@@ -4712,6 +4741,35 @@ struct Workspace {
     logo_picker: Option<LogoPicker>,
     /// The LAUNCH AGENT panel, if it is up.
     agent_launcher: Option<AgentLauncher>,
+    /// The composer over the main area: a sentence first, then where it runs
+    /// and with what (`entry_view.rs`). Owns the keyboard while up.
+    composer: Option<entry_view::Composer>,
+    /// What was typed into the composer when it was last put away, kept for
+    /// the next time it opens.
+    composer_stash: Option<(String, Vec<std::path::PathBuf>)>,
+    /// The relate dialog: a pane or tab dropped on another tab, asking how the
+    /// two agents work together (`relate_view.rs`).
+    relate: Option<relate_view::Relate>,
+    /// What a person has said about the inbox — snoozes, done marks, which
+    /// shelves are open, which face the spine shows — and the file it is kept
+    /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
+    /// the way the rail's memo is.
+    inbox_store: std::cell::RefCell<inbox::Store>,
+    /// What this window has watched each pane do, on its own clock.
+    inbox_tracker: std::cell::RefCell<inbox::Tracker>,
+    /// One frame's inbox, shared by the toggle's count, the list and a click.
+    inbox_memo: std::cell::RefCell<Option<inbox_view::InboxMemo>>,
+    /// The row whose snooze choices are open under it.
+    inbox_snoozing: Option<inbox::Key>,
+    /// The inbox row the keyboard is on (Ctrl+Alt+↑↓ with the INBOX face up).
+    inbox_cursor: Option<inbox::Key>,
+    /// The inbox row under the pointer, which alone shows its verbs.
+    inbox_hover: Option<inbox::Key>,
+    /// When the inbox next moves on its own (a snooze running out, a WORKING
+    /// seat's grace ending), as booked; and the booking's epoch, so a later
+    /// booking supersedes an earlier one.
+    inbox_clock: Option<std::time::SystemTime>,
+    inbox_clock_epoch: u64,
     /// Bumped on every picker open. The async tier-3 sweep captures the value
     /// and drops its result unless it still matches — otherwise a slow sweep
     /// belonging to a CLOSED (or re-opened, different-pane) picker lands in
@@ -5194,6 +5252,10 @@ struct Workspace {
     bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
     bar_bounds: BarBoxes,
+    /// An INBOX row being dragged onto another agent's row (`inbox_view.rs`).
+    inbox_drag: Option<inbox_view::InboxDrag>,
+    /// Where each INBOX row was drawn last frame, by the pane it stands for.
+    inbox_bounds: inbox_view::InboxBoxes,
     /// Where the bay was drawn this frame, for the same hit-testing. Separate
     /// from `bar_bounds` because the bay is not a tree row and must never be
     /// reachable by the code that walks rows looking for a place to file into.
@@ -5588,6 +5650,17 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.set_left_bar(!ws.left_bar, cx);
         ws.save(cx);
         cx.notify();
+    })
+    .detach();
+    // ctrl+shift+I in any pane → the left spine turns between its faces.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleInbox, cx| {
+        let showing = ws.spine_inbox();
+        ws.set_spine_inbox(!showing, cx);
+    })
+    .detach();
+    // ctrl+shift+E in any pane → the composer, over the main area.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &OpenComposer, window, cx| {
+        ws.open_composer(window, cx);
     })
     .detach();
     // ctrl+shift+N in any pane → open or close the attention queue.
@@ -6645,6 +6718,17 @@ impl Workspace {
             lang_picker: None,
             logo_picker: None,
             agent_launcher: None,
+            composer: None,
+            composer_stash: None,
+            relate: None,
+            inbox_store: std::cell::RefCell::new(Self::inbox_load()),
+            inbox_tracker: std::cell::RefCell::new(inbox::Tracker::default()),
+            inbox_memo: std::cell::RefCell::new(None),
+            inbox_snoozing: None,
+            inbox_cursor: None,
+            inbox_hover: None,
+            inbox_clock: None,
+            inbox_clock_epoch: 0,
             logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
             tool_probe: std::collections::HashMap::new(),
@@ -6851,6 +6935,8 @@ impl Workspace {
             bar_rename: None,
             bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
+            inbox_drag: None,
+            inbox_bounds: Arc::new(Mutex::new(Vec::new())),
             bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
             tab_digits: saved.tab_digits,
@@ -15347,6 +15433,38 @@ impl Workspace {
         bar_drop_at(&rows, pos)
     }
 
+    /// A tab carried over the MIDDLE of another tab's row, when both have an
+    /// agent: a release there opens the relate dialog rather than filing.
+    ///
+    /// The middle band only, so the top and bottom of every row still place
+    /// the tab above or below it as before; and only between agents, so a
+    /// shell tab's row is reordered across its whole height exactly as it was.
+    fn bar_relate_drop(
+        &self,
+        what: BarDragged,
+        pos: Point<Pixels>,
+        cx: &App,
+    ) -> Option<tree::Drop> {
+        let BarDragged::Task(i) = what else {
+            return None;
+        };
+        let j = {
+            let rows = self.bar_bounds.lock().unwrap();
+            let (id, b) = rows.iter().rev().find(|(_, b)| b.contains(&pos))?;
+            let tree::RowId::Task(j) = *id else {
+                return None;
+            };
+            let frac =
+                (f32::from(pos.y) - f32::from(b.origin.y)) / f32::from(b.size.height).max(1.0);
+            (RELATE_BAND.contains(&frac) && j != i).then_some(j)?
+        };
+        let actor = self.tab_agents(i, cx).into_iter().next()?;
+        self.tab_agents(j, cx)
+            .iter()
+            .any(|t| *t != actor)
+            .then_some(tree::Drop::Into(tree::RowId::Task(j)))
+    }
+
     /// Write a task's branch from a resolved [`tree::Place`] — the two fields
     /// that say where it hangs, set together so they cannot disagree.
     fn place_task(&mut self, i: usize, place: tree::Place) {
@@ -16565,7 +16683,9 @@ impl Workspace {
                 let open = workspace
                     .update(cx, |workspace, cx| {
                         cx.notify();
-                        workspace.agent_launcher.is_some() || workspace.launch_defaults_open
+                        workspace.agent_launcher.is_some()
+                            || workspace.launch_defaults_open
+                            || workspace.composer.is_some()
                     })
                     .unwrap_or(false);
                 if !open {
@@ -21914,6 +22034,8 @@ impl Workspace {
             || self.admin_menu
             || self.update_menu
             || self.savings_menu
+            || self.composer.is_some()
+            || self.relate.is_some()
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -22020,6 +22142,19 @@ impl Workspace {
         // queue, never the wall underneath it.
         if self.rail_open {
             self.rail_close();
+            return true;
+        }
+        // The composer is a page over the panes: Esc on a chip goes back to the
+        // sentence, and Esc on the sentence puts the page away with the draft
+        // kept for next time.
+        if self.composer.is_some() {
+            self.composer_escape();
+            return true;
+        }
+        // The relate dialog draws nothing until it is answered, so Esc is a
+        // plain no.
+        if self.relate.is_some() {
+            self.relate = None;
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -22235,6 +22370,14 @@ impl Workspace {
         if ks.key.as_str() == "f1" {
             self.help_open = !self.help_open;
             cx.notify();
+            return;
+        }
+        // The composer owns every key while it is up: one that fell through
+        // would reach a terminal behind a page.
+        if self.composer.is_some() && self.composer_key(ks, window, cx) {
+            return;
+        }
+        if self.relate.is_some() && self.relate_key(ks, window, cx) {
             return;
         }
         // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
@@ -22898,6 +23041,26 @@ impl Workspace {
                 // (or the live cursor's task) travels with the arrows
                 // instead of just the highlight. See `bar_carry_move`,
                 // `bar_carry_out`, `bar_carry_in`.
+                // With the spine on its INBOX face the same chords walk the
+                // inbox: ↑/↓ move the highlight row to row, → goes to the
+                // highlighted agent, ← lets the highlight go, and 1…9 go
+                // straight to that row (`inbox_view.rs`).
+                "up" | "down" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_walk(ks.key.as_str() == "down", cx);
+                }
+                "right" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_enter(cx);
+                }
+                "left" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_cursor = None;
+                    cx.notify();
+                }
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+                    if self.left_bar && self.spine_inbox() =>
+                {
+                    let n = (ks.key.as_bytes()[0] - b'0') as usize;
+                    self.inbox_jump(n, cx);
+                }
                 "up" | "down" if self.left_bar => {
                     let down = ks.key.as_str() == "down";
                     if m.shift {
@@ -23036,6 +23199,20 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // an INBOX row carried toward another agent's row: engage past the
+        // same threshold as the tree, so a press on a row is still a click
+        if let Some(d) = self.inbox_drag.as_mut() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.inbox_drag = None;
+            } else {
+                d.at = ev.position;
+                let dx = f32::from(d.at.x) - f32::from(d.start.x);
+                let dy = f32::from(d.at.y) - f32::from(d.start.y);
+                d.engaged |= (dx * dx + dy * dy).sqrt() > 6.0;
+            }
+            cx.notify();
+            return;
+        }
         // a left-bar filing drag: engage past a threshold (so a click on a row
         // is still a click) and resolve which branch a release would file into
         if self.bar_drag.is_some() {
@@ -23045,7 +23222,11 @@ impl Workspace {
                 return;
             }
             let pos = ev.position;
-            let over = self.resolve_bar_drop(pos);
+            let relate = self
+                .bar_drag
+                .as_ref()
+                .and_then(|d| self.bar_relate_drop(d.what, pos, cx));
+            let over = relate.or_else(|| self.resolve_bar_drop(pos));
             let in_bay = self.point_in_bay(pos);
             if let Some(d) = self.bar_drag.as_mut() {
                 d.at = pos;
@@ -23343,6 +23524,20 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // an INBOX row let go over another agent's row: the two are introduced
+        // through the relate dialog. Anywhere else, the press was the click
+        // that already went to the row's pane.
+        if let Some(drag) = self.inbox_drag.take() {
+            if drag.engaged {
+                if let Some(to) = self.inbox_relate_target(drag.from, ev.position, cx) {
+                    if let Some(actor) = self.pane_by_id(drag.from) {
+                        self.offer_relate_to(actor, vec![to], None, window, cx);
+                    }
+                }
+            }
+            cx.notify();
+            return;
+        }
         // a left-bar drag lands: file what was grabbed into the branch under the
         // cursor. A drag that never engaged was a click, and the click has
         // already done its work (activate / scope) on the way down.
@@ -23354,6 +23549,17 @@ impl Workspace {
                 return;
             }
             if drag.engaged {
+                // Over the middle of another tab's row: the two tabs' agents
+                // are being introduced, not filed (`bar_relate_drop`).
+                if let (BarDragged::Task(i), Some(tree::Drop::Into(tree::RowId::Task(j)))) =
+                    (drag.what, drag.over)
+                {
+                    if let Some(actor) = self.tab_agents(i, cx).into_iter().next() {
+                        self.offer_relate(actor, j, None, window, cx);
+                    }
+                    cx.notify();
+                    return;
+                }
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
                         self.save(cx);
@@ -23453,8 +23659,38 @@ impl Workspace {
                     // here and a pane closed with alt+w land in one holding and
                     // come back the same way.
                     self.close_pane(drag.id, window, cx);
+                } else if let (Some(to), Some(pane)) = (
+                    self.inbox_relate_target(drag.id, ev.position, cx),
+                    self.pane_by_id(drag.id),
+                ) {
+                    // Onto an agent's INBOX row: that agent, exactly, and no
+                    // move — a row in the inbox is not a place to put a pane.
+                    self.offer_relate_to(pane, vec![to], None, window, cx);
                 } else if let Some(target) = target {
-                    self.perform_drop(drag.id, target, window, cx);
+                    // A pane dropped on ANOTHER tab with an agent in it asks how
+                    // the two agents work together; moving it in stays one of
+                    // the answers (`relate_view.rs`). No agent on either side,
+                    // and the drop joins the tab as it always did.
+                    let onto = match &target {
+                        DropTarget::Tab { index } | DropTarget::BarTask { index, .. } => {
+                            Some(*index)
+                        }
+                        _ => None,
+                    };
+                    let home = self.tabs.iter().position(|t| {
+                        let mut v = vec![];
+                        t.root.leaves(&mut v);
+                        v.iter().any(|e| e.entity_id() == drag.id)
+                    });
+                    let offered = match (onto, self.pane_by_id(drag.id)) {
+                        (Some(to), Some(pane)) if home != Some(to) => {
+                            self.offer_relate(pane, to, Some((drag.id, target.clone())), window, cx)
+                        }
+                        _ => false,
+                    };
+                    if !offered {
+                        self.perform_drop(drag.id, target, window, cx);
+                    }
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
                     // brand-new window. Guarded so you can't pop out your only
@@ -29442,7 +29678,11 @@ impl Workspace {
             // whatever a branch row is pinned to — only the whole session
             // widens it (see `render_strip_head`). This row's glyphs and their
             // arrangement are the next pass.
-            .child(div().flex_1().min_w_0())
+            // The spine's two faces — PROJECTS and INBOX — in the stretch the
+            // scope chip once had, so the buttons stay at the right-hand end.
+            // The tree's own buttons (fold all, new project) act on the tree,
+            // so the INBOX face leaves them out and carries + NEW instead.
+            .child(self.render_spine_faces(&sk, s, cx))
             // Unboxed, ADD PROJECT lives here, beside the TABS handle with a
             // hairline between them: it is about the projects this tree lists,
             // and with it up here the top bar has nothing of its own left to
@@ -29451,7 +29691,7 @@ impl Workspace {
             // spine (adjescent and SEPARATED from tabs... this will eliminate
             // the TOP rail"*. With the spine shut it goes back to the top
             // corner, beside SPINE, since that is then the only way in.
-            .when(sk.unboxed(), |d| {
+            .when(sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     Self::bezel_btn_s(&sk, self.lang.strings().parts.ctl_add_project, false, s)
                         .id("spine-add-project")
@@ -29477,7 +29717,7 @@ impl Workspace {
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
             // NOT HIDE THE little arrow to change this even in clean mode."
-            .when(bar_header && !sk.unboxed(), |d| {
+            .when(bar_header && !sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     // fold or unfold the whole tree. One button rather than two,
                     // showing the triangle of what pressing it does: pointing down
@@ -29558,8 +29798,15 @@ impl Workspace {
             .flex_col()
             .gap(px(1. * s))
             .pb(px(6. * s));
-        for row in rows {
-            list = list.child(self.bar_row(row, cx));
+        if self.spine_inbox() {
+            // The INBOX face: the same list, holding every agent as a
+            // conversation to close (`inbox_view.rs`). The tree's keyboard
+            // cursor addresses tree rows, so it is not drawn here.
+            list = list.children(self.inbox_list(&th, s, cx));
+        } else {
+            for row in rows {
+                list = list.child(self.bar_row(row, cx));
+            }
         }
 
         Some(
@@ -31934,6 +32181,20 @@ impl Render for Workspace {
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
+                             // The inbox advances its clock, marks the pane in front of the person
+                             // visited, saves and books its next wake — once a frame, after the
+                             // reap, so it never lists a pane this frame has already closed.
+        let looking = window.is_window_active() && !self.overlay_owns_keyboard();
+        self.inbox_tick(looking, cx);
+        // The composer holds the keyboard while it is up. If something else
+        // took it — a click on a tab, a pane, the tree — the page is put away
+        // rather than left over a terminal that is now being typed into.
+        if self.composer.is_some() && !self.focus_handle.is_focused(window) {
+            self.composer_put_away();
+        }
+        if self.relate.is_some() && !self.focus_handle.is_focused(window) {
+            self.relate = None;
+        }
         warp::set_suppressed(
             pane_popup_open
                 // PAINT raises a card over EVERY pane at once, each one drawn
@@ -31979,6 +32240,9 @@ impl Render for Workspace {
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
                 || self.agent_launcher.is_some()
+                // The composer is a page over every pane of the active tab.
+                || self.composer.is_some()
+                || self.relate.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -32100,6 +32364,8 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
+        // demo/capture hook (TD_RELATE_DEMO): the relate dialog, once.
+        self.relate_demo(window, cx);
         // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
         // cannot click the counter; a number selects that seat without granting access.
         if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
@@ -39780,6 +40046,13 @@ impl Render for Workspace {
             // client-server" and "above host debts" are different releases and
             // the caret alone does not name what it is next to.
             let (label, color) = match d.over {
+                Some(tree::Drop::Into(row @ tree::RowId::Task(_))) => {
+                    let (name, c) = named(row);
+                    (
+                        lang::fill(self.lang.strings().entry.drag_relate, &[("name", &name)]),
+                        c,
+                    )
+                }
                 Some(tree::Drop::Into(row)) => {
                     let (name, c) = named(row);
                     (lang::fill(ui.drag_into, &[("name", &name)]), c)
@@ -39818,7 +40091,28 @@ impl Render for Workspace {
                 .bg(th.accent.alpha(0.9))
                 .text_color(th.bg)
                 .text_size(sk.text_px(10.5))
-                .child(self.lang.strings().ui.drag_moving_subtab)
+                .child(
+                    self.inbox_relate_target(d.id, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| self.lang.strings().ui.drag_moving_subtab.to_string()),
+                )
+        });
+        let inbox_chip = self.inbox_drag.as_ref().filter(|d| d.engaged).map(|d| {
+            div()
+                .absolute()
+                .left(px(f32::from(d.at.x) + 12.))
+                .top(px(f32::from(d.at.y) + 12.))
+                .px_2()
+                .py_0p5()
+                .rounded(sk.radius())
+                .bg(th.accent.alpha(0.9))
+                .text_color(th.bg)
+                .text_size(sk.text_px(10.5))
+                .child(
+                    self.inbox_relate_target(d.from, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| "\u{2026}".to_string()),
+                )
         });
 
         let dragging = self.drag_split;
@@ -39852,7 +40146,11 @@ impl Render for Workspace {
             .mx_2()
             // Doubled black bezel gap between the mother bar and the screen.
             .mt(px(7.))
-            .child(pane_area);
+            .child(pane_area)
+            // The composer lies over the panes inside the screen's own box, so
+            // it can cover them without resizing any (`entry_view.rs`).
+            .children(self.render_composer(&th, cx))
+            .children(self.render_relate(&th, cx));
 
         // The tree and the screen share the space under the mother bar. The bar
         // is `flex_none` at its own width and the screen takes what is left, so
@@ -39931,9 +40229,14 @@ impl Render for Workspace {
                 // is naturally typed with Alt still down, and that must pick the
                 // third row rather than go to the pane marked 3.
                 let digit = navkeys::row_digit(key).is_some();
+                // Not while the composer is up: a sentence is being typed, and
+                // a `y` or a digit in it must never answer an ask or jump a
+                // pane from a queue drawn underneath the page.
                 if !m.control
                     && !m.platform
                     && (!m.alt || digit)
+                    && ws.composer.is_none()
+                    && ws.relate.is_none()
                     && (ws.rail_key(key, cx) || ws.art_key(key, cx))
                 {
                     cx.stop_propagation();
@@ -40059,6 +40362,7 @@ impl Render for Workspace {
                     .children(group_menu_overlay)
                     .children(bar_chip)
                     .children(drag_chip)
+                    .children(inbox_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
                     // Document gauges must remain clickable while a brief is
@@ -44775,6 +45079,10 @@ mod tests {
                 cut(include_str!("threshing_floor_view.rs"), "\n#[cfg(test)]"),
             ),
             ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            (
+                "relate_view.rs",
+                cut(include_str!("relate_view.rs"), "\n#[cfg(test)]"),
+            ),
             ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
             ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
             (

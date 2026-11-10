@@ -4311,6 +4311,117 @@ impl Workspace {
             .unwrap_or_else(|| self.lang.strings().ui.floor_unavailable.to_string())
     }
 
+    /// Draw a relationship asked for outside the Floor: a pane or a tab
+    /// dropped onto another tab and answered in the relate dialog
+    /// (`relate_view.rs`).
+    ///
+    /// It goes through the Floor's own draft and save, so every rule the panel
+    /// keeps holds here unchanged: pool panes are seated into the org, a moved
+    /// or closed pane rejects the whole draw, and the batch's own checks run.
+    /// The panel's open org, draft, map and feedback are put back afterwards,
+    /// so a draft somebody left half made on the Floor survives a drop.
+    ///
+    /// The org is the one the seated side is already in. Two seated sides in
+    /// different orgs are refused: a line across orgs is the System Map's.
+    /// When nobody is seated, the org is named after the actor's left-bar
+    /// project and reused by that name next time, so dropping tabs within one
+    /// project builds one org rather than one per drop.
+    pub(crate) fn floor_relate(
+        &mut self,
+        actor: &Entity<TerminalView>,
+        targets: &[Entity<TerminalView>],
+        rung: threshing_floor::Rung,
+        cx: &mut Context<Self>,
+    ) -> Result<usize, String> {
+        let invalid = self.lang.strings().ui.floor_rel_invalid.to_string();
+        let leaves: Vec<&Entity<TerminalView>> = std::iter::once(actor).chain(targets).collect();
+        if targets.is_empty()
+            || targets.contains(actor)
+            || leaves.iter().any(|l| !l.read(cx).hosts_agent())
+        {
+            return Err(invalid);
+        }
+        let mut orgs: Vec<threshing_floor::OrgId> = leaves
+            .iter()
+            .filter_map(|l| l.read(cx).seat.and_then(|s| self.floor_orgs.owner(s)))
+            .collect();
+        orgs.sort_by_key(|o| o.0);
+        orgs.dedup();
+        if orgs.len() > 1 {
+            return Err(self.lang.strings().entry.relate_split.to_string());
+        }
+        let (org, created) = match orgs.first() {
+            Some(org) => (*org, false),
+            None => {
+                let name = self.relate_org_name(actor, cx);
+                let known = self
+                    .floor_orgs
+                    .saved()
+                    .iter()
+                    .find(|o| o.name.as_deref() == Some(name.as_str()))
+                    .map(|o| o.id);
+                match known {
+                    Some(id) => (id, false),
+                    None => match self.floor_orgs.create(&name) {
+                        Some(id) => (id, true),
+                        None => return Err(invalid),
+                    },
+                }
+            }
+        };
+        let kept_org = self.floor_org.replace(org);
+        let kept_draft = self.floor_relation.take();
+        let kept_feedback = self.floor_feedback.take();
+        let kept_map = self.floor_map.take();
+        let actor_member = self.threshing_floor_member(actor, cx);
+        let target_members: Option<Vec<RelationMember>> = targets
+            .iter()
+            .map(|t| self.threshing_floor_member(t, cx))
+            .collect();
+        let result = match (actor_member, target_members) {
+            (Some(actor), Some(targets)) => {
+                let n = targets.len();
+                self.floor_relation = Some(RelationEditor {
+                    actor: Some(actor),
+                    targets: targets.into_iter().map(Some).collect(),
+                    rung: Some(rung),
+                    ..Default::default()
+                });
+                self.threshing_floor_save_relation(cx);
+                match self.floor_relation.take() {
+                    None => Ok(n),
+                    Some(editor) => Err(editor.error.unwrap_or(invalid)),
+                }
+            }
+            _ => Err(invalid),
+        };
+        self.floor_org = kept_org;
+        self.floor_relation = kept_draft;
+        self.floor_feedback = kept_feedback;
+        self.floor_map = kept_map;
+        if created && result.is_err() {
+            self.floor_orgs.delete(org);
+        }
+        result
+    }
+
+    /// The name an org made by a drop takes: the actor's left-bar project, else
+    /// where the pane sits.
+    fn relate_org_name(&self, actor: &Entity<TerminalView>, cx: &App) -> String {
+        let id = actor.entity_id();
+        self.tabs
+            .iter()
+            .position(|t| {
+                let mut leaves = Vec::new();
+                t.root.leaves(&mut leaves);
+                leaves.iter().any(|l| l.entity_id() == id)
+            })
+            .and_then(|ti| self.place_of(ti).project)
+            .and_then(|p| self.projects.iter().find(|q| q.id == p))
+            .map(|p| p.label())
+            .unwrap_or_else(|| self.pane_name(actor, cx).place())
+    }
+
     fn threshing_floor_save_relation(&mut self, cx: &mut Context<Self>) {
         let Some(prepared) = self.threshing_floor_prepare_relation(cx) else {
             let missing = self
@@ -10306,6 +10417,387 @@ mod tests {
         leaf
     }
 
+    /// The tab index holding `leaf`.
+    fn tab_holding(ws: &Workspace, leaf: &Entity<TerminalView>) -> usize {
+        ws.tabs
+            .iter()
+            .position(|t| {
+                let mut v = Vec::new();
+                t.root.leaves(&mut v);
+                v.contains(&leaf)
+            })
+            .unwrap()
+    }
+
+    /// A pane dropped on a tab, answered with a number and Enter, draws the
+    /// line through the Floor's own save: both pool agents are seated into one
+    /// org, the line is the one picked, and the Floor's own state is as it was.
+    #[gpui::test]
+    fn a_drop_answered_in_the_dialog_seats_both_agents_and_draws_the_line(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let lead = pool_member(&ws, cx, "Scout");
+        let worker = pool_member(&ws, cx, "Builder");
+        let kept_org = ws.read_with(cx, |ws, _| ws.floor_org);
+        cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let to = tab_holding(ws, &worker);
+                assert!(ws.offer_relate(lead.clone(), to, None, window, cx));
+                for key in ["3", "enter"] {
+                    let ks = gpui::Keystroke::parse(key).unwrap();
+                    assert!(ws.relate_key(&ks, window, cx));
+                }
+                assert!(ws.relate.is_none(), "a drawn line closes the dialog");
+            })
+        });
+        ws.read_with(cx, |ws, cx| {
+            let a = lead.read(cx).seat.expect("the actor is seated");
+            let t = worker.read(cx).seat.expect("the target is seated");
+            let org = ws.floor_orgs.owner(a);
+            assert!(org.is_some() && org == ws.floor_orgs.owner(t));
+            assert_eq!(
+                ws.chart.line(a, t).and_then(|l| l.rung.known()),
+                Some(threshing_floor::Rung::Ask)
+            );
+            assert!(ws.chart.line(t, a).is_none(), "one direction only");
+            assert_eq!(ws.floor_org, kept_org, "the Floor's open org is put back");
+        });
+    }
+
+    /// A second drop between agents of the same place reuses the org the first
+    /// made, by name, rather than minting one org per drop.
+    #[gpui::test]
+    fn drops_in_one_place_build_one_org(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let a = pool_member(&ws, cx, "One");
+        let b = pool_member(&ws, cx, "Two");
+        let c = pool_member(&ws, cx, "Three");
+        ws.update(cx, |ws, cx| {
+            let before = ws.floor_orgs.saved().len();
+            ws.floor_relate(
+                &a,
+                std::slice::from_ref(&b),
+                threshing_floor::Rung::Read,
+                cx,
+            )
+            .unwrap();
+            ws.floor_relate(&b, std::slice::from_ref(&c), threshing_floor::Rung::See, cx)
+                .unwrap();
+            assert_eq!(ws.floor_orgs.saved().len(), before + 1);
+        });
+    }
+
+    /// Two agents already seated in different orgs are refused with the reason,
+    /// and nothing is drawn; a shell pane is never offered the dialog at all.
+    #[gpui::test]
+    fn a_cross_org_drop_is_refused_and_a_shell_is_never_asked(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, other) = fixture(cx);
+        let shell = pool_member(&ws, cx, "Plain shell");
+        shell.update(cx, |v, cx| {
+            v.mode = pane::PaneMode::Shell;
+            cx.notify();
+        });
+        cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let lines = ws.chart.saved().len();
+                ws.floor_orgs.assign(threshing_floor::SeatId(101), other);
+                let lead = ws
+                    .threshing_floor_seat_leaf(threshing_floor::SeatId(100), cx)
+                    .unwrap();
+                let worker = ws
+                    .threshing_floor_seat_leaf(threshing_floor::SeatId(101), cx)
+                    .unwrap();
+                let refused = ws.floor_relate(
+                    &lead,
+                    std::slice::from_ref(&worker),
+                    threshing_floor::Rung::Prompt,
+                    cx,
+                );
+                assert_eq!(
+                    refused,
+                    Err(ws.lang.strings().entry.relate_split.to_string())
+                );
+                assert_eq!(ws.chart.saved().len(), lines);
+                let to = tab_holding(ws, &worker);
+                assert!(!ws.offer_relate(shell.clone(), to, None, window, cx));
+                assert!(ws.relate.is_none());
+            })
+        });
+    }
+
+    /// The dialog is a card the size of what it says, inside the screen, with
+    /// the house edge. Parker's first look found it the height of the window,
+    /// its title pushed off the top and nothing marking where it ended.
+    #[gpui::test]
+    fn the_relate_dialog_is_a_card_that_fits_its_words(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        // Names as long as the ones on Parker's screen: a short name hid it.
+        let lead = pool_member(
+            &ws,
+            cx,
+            "T3 code inspired agent inbox workflow and the composer that files it",
+        );
+        let worker = pool_member(
+            &ws,
+            cx,
+            "Get job application materials together for the remote listing",
+        );
+        cx.update(|window, cx| {
+            ws.update(cx, |ws, cx| {
+                let to = tab_holding(ws, &worker);
+                assert!(ws.offer_relate(lead.clone(), to, None, window, cx));
+            })
+        });
+        cx.run_until_parked();
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let page = cx.debug_bounds("relate-page").expect("the scrim");
+        let card = cx.debug_bounds("relate-column").expect("the card");
+        assert!(card.top() >= page.top() && card.bottom() <= page.bottom());
+        assert!(
+            card.size.height < page.size.height * 0.75,
+            "the card is the height of its words, not of the window"
+        );
+    }
+
+    /// An agent's row in the INBOX spine relates like a tab does: carried
+    /// onto another agent's row and let go, it opens the dialog for exactly
+    /// those two (Parker: "anything that has an agent in the left spine").
+    #[gpui::test]
+    fn an_inbox_row_dragged_onto_another_agents_row_asks_how_they_relate(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let lead = pool_member(&ws, cx, "Scout");
+        let worker = pool_member(&ws, cx, "Builder");
+        ws.update(cx, |ws, cx| {
+            // The fixture opens the Floor; the gesture is made on the spine.
+            ws.threshing_floor = false;
+            ws.spine_in_scratch = true;
+            ws.set_left_bar(true, cx);
+            ws.set_spine_inbox(true, cx);
+        });
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+        };
+        draw(cx);
+        draw(cx);
+        // Fresh panes rest on SLEEP & QUIET, folded until opened.
+        ws.update(cx, |ws, cx| {
+            if !ws.inbox_store.borrow().is_open(inbox::Shelf::Quiet) {
+                ws.inbox_store.borrow_mut().toggle_open(inbox::Shelf::Quiet);
+                cx.notify();
+            }
+        });
+        draw(cx);
+        let row_of = |cx: &mut gpui::VisualTestContext, leaf: &Entity<TerminalView>| {
+            let id = leaf.entity_id();
+            ws.read_with(cx, |ws, _| {
+                ws.inbox_bounds
+                    .lock()
+                    .unwrap()
+                    .iter()
+                    .find(|(e, _)| *e == id)
+                    .map(|(_, b)| *b)
+            })
+            .expect("the agent has a row in the inbox")
+        };
+        let from = row_of(cx, &lead).center();
+        let to = row_of(cx, &worker).center();
+        let none = gpui::Modifiers::default();
+        cx.simulate_mouse_down(from, gpui::MouseButton::Left, none);
+        cx.simulate_mouse_move(
+            point(from.x + px(20.), from.y),
+            gpui::MouseButton::Left,
+            none,
+        );
+        cx.simulate_mouse_move(to, gpui::MouseButton::Left, none);
+        draw(cx);
+        cx.simulate_mouse_up(to, gpui::MouseButton::Left, none);
+        draw(cx);
+        ws.read_with(cx, |ws, _| {
+            let r = ws.relate.as_ref().expect("the dialog is up");
+            assert_eq!(r.actor.entity_id(), lead.entity_id());
+            let targets: Vec<_> = r.targets.iter().map(|t| t.entity_id()).collect();
+            assert_eq!(targets, vec![worker.entity_id()], "that agent, exactly");
+            assert!(
+                r.join.is_none(),
+                "an inbox row is not a place to move a pane"
+            );
+        });
+    }
+
+    /// A line drawn in the dialog is the line the MCP server enforces: no
+    /// shortcut of its own. Every grant here is made by the dialog's keys, and
+    /// every answer is read through the server's own snapshot (`snapshot_of`,
+    /// what a live request is answered from) and the window's own prompt gate
+    /// (`ask_bridge`, where a live `prompt_agent` lands). Read lets the caller
+    /// read and nothing more; only prompt lets it prompt; and an agent the
+    /// caller has no line to stays out of its census.
+    #[gpui::test]
+    fn a_line_drawn_in_the_dialog_is_exactly_what_the_mcp_server_allows(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let lead = pool_member(&ws, cx, "Lead");
+        let worker = pool_member(&ws, cx, "Worker");
+        let stranger = pool_member(&ws, cx, "Stranger");
+        ws.update(cx, |ws, _| ws.mcp.enabled = true);
+        let lead_pane = lead.read_with(cx, |v, _| v.pane_id().unwrap());
+        let worker_pid = worker.read_with(cx, |v, _| v.shell_pid().unwrap());
+        let stranger_pid = stranger.read_with(cx, |v, _| v.shell_pid().unwrap());
+
+        // Draw `from -> to` the way a person does: drop, a number, Enter.
+        let relate = |from: &Entity<TerminalView>,
+                      to: &Entity<TerminalView>,
+                      key: &str,
+                      cx: &mut gpui::VisualTestContext| {
+            cx.update(|window, cx| {
+                ws.update(cx, |ws, cx| {
+                    let i = tab_holding(ws, to);
+                    assert!(ws.offer_relate(from.clone(), i, None, window, cx));
+                    for k in [key, "enter"] {
+                        assert!(ws.relate_key(&gpui::Keystroke::parse(k).unwrap(), window, cx));
+                    }
+                    assert!(ws.relate.is_none(), "{key}: the line was not drawn");
+                })
+            });
+        };
+        // What the lead sees through the MCP server, as a live request would.
+        let census = |cx: &mut gpui::VisualTestContext| -> Vec<(u64, String)> {
+            let mut snap = ws.update(cx, crate::mcp_transport::snapshot_of);
+            snap.caller = Some(mcp::Caller {
+                session: "t".into(),
+                pane: Some(lead_pane),
+            });
+            let line = serde_json::json!({ "id": 1, "method": "tools/call",
+                "params": { "name": "list_panes", "arguments": {} } })
+            .to_string();
+            let reply: serde_json::Value =
+                serde_json::from_str(&mcp::handle_line(&line, &snap, |_, _| vec![]).unwrap())
+                    .unwrap();
+            reply["result"]["structuredContent"]["panes"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .map(|p| {
+                    (
+                        p["pid"].as_u64().unwrap(),
+                        p["reach"].as_str().unwrap_or_default().to_string(),
+                    )
+                })
+                .collect()
+        };
+        // The window's prompt gate, as a live `prompt_agent` reaches it.
+        let prompt = |target: u32, cx: &mut gpui::VisualTestContext| {
+            ws.update(cx, |ws, cx| {
+                ws.ask_bridge(
+                    &mcp::AskCall::Prompt(mcp::PromptRequest {
+                        caller_pane: lead_pane,
+                        target,
+                        brief: "check the build".into(),
+                        key: None,
+                    }),
+                    cx,
+                )
+            })
+        };
+        let reach_of = |pid: u32, seen: &[(u64, String)]| {
+            seen.iter()
+                .find(|(p, _)| *p == u64::from(pid))
+                .map(|(_, r)| r.clone())
+        };
+
+        // Nothing drawn: the lead cannot prompt the worker.
+        assert!(matches!(prompt(worker_pid, cx), mcp::AskReply::Refused(_)));
+
+        // READ, from the dialog: the worker is read, and still not prompted.
+        relate(&lead, &worker, "2", cx);
+        // The worker and the stranger are introduced too, so the stranger is
+        // seated in the same org with no line from the lead.
+        relate(&worker, &stranger, "1", cx);
+        let seen = census(cx);
+        assert_eq!(
+            reach_of(worker_pid, &seen).as_deref(),
+            Some("read"),
+            "{seen:?}"
+        );
+        assert_eq!(
+            reach_of(stranger_pid, &seen),
+            None,
+            "an agent the lead has no line to is not in its census: {seen:?}"
+        );
+        assert!(matches!(prompt(worker_pid, cx), mcp::AskReply::Refused(_)));
+        assert!(matches!(
+            prompt(stranger_pid, cx),
+            mcp::AskReply::Refused(_)
+        ));
+
+        // PROMPT, from the dialog: now, and only now, the prompt is taken.
+        relate(&lead, &worker, "4", cx);
+        let seen = census(cx);
+        assert_eq!(
+            reach_of(worker_pid, &seen).as_deref(),
+            Some("prompt"),
+            "{seen:?}"
+        );
+        assert!(
+            matches!(prompt(worker_pid, cx), mcp::AskReply::Prompt(_)),
+            "a prompt line drawn in the dialog lets the lead prompt"
+        );
+        assert!(matches!(
+            prompt(stranger_pid, cx),
+            mcp::AskReply::Refused(_)
+        ));
+    }
+
+    /// A draft somebody left half made on the Floor survives a drop.
+    #[gpui::test]
+    fn a_drop_leaves_the_floors_own_draft_alone(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let a = pool_member(&ws, cx, "One");
+        let b = pool_member(&ws, cx, "Two");
+        ws.update(cx, |ws, cx| {
+            ws.threshing_floor_begin_relation(Some(threshing_floor::SeatId(100)), None, cx);
+            ws.floor_relation.as_mut().unwrap().rung = Some(threshing_floor::Rung::See);
+            ws.floor_relate(&a, std::slice::from_ref(&b), threshing_floor::Rung::Ask, cx)
+                .unwrap();
+            let draft = ws.floor_relation.as_ref().expect("the draft is kept");
+            assert_eq!(
+                draft.actor,
+                Some(RelationMember::Seat(threshing_floor::SeatId(100)))
+            );
+            assert_eq!(draft.rung, Some(threshing_floor::Rung::See));
+        });
+    }
     #[gpui::test]
     fn pool_navigation_focuses_unseated_shell_sleeping_and_other_org_panes(
         cx: &mut gpui::TestAppContext,

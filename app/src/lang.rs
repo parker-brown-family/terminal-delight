@@ -14,10 +14,12 @@ use serde::{Deserialize, Serialize};
 
 mod chrome;
 mod coord;
+mod entry;
 mod help;
 mod parts;
 pub use chrome::Chrome;
 pub use coord::Coord;
+pub use entry::Entry;
 pub use help::Help;
 pub use parts::Parts;
 
@@ -458,6 +460,9 @@ pub struct Strings {
     pub parts: &'static Parts,
     /// The help sheet's filter, new shortcut rows and FEATURES tour.
     pub hs: &'static Help,
+    /// The entry point: the left spine's INBOX face and the composer that
+    /// starts an agent from a sentence.
+    pub entry: &'static Entry,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -815,6 +820,7 @@ pub const EN: Strings = Strings {
     ui: &chrome::EN,
     parts: &parts::EN,
     hs: &help::EN,
+    entry: &entry::EN,
 };
 
 /// Español.
@@ -1092,6 +1098,7 @@ pub const ES: Strings = Strings {
     ui: &chrome::ES,
     parts: &parts::ES,
     hs: &help::ES,
+    entry: &entry::ES,
 };
 
 /// Deutsch.
@@ -1369,6 +1376,7 @@ pub const DE: Strings = Strings {
     ui: &chrome::DE,
     parts: &parts::DE,
     hs: &help::DE,
+    entry: &entry::DE,
 };
 
 /// 中文 (简体).
@@ -1646,6 +1654,7 @@ pub const ZH: Strings = Strings {
     ui: &chrome::ZH,
     parts: &parts::ZH,
     hs: &help::ZH,
+    entry: &entry::ZH,
 };
 
 /// Français.
@@ -1923,6 +1932,7 @@ pub const FR: Strings = Strings {
     ui: &chrome::FR,
     parts: &parts::FR,
     hs: &help::FR,
+    entry: &entry::FR,
 };
 
 /// Русский.
@@ -2200,6 +2210,7 @@ pub const RU: Strings = Strings {
     ui: &chrome::RU,
     parts: &parts::RU,
     hs: &help::RU,
+    entry: &entry::RU,
 };
 
 /// 日本語.
@@ -2477,6 +2488,7 @@ pub const JA: Strings = Strings {
     ui: &chrome::JA,
     parts: &parts::JA,
     hs: &help::JA,
+    entry: &entry::JA,
 };
 
 /// 한국어.
@@ -2754,6 +2766,7 @@ pub const KO: Strings = Strings {
     ui: &chrome::KO,
     parts: &parts::KO,
     hs: &help::KO,
+    entry: &entry::KO,
 };
 
 /// हिन्दी.
@@ -3032,6 +3045,7 @@ pub const HI: Strings = Strings {
     ui: &chrome::HI,
     parts: &parts::HI,
     hs: &help::HI,
+    entry: &entry::HI,
 };
 
 #[cfg(test)]
@@ -3331,6 +3345,8 @@ mod tests {
         "parts.transcript_image",
         "parts.video_error_code",
         "parts.vitals_bar_fatigue",
+        // A file's name and a placeholder; only the colon could change.
+        "entry.composer_machines_error",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -3376,6 +3392,7 @@ mod tests {
             ("chrome", include_str!("lang/chrome.rs")),
             ("parts", include_str!("lang/parts.rs")),
             ("help", include_str!("lang/help.rs")),
+            ("entry", include_str!("lang/entry.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
