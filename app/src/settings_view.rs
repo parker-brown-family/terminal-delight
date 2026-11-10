@@ -520,6 +520,7 @@ fn page_name_in(l: lang::Lang, p: Page) -> &'static str {
         Page::Threads => s.p_threads,
         Page::Projects => s.p_projects,
         Page::Worktrees => s.p_worktrees,
+        Page::SourceControl => s.p_source_control,
         Page::Environments => s.p_environments,
         Page::Access => s.p_access,
         Page::Maintenance => s.p_maintenance,
@@ -596,6 +597,18 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         ),
         (Page::Worktrees, s.s_cleanup, s.r_wt_keep, s.r_wt_keep_sub),
         (Page::Worktrees, s.s_wt_review, s.r_wt_scan, ""),
+        (
+            Page::SourceControl,
+            s.s_coordination,
+            s.r_coordination,
+            s.r_coordination_sub,
+        ),
+        (
+            Page::Threads,
+            s.s_handovers,
+            s.r_artifacts,
+            s.r_artifacts_sub,
+        ),
         (Page::Environments, s.s_machines, s.r_machines, ""),
         (Page::Access, s.s_access, s.r_server, s.r_server_sub),
         (Page::Access, s.s_access, s.r_expose, s.r_expose_sub),
@@ -1363,70 +1376,91 @@ impl Workspace {
                         ("held", &c.memory.held.label(t.parts.pane_mem_unmeasured)),
                     ],
                 );
-                vec![Self::st_section(
-                    th,
-                    sk,
-                    "st-sec-rest",
-                    s.s_rest,
-                    vec![
-                        row(
-                            ui.ag_rest_name,
-                            ui.ag_rest_blurb,
-                            self.st_switch(
+                vec![
+                    Self::st_section(
+                        th,
+                        sk,
+                        "st-sec-rest",
+                        s.s_rest,
+                        vec![
+                            row(
+                                ui.ag_rest_name,
+                                ui.ag_rest_blurb,
+                                self.st_switch(
+                                    th,
+                                    sk1,
+                                    "st-rest",
+                                    p.rest_on(),
+                                    |ws, _| {
+                                        ws.agents_prefs.rest = Some(!ws.agents_prefs.rest_on());
+                                        agentcfg::save(&ws.agents_prefs);
+                                    },
+                                    cx,
+                                ),
+                            ),
+                            Self::st_row(
                                 th,
-                                sk1,
-                                "st-rest",
-                                p.rest_on(),
-                                |ws, _| {
-                                    ws.agents_prefs.rest = Some(!ws.agents_prefs.rest_on());
-                                    agentcfg::save(&ws.agents_prefs);
-                                },
+                                sk,
+                                ui.ag_rest_after,
+                                Some(self.agents_minutes_label(p.rest_after_min())),
+                                Some(self.agents_slider(0, None, th, sk, cx).into_any_element()),
+                            ),
+                            row(
+                                ui.ag_sleep_name,
+                                ui.ag_sleep_blurb,
+                                self.st_switch(
+                                    th,
+                                    sk1,
+                                    "st-sleep",
+                                    p.sleep_on(),
+                                    |ws, _| {
+                                        let on = !ws.agents_prefs.sleep_on();
+                                        ws.agents_prefs.sleep = Some(on);
+                                        // Sleep needs rest: switching sleep on switches rest on.
+                                        if on {
+                                            ws.agents_prefs.rest = Some(true);
+                                        }
+                                        agentcfg::save(&ws.agents_prefs);
+                                    },
+                                    cx,
+                                ),
+                            ),
+                            Self::st_row(
+                                th,
+                                sk,
+                                ui.ag_sleep_after,
+                                Some(self.agents_minutes_label(p.sleep_after_rest_min())),
+                                Some(self.agents_slider(1, None, th, sk, cx).into_any_element()),
+                            ),
+                            Self::st_row(
+                                th,
+                                sk,
+                                s.r_now,
+                                Some(format!("{now}\n{}", ui.am_coverage)),
+                                None,
+                            ),
+                        ],
+                    ),
+                    // CONFIG's "Artifacts" row: what agents handed over.
+                    Self::st_section(
+                        th,
+                        sk,
+                        "st-sec-handovers",
+                        s.s_handovers,
+                        vec![row(
+                            s.r_artifacts,
+                            s.r_artifacts_sub,
+                            self.st_open(
+                                th,
+                                sk,
+                                "st-open-artifacts",
+                                None,
+                                |ws, _, cx| ws.art_open(cx),
                                 cx,
                             ),
-                        ),
-                        Self::st_row(
-                            th,
-                            sk,
-                            ui.ag_rest_after,
-                            Some(self.agents_minutes_label(p.rest_after_min())),
-                            Some(self.agents_slider(0, None, th, sk, cx).into_any_element()),
-                        ),
-                        row(
-                            ui.ag_sleep_name,
-                            ui.ag_sleep_blurb,
-                            self.st_switch(
-                                th,
-                                sk1,
-                                "st-sleep",
-                                p.sleep_on(),
-                                |ws, _| {
-                                    let on = !ws.agents_prefs.sleep_on();
-                                    ws.agents_prefs.sleep = Some(on);
-                                    // Sleep needs rest: switching sleep on switches rest on.
-                                    if on {
-                                        ws.agents_prefs.rest = Some(true);
-                                    }
-                                    agentcfg::save(&ws.agents_prefs);
-                                },
-                                cx,
-                            ),
-                        ),
-                        Self::st_row(
-                            th,
-                            sk,
-                            ui.ag_sleep_after,
-                            Some(self.agents_minutes_label(p.sleep_after_rest_min())),
-                            Some(self.agents_slider(1, None, th, sk, cx).into_any_element()),
-                        ),
-                        Self::st_row(
-                            th,
-                            sk,
-                            s.r_now,
-                            Some(format!("{now}\n{}", ui.am_coverage)),
-                            None,
-                        ),
-                    ],
-                )]
+                        )],
+                    ),
+                ]
             }
             Page::Projects => {
                 let file = addproject::projects_path(&instance::config_dir());
@@ -1462,6 +1496,25 @@ impl Workspace {
                 )]
             }
             Page::Worktrees => self.wt_page(th, sk, sk1, cx),
+            // CONFIG's "Git · N projects" row, on T3's Source control page.
+            Page::SourceControl => vec![Self::st_section(
+                th,
+                sk,
+                "st-sec-coordination",
+                s.s_coordination,
+                vec![row(
+                    s.r_coordination,
+                    s.r_coordination_sub,
+                    self.st_open(
+                        th,
+                        sk,
+                        "st-open-coordination",
+                        None,
+                        |ws, w, cx| ws.toggle_eng_table(w, cx),
+                        cx,
+                    ),
+                )],
+            )],
             Page::Environments => {
                 let config = instance::config_dir();
                 let path = entry::machines_path(&config);

@@ -176,6 +176,14 @@ pub struct Settings {
     pub wt_failed: &'static str,
     /// Under the review when every rule is off.
     pub wt_rules_off: &'static str,
+    // ── Source control, Handovers ──
+    pub p_source_control: &'static str,
+    pub s_coordination: &'static str,
+    pub r_coordination: &'static str,
+    pub r_coordination_sub: &'static str,
+    pub s_handovers: &'static str,
+    pub r_artifacts: &'static str,
+    pub r_artifacts_sub: &'static str,
     /// The ⚙ glyph's tooltip in the menu corner. Keep the keycap.
     pub glyph_tip: &'static str,
 }
@@ -307,6 +315,13 @@ pub const EN: Settings = Settings {
     wt_removed: "{n} removed",
     wt_failed: "{n} refused by git: {first}",
     wt_rules_off: "Switch on a rule above to choose what goes. Branches are always kept.",
+    p_source_control: "Source control",
+    s_coordination: "Across projects",
+    r_coordination: "Coordination",
+    r_coordination_sub: "Which projects have new findings: branches, worktrees, and who is writing where.",
+    s_handovers: "Handovers",
+    r_artifacts: "Artifacts",
+    r_artifacts_sub: "Everything agents handed over, newest first. Alt+O opens it from anywhere.",
     glyph_tip: "Settings · Ctrl+,",
 };
 
@@ -437,6 +452,13 @@ pub const ES: Settings = Settings {
     wt_removed: "{n} quitados",
     wt_failed: "{n} rechazados por git: {first}",
     wt_rules_off: "Activa una regla arriba para elegir qué se va. Las ramas siempre se conservan.",
+    p_source_control: "Control de versiones",
+    s_coordination: "Entre proyectos",
+    r_coordination: "Coordinación",
+    r_coordination_sub: "Qué proyectos tienen hallazgos nuevos: ramas, árboles de trabajo y quién escribe dónde.",
+    s_handovers: "Entregas",
+    r_artifacts: "Artefactos",
+    r_artifacts_sub: "Todo lo que entregaron los agentes, lo más reciente primero. Alt+O lo abre desde cualquier lugar.",
     glyph_tip: "Ajustes · Ctrl+,",
 };
 
@@ -567,6 +589,13 @@ pub const DE: Settings = Settings {
     wt_removed: "{n} entfernt",
     wt_failed: "{n} von git abgelehnt: {first}",
     wt_rules_off: "Schalte oben eine Regel ein, um zu wählen, was geht. Zweige bleiben immer erhalten.",
+    p_source_control: "Versionsverwaltung",
+    s_coordination: "Über Projekte hinweg",
+    r_coordination: "Koordination",
+    r_coordination_sub: "Welche Projekte neue Befunde haben: Zweige, Arbeitsbäume und wer wo schreibt.",
+    s_handovers: "Übergaben",
+    r_artifacts: "Artefakte",
+    r_artifacts_sub: "Alles, was Agenten übergeben haben, das Neueste zuerst. Alt+O öffnet es von überall.",
     glyph_tip: "Einstellungen · Strg+,",
 };
 
@@ -697,6 +726,13 @@ pub const FR: Settings = Settings {
     wt_removed: "{n} retirés",
     wt_failed: "{n} refusés par git : {first}",
     wt_rules_off: "Activez une règle ci-dessus pour choisir ce qui part. Les branches sont toujours gardées.",
+    p_source_control: "Gestion de versions",
+    s_coordination: "Entre projets",
+    r_coordination: "Coordination des projets",
+    r_coordination_sub: "Les projets qui ont du nouveau : branches, arbres de travail, et qui écrit où.",
+    s_handovers: "Remises",
+    r_artifacts: "Artefacts",
+    r_artifacts_sub: "Tout ce que les agents ont remis, le plus récent d'abord. Alt+O l'ouvre de partout.",
     glyph_tip: "Réglages · Ctrl+,",
 };
 
@@ -827,6 +863,13 @@ pub const RU: Settings = Settings {
     wt_removed: "Удалено: {n}",
     wt_failed: "{n} отклонено git: {first}",
     wt_rules_off: "Включите правило выше, чтобы выбрать, что уйдёт. Ветки сохраняются всегда.",
+    p_source_control: "Управление версиями",
+    s_coordination: "Между проектами",
+    r_coordination: "Координация",
+    r_coordination_sub: "В каких проектах есть новые находки: ветки, рабочие деревья и кто где пишет.",
+    s_handovers: "Передачи",
+    r_artifacts: "Артефакты",
+    r_artifacts_sub: "Всё, что передали агенты, сначала новое. Alt+O открывает отовсюду.",
     glyph_tip: "Настройки · Ctrl+,",
 };
 
@@ -957,6 +1000,13 @@ pub const ZH: Settings = Settings {
     wt_removed: "已移除 {n} 个",
     wt_failed: "{n} 个被 git 拒绝：{first}",
     wt_rules_off: "在上方开启一条规则来选择移除什么。分支始终保留。",
+    p_source_control: "源代码管理",
+    s_coordination: "跨项目",
+    r_coordination: "协调",
+    r_coordination_sub: "哪些项目有新发现：分支、工作树，以及谁在哪里写。",
+    s_handovers: "交付",
+    r_artifacts: "成果",
+    r_artifacts_sub: "智能体交付的所有内容，最新的在前。Alt+O 可随处打开。",
     glyph_tip: "设置 · Ctrl+,",
 };
 
@@ -1087,6 +1137,13 @@ pub const JA: Settings = Settings {
     wt_removed: "{n} 個を削除しました",
     wt_failed: "git が {n} 個を拒否：{first}",
     wt_rules_off: "上の規則をオンにして、何を消すか選んでください。ブランチは常に残ります。",
+    p_source_control: "ソース管理",
+    s_coordination: "プロジェクト横断",
+    r_coordination: "連携",
+    r_coordination_sub: "新しい発見があるプロジェクト：ブランチ、ワークツリー、誰がどこで書いているか。",
+    s_handovers: "引き渡し",
+    r_artifacts: "成果物",
+    r_artifacts_sub: "エージェントが引き渡したものすべて、新しい順。Alt+O でどこからでも開けます。",
     glyph_tip: "設定 · Ctrl+,",
 };
 
@@ -1217,6 +1274,13 @@ pub const KO: Settings = Settings {
     wt_removed: "{n}개 지움",
     wt_failed: "git이 {n}개를 거부: {first}",
     wt_rules_off: "위에서 규칙을 켜서 무엇을 지울지 고르세요. 브랜치는 항상 남습니다.",
+    p_source_control: "소스 관리",
+    s_coordination: "프로젝트 전반",
+    r_coordination: "조정",
+    r_coordination_sub: "새 발견이 있는 프로젝트: 브랜치, 워크트리, 누가 어디서 쓰는지.",
+    s_handovers: "인계",
+    r_artifacts: "결과물",
+    r_artifacts_sub: "에이전트가 넘긴 모든 것, 최신순. Alt+O로 어디서든 엽니다.",
     glyph_tip: "설정 · Ctrl+,",
 };
 
@@ -1347,5 +1411,12 @@ pub const HI: Settings = Settings {
     wt_removed: "{n} हटाई गईं",
     wt_failed: "git ने {n} को मना किया: {first}",
     wt_rules_off: "क्या हटे यह चुनने के लिए ऊपर कोई नियम चालू करें। ब्रांच हमेशा रखी जाती हैं।",
+    p_source_control: "सोर्स कंट्रोल",
+    s_coordination: "प्रोजेक्टों के पार",
+    r_coordination: "समन्वय",
+    r_coordination_sub: "किन प्रोजेक्टों में नई खोजें हैं: ब्रांच, वर्कट्री, और कौन कहाँ लिख रहा है।",
+    s_handovers: "सौंपे गए काम",
+    r_artifacts: "कलाकृतियाँ",
+    r_artifacts_sub: "एजेंटों ने जो कुछ सौंपा, नया सबसे पहले। Alt+O इसे कहीं से भी खोलता है।",
     glyph_tip: "सेटिंग्स · Ctrl+,",
 };
