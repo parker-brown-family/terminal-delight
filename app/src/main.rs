@@ -119,6 +119,8 @@ mod threshing_floor_view;
 mod uninstall;
 mod update;
 mod update_view;
+#[cfg(test)]
+mod verify_keyboard;
 mod wirecheck;
 mod wtclean;
 use skin::parts::{
@@ -22413,6 +22415,61 @@ impl Workspace {
         true
     }
 
+    /// The language dropdown owns the keyboard while open: esc closes, ↵
+    /// applies the selected language, ↑/↓ (tab) move, everything else edits
+    /// the fuzzy query. Called in the CAPTURE phase: the picker opens from a
+    /// click (the keys sheet's 🌐, Settings › General) that leaves a pane
+    /// holding the focus, and a key that reached that pane first went to its
+    /// shell (`verify_keyboard`, 2026-11-10). True when the picker took it.
+    fn lang_picker_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let m = &ks.modifiers;
+        if let Some(mut lp) = self.lang_picker.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    cx.notify();
+                    return true;
+                }
+                "enter" => {
+                    let langs = Self::filtered_langs(&lp.query.text());
+                    if let Some(&l) = langs.get(lp.selected.min(langs.len().saturating_sub(1))) {
+                        self.lang = l;
+                        lang::set_current(l);
+                        self.save(cx);
+                    }
+                    cx.notify();
+                    return true;
+                }
+                "down" | "tab" => {
+                    let n = Self::filtered_langs(&lp.query.text()).len();
+                    if n > 0 {
+                        lp.selected = (lp.selected + 1).min(n - 1);
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+                "up" => {
+                    lp.selected = lp.selected.saturating_sub(1);
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+                _ => {
+                    let before = lp.query.text();
+                    lp.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
+                    if lp.query.text() != before {
+                        lp.selected = 0;
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// The help sheet's keyboard, taken in the capture phase because a
     /// terminal pane still holds the focus under it. Typing filters the sheet
     /// (Parker, 2026-11-03: *"TYPING (no click just a raw 'word' will FUZZY
@@ -22608,52 +22665,8 @@ impl Workspace {
         if ks.key.as_str() == "escape" && self.escape_closes_the_reader(window, cx) {
             return;
         }
-        // The language dropdown owns the keyboard while open: esc closes, ↵ applies
-        // the selected language, ↑/↓ (tab) move, everything else edits the fuzzy query.
-        if let Some(mut lp) = self.lang_picker.take() {
-            match ks.key.as_str() {
-                "escape" => {
-                    cx.notify();
-                    return;
-                }
-                "enter" => {
-                    let langs = Self::filtered_langs(&lp.query.text());
-                    if let Some(&l) = langs.get(lp.selected.min(langs.len().saturating_sub(1))) {
-                        self.lang = l;
-                        lang::set_current(l);
-                        self.save(cx);
-                    }
-                    cx.notify();
-                    return;
-                }
-                "down" | "tab" => {
-                    let n = Self::filtered_langs(&lp.query.text()).len();
-                    if n > 0 {
-                        lp.selected = (lp.selected + 1).min(n - 1);
-                    }
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
-                }
-                "up" => {
-                    lp.selected = lp.selected.saturating_sub(1);
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
-                }
-                _ => {
-                    let before = lp.query.text();
-                    lp.query
-                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
-                    if lp.query.text() != before {
-                        lp.selected = 0;
-                    }
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
-                }
-            }
-        }
+        // The language dropdown: see `lang_picker_key`, which the capture
+        // phase calls before any pane hears the key.
         if self.agents_menu && self.skills_form.is_some() {
             match ks.key.as_str() {
                 "escape" => self.cancel_skill_import(),
@@ -39059,6 +39072,8 @@ impl Render for Workspace {
             // Language-pack picker: click opens a fuzzy-search dropdown over all
             // languages (cycling was painful past a few langs).
             let lang_pick = div()
+                .id("help-lang")
+                .debug_selector(|| "help-lang".into())
                 .px_2()
                 .py_0p5()
                 .rounded(sk.radius())
@@ -40571,6 +40586,12 @@ impl Render for Workspace {
                     return;
                 }
                 if ws.threshing_floor_capture_key(&ev.keystroke, window, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                // The language picker sits over the keys sheet and over
+                // Settings, so it hears its keys before either.
+                if ws.lang_picker_key(&ev.keystroke, cx) {
                     cx.stop_propagation();
                     return;
                 }
