@@ -10,6 +10,7 @@ Tests check the cases someone thought to write. These check every order of steps
 | [`overlay-stack/`](overlay-stack/SKILL.md) | what is on top gets your keys and your Esc | TLA+ and replays (`app/src/verify_overlay.rs`) | 0 findings (the composer and a pane's design menu opened under the book; fixed, 3 replays) |
 | [`composer/`](composer/SKILL.md) | PROJECT's list shows what its field says, and the add-a-project dialog is the only face while it is up | TLA+ and a window replay (`addproject_view/tests.rs`) | 0 findings (a list left narrowed under an empty field; fixed) |
 | [`side-panel-reading/`](side-panel-reading/SKILL.md) | a side-panel tab's red note is about its latest read, and trouble never blanks what you were reading | TLA+ and the real window (`flyout_view.rs` tests) | 0 findings (a stale red note; fixed) |
+| [`drags/`](drags/SKILL.md) | a press drags only what it pressed, and a release ends every drag | TLA+ | 2 findings, only after a release the window never receives; the fix (one `Drag` enum) is issue 1425 |
 | [`flows/`](flows/README.md) | the INBOX and the Settings book, as user flows | TLA+ | hold |
 
 `verify/check.sh SPEC.tla [CONFIG.cfg]` checks one model, each rule on its own, against the folder's `findings.txt`. `verify/mutate.sh` proves a rule can fail. Each folder's `view.ts` is the reader's words for the pstack `/statechart` skill, which draws the model and gives each break as a path. `scripts/link-verify-skills.sh` links each `SKILL.md` where Claude Code finds project skills.
