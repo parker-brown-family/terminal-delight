@@ -20,6 +20,10 @@
 (***************************************************************************)
 EXTENDS Naturals, FiniteSets
 
+\* FALSE: the code before 2026-11-10. TRUE: a surface raised puts away the
+\* ones it would otherwise open beneath.
+CONSTANT Fixed
+
 \* The keys sheet (F1) is left out: it is drawn over all three and hears its
 \* keys first, so it keeps every promise here and only multiplies the states.
 Surfaces == {"composer", "palette", "book"}
@@ -48,7 +52,12 @@ ChordsReachPane == "composer" \notin open
 Raise(s) ==
     /\ s \notin open
     /\ ChordsReachPane
-    /\ open' = open \cup {s}
+    \* Fixed: open_composer puts the book and the design menu away first; a
+    \* pane's design menu (OpenThemeMenu in wire_pane) puts the book away.
+    /\ open' = IF ~Fixed THEN open \cup {s}
+               ELSE CASE s = "composer" -> {"composer"}
+                      [] s = "palette" -> (open \ {"book"}) \cup {"palette"}
+                      [] OTHER -> open \cup {s}
     /\ opened' = s
     /\ escHit' = "none" /\ typedTo' = "none"
 

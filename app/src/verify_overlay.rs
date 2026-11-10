@@ -1,8 +1,7 @@
 //! Replays of the overlay-stack model's counterexamples against the real
 //! window (`verify/overlay-stack/`). Each test states the PROMISE and is
-//! ignored while the current code breaks it: run them with
-//! `cargo test --locked -- --ignored verify_overlay` to see the finding, and
-//! drop the `#[ignore]` when a change makes the promise hold.
+//! ignored while the code broke it; since 2026-11-10 each holds and runs
+//! with the rest of the suite (`cargo test --locked verify_overlay`).
 
 use super::*;
 
@@ -44,10 +43,10 @@ fn redraw(cx: &mut gpui::VisualTestContext) {
 }
 
 /// RaisedIsOnTop, path: Ctrl+, then Ctrl+Shift+E. The promise: a surface a
-/// chord raises is the one on top. Today the composer opens inside the
-/// screen box, drawn under the Settings book.
+/// chord raises is the one on top. Before 2026-11-10 the composer opened
+/// inside the screen box, drawn under the Settings book; now raising it puts
+/// the book away.
 #[gpui::test]
-#[ignore = "finding: the composer opens behind Settings (verify/overlay-stack)"]
 fn verify_overlay_a_chord_never_raises_a_surface_behind_the_book(cx: &mut gpui::TestAppContext) {
     let _warp = crate::warp::WARP_SERIAL
         .lock()
@@ -67,10 +66,10 @@ fn verify_overlay_a_chord_never_raises_a_surface_behind_the_book(cx: &mut gpui::
 
 /// EscClosesTheTop and TypingGoesToTheTop, path: Ctrl+Shift+D, Ctrl+Shift+E,
 /// then a letter and Esc. The promise: the letter goes to the surface on top
-/// and Esc closes it. Today the composer opens under the design menu, takes
-/// the letter, and is what Esc closes; the menu stays.
+/// and Esc closes it. Before 2026-11-10 the composer opened under the design
+/// menu, took the letter, and was what Esc closed; the menu stayed. Now
+/// raising the composer puts the menu away.
 #[gpui::test]
-#[ignore = "finding: under the design menu the hidden composer takes typing and Esc (verify/overlay-stack)"]
 fn verify_overlay_esc_and_typing_reach_the_surface_on_top(cx: &mut gpui::TestAppContext) {
     let _warp = crate::warp::WARP_SERIAL
         .lock()
@@ -87,10 +86,13 @@ fn verify_overlay_esc_and_typing_reach_the_surface_on_top(cx: &mut gpui::TestApp
     redraw(cx);
     cx.simulate_keystrokes("q");
     redraw(cx);
+    // Hidden: the composer took the letter while the menu was drawn over it.
     let typed_into_hidden = ws.read_with(cx, |ws, _| {
-        ws.composer
-            .as_ref()
-            .is_some_and(|c| c.text.text().contains('q'))
+        ws.theme_menu.is_some()
+            && ws
+                .composer
+                .as_ref()
+                .is_some_and(|c| c.text.text().contains('q'))
     });
     cx.simulate_keystrokes("escape");
     redraw(cx);
@@ -103,5 +105,34 @@ fn verify_overlay_esc_and_typing_reach_the_surface_on_top(cx: &mut gpui::TestApp
     assert!(
         !(menu && !composer),
         "Esc closed the composer under the menu and left the menu on top"
+    );
+}
+
+/// RaisedIsOnTop, path: Ctrl+, then Ctrl+Shift+D. A pane's design menu is
+/// drawn under the Settings book, so raising it puts the book away rather
+/// than opening behind it.
+#[gpui::test]
+fn verify_overlay_a_panes_design_menu_never_opens_behind_the_book(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    cx.simulate_keystrokes("ctrl-,");
+    redraw(cx);
+    assert!(
+        ws.read_with(cx, |ws, _| ws.settings.is_some()),
+        "the book is up"
+    );
+    cx.simulate_keystrokes("ctrl-shift-d");
+    redraw(cx);
+    let (book, menu) = ws.read_with(cx, |ws, _| (ws.settings.is_some(), ws.theme_menu.is_some()));
+    assert!(
+        menu,
+        "Ctrl+Shift+D reached the pane and raised its design menu"
+    );
+    assert!(
+        !book,
+        "the menu was raised while the book stays drawn over it"
     );
 }

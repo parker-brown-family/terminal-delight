@@ -375,6 +375,17 @@ impl Workspace {
         if self.rail_open {
             self.rail_close();
         }
+        // Raised, it is the one on top: the surfaces it would otherwise open
+        // beneath (the Settings book, a pane's design menu) are put away
+        // first, as T3 leaves its settings page for a new thread. Its own
+        // render sits inside the screen, under the window's overlays, so a
+        // book left up would cover it and keep its keys and its Esc
+        // (verify/overlay-stack).
+        if self.settings.is_some() {
+            self.close_settings(cx);
+        }
+        self.theme_menu = None;
+        self.design_menu = None;
         if self.composer.is_none() {
             let home = session::home_dir();
             let config = instance::config_dir();
