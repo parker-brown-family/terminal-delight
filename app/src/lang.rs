@@ -3388,6 +3388,7 @@ mod tests {
         "settings.p_general",
         "settings.p_notifications",
         "settings.s_machines",
+        "settings.s_interface", // fr: interface is the standard French word for a user interface.
         // A product surface's name, kept as the window draws it.
         "settings.r_floor",
     ];

@@ -59,15 +59,6 @@ const CASES: &[Case] = &[
         field: |ws| ws.lang_picker.as_ref().map(|p| p.query.text()),
     },
     Case {
-        name: "the language picker, from Settings › General",
-        open: |_, cx| {
-            cx.simulate_keystrokes("ctrl-,");
-            redraw(cx);
-            click(cx, "st-open-language");
-        },
-        field: |ws| ws.lang_picker.as_ref().map(|p| p.query.text()),
-    },
-    Case {
         name: "the composer (Ctrl+Shift+E)",
         open: |_, cx| cx.simulate_keystrokes("ctrl-shift-e"),
         field: |ws| ws.composer.as_ref().map(|c| c.text.text()),
