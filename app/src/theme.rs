@@ -4543,7 +4543,7 @@ mod tests {
     fn named_sets_are_the_variants_the_desktop_ships() {
         // ONE vocabulary: this list is `variants.toml` in
         // omarchy-terminal-delight-tools, which installs
-        // ~/.config/omarchy/themes/terminal-delight-<key>. If the desktop set
+        // ~/.local/share/terminal-delight/palettes/<key>. If the desktop set
         // changes, this test is the place that says so out loud.
         let names: Vec<&str> = Dynamic::NAMED.iter().map(|d| d.label()).collect();
         assert_eq!(

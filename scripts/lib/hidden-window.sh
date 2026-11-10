@@ -75,7 +75,9 @@ hidden_close() {
   kill "$WIN" 2>/dev/null
   for _ in $(seq 1 50); do kill -0 "$WIN" 2>/dev/null || break; sleep 0.1; done
   # Forgotten, so cleanup never signals a pid the system may have handed on.
-  HIDDEN_WINDOWS=$(printf '%s\n' $HIDDEN_WINDOWS | grep -vx "$WIN" | tr '\n' ' ')
+  # grep exits 1 when the last window is filtered out; under a caller's
+  # errexit that empty result must not end the script.
+  HIDDEN_WINDOWS=$(printf '%s\n' $HIDDEN_WINDOWS | { grep -vx "$WIN" || true; } | tr '\n' ' ')
   WIN=""
 }
 
