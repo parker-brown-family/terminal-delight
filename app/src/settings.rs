@@ -28,6 +28,7 @@ pub enum Page {
     Threads,
     Projects,
     Worktrees,
+    SourceControl,
     Environments,
     Access,
     Maintenance,
@@ -57,7 +58,10 @@ pub const GROUPS: &[(Option<Heading>, &[Page])] = &[
         ],
     ),
     (Some(Heading::Agents), &[Page::Providers, Page::Threads]),
-    (Some(Heading::Code), &[Page::Projects, Page::Worktrees]),
+    (
+        Some(Heading::Code),
+        &[Page::Projects, Page::SourceControl, Page::Worktrees],
+    ),
     (
         Some(Heading::Connections),
         &[Page::Environments, Page::Access],
@@ -85,6 +89,7 @@ impl Page {
             Page::Threads => "threads",
             Page::Projects => "projects",
             Page::Worktrees => "worktrees",
+            Page::SourceControl => "source-control",
             Page::Environments => "environments",
             Page::Access => "access",
             Page::Maintenance => "maintenance",
@@ -112,6 +117,7 @@ impl Page {
             Page::Threads => "\u{1f4ac}",       // 💬
             Page::Projects => "\u{25a6}",       // ▦
             Page::Worktrees => "\u{1f5c2}",     // 🗂
+            Page::SourceControl => "\u{2387}",  // ⎇
             Page::Environments => "\u{1f5a7}",  // 🖧
             Page::Access => "\u{1f6e1}",        // 🛡
             Page::Maintenance => "\u{1f527}",   // 🔧

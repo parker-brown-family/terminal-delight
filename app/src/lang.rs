@@ -3252,9 +3252,8 @@ mod tests {
         // German says UPDATES too, and French spells STABLE the same way.
         "chrome.cfg_updates",
         "chrome.upd_stable",
-        // Names, not words: Parker's CONFIG menu and UI CONFIG section, and the
-        // face chips, which read TERM | BENCH in every language.
-        "chrome.cfg_config",
+        // Names, not words: the UI CONFIG section, and the face chips, which
+        // read TERM | BENCH in every language.
         "chrome.cfg_ui",
         // French shares "Agents" with English, and Spanish and French the
         // abbreviation "min".
