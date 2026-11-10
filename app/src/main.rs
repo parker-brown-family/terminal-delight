@@ -26825,10 +26825,16 @@ impl Workspace {
     /// No collector is run, no file is opened and nothing is awaited: the bar
     /// rebuilds every frame, and a widget that touched the disk during paint
     /// would be a stutter in a surface that is never not on screen.
+    /// The records that earn a row in the bar's allowance slot, in order.
+    /// `slot_rows` and the slot's drawing both walk this, so a row and its
+    /// record never fall out of step.
+    fn slot_records(&self) -> impl Iterator<Item = &usage::Record> {
+        self.usage_records.iter().filter(|r| r.earns_a_slot_row())
+    }
+
     fn slot_rows(&self) -> Vec<slot::ProviderRow> {
         let now = usage::now_epoch();
-        self.usage_records
-            .iter()
+        self.slot_records()
             .map(|r| {
                 // A record that does not say when it was written yields `None`
                 // here, and `from_record` treats that as one more thing nobody
@@ -27285,7 +27291,7 @@ impl Workspace {
             .px(px(6.0 * s))
             .pb(px(5.0 * s));
 
-        for (rec, row) in self.usage_records.iter().zip(&rows) {
+        for (rec, row) in self.slot_records().zip(&rows) {
             let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
 
             // The same pace math the usage panel's TOKEN USAGE PACE line uses

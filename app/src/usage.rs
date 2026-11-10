@@ -264,6 +264,19 @@ impl Record {
     pub fn has_content(&self) -> bool {
         self.ready || !self.limits.is_empty() || self.total_tokens() > 0
     }
+
+    /// Does this record earn an allowance row in the left bar? The rows are
+    /// rails for limits and a balance, so a record with either earns one. So
+    /// does a subscription somebody has used whose reading failed (a sign-in
+    /// that lapsed): its hatched row is how the person learns to sign in
+    /// again. Everything else is a collector for a vendor nobody here pays,
+    /// and Omarchy now writes one for each of twenty-three vendors. Parker,
+    /// 2026-11-10: *"all subscriptions shown … I only have 2"*, then *"empty
+    /// subscriptions not shown"*.
+    pub fn earns_a_slot_row(&self) -> bool {
+        let used = self.total_prompts > 0 || self.active_days > 0 || self.total_tokens() > 0;
+        !self.limits.is_empty() || self.balance.is_some() || (used && !self.status_text.is_empty())
+    }
 }
 
 /// `$XDG_STATE_HOME`, or the spec's fallback.
@@ -874,6 +887,55 @@ mod tests {
     fn worst_limit_is_the_one_under_pressure() {
         let r = parse(CLAUDE);
         assert_eq!(r.worst_limit().unwrap().label, "Weekly (7-day)");
+    }
+
+    /// Only a record with something for the rails, or a used subscription
+    /// whose reading failed, earns an allowance row. The cases are the
+    /// shapes Omarchy wrote on this machine on 2026-11-10, where 23 records
+    /// sat on disk for 2 subscriptions.
+    ///
+    /// Mutation-tested: keeping the `ready` flag as a reason lets the cursor
+    /// record through; dropping the lapsed-sign-in case loses the claude one.
+    #[test]
+    fn only_a_subscription_with_something_to_say_earns_a_slot_row() {
+        use serde_json::json;
+        let rec = |v: serde_json::Value| Record::from_json(&v).expect("a record");
+        let limit = json!([{"label": "Weekly (7-day)", "percent": 53.0}]);
+        let cases = [
+            // Antigravity: a collector for a vendor never used.
+            (json!({"id": "agy", "ready": false}), false),
+            // Cursor: says ready, waits for a sign-in nobody made, never used.
+            (
+                json!({"id": "cursor", "ready": true, "usageStatusText": "Waiting for auth"}),
+                false,
+            ),
+            // OpenCode: used, but publishes no allowance and no balance.
+            (
+                json!({"id": "opencode", "ready": true, "totalPrompts": 13}),
+                false,
+            ),
+            // Claude and Codex: limits to draw.
+            (
+                json!({"id": "claude", "ready": true, "limits": limit}),
+                true,
+            ),
+            // A prepaid account: a balance to draw.
+            (
+                json!({"id": "fireworks", "balance": {"remaining": 4.5, "currency": "USD"}}),
+                true,
+            ),
+            // Claude after the sign-in lapsed: no limits, but used, and the
+            // hatched row is what says to sign in again.
+            (
+                json!({"id": "claude", "ready": false, "totalPrompts": 1869,
+                       "usageStatusText": "Sign-in expired"}),
+                true,
+            ),
+        ];
+        for (v, earns) in cases {
+            let r = rec(v);
+            assert_eq!(r.earns_a_slot_row(), earns, "{}", r.id);
+        }
     }
 
     #[test]
