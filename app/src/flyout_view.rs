@@ -90,44 +90,133 @@ const GH_PAGES_BUDGET: Duration = Duration::from_secs(90);
 /// git's empty tree: what a repository with no commits is compared against.
 const EMPTY_TREE: &str = "4b825dc642cb6eb9a060e54bf8d69288fbee4904";
 
-/// A reading that can be absent, in flight, failed or had, kept apart so a
-/// repository with no changes and one not read yet never draw the same.
+/// A side-panel tab's reading: what it shows, and whether a read is out for
+/// a newer one. The two are apart on purpose: an answer stays drawn while it
+/// is read again, and so does a failure while it is tried again. What is
+/// shown is one value, set only by a read landing, so a red note is always
+/// about the latest read (`verify/side-panel-reading`).
 pub(crate) struct Reading<T> {
-    got: Option<T>,
-    error: Option<String>,
-    busy: bool,
-    at: Option<Instant>,
-    task: Option<gpui::Task<()>>,
+    shown: Shown<T>,
+    /// The read that is out. Busy is this, so busy and its task can never
+    /// disagree; dropping it cancels the read.
+    out: Option<gpui::Task<()>>,
+}
+
+/// What a person sees of a reading. Not read yet and read as empty are
+/// different values, so a repository with no changes and one not read yet
+/// never draw the same.
+enum Shown<T> {
+    Never,
+    /// The latest read's answer, and when it landed.
+    Got {
+        value: T,
+        at: Instant,
+    },
+    /// The latest read failed. The answer before it stays drawn beside the
+    /// red note, so a moment's trouble does not blank a list a person was
+    /// reading.
+    Failed {
+        why: String,
+        at: Instant,
+        last: Option<T>,
+    },
 }
 
 impl<T> Default for Reading<T> {
     fn default() -> Self {
         Self {
-            got: None,
-            error: None,
-            busy: false,
-            at: None,
-            task: None,
+            shown: Shown::Never,
+            out: None,
         }
     }
 }
 
 impl<T> Reading<T> {
     fn due(&self, every: Duration) -> bool {
-        !self.busy && self.at.is_none_or(|t| t.elapsed() >= every)
+        self.out.is_none() && self.at().is_none_or(|t| t.elapsed() >= every)
     }
 
-    /// An answer arrived. A failure keeps the last good answer beside it, so
-    /// a moment's trouble does not blank a list a person was reading.
+    fn busy(&self) -> bool {
+        self.out.is_some()
+    }
+
+    /// A read went out; it lands through [`Self::land`] or [`Self::same`].
+    fn start(&mut self, task: gpui::Task<()>) {
+        self.out = Some(task);
+    }
+
+    /// The read that is out is over. It is landing from inside itself, so
+    /// it is let finish rather than dropped, which would cancel it.
+    fn done(&mut self) {
+        if let Some(t) = self.out.take() {
+            t.detach();
+        }
+    }
+
+    /// An answer arrived. A failure keeps the answer before it beside it.
     fn land(&mut self, r: Result<T, String>) {
-        self.busy = false;
-        self.at = Some(Instant::now());
-        match r {
-            Ok(v) => {
-                self.got = Some(v);
-                self.error = None;
-            }
-            Err(e) => self.error = Some(e),
+        self.done();
+        let at = Instant::now();
+        self.shown = match (r, std::mem::replace(&mut self.shown, Shown::Never)) {
+            (Ok(value), _) => Shown::Got { value, at },
+            (Err(why), Shown::Never) => Shown::Failed {
+                why,
+                at,
+                last: None,
+            },
+            (Err(why), Shown::Got { value, .. }) => Shown::Failed {
+                why,
+                at,
+                last: Some(value),
+            },
+            (Err(why), Shown::Failed { last, .. }) => Shown::Failed { why, at, last },
+        };
+    }
+
+    /// The read found nothing moved since the answer held was read: that
+    /// answer is current again, and a failure since it is no longer the
+    /// latest read, so its note goes.
+    fn same(&mut self) {
+        self.done();
+        let at = Instant::now();
+        self.shown = match std::mem::replace(&mut self.shown, Shown::Never) {
+            Shown::Got { value, .. }
+            | Shown::Failed {
+                last: Some(value), ..
+            } => Shown::Got { value, at },
+            // Nothing held to be current: the next read reads it whole.
+            Shown::Failed { last: None, .. } | Shown::Never => Shown::Never,
+        };
+    }
+
+    fn got(&self) -> Option<&T> {
+        match &self.shown {
+            Shown::Never => None,
+            Shown::Got { value, .. } => Some(value),
+            Shown::Failed { last, .. } => last.as_ref(),
+        }
+    }
+
+    fn error(&self) -> Option<&str> {
+        match &self.shown {
+            Shown::Failed { why, .. } => Some(why),
+            _ => None,
+        }
+    }
+
+    /// When the latest read landed; `None` while none has.
+    fn at(&self) -> Option<Instant> {
+        match &self.shown {
+            Shown::Never => None,
+            Shown::Got { at, .. } | Shown::Failed { at, .. } => Some(*at),
+        }
+    }
+
+    /// Make the last read older by `by`, so a test can make it due.
+    #[cfg(test)]
+    fn age(&mut self, by: Duration) {
+        if let Shown::Got { at, .. } | Shown::Failed { at, .. } = &mut self.shown {
+            *at = at.checked_sub(by).unwrap_or(*at);
         }
     }
 }
@@ -1506,7 +1595,7 @@ impl Workspace {
             f.source = true;
             f.jump = Some(line);
             f.lit = Some(line);
-            if f.text.got.is_some() {
+            if f.text.got().is_some() {
                 f.scroll
                     .scroll_to_item(line.saturating_sub(1) as usize, ScrollStrategy::Center);
                 f.jump = None;
@@ -1945,7 +2034,7 @@ impl Workspace {
         let Some(Live::File(f)) = self.flyout.live.get_mut(t) else {
             return;
         };
-        let readable = f.text.got.as_ref().is_some_and(|x| !x.binary && !x.cut);
+        let readable = f.text.got().is_some_and(|x| !x.binary && !x.cut);
         if f.face.is_none() || !readable {
             return;
         }
@@ -2151,15 +2240,13 @@ impl Workspace {
             Some(Live::Changes(c)) => {
                 let paths = c
                     .list
-                    .got
-                    .as_ref()
+                    .got()
                     .map(|l| l.files.iter().map(|f| f.path.as_str()).collect::<Vec<_>>())
                     .unwrap_or_default();
                 c.filter.apply(paths);
                 let n = c
                     .list
-                    .got
-                    .as_ref()
+                    .got()
                     .map_or(0, |l| c.filter.rows(l.files.len()).len());
                 c.cursor = if fresh {
                     0
@@ -2174,8 +2261,7 @@ impl Workspace {
             Some(Live::Pull(p)) => {
                 let paths = p
                     .diff
-                    .got
-                    .as_ref()
+                    .got()
                     .map(|d| {
                         d.files
                             .iter()
@@ -2186,8 +2272,7 @@ impl Workspace {
                 p.filter.apply(paths);
                 let n = p
                     .diff
-                    .got
-                    .as_ref()
+                    .got()
                     .map_or(0, |d| p.filter.rows(d.files.len()).len());
                 p.cursor = if fresh {
                     0
@@ -2205,7 +2290,7 @@ impl Workspace {
     /// Find a file's text again: the query changed, or the file did.
     fn refind(&mut self, t: &Target) {
         if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
-            f.find.hits = Rc::new(match &f.text.got {
+            f.find.hits = Rc::new(match f.text.got() {
                 Some(text) if !f.find.query.is_empty() => {
                     flyout::find_text(&text.lines, &f.find.query, FIND_HITS)
                 }
@@ -2474,10 +2559,9 @@ impl Workspace {
         let Live::Changes(c) = self.flyout_live(key) else {
             return;
         };
-        if !(c.list.due(CHANGES_EVERY) || force && !c.list.busy) {
+        if !(c.list.due(CHANGES_EVERY) || force && !c.list.busy()) {
             return;
         }
-        c.list.busy = true;
         let k = key.clone();
         let task = cx.spawn(async move |this, cx| {
             let read = cx
@@ -2487,7 +2571,7 @@ impl Workspace {
                 .ok();
         });
         if let Live::Changes(c) = self.flyout_live(key) {
-            c.list.task = Some(task);
+            c.list.start(task);
         }
     }
 
@@ -2503,7 +2587,7 @@ impl Workspace {
         // A patch is kept only while its file is unchanged: same counts, same
         // size and time on disk, same revision underneath.
         if let Ok(new) = &read {
-            let old = c.list.got.as_ref();
+            let old = c.list.got();
             c.patches.retain(|path, _| {
                 let Some(old) = old else { return false };
                 old.rev == new.rev
@@ -2521,7 +2605,7 @@ impl Workspace {
         // rows as drawn, a filter's best first.
         if c.open.is_empty() && std::env::var("TD_FLYOUT_DEMO").is_ok_and(|v| v.contains("expand"))
         {
-            if let Some(l) = &c.list.got {
+            if let Some(l) = c.list.got() {
                 for (i, _) in c
                     .filter
                     .rows(l.files.len())
@@ -2535,8 +2619,7 @@ impl Workspace {
         }
         let want: Vec<FileStat> = c
             .list
-            .got
-            .as_ref()
+            .got()
             .map(|l| {
                 l.files
                     .iter()
@@ -2559,17 +2642,16 @@ impl Workspace {
         let Some(Live::Changes(c)) = self.flyout.live.get_mut(key) else {
             return;
         };
-        let Some(rev) = c.list.got.as_ref().map(|l| l.rev.clone()) else {
+        let Some(rev) = c.list.got().map(|l| l.rev.clone()) else {
             return;
         };
         if f.path.ends_with('/') {
             return;
         }
         let entry = c.patches.entry(f.path.clone()).or_default();
-        if entry.busy {
+        if entry.busy() {
             return;
         }
-        entry.busy = true;
         let k = key.clone();
         let path = f.path.clone();
         let filed = f.path.clone();
@@ -2587,7 +2669,7 @@ impl Workspace {
         });
         // Kept with its reading: a dropped task is a cancelled one.
         if let Some(Live::Changes(c)) = self.flyout.live.get_mut(key) {
-            c.patches.entry(filed).or_default().task = Some(task);
+            c.patches.entry(filed).or_default().start(task);
         }
     }
 
@@ -2595,12 +2677,11 @@ impl Workspace {
         let Live::File(f) = self.flyout_live(key) else {
             return;
         };
-        if !(f.text.due(FILE_EVERY) || force && !f.text.busy) {
+        if !(f.text.due(FILE_EVERY) || force && !f.text.busy()) {
             return;
         }
-        f.text.busy = true;
         let prev = f.stamp;
-        let fresh = force || f.text.got.is_none();
+        let fresh = force || f.text.got().is_none();
         let k = key.clone();
         let task = cx.spawn(async move |this, cx| {
             let read = cx
@@ -2612,7 +2693,7 @@ impl Workspace {
                 if let Some(Live::File(f)) = ws.flyout.live.get_mut(&k) {
                     match read {
                         Ok(Some((text, marks, stamp))) => {
-                            first = f.text.got.is_none();
+                            first = f.text.got().is_none();
                             f.stamp = Some(stamp);
                             f.marks = Rc::new(marks);
                             f.text.land(Ok(text));
@@ -2625,10 +2706,7 @@ impl Workspace {
                             // The file changed under a find: find it again.
                             again = !f.find.query.is_empty();
                         }
-                        Ok(None) => {
-                            f.text.busy = false;
-                            f.text.at = Some(Instant::now());
-                        }
+                        Ok(None) => f.text.same(),
                         Err(e) => f.text.land(Err(e)),
                     }
                 }
@@ -2645,7 +2723,7 @@ impl Workspace {
             .ok();
         });
         if let Live::File(f) = self.flyout_live(key) {
-            f.text.task = Some(task);
+            f.text.start(task);
         }
     }
 
@@ -2659,8 +2737,7 @@ impl Workspace {
             .suggest
             .iter()
             .filter(|(_, s)| {
-                s.got
-                    .as_ref()
+                s.got()
                     .and_then(|g| g.slug.as_ref())
                     .is_some_and(|(o, r)| o == owner && r == repo)
             })
@@ -2708,10 +2785,9 @@ impl Workspace {
             return;
         };
         let wants_diff = p.face == PullFace::Files
-            && (p.diff.got.is_none() && p.diff.error.is_none() || force)
-            && !p.diff.busy;
-        if p.pull.due(PULL_EVERY) || force && !p.pull.busy {
-            p.pull.busy = true;
+            && (p.diff.got().is_none() && p.diff.error().is_none() || force)
+            && !p.diff.busy();
+        if p.pull.due(PULL_EVERY) || force && !p.pull.busy() {
             let (k, c, o, r) = (key.clone(), candidates.clone(), owner.clone(), repo.clone());
             let task = cx.spawn(async move |this, cx| {
                 let read = cx
@@ -2721,7 +2797,7 @@ impl Workspace {
                     if let Some(Live::Pull(p)) = ws.flyout.live.get_mut(&k) {
                         // A pull request that moved since its diff was read
                         // has its diff read again when next shown.
-                        let moved = matches!((&p.pull.got, &read), (Some(old), Ok(new)) if old.updated_ms != new.updated_ms);
+                        let moved = matches!((p.pull.got(), &read), (Some(old), Ok(new)) if old.updated_ms != new.updated_ms);
                         if moved {
                             p.diff = Reading::default();
                         }
@@ -2732,13 +2808,10 @@ impl Workspace {
                 .ok();
             });
             if let Live::Pull(p) = self.flyout_live(key) {
-                p.pull.task = Some(task);
+                p.pull.start(task);
             }
         }
         if wants_diff {
-            if let Live::Pull(p) = self.flyout_live(key) {
-                p.diff.busy = true;
-            }
             let k = key.clone();
             let task = cx.spawn(async move |this, cx| {
                 let read = cx
@@ -2753,7 +2826,7 @@ impl Workspace {
                         if p.open.is_empty()
                             && std::env::var("TD_FLYOUT_DEMO").is_ok_and(|v| v.contains("expand"))
                         {
-                            if let Some(d) = &p.diff.got {
+                            if let Some(d) = p.diff.got() {
                                 for f in d.files.iter().filter(|f| f.diff.is_some()).take(2) {
                                     p.open.insert(f.stat.path.clone());
                                 }
@@ -2766,7 +2839,7 @@ impl Workspace {
                 .ok();
             });
             if let Live::Pull(p) = self.flyout_live(key) {
-                p.diff.task = Some(task);
+                p.diff.start(task);
             }
         }
     }
@@ -2776,10 +2849,9 @@ impl Workspace {
             return;
         };
         let s = self.flyout.suggest.entry(repo.clone()).or_default();
-        if !(s.due(SUGGEST_EVERY) || force && !s.busy) {
+        if !(s.due(SUGGEST_EVERY) || force && !s.busy()) {
             return;
         }
-        s.busy = true;
         let r = repo.clone();
         let task = cx.spawn(async move |this, cx| {
             let read = cx.background_spawn(async move { read_suggest(&r) }).await;
@@ -2791,7 +2863,7 @@ impl Workspace {
         });
         if let Some(here) = self.flyout.here.clone() {
             if let Some(s) = self.flyout.suggest.get_mut(&here) {
-                s.task = Some(task);
+                s.start(task);
             }
         }
     }
@@ -3038,13 +3110,12 @@ impl Workspace {
                         if !c.patches.contains_key(path) {
                             read = c
                                 .list
-                                .got
-                                .as_ref()
+                                .got()
                                 .and_then(|l| l.files.iter().find(|f| f.path == path).cloned());
                         }
                     }
                     // The keyboard follows the press, counted as the rows are drawn.
-                    if let Some(i) = c.list.got.as_ref().and_then(|l| {
+                    if let Some(i) = c.list.got().and_then(|l| {
                         c.filter
                             .rows(l.files.len())
                             .iter()
@@ -3062,7 +3133,7 @@ impl Workspace {
                     if !p.open.remove(path) {
                         p.open.insert(path.to_string());
                     }
-                    if let Some(i) = p.diff.got.as_ref().and_then(|d| {
+                    if let Some(i) = p.diff.got().and_then(|d| {
                         p.filter
                             .rows(d.files.len())
                             .iter()
@@ -3100,8 +3171,7 @@ impl Workspace {
                 if let Some(Live::Changes(c)) = self.flyout.live.get_mut(key) {
                     let files: Vec<FileStat> = c
                         .list
-                        .got
-                        .as_ref()
+                        .got()
                         .map(|l| {
                             l.files
                                 .iter()
@@ -3129,7 +3199,7 @@ impl Workspace {
                 if let Some(Live::Pull(p)) = self.flyout.live.get_mut(key) {
                     if !p.open.is_empty() {
                         p.open.clear();
-                    } else if let Some(d) = &p.diff.got {
+                    } else if let Some(d) = p.diff.got() {
                         p.open = d
                             .files
                             .iter()
@@ -3204,14 +3274,14 @@ impl Workspace {
             return rows;
         };
         let reading = self.flyout.suggest.get(&here);
-        let read_at = reading.and_then(|r| r.at);
+        let read_at = reading.and_then(|r| r.at());
         if let Some(c) = self.flyout.finder.borrow().as_ref() {
             if c.query == q && c.here.as_ref() == Some(&here) && c.read_at == read_at {
                 rows.extend(c.rows.iter().cloned());
                 return rows;
             }
         }
-        let rest = repo_rows(&here, reading.and_then(|r| r.got.as_ref()), &q);
+        let rest = repo_rows(&here, reading.and_then(|r| r.got()), &q);
         *self.flyout.finder.borrow_mut() = Some(FinderRows {
             query: q,
             here: Some(here),
@@ -3428,7 +3498,7 @@ impl Workspace {
                     return;
                 }
                 if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
-                    let n = f.text.got.as_ref().map_or(0, |x| x.lines.len());
+                    let n = f.text.got().map_or(0, |x| x.lines.len());
                     let top = list_top(&f.scroll);
                     let to = match key {
                         "up" | "k" => top.saturating_sub(1),
@@ -3461,8 +3531,7 @@ impl Workspace {
                 let (paths, cursor, scroll) = match self.flyout.live.get(t) {
                     Some(Live::Changes(c)) => (
                         c.list
-                            .got
-                            .as_ref()
+                            .got()
                             .map(|l| {
                                 c.filter
                                     .rows(l.files.len())
@@ -3476,8 +3545,7 @@ impl Workspace {
                     ),
                     Some(Live::Pull(p)) if p.face == PullFace::Files => (
                         p.diff
-                            .got
-                            .as_ref()
+                            .got()
                             .map(|d| {
                                 p.filter
                                     .rows(d.files.len())
@@ -3617,7 +3685,7 @@ impl Workspace {
     /// once it is known.
     fn tab_label(&self, t: &Target) -> String {
         match (t, self.flyout.live.get(t)) {
-            (Target::Pull { number, .. }, Some(Live::Pull(p))) => match &p.pull.got {
+            (Target::Pull { number, .. }, Some(Live::Pull(p))) => match p.pull.got() {
                 Some(pull) if !pull.title.is_empty() => format!("#{number} {}", pull.title),
                 _ => t.short_name(),
             },
@@ -3654,7 +3722,7 @@ impl Workspace {
         match (t, self.flyout.live.get(t)) {
             (Target::Pull { .. }, Some(Live::Pull(p))) => (
                 t.glyph(),
-                match p.pull.got.as_ref().map(|x| x.state) {
+                match p.pull.got().map(|x| x.state) {
                     Some(PullState::Open) => sk.ink.ok,
                     Some(PullState::Draft) => sk.ink.ink_faint,
                     Some(PullState::Merged) => th.ansi[13],
@@ -4143,7 +4211,7 @@ impl Workspace {
     ) -> AnyElement {
         let f = self.lang.strings().flyout;
         let ink = Ink::of(th, sk);
-        let list = c.list.got.as_ref();
+        let list = c.list.got();
         let totals = list.map(|l| flyout::totals(&l.files));
         let base_chip = |b: Base, word: &'static str| {
             let lit = b == base;
@@ -4216,7 +4284,7 @@ impl Workspace {
                         ))
                     })
                     .child(with_tip(
-                        icon_button("flyout-refresh", "\u{27f3}", c.list.busy, sk, s)
+                        icon_button("flyout-refresh", "\u{27f3}", c.list.busy(), sk, s)
                             .on_mouse_down(
                                 MouseButton::Left,
                                 cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -4275,11 +4343,11 @@ impl Workspace {
                     }),
             );
         let mut notes: Vec<AnyElement> = Vec::new();
-        if let Some(e) = &c.list.error {
+        if let Some(e) = c.list.error() {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
         match list {
-            None if c.list.error.is_none() => {
+            None if c.list.error().is_none() => {
                 notes.push(note(f.reading, sk.ink.ink_faint, sk, s).into_any_element())
             }
             Some(l) if l.files.is_empty() => {
@@ -4325,7 +4393,7 @@ impl Workspace {
                 let file = &l.files[*i];
                 let patch = match c.patches.get(&file.path) {
                     None => Patch::Unread,
-                    Some(r) => match (&r.got, &r.error) {
+                    Some(r) => match (r.got(), r.error()) {
                         (Some(d), _) => Patch::Got(d),
                         (None, Some(e)) => Patch::Failed(e),
                         (None, None) => Patch::Busy,
@@ -4977,7 +5045,7 @@ impl Workspace {
                 }
             })
             .unwrap_or_default();
-        let text = fl.text.got.as_ref();
+        let text = fl.text.got();
         let changed = fl.marks.len();
         let paged = fl.paged();
         // Page | Source, for a file TD draws: the page by default.
@@ -5120,7 +5188,7 @@ impl Workspace {
                 .into_any_element(),
             );
         }
-        if let Some(e) = &fl.text.error {
+        if let Some(e) = fl.text.error() {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
         if let Some(edit) = &fl.edit {
@@ -5133,7 +5201,7 @@ impl Workspace {
             }
         }
         let Some(t) = text else {
-            if fl.text.error.is_none() {
+            if fl.text.error().is_none() {
                 notes.push(note(f.reading, ink.faint, sk, s).into_any_element());
             }
             return div()
@@ -5496,7 +5564,7 @@ impl Workspace {
             return div().into_any_element();
         };
         let url = key.url().unwrap_or_default();
-        let pull = p.pull.got.as_ref();
+        let pull = p.pull.got();
         let (state_word, state_ink) = match pull.map(|x| x.state) {
             Some(PullState::Open) => (f.pr_open, ink.ok),
             Some(PullState::Draft) => (f.pr_draft, sk.ink.ink_dim),
@@ -5522,7 +5590,7 @@ impl Workspace {
         // the diff gets the room; Overview keeps all of it.
         if p.face != PullFace::Overview {
             let mut notes: Vec<AnyElement> = Vec::new();
-            if let Some(e) = &p.pull.error {
+            if let Some(e) = p.pull.error() {
                 notes.push(note(e, ink.danger, sk, s).into_any_element());
             }
             let line = div()
@@ -5666,10 +5734,10 @@ impl Workspace {
                 .child(self.pull_actions(x, &url, th, sk, s, cx))
             });
         let mut notes: Vec<AnyElement> = Vec::new();
-        if let Some(e) = &p.pull.error {
+        if let Some(e) = p.pull.error() {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
-        if pull.is_none() && p.pull.error.is_none() {
+        if pull.is_none() && p.pull.error().is_none() {
             notes.push(note(f.reading, ink.faint, sk, s).into_any_element());
         }
         let faces = self.pull_faces(p, pull, sk, s, cx);
@@ -6037,9 +6105,9 @@ impl Workspace {
         let f = self.lang.strings().flyout;
         let owner = DiffOwner::Pull(key.clone());
         let column = div().flex_1().min_h_0().flex().flex_col();
-        let Some(d) = &p.diff.got else {
+        let Some(d) = p.diff.got() else {
             return column
-                .child(match &p.diff.error {
+                .child(match p.diff.error() {
                     Some(e) => note(e, ink.danger, sk, s),
                     None => note(f.reading, ink.faint, sk, s),
                 })
@@ -6048,7 +6116,7 @@ impl Workspace {
         let files_url = key.url().map(|u| format!("{u}/files"));
         let order = p.filter.rows(d.files.len());
         let mut notes: Vec<AnyElement> = Vec::new();
-        if let Some(e) = &p.diff.error {
+        if let Some(e) = p.diff.error() {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
         if d.by_file {
@@ -6056,7 +6124,7 @@ impl Workspace {
         }
         // GitHub lists at most 3,000 files: past that, say how many it left out.
         let listed = d.files.len() as u64;
-        if let Some(total) = p.pull.got.as_ref().and_then(|x| x.changed_files) {
+        if let Some(total) = p.pull.got().and_then(|x| x.changed_files) {
             if d.by_file && total > listed {
                 notes.push(
                     note(
@@ -6186,7 +6254,7 @@ impl Workspace {
         let rows = self.add_rows(cx);
         let here = self.flyout.here.clone();
         let suggest = here.as_ref().and_then(|h| self.flyout.suggest.get(h));
-        let got = suggest.and_then(|r| r.got.as_ref());
+        let got = suggest.and_then(|r| r.got());
         let query = self.flyout.query.clone();
         let caret = if self.flyout.focused { "\u{258f}" } else { "" };
         let field = div()
@@ -7029,7 +7097,7 @@ mod tests {
             else {
                 panic!("the file tab read nothing");
             };
-            assert_eq!(f.text.got.as_ref().map(|t| t.lines.len()), Some(3));
+            assert_eq!(f.text.got().map(|t| t.lines.len()), Some(3));
         });
         let pane_focused = |cx: &mut gpui::VisualTestContext| {
             cx.update(|w, cx| {
@@ -7278,6 +7346,132 @@ mod tests {
             });
         }
         cx.run_until_parked();
+    }
+
+    /// Not read yet is its own state: no answer, no note, no time, and due.
+    /// A read going out makes it busy and not due, and landing ends both.
+    #[test]
+    fn a_reading_is_busy_exactly_while_a_read_is_out() {
+        let mut r: Reading<u32> = Reading::default();
+        assert_eq!((r.got(), r.error(), r.at()), (None, None, None));
+        assert!(r.due(FILE_EVERY) && !r.busy());
+        r.start(gpui::Task::ready(()));
+        assert!(r.busy() && !r.due(Duration::ZERO), "one read at a time");
+        r.land(Ok(7));
+        assert!(!r.busy());
+        assert_eq!(r.got(), Some(&7));
+        assert!(!r.due(FILE_EVERY), "just read");
+        r.age(FILE_EVERY);
+        assert!(r.due(FILE_EVERY));
+    }
+
+    /// A failure keeps the answer before it on screen, beside its note; the
+    /// next answer takes the note away; a second failure keeps the same
+    /// answer, and a failure with nothing before it has nothing to keep.
+    #[test]
+    fn a_failure_keeps_the_answer_before_it_and_an_answer_ends_the_note() {
+        let mut r: Reading<u32> = Reading::default();
+        r.land(Err("gh is not signed in".into()));
+        assert_eq!((r.got(), r.error()), (None, Some("gh is not signed in")));
+        r.land(Ok(1));
+        assert_eq!((r.got(), r.error()), (Some(&1), None));
+        r.land(Err("gone".into()));
+        assert_eq!((r.got(), r.error()), (Some(&1), Some("gone")));
+        r.land(Err("still gone".into()));
+        assert_eq!((r.got(), r.error()), (Some(&1), Some("still gone")));
+        assert!(
+            r.at().is_some(),
+            "a failure is a read too: it waits its turn"
+        );
+        r.land(Ok(2));
+        assert_eq!((r.got(), r.error()), (Some(&2), None));
+    }
+
+    /// "Nothing moved" makes the answer held current again: a note about an
+    /// earlier failure goes, the answer stays, and the read is over.
+    #[test]
+    fn nothing_moved_makes_the_answer_current_and_its_old_note_goes() {
+        let mut r: Reading<u32> = Reading::default();
+        r.land(Ok(3));
+        r.land(Err("The file is not there any more.".into()));
+        r.start(gpui::Task::ready(()));
+        r.same();
+        assert_eq!((r.got(), r.error()), (Some(&3), None));
+        assert!(!r.busy());
+        // With nothing held, nothing is current: the next read reads it whole.
+        let mut empty: Reading<u32> = Reading::default();
+        empty.land(Err("gone".into()));
+        empty.same();
+        assert_eq!((empty.got(), empty.error(), empty.at()), (None, None, None));
+    }
+
+    /// A file that goes away and comes back as it was takes its red note
+    /// with it. The read while it was gone failed; back with the same time
+    /// and size, the next poll finds nothing moved, and a note about a
+    /// failure that is no longer the latest read must not stay on screen.
+    /// The bug path of `ErrorIsTheLatestRead` in verify/side-panel-reading,
+    /// one step per action: read, gone, read fails, back, poll unchanged.
+    #[gpui::test]
+    fn a_file_back_as_it_was_takes_its_red_note_with_it(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-back-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = dir.join("notes.rs");
+        let away = dir.join("notes.rs.away");
+        std::fs::write(&file, "fn one() {}\nfn two() {}\n").unwrap();
+        let key = Target::File { path: file.clone() };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, key.clone(), None, true, w, cx);
+            })
+        });
+        redraw(cx);
+        // What the tab holds: lines of text, and the red note if any.
+        let seen = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| {
+                let Some(Live::File(f)) = ws.flyout.live.get(&key) else {
+                    panic!("the file tab read nothing");
+                };
+                (
+                    f.text.got().map(|t| t.lines.len()),
+                    f.text.error().map(str::to_owned),
+                )
+            })
+        };
+        // The poll, as the window runs it once a second, with the reading due.
+        let poll = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| {
+                ws.update(cx, |ws, cx| {
+                    if let Some(Live::File(f)) = ws.flyout.live.get_mut(&key) {
+                        f.text.age(FILE_EVERY);
+                    }
+                    ws.flyout_kick(false, cx);
+                })
+            });
+            redraw(cx);
+        };
+        assert_eq!(seen(cx), (Some(2), None), "read");
+        // A rename keeps the file's time, so coming back is coming back as it was.
+        std::fs::rename(&file, &away).unwrap();
+        poll(cx);
+        let (lines, note) = seen(cx);
+        assert_eq!(lines, Some(2), "the text a person was reading stays");
+        assert!(note.is_some(), "and the trouble is shown beside it");
+        std::fs::rename(&away, &file).unwrap();
+        poll(cx);
+        assert_eq!(
+            seen(cx),
+            (Some(2), None),
+            "back as it was: the read succeeded, so the red note goes"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A tab's ✕ sits at its left and closes it. A Markdown file opens as a
@@ -7698,8 +7892,7 @@ mod tests {
             ws.read_with(cx, |ws, _| match ws.flyout.live.get(&key) {
                 Some(Live::Changes(c)) => c
                     .list
-                    .got
-                    .as_ref()
+                    .got()
                     .map(|l| {
                         c.filter
                             .rows(l.files.len())
