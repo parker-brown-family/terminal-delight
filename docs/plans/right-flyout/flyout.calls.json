@@ -1,0 +1,241 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-build-overnight-without-waiting-for-plan-approva",
+      "at": "2026-11-08T09:52Z",
+      "title": "Build overnight without waiting for plan approval",
+      "context": null,
+      "chose": "Wrote the one-page plan and built straight on",
+      "because": "Parker said use your own judgement and build end to end on the experimental branch, then went to sleep; the branch is unmerged",
+      "passed_over": [],
+      "undo": "Revert the flyout commits on explore/t3-scuttle",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "plan"
+    },
+    {
+      "id": "call-tabs-belong-to-the-left-bar-task-they-were-opene",
+      "at": "2026-11-08T09:52Z",
+      "title": "Tabs belong to the left-bar task they were opened in",
+      "context": null,
+      "chose": "Each task keeps its own flyout tabs; open/closed and width are the window's",
+      "because": "The flyout should follow the conversation, as T3's side panel follows its thread; a single global set piles up every project's diffs",
+      "passed_over": [
+        "One set of tabs for the whole window"
+      ],
+      "undo": "Move the tab list from Tab to Workspace",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-a-pull-request-handed-over-on-the-rail-opens-in",
+      "at": "2026-11-08T09:52Z",
+      "title": "A pull request handed over on the rail opens in the flyout",
+      "context": null,
+      "chose": "The rail's PR handover opens the PR tab instead of asking about the browser",
+      "because": "It is the agent's evidence and belongs beside its conversation; the browser stays one press away inside the tab",
+      "passed_over": [
+        "Keep asking before the browser"
+      ],
+      "undo": "Remove the branch in ask_handover",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-draw-diffs-files-and-prs-natively-not-as-a-live",
+      "at": "2026-11-08T09:52Z",
+      "title": "Draw diffs, files and PRs natively, not as a live page",
+      "context": null,
+      "chose": "Native gpui views fed by git and gh; a live Chromium page waits",
+      "because": "He asked for code files, diffs and PRs; native rows are faster, wear the theme and need no GitHub cookies in a browser profile",
+      "passed_over": [
+        "A live Chromium tab over CDP, as the pasted assessment recommended",
+        "Electron"
+      ],
+      "undo": "Add a page tab kind beside the three",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-ctrl-shift-r-and-alt-click-open-the-flyout",
+      "at": "2026-11-08T09:52Z",
+      "title": "Ctrl+Shift+R and Alt+click open the flyout",
+      "context": null,
+      "chose": "Ctrl+Shift+R toggles it; Alt+click on a code file or PR URL opens there",
+      "because": "Ctrl+Shift+R is free everywhere in the code; Alt+click already means open inside TD and did nothing on those targets",
+      "passed_over": [
+        "Changing Ctrl+click on PR URLs, which people already use for the browser"
+      ],
+      "undo": "Drop the chord and the OpenSide intent",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-pull-requests-are-read-only-from-gh-on-path",
+      "at": "2026-11-08T09:52Z",
+      "title": "Pull requests are read-only, from gh on PATH",
+      "context": null,
+      "chose": "gh pr view and gh pr diff; no merge, checkout or comment buttons",
+      "because": "Writes to GitHub are outward-facing and Parker has not asked for them; gh on PATH is what any user has, TD_GH overrides it",
+      "passed_over": [
+        "T3's Merge and Check out buttons",
+        "Resolving Parker's ~/bin/gh wrapper specially"
+      ],
+      "undo": "Add the buttons later",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-the-changes-tab-re-reads-git-every-three-seconds",
+      "at": "2026-11-08T09:52Z",
+      "title": "The Changes tab re-reads git every three seconds while shown",
+      "context": null,
+      "chose": "Poll only the visible tab: changes 3s, a file on change, PR 60s",
+      "because": "Agents edit while you watch; polling only what is on screen keeps twenty panes cheap",
+      "passed_over": [],
+      "undo": "Make refresh manual",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
+    },
+    {
+      "id": "call-a-window-too-narrow-for-both-splits-the-room",
+      "at": "2026-11-08T11:32Z",
+      "title": "A window too narrow for both splits the room",
+      "context": null,
+      "chose": "Terminals keep 380 px when the window has it; otherwise panel and panes split evenly",
+      "because": "The panel's own minimum used to squeeze panes to 138 px in a 640 px tile",
+      "passed_over": [
+        "Hide the panel when it cannot fit",
+        "Draw it over the panes in a narrow window"
+      ],
+      "undo": "Change panel_width",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "shape"
+    }
+  ]
+}

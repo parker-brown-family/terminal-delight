@@ -1,0 +1,200 @@
+{
+ "format": 1,
+ "kind": "briefing-calls",
+ "calls": [
+  {
+   "id": "call-a-refused-pull-request-diff-is-read-file-by-file",
+   "at": "2026-11-08T18:54Z",
+   "title": "A refused pull request diff is read file by file",
+   "context": null,
+   "chose": "When GitHub refuses the whole diff, read its per-file list and each file's patch",
+   "because": "GitHub caps one whole diff at 20,000 lines but lists up to 3,000 files with a patch each",
+   "passed_over": [
+    "Diff a local checkout (needs the pull request's commits fetched)",
+    "Show the refusal and stop"
+   ],
+   "undo": "Drop the fallback in read_pull_diff",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "low",
+    "taste": "low",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "carry-on",
+    "reasons": []
+   },
+   "status": "open",
+   "verdict": null,
+   "see": "big-pulls"
+  },
+  {
+   "id": "call-a-file-list-narrows-as-you-type-best-match-first",
+   "at": "2026-11-08T18:54Z",
+   "title": "A file list narrows as you type, best match first",
+   "context": null,
+   "chose": "Slash or a click filters the list; best match first, matched letters lit",
+   "because": "Parker asked for fuzzy search; a 208-file list is read by finding one file",
+   "passed_over": [
+    "Keep path order and only hide what does not match"
+   ],
+   "undo": "Sort filtered rows by path instead of score",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "medium",
+    "taste": "medium",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "stop",
+    "reasons": [
+     "both readings are medium under a standard posture"
+    ]
+   },
+   "status": "concurred",
+   "verdict": {
+    "at": "2026-11-09T00:28Z",
+    "via": "reported",
+    "note": "Parker chose 'Best match first' when asked, 2026-11-08",
+    "follow_up": null,
+    "superseded_by": null,
+    "seen": []
+   },
+   "see": "search"
+  },
+  {
+   "id": "call-the-finder-matches-across-the-whole-path-the-nam",
+   "at": "2026-11-08T18:54Z",
+   "title": "The finder matches across the whole path, the name counting most",
+   "context": null,
+   "chose": "fzf-style scoring; outside the file's name, a gap must land on a word start",
+   "because": "The first pass refused letters across folders, which also refused src/fly for app/src/flyout.rs; letters strewn mid-word into other folders stay refused",
+   "passed_over": [
+    "Letters in order within the file name only (the first pass)"
+   ],
+   "undo": "Restrict matching to the file name again",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "low",
+    "taste": "medium",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "carry-on",
+    "reasons": []
+   },
+   "status": "open",
+   "verdict": null,
+   "see": "search"
+  },
+  {
+   "id": "call-every-tab-shows-its-close-mark-on-the-left-alway",
+   "at": "2026-11-08T18:54Z",
+   "title": "Every tab shows its close mark on the left, always",
+   "context": null,
+   "chose": "A quiet × left of every tab, red under the pointer; middle-click still closes",
+   "because": "Parker asked for it on the left; shown only under the pointer, it leaves an empty gap",
+   "passed_over": [
+    "Only on the shown tab and under the pointer, as before"
+   ],
+   "undo": "Hide the × on tabs not shown or hovered",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "low",
+    "taste": "medium",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "carry-on",
+    "reasons": []
+   },
+   "status": "open",
+   "verdict": null,
+   "see": "tabs"
+  },
+  {
+   "id": "call-pages-markdown-pictures-and-pdfs-open-drawn-sour",
+   "at": "2026-11-08T18:54Z",
+   "title": "Pages, Markdown, pictures and PDFs open drawn, source one key away",
+   "context": null,
+   "chose": "Drawn by the floating square's own document view; s flips to source",
+   "because": "Parker opened tv.html and saw source; the square's engine already draws all four kinds",
+   "passed_over": [
+    "Source first, page on request",
+    "Send the file to the floating square instead"
+   ],
+   "undo": "Default a File tab to its source",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "low",
+    "taste": "medium",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "carry-on",
+    "reasons": []
+   },
+   "status": "open",
+   "verdict": null,
+   "see": "pages"
+  },
+  {
+   "id": "call-files-and-conversation-faces-wear-a-one-line-pul",
+   "at": "2026-11-08T18:54Z",
+   "title": "Files and Conversation faces wear a one-line pull request header",
+   "context": null,
+   "chose": "Overview keeps the full header; the other faces show one line",
+   "because": "On a 900-pixel panel the full header took a quarter of the height",
+   "passed_over": [
+    "The full header on every face"
+   ],
+   "undo": "Draw the full header on every face",
+   "door": "two-way",
+   "evidence": [],
+   "conflicts": [],
+   "under": null,
+   "judgement": {
+    "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+    "filled_by": "agent",
+    "uncertainty": "medium",
+    "taste": "medium",
+    "posture": "standard",
+    "posture_declared": true,
+    "outcome": "stop",
+    "reasons": [
+     "both readings are medium under a standard posture"
+    ]
+   },
+   "status": "concurred",
+   "verdict": {
+    "at": "2026-11-09T00:28Z",
+    "via": "reported",
+    "note": "Parker chose 'One line there' when asked, 2026-11-08",
+    "follow_up": null,
+    "superseded_by": null,
+    "seen": []
+   },
+   "see": "diffs"
+  }
+ ]
+}

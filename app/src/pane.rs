@@ -3747,6 +3747,19 @@ impl gpui::EventEmitter<ToggleInbox> for TerminalView {}
 pub struct OpenComposer;
 impl gpui::EventEmitter<OpenComposer> for TerminalView {}
 
+/// Ctrl+Shift+R — open or close the right-bar flyout (`flyout_view.rs`).
+pub struct ToggleFlyout;
+impl gpui::EventEmitter<ToggleFlyout> for TerminalView {}
+
+/// Alt+click on a code file or a GitHub pull request link: show it in the
+/// right-bar flyout, beside this pane's conversation, at the line a
+/// `path:line` named. The workspace owns the flyout, so the pane asks.
+pub struct OpenSide {
+    pub target: crate::flyout::Target,
+    pub line: Option<u32>,
+}
+impl gpui::EventEmitter<OpenSide> for TerminalView {}
+
 /// Ctrl+Shift+Z — bring back the most recently closed thing.
 ///
 /// Z because the feature is an undo on a close. Not ctrl+shift+T, which this
@@ -6990,6 +7003,28 @@ impl TerminalView {
             .map(|c| c.link)
     }
 
+    /// What an Alt+click at `pos` shows in the right-bar flyout: a GitHub
+    /// pull request by its address, or a code file on this disk, at the line
+    /// a `path:line` names. The resolved link is asked first; then the bare
+    /// token, because `src/main.rs:120` is not a link to [`link_of_token`]
+    /// (a colon there reads as a host and port) but is exactly what a
+    /// compiler or an agent prints.
+    fn side_target_under(&self, pos: gpui::Point<Pixels>) -> Option<crate::flyout_view::SideOpen> {
+        let cwd = self.runtime().cwd;
+        if let Some(l) = self.link_under(pos) {
+            if let Some(open) = crate::flyout_view::side_of(&l, cwd.as_deref()) {
+                return Some(open);
+            }
+        }
+        let (vrow, vcol, _) = self.viewport_cell(pos);
+        let vrow = self.paint_row_to_grid_row(vrow);
+        let (grid, _) = self.grid_snapshot();
+        let row = grid.get(vrow)?;
+        let (start, end) = token_span(row, vcol)?;
+        let token = trim_link_delims(&row[start..end].iter().collect::<String>());
+        crate::flyout_view::side_of(&token, cwd.as_deref())
+    }
+
     /// Every reading of the link under the pointer, the most-joined first.
     ///
     /// A cell carrying an OSC 8 link to a file on this machine is read as that
@@ -8208,6 +8243,8 @@ impl TerminalView {
                 // E for entry: the composer that starts an agent from a
                 // sentence.
                 "e" => cx.emit(OpenComposer),
+                // R for the right bar: diffs, files and pull requests.
+                "r" => cx.emit(ToggleFlyout),
                 // M for made: what this pane's agent handed over, as a page
                 // over the pane. The pane's own, so it is acted on here rather
                 // than sent up to the workspace.
@@ -9845,6 +9882,13 @@ impl TerminalView {
             let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
                 .then(|| link.as_deref().and_then(|l| self.document_of(l)))
                 .flatten();
+            // A code file or a pull request link, for the right-bar flyout:
+            // asked only with Alt held and only where no document answered.
+            let side = (mods.alt
+                && doc.is_none()
+                && self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| self.side_target_under(ev.position))
+                .flatten();
             // The chip a copy would take, asked without the document: it is
             // armed for a copy exactly when the line is a command line.
             let copy = mods
@@ -9855,6 +9899,7 @@ impl TerminalView {
             let intent = crate::docopen::click_intent(
                 mods,
                 doc.is_some(),
+                side.is_some(),
                 link.is_some(),
                 revealable.is_some(),
                 copy.is_some(),
@@ -9934,6 +9979,15 @@ impl TerminalView {
                     }
                     Some(Took::Stop)
                 }
+                // Beside the conversation, in the flyout; the keyboard stays
+                // in this pane, which is where the person was typing.
+                ClickIntent::OpenSide => side.map(|open| {
+                    cx.emit(OpenSide {
+                        target: open.target,
+                        line: open.line,
+                    });
+                    Took::Stop
+                }),
                 ClickIntent::CopyChip => copy.map(|hint| {
                     self.copy_chip(hint, cx);
                     Took::Stop
@@ -11568,6 +11622,10 @@ impl Render for TerminalView {
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
         let ctx_menu_el = self.ctx_menu.map(|pos| {
             let link = self.link_under(pos);
+            // A code file or a pull request link offers the flyout too.
+            let side = (self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| self.side_target_under(pos))
+                .flatten();
             // The bench's selection counts too, and on the bench face it is
             // usually the only one — the grid behind it is not what a person
             // dragged over. Both are checked so the row is live in either
@@ -11625,6 +11683,23 @@ impl Render for TerminalView {
                 .font_family(ff)
                 .shadow_md()
                 .map(|d| menu_skin.finish(d));
+            if let (None, Some(open)) = (&link, side.clone()) {
+                // A `path:line` the link reader does not take still opens in
+                // the flyout, and that is the only row it has.
+                menu = menu.child(link_row(s.flyout.menu_open, "alt+click").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _, _, cx| {
+                        cx.emit(OpenSide {
+                            target: open.target.clone(),
+                            line: open.line,
+                        });
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ));
+                menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
+            }
             if let Some(l) = link {
                 // The rows come from `docopen::link_menu`, so a row is offered
                 // only where it does something: Open here on a document TD can
@@ -11637,8 +11712,27 @@ impl Render for TerminalView {
                     .then(|| self.document_of(&l))
                     .flatten();
                 let (row_at, _, _) = self.viewport_cell(pos);
-                for entry in crate::docopen::link_menu(doc.is_some(), item.is_some()) {
+                for entry in
+                    crate::docopen::link_menu(doc.is_some(), side.is_some(), item.is_some())
+                {
                     let el = match entry {
+                        crate::docopen::LinkItem::OpenSide => {
+                            let open = side.clone();
+                            link_row(s.flyout.menu_open, "alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(open) = open.clone() {
+                                        cx.emit(OpenSide {
+                                            target: open.target,
+                                            line: open.line,
+                                        });
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
                         crate::docopen::LinkItem::OpenHere => {
                             let doc = doc.clone();
                             link_row(s.m_open_here, "alt+click").on_mouse_down(
@@ -18297,7 +18391,8 @@ mod tests {
     #[test]
     fn the_link_menu_rows_come_from_the_table() {
         let code = live_code();
-        assert!(code.contains("crate::docopen::link_menu(doc.is_some(), item.is_some())"));
+        assert!(code
+            .contains("crate::docopen::link_menu(doc.is_some(), side.is_some(), item.is_some())"));
         for row in [
             "s.m_open_here",
             "s.m_open_beside",

@@ -491,6 +491,9 @@ pub enum ClickIntent {
     /// Ctrl+Alt on a document: open it in a new pane to the right of this
     /// one, keeping focus where it was.
     OpenBeside,
+    /// Alt on a code file or a GitHub pull request link: show it in the
+    /// right-bar flyout, beside the conversation (`flyout_view.rs`).
+    OpenSide,
     /// Copy the command line the Alt chip is framing.
     CopyChip,
     /// Show the file in the file manager with the item selected.
@@ -547,6 +550,7 @@ pub fn loopback_target(link: &str, target: &str) -> Option<String> {
 /// |---------------|----------------------------|-----------------|
 /// | ctrl+alt      | a document                 | OpenBeside      |
 /// | alt           | a document                 | OpenHere        |
+/// | alt           | a code file, a PR link     | OpenSide        |
 /// | alt           | an armed copy chip         | CopyChip        |
 /// | super+ctrl    | a file on this disk        | Reveal          |
 /// | shift         | a file on this disk        | Reveal          |
@@ -561,6 +565,7 @@ pub fn loopback_target(link: &str, target: &str) -> Option<String> {
 pub fn click_intent(
     m: Mods,
     on_document: bool,
+    on_side: bool,
     on_link: bool,
     revealable: bool,
     chip_armed: bool,
@@ -571,6 +576,11 @@ pub fn click_intent(
         } else {
             ClickIntent::OpenHere
         };
+    }
+    // Ahead of the chip for the reason a document is: the token under the
+    // pointer says which file, and a command line around it does not.
+    if m.alt && on_side && !m.platform && !m.control {
+        return ClickIntent::OpenSide;
     }
     if m.alt && chip_armed {
         return ClickIntent::CopyChip;
@@ -592,6 +602,8 @@ pub fn click_intent(
 pub enum LinkItem {
     OpenHere,
     OpenBeside,
+    /// In the right-bar flyout: a code file or a pull request.
+    OpenSide,
     OpenWithDesktop,
     Reveal,
     CopyLink,
@@ -603,11 +615,14 @@ pub enum LinkItem {
 /// opens with the desktop, a file on this disk reveals, and every link can be
 /// copied. Copy link is what Alt+click used to give on a command line that
 /// was mostly a path; now that Alt+click opens the path, the copy lives here.
-pub fn link_menu(is_document: bool, revealable: bool) -> Vec<LinkItem> {
-    let mut items = Vec::with_capacity(5);
+pub fn link_menu(is_document: bool, side: bool, revealable: bool) -> Vec<LinkItem> {
+    let mut items = Vec::with_capacity(6);
     if is_document {
         items.push(LinkItem::OpenHere);
         items.push(LinkItem::OpenBeside);
+    }
+    if side && !is_document {
+        items.push(LinkItem::OpenSide);
     }
     items.push(LinkItem::OpenWithDesktop);
     if revealable {
@@ -1581,7 +1596,11 @@ mod tests {
             ("shift, nothing", shift, false, false, false, false, Pass),
         ];
         for (name, mods, doc, link, reveal, chip, want) in rows {
-            assert_eq!(click_intent(mods, doc, link, reveal, chip), want, "{name}");
+            assert_eq!(
+                click_intent(mods, doc, false, link, reveal, chip),
+                want,
+                "{name}"
+            );
         }
     }
 
@@ -1591,7 +1610,7 @@ mod tests {
     #[test]
     fn the_menu_on_a_document_path_offers_open_here_open_beside_and_copy_link() {
         assert_eq!(
-            link_menu(true, true),
+            link_menu(true, false, true),
             vec![
                 LinkItem::OpenHere,
                 LinkItem::OpenBeside,
@@ -1602,7 +1621,7 @@ mod tests {
         );
         // A file TD cannot draw keeps everything but Open here.
         assert_eq!(
-            link_menu(false, true),
+            link_menu(false, false, true),
             vec![
                 LinkItem::OpenWithDesktop,
                 LinkItem::Reveal,
@@ -1611,10 +1630,69 @@ mod tests {
         );
     }
 
+    /// Alt on a code file or a pull request link opens it in the flyout:
+    /// ahead of the command line's copy, behind a document's own square, and
+    /// never with Ctrl or Super held, whose clicks already mean something.
+    #[test]
+    fn alt_on_a_code_file_or_a_pull_request_opens_the_flyout() {
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        let ctrl_alt = Mods {
+            control: true,
+            ..alt
+        };
+        let super_alt = Mods {
+            platform: true,
+            ..alt
+        };
+        assert_eq!(
+            click_intent(alt, false, true, true, true, false),
+            ClickIntent::OpenSide
+        );
+        assert_eq!(
+            click_intent(alt, false, true, false, false, true),
+            ClickIntent::OpenSide,
+            "a file on a command line opens; the rest of the line still copies"
+        );
+        assert_eq!(
+            click_intent(alt, true, true, true, true, false),
+            ClickIntent::OpenHere,
+            "a document keeps its square"
+        );
+        assert_eq!(
+            click_intent(ctrl_alt, false, true, true, true, true),
+            ClickIntent::CopyChip
+        );
+        assert_ne!(
+            click_intent(super_alt, false, true, true, true, false),
+            ClickIntent::OpenSide
+        );
+        assert_eq!(
+            click_intent(Mods::default(), false, true, true, true, false),
+            ClickIntent::Pass
+        );
+    }
+
+    #[test]
+    fn the_menu_offers_the_flyout_for_a_code_file_but_not_for_a_document() {
+        assert_eq!(
+            link_menu(false, true, true),
+            vec![
+                LinkItem::OpenSide,
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+        assert!(!link_menu(true, true, true).contains(&LinkItem::OpenSide));
+    }
+
     #[test]
     fn the_menu_on_a_web_link_offers_neither_open_here_nor_reveal() {
         assert_eq!(
-            link_menu(false, false),
+            link_menu(false, false, false),
             vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
         );
     }

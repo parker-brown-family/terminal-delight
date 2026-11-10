@@ -132,6 +132,7 @@ pub fn shortcuts(s: &Strings) -> Vec<Section> {
                 row("Alt+Q · Ctrl+Shift+N", s.rail),
                 row("Ctrl+Shift+I", s.entry.help_inbox),
                 row("Ctrl+Shift+E", s.entry.help_composer),
+                row("Ctrl+Shift+R", s.flyout.help),
                 row("Alt+Q → 1 … 9", h.needs_digit),
                 row("Ctrl+Alt+↑↓←→", s.walk_tree),
                 row("Ctrl+Alt+1…9", s.jump_branch),

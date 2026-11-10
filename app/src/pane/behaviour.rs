@@ -4393,14 +4393,60 @@ fn a_clip_over_a_page_being_read_leaves_the_page_the_keys(cx: &mut TestAppContex
 /// A letter typed meanwhile still reaches the shell. Parker, 2026-11-03:
 /// *"a little dialogue pops up --- ENTER to open a BROWSER with THIS
 /// artifact"*.
+/// A pull request handed over opens in the right-bar flyout, beside the
+/// conversation that made it: nothing leaves for the browser, so there is
+/// nothing to ask, and the handover counts as opened.
 #[gpui::test]
-fn alt_o_on_a_web_artifact_asks_before_the_browser(cx: &mut TestAppContext) {
+fn alt_o_on_a_pull_request_opens_it_in_the_flyout_without_asking(cx: &mut TestAppContext) {
     let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
     pane.wait_for("ready");
     let href = "https://github.com/parker-brown-family/terminal-delight/pull/1292".to_string();
     pane.view.update(pane.cx, |v, cx| {
         v.hand_over(
             Some("PR 1292".into()),
+            href.clone(),
+            crate::handover::Source::Declared,
+            cx,
+        );
+    });
+    let shown = std::rc::Rc::new(std::cell::RefCell::new(Vec::new()));
+    let log = shown.clone();
+    let view = pane.view.clone();
+    pane.cx.update(|_, cx| {
+        cx.subscribe(&view, move |_, ev: &super::OpenSide, _| {
+            log.borrow_mut().push(ev.target.clone());
+        })
+        .detach();
+    });
+    let before = desktop_launches().len();
+    pane.view.update(pane.cx, |v, cx| v.ask_newest_handover(cx));
+    pane.redraw();
+    assert!(!pane.read(|v| v.asks_outside()), "nothing to ask");
+    assert_eq!(
+        desktop_launches().len(),
+        before,
+        "nothing went to the browser"
+    );
+    assert_eq!(
+        *shown.borrow(),
+        vec![crate::flyout::Target::Pull {
+            owner: "parker-brown-family".into(),
+            repo: "terminal-delight".into(),
+            number: 1292
+        }]
+    );
+}
+
+#[gpui::test]
+fn alt_o_on_a_web_artifact_asks_before_the_browser(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "printf '%s\\n' 'ready'; exec cat");
+    pane.wait_for("ready");
+    // A web page. A pull request was the example here until the right-bar
+    // flyout drew pull requests itself; see the test after this one.
+    let href = "https://example.com/release-notes".to_string();
+    pane.view.update(pane.cx, |v, cx| {
+        v.hand_over(
+            Some("Release notes".into()),
             href.clone(),
             crate::handover::Source::Declared,
             cx,
