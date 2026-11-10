@@ -46,6 +46,8 @@ use std::time::{Duration, SystemTime};
 /// The narrowest the panel is dragged to, and the widest.
 pub(crate) const FLYOUT_MIN: f32 = 320.;
 pub(crate) const FLYOUT_MAX: f32 = 1600.;
+/// The lines PageUp and PageDown move the caret while editing.
+const EDIT_PAGE: usize = 20;
 /// Wide enough for a diff line and both its line numbers at chrome size.
 pub(crate) const FLYOUT_DEFAULT: f32 = 560.;
 /// What the terminals keep however wide the panel is dragged.
@@ -253,6 +255,83 @@ pub(crate) struct FileLive {
     face_note: Option<String>,
     /// The text is shown in place of the page.
     source: bool,
+    /// The source is being written in.
+    edit: Option<FileEdit>,
+}
+
+/// A drawn file's source being edited in the side panel: the text, what the
+/// file held when the edit began or was last saved, and what the last save
+/// said. Parker, 2026-11-10: *"would be nice to be able to edit from the main
+/// OR source by just clicking around and editing like a regular markedown
+/// editor!"*
+pub(crate) struct FileEdit {
+    ed: crate::textedit::TextEdit,
+    /// The file's bytes as read when the edit began or as last written. A
+    /// save that finds anything else on disk refuses, once.
+    base: String,
+    /// The file ended its lines with CR LF, so it is written back that way.
+    crlf: bool,
+    /// Why the last save did not happen.
+    note: Option<String>,
+    /// The last save refused for a file changed underneath: the next one
+    /// writes over it.
+    force: bool,
+    /// Where the text column starts in the window, from the last paint, so
+    /// a click becomes a caret.
+    text_x: Rc<Cell<Option<Pixels>>>,
+}
+
+impl FileEdit {
+    fn new(base: String) -> FileEdit {
+        let crlf = base.contains("\r\n");
+        let text = if crlf {
+            base.replace("\r\n", "\n")
+        } else {
+            base.clone()
+        };
+        FileEdit {
+            ed: crate::textedit::TextEdit::new(&text),
+            base,
+            crlf,
+            note: None,
+            force: false,
+            text_x: Rc::new(Cell::new(None)),
+        }
+    }
+
+    /// The bytes a save writes.
+    fn bytes(&self) -> String {
+        let text = self.ed.text();
+        if self.crlf {
+            text.replace('\n', "\r\n")
+        } else {
+            text
+        }
+    }
+}
+
+/// Write `text` over the file at `path` in one step: into a file beside it,
+/// then renamed over it, keeping its permissions, so a reader never sees half
+/// of it. A link is followed, so the link stays a link.
+fn write_whole(path: &Path, text: &str) -> std::io::Result<()> {
+    let real = std::fs::canonicalize(path)?;
+    let dir = real.parent().unwrap_or(Path::new("."));
+    let name = real
+        .file_name()
+        .map(|n| n.to_string_lossy().into_owned())
+        .unwrap_or_default();
+    let tmp = dir.join(format!(".{name}.td-edit-{}", std::process::id()));
+    let done = (|| {
+        std::fs::write(&tmp, text)?;
+        if let Ok(meta) = std::fs::metadata(&real) {
+            std::fs::set_permissions(&tmp, meta.permissions())?;
+        }
+        std::fs::rename(&tmp, &real)
+    })();
+    if done.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    done
 }
 
 impl Default for FileLive {
@@ -269,6 +348,7 @@ impl Default for FileLive {
             face_tried: false,
             face_note: None,
             source: false,
+            edit: None,
         }
     }
 }
@@ -1809,6 +1889,12 @@ impl Workspace {
 
     /// `s`: a page's source, or back to the page.
     fn flyout_source(&mut self, t: &Target, cx: &mut Context<Self>) {
+        // Back to the page from an edit: the page shows the file, so what was
+        // written goes into it first.
+        let writing = matches!(self.flyout.live.get(t), Some(Live::File(f)) if f.edit.is_some() && !f.paged());
+        if writing && !self.edit_save(t, cx) {
+            return;
+        }
         if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
             if f.face.is_some() {
                 f.source = !f.source;
@@ -1819,6 +1905,232 @@ impl Workspace {
         }
         self.flyout_faces(cx);
         cx.notify();
+    }
+
+    // ---- editing -----------------------------------------------------------
+
+    fn editing(&self, t: &Target) -> bool {
+        matches!(self.flyout.live.get(t), Some(Live::File(f)) if f.edit.is_some())
+    }
+
+    /// `e`, or the Edit chip: write in a drawn file's source, starting at the
+    /// block the page shows at its top; or stop, saving.
+    fn edit_toggle(&mut self, t: &Target, cx: &mut Context<Self>) {
+        if self.editing(t) {
+            self.edit_stop(t, cx);
+            return;
+        }
+        let top = match self.flyout.live.get(t) {
+            Some(Live::File(f)) if f.paged() => f
+                .face
+                .as_ref()
+                .and_then(|d| d.bounds.get())
+                .map(|b| point(b.origin.x + px(1.), b.origin.y + px(1.))),
+            _ => None,
+        };
+        let line = match (top, self.paged_face(t)) {
+            (Some(at), Some(view)) => view.update(cx, |v, _| v.source_line_at(at)),
+            _ => None,
+        };
+        self.edit_start(t, line.map(|l| (l, 0)), cx);
+    }
+
+    /// Begin editing a drawn file's source with the caret at `at` (line,
+    /// column), reading the file whole from disk: the panel's text has its
+    /// tabs widened, which must not be what is written back.
+    fn edit_start(&mut self, t: &Target, at: Option<(usize, usize)>, cx: &mut Context<Self>) {
+        let Target::File { path } = t else {
+            return;
+        };
+        let Some(Live::File(f)) = self.flyout.live.get_mut(t) else {
+            return;
+        };
+        let readable = f.text.got.as_ref().is_some_and(|x| !x.binary && !x.cut);
+        if f.face.is_none() || !readable {
+            return;
+        }
+        if f.edit.is_none() {
+            match std::fs::read_to_string(path) {
+                Ok(text) => f.edit = Some(FileEdit::new(text)),
+                Err(e) => {
+                    f.face_note = Some(e.to_string());
+                    cx.notify();
+                    return;
+                }
+            }
+        }
+        f.source = true;
+        f.find.typing = false;
+        if let Some(ed) = f.edit.as_mut() {
+            if let Some((line, col)) = at {
+                ed.ed.place(line, col);
+            }
+            f.scroll.scroll_to_item(ed.ed.line, ScrollStrategy::Center);
+        }
+        self.flyout_faces(cx);
+        cx.notify();
+    }
+
+    /// Write the edit into the file. Refuses once, saying so, when the file
+    /// changed on disk since the edit began; the next save writes over it.
+    /// True when nothing is left unsaved.
+    fn edit_save(&mut self, t: &Target, cx: &mut Context<Self>) -> bool {
+        let Target::File { path } = t else {
+            return true;
+        };
+        let f_strings = self.lang.strings().flyout;
+        let Some(Live::File(f)) = self.flyout.live.get_mut(t) else {
+            return true;
+        };
+        let Some(ed) = f.edit.as_mut() else {
+            return true;
+        };
+        if !ed.ed.changed() {
+            return true;
+        }
+        let on_disk = std::fs::read_to_string(path).ok();
+        if !ed.force && on_disk.as_deref() != Some(ed.base.as_str()) {
+            ed.force = true;
+            ed.note = Some(f_strings.edit_conflict.to_string());
+            cx.notify();
+            return false;
+        }
+        let bytes = ed.bytes();
+        match write_whole(path, &bytes) {
+            Ok(()) => {
+                ed.base = bytes;
+                ed.ed.saved();
+                ed.force = false;
+                ed.note = None;
+                self.file_read(t, path.clone(), true, cx);
+                cx.notify();
+                true
+            }
+            Err(e) => {
+                ed.note = Some(lang::fill(
+                    f_strings.edit_failed,
+                    &[("why", &e.to_string())],
+                ));
+                cx.notify();
+                false
+            }
+        }
+    }
+
+    /// Stop editing, saving first. An edit that could not be saved stays,
+    /// saying why.
+    fn edit_stop(&mut self, t: &Target, cx: &mut Context<Self>) -> bool {
+        if !self.edit_save(t, cx) {
+            return false;
+        }
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            f.edit = None;
+        }
+        cx.notify();
+        true
+    }
+
+    /// A click on a line of the source being edited: the caret goes where it
+    /// landed. `x` is the window x of the click.
+    fn edit_click(
+        &mut self,
+        t: &Target,
+        line: usize,
+        x: Pixels,
+        char_w: f32,
+        cx: &mut Context<Self>,
+    ) {
+        if let Some(Live::File(f)) = self.flyout.live.get_mut(t) {
+            if let Some(ed) = f.edit.as_mut() {
+                let col = match (ed.text_x.get(), ed.ed.lines().get(line)) {
+                    (Some(x0), Some(text)) => {
+                        crate::textedit::col_at_shown(text, f32::from(x - x0) / char_w.max(1.))
+                    }
+                    _ => 0,
+                };
+                ed.ed.place(line, col);
+            }
+        }
+        self.flyout.focused = true;
+        cx.notify();
+    }
+
+    /// A key while editing. False for a chord that is not the editor's, so
+    /// the window has it.
+    fn edit_key(&mut self, t: &Target, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let m = ks.modifiers;
+        let key = ks.key.as_str();
+        if m.control && !m.alt && key == "s" {
+            self.edit_save(t, cx);
+            return true;
+        }
+        if key == "escape" && !m.control && !m.alt {
+            self.edit_stop(t, cx);
+            return true;
+        }
+        let paste = crate::workbench::is_paste_chord(&ks.key, m.control, m.shift).then(|| {
+            cx.read_from_clipboard()
+                .and_then(|item| item.text())
+                .map(|t| t.replace("\r\n", "\n"))
+                .unwrap_or_default()
+        });
+        let Some(Live::File(f)) = self.flyout.live.get_mut(t) else {
+            return false;
+        };
+        let Some(edit) = f.edit.as_mut() else {
+            return false;
+        };
+        let ed = &mut edit.ed;
+        if let Some(text) = paste {
+            ed.insert(&text);
+        } else if m.control && !m.alt {
+            match (key, m.shift) {
+                ("z", false) => {
+                    ed.undo();
+                }
+                ("z", true) | ("y", false) => {
+                    ed.redo();
+                }
+                ("home", _) => ed.place(0, 0),
+                ("end", _) => {
+                    let last = ed.lines().len().saturating_sub(1);
+                    ed.place(last, usize::MAX);
+                }
+                _ => return false,
+            }
+        } else if m.alt || m.platform {
+            return false;
+        } else {
+            match key {
+                "enter" => ed.newline(),
+                "backspace" => ed.backspace(),
+                "delete" => ed.delete(),
+                "left" => ed.left(),
+                "right" => ed.right(),
+                "up" => ed.up(),
+                "down" => ed.down(),
+                "home" => ed.home(),
+                "end" => ed.end(),
+                "pageup" | "pagedown" => {
+                    for _ in 0..EDIT_PAGE {
+                        if key == "pageup" {
+                            ed.up();
+                        } else {
+                            ed.down();
+                        }
+                    }
+                }
+                "tab" => ed.insert("  "),
+                _ => match ks.key_char.as_deref() {
+                    Some(c) if !c.is_empty() && !c.chars().any(char::is_control) => ed.insert(c),
+                    _ => {}
+                },
+            }
+        }
+        f.scroll
+            .scroll_to_item(edit.ed.line, ScrollStrategy::Nearest);
+        cx.notify();
+        true
     }
 
     // ---- finding -----------------------------------------------------------
@@ -2644,6 +2956,19 @@ impl Workspace {
         // shown so that is seen. Only when no other task shows the same
         // file, since closing one of two tabs loses nothing.
         if let Some(t) = self.side().and_then(|s| s.tabs.get(i)).cloned() {
+            // An edit is saved as its tab closes; one that cannot be keeps
+            // the tab open, saying why.
+            if self.editing(&t) && !self.edit_stop(&t, cx) {
+                if let Some(side) = self.side_mut() {
+                    side.active = i;
+                }
+                if let Some(Live::File(f)) = self.flyout.live.get_mut(&t) {
+                    f.source = true;
+                }
+                self.flyout_faces(cx);
+                cx.notify();
+                return;
+            }
             let elsewhere = self
                 .tabs
                 .iter()
@@ -2943,6 +3268,14 @@ impl Workspace {
             cx.notify();
             return true;
         }
+        // The source being written in has the keys, but for the chords that
+        // are not an editor's: those fall through to the panel's own.
+        if let Some(t) = current.clone() {
+            let writing = matches!(self.flyout.live.get(&t), Some(Live::File(f)) if f.edit.is_some() && !f.paged());
+            if writing && !self.search_typing(&t) && self.edit_key(&t, ks, cx) {
+                return true;
+            }
+        }
         if m.control && !m.shift && !m.alt && key == "f" {
             if let Some(t) = &current {
                 self.search_start(t, cx);
@@ -3047,6 +3380,7 @@ impl Workspace {
                     self.changes_base(next, cx);
                 }
             }
+            "e" if matches!(t, Target::File { .. }) => self.edit_toggle(&t, cx),
             "e" => {
                 let owner = match &t {
                     Target::Changes { .. } => Some(DiffOwner::Changes(t.clone())),
@@ -4671,6 +5005,29 @@ impl Workspace {
                         }),
                     )
             };
+            // Edit, for a file whose text is whole: lit while writing in it.
+            let editable = text.is_some_and(|t| !t.binary && !t.cut);
+            let editing = fl.edit.is_some();
+            let k = key.clone();
+            let edit = editable.then(|| {
+                div()
+                    .id("flyout-face-edit")
+                    .debug_selector(|| "flyout-face-edit".into())
+                    .px(px(7. * s))
+                    .py(px(1. * s))
+                    .map(|d| sk.choice(d, editing))
+                    .text_size(sk.text_px(10. * s))
+                    .cursor_pointer()
+                    .child(f.edit)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.flyout.focused = true;
+                            ws.edit_toggle(&k, cx);
+                        }),
+                    )
+            });
             div()
                 .flex()
                 .flex_row()
@@ -4678,6 +5035,7 @@ impl Workspace {
                 .flex_none()
                 .child(chip(true, f.face_page))
                 .child(chip(false, f.face_source))
+                .children(edit)
         });
         let head = div()
             .flex_none()
@@ -4765,6 +5123,15 @@ impl Workspace {
         if let Some(e) = &fl.text.error {
             notes.push(note(e, ink.danger, sk, s).into_any_element());
         }
+        if let Some(edit) = &fl.edit {
+            match &edit.note {
+                Some(why) => notes.push(note(why, ink.warn, sk, s).into_any_element()),
+                None if edit.ed.changed() => {
+                    notes.push(note(f.edit_unsaved, ink.faint, sk, s).into_any_element())
+                }
+                None => {}
+            }
+        }
         let Some(t) = text else {
             if fl.text.error.is_none() {
                 notes.push(note(f.reading, ink.faint, sk, s).into_any_element());
@@ -4824,10 +5191,54 @@ impl Workspace {
         let row_h = f32::from(code_px) * 1.5;
         let digits = t.lines.len().max(1).to_string().len().max(3) as f32;
         let num_w = digits * f32::from(code_px) * 0.62 + 8. * s;
-        let lines = t.lines.clone();
-        let starts = t.starts.clone();
+        // Writing in it: the editor's lines, a caret, a click places it.
+        // The diff marks and the block-comment states were read off the file
+        // as saved, so they stand down until it is saved again.
+        let edit = fl.edit.as_ref();
+        let (lines, starts, marks, widest) = match edit {
+            Some(e) => {
+                let lines: Arc<Vec<String>> = Arc::new(e.ed.lines().to_vec());
+                let widest = lines
+                    .iter()
+                    .enumerate()
+                    .max_by_key(|(_, l)| l.chars().count().min(LINE_DRAWN))
+                    .map_or(0, |(i, _)| i);
+                (
+                    lines,
+                    Arc::new(Vec::new()),
+                    Rc::new(BTreeMap::new()),
+                    widest,
+                )
+            }
+            None => (
+                t.lines.clone(),
+                t.starts.clone(),
+                fl.marks.clone(),
+                t.widest,
+            ),
+        };
+        let caret = edit.map(|e| {
+            let shown =
+                e.ed.lines()
+                    .get(e.ed.line)
+                    .map_or(0, |l| crate::textedit::shown_col(l, e.ed.col));
+            (e.ed.line, shown)
+        });
+        let text_x = edit.map(|e| e.text_x.clone());
+        let char_w = {
+            let ts = cx.text_system();
+            ts.advance(
+                ts.resolve_font(&gpui::font(th.font_family.clone())),
+                code_px,
+                'M',
+            )
+            .map(|w| f32::from(w.width))
+            .unwrap_or(f32::from(code_px) * 0.6)
+        };
+        let me = cx.entity().downgrade();
+        let edit_key = key.clone();
+        let caret_ink = th.accent;
         let sy = t.syntax;
-        let marks = fl.marks.clone();
         let hits = find.hits.clone();
         let here = hits.get(find.at).map(|(line, _)| *line);
         let lit = fl.lit;
@@ -4860,6 +5271,7 @@ impl Workspace {
                             .map(|(_, r)| r.clone())
                             .collect();
                         div()
+                            .debug_selector(move || format!("flyout-line-{i}"))
                             .h(px(row_h))
                             .flex()
                             .flex_row()
@@ -4890,6 +5302,7 @@ impl Workspace {
                             .child(
                                 div()
                                     .flex_none()
+                                    .relative()
                                     .pr(px(12. * s))
                                     .whitespace_nowrap()
                                     .text_color(ink.text)
@@ -4900,8 +5313,45 @@ impl Workspace {
                                         &ink,
                                         &on_line,
                                         found,
-                                    )),
+                                    ))
+                                    .when_some(text_x.clone(), |d, at| {
+                                        d.child(
+                                            canvas(
+                                                move |b, _, _| at.set(Some(b.origin.x)),
+                                                |_, _, _, _| {},
+                                            )
+                                            .absolute()
+                                            .inset_0(),
+                                        )
+                                    })
+                                    .when_some(
+                                        caret.filter(|(line, _)| *line == i),
+                                        |d, (_, col)| {
+                                            d.child(
+                                                div()
+                                                    .absolute()
+                                                    .top_0()
+                                                    .bottom_0()
+                                                    .left(px(col as f32 * char_w))
+                                                    .w(px((1.5 * s).max(1.)))
+                                                    .bg(caret_ink),
+                                            )
+                                        },
+                                    ),
                             )
+                            .when(caret.is_some(), |d| {
+                                let me = me.clone();
+                                let k = edit_key.clone();
+                                d.cursor_text().on_mouse_down(
+                                    MouseButton::Left,
+                                    move |ev: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        let x = ev.position.x;
+                                        me.update(cx, |ws, cx| ws.edit_click(&k, i, x, char_w, cx))
+                                            .ok();
+                                    },
+                                )
+                            })
                     })
                     .collect::<Vec<_>>()
             },
@@ -4909,7 +5359,7 @@ impl Workspace {
         // Long lines scroll sideways rather than stop at the panel's edge:
         // every row is as wide as the widest.
         .with_horizontal_sizing_behavior(ListHorizontalSizingBehavior::Unconstrained)
-        .with_width_from_item(Some(t.widest))
+        .with_width_from_item(Some(widest))
         .track_scroll(&fl.scroll)
         .size_full();
         div()
@@ -4971,6 +5421,16 @@ impl Workspace {
                     let Some(t) = ws.side_current() else {
                         return;
                     };
+                    // Editing, a click on the page opens its source at the
+                    // block clicked, the caret at that block's start.
+                    if ws.editing(&t) {
+                        if let Some(view) = ws.paged_face(&t) {
+                            let line = view.update(cx, |v, _| v.source_line_at(ev.position));
+                            ws.flyout.focused = true;
+                            ws.edit_start(&t, Some((line.unwrap_or(0), 0)), cx);
+                            return;
+                        }
+                    }
                     let Some((view, at)) = ws.face_point(&t, ev.position) else {
                         return;
                     };
@@ -6922,6 +7382,187 @@ mod tests {
             let tabs = &ws.side().unwrap().tabs;
             assert_eq!(tabs, &vec![page.clone()], "the ✕ closed the first tab");
         });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A drawn file's source is written in: `e` starts at the block on top,
+    /// Enter carries a list on, Ctrl+S writes the file whole with its tab
+    /// and its line endings as they were, Ctrl+Z takes back a word, Esc
+    /// saves and stops, and a save over a file changed on disk refuses once.
+    ///
+    /// Mutation-tested: dropping the base check in `edit_save` writes over the
+    /// other writer's change at the first Ctrl+S; reading the edit from the
+    /// panel's text instead of the disk writes the tab back as four spaces.
+    #[gpui::test]
+    fn a_markdown_file_is_written_in_the_side_panel_and_saved_whole(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-edit-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("notes.md");
+        std::fs::write(&notes, "# Notes\r\n\r\n- one\r\n\tkept\r\n").unwrap();
+        let page = Target::File {
+            path: notes.clone(),
+        };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, page.clone(), None, true, w, cx);
+            })
+        });
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("flyout-face-edit").is_some(),
+            "Edit is offered"
+        );
+        cx.simulate_keystrokes("e");
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("flyout-page").is_none(),
+            "editing shows the source"
+        );
+        let caret = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+                Some(Live::File(f)) => f.edit.as_ref().map(|e| (e.ed.line, e.ed.col)),
+                _ => None,
+            })
+        };
+        assert_eq!(caret(cx), Some((0, 0)), "the caret starts at the top block");
+
+        cx.simulate_keystrokes("down down end enter t w o");
+        redraw(cx);
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+        assert_eq!(
+            std::fs::read_to_string(&notes).unwrap(),
+            "# Notes\r\n\r\n- one\r\n- two\r\n\tkept\r\n",
+            "the list goes on, and the tab and CR LF are kept"
+        );
+
+        cx.simulate_keystrokes("ctrl-z");
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert_eq!(
+            std::fs::read_to_string(&notes).unwrap(),
+            "# Notes\r\n\r\n- one\r\n- \r\n\tkept\r\n",
+            "Ctrl+Z took back the word and Esc saved it"
+        );
+        assert_eq!(caret(cx), None, "and stopped editing");
+
+        // Someone else writes the file while it is being edited.
+        cx.simulate_keystrokes("e");
+        redraw(cx);
+        cx.simulate_keystrokes("x");
+        std::fs::write(&notes, "# Theirs\n").unwrap();
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+        assert_eq!(
+            std::fs::read_to_string(&notes).unwrap(),
+            "# Theirs\n",
+            "a save over a changed file refuses"
+        );
+        ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+            Some(Live::File(f)) => assert!(
+                f.edit.as_ref().is_some_and(|e| e.note.is_some()),
+                "and says why"
+            ),
+            _ => panic!(),
+        });
+        cx.simulate_keystrokes("ctrl-s");
+        redraw(cx);
+        assert!(
+            std::fs::read_to_string(&notes)
+                .unwrap()
+                .starts_with("x# Notes"),
+            "a second Ctrl+S writes over it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Clicking places the caret: on a source line, where the click landed;
+    /// on the page while editing, at the start of the block clicked.
+    ///
+    /// Mutation-tested: answering the first block from `source_line_at`
+    /// leaves the caret on line 0 after the click low on the page.
+    #[gpui::test]
+    fn a_click_on_the_source_or_the_page_puts_the_caret_there(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-click-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let notes = dir.join("long.md");
+        let mut text = String::from("# Top\n");
+        for i in 0..40 {
+            text.push_str(&format!("\npara {i} words here\n"));
+        }
+        std::fs::write(&notes, &text).unwrap();
+        let page = Target::File {
+            path: notes.clone(),
+        };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, page.clone(), None, true, w, cx);
+            })
+        });
+        redraw(cx);
+        cx.simulate_keystrokes("e");
+        redraw(cx);
+        let caret = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+                Some(Live::File(f)) => f.edit.as_ref().map(|e| (e.ed.line, e.ed.col)),
+                _ => None,
+            })
+        };
+        let row = cx.debug_bounds("flyout-line-2").expect("line 3 drawn");
+        cx.simulate_click(
+            point(row.right() - px(4.), row.center().y),
+            gpui::Modifiers::none(),
+        );
+        redraw(cx);
+        assert_eq!(
+            caret(cx),
+            Some((2, "para 0 words here".len())),
+            "a click past a line's end puts the caret at its end"
+        );
+        let bounds = cx.debug_bounds("flyout-line-2").unwrap();
+        let x0 = ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+            Some(Live::File(f)) => f.edit.as_ref().and_then(|e| e.text_x.get()),
+            _ => None,
+        });
+        let x0 = x0.expect("the text column was measured");
+        assert!(x0 > bounds.left(), "past the line numbers");
+
+        let page_chip = cx.debug_bounds("flyout-face-page-true").expect("Page chip");
+        cx.simulate_click(page_chip.center(), gpui::Modifiers::none());
+        redraw(cx);
+        let drawn = cx.debug_bounds("flyout-page").expect("the page again");
+        cx.simulate_click(
+            point(drawn.center().x, drawn.bottom() - px(20.)),
+            gpui::Modifiers::none(),
+        );
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("flyout-page").is_none(),
+            "the click opened the source"
+        );
+        let (line, col) = caret(cx).expect("still editing");
+        let at = ws.read_with(cx, |ws, _| match ws.flyout.live.get(&page) {
+            Some(Live::File(f)) => f.edit.as_ref().unwrap().ed.lines()[line].clone(),
+            _ => String::new(),
+        });
+        assert!(
+            line > 2 && col == 0 && at.starts_with("para "),
+            "the caret starts the block clicked low on the page: line {line}, {at:?}"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

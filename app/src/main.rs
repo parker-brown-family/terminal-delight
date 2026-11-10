@@ -115,6 +115,7 @@ mod settings;
 mod settings_view;
 mod skills;
 mod skin;
+mod textedit;
 mod threshing_floor_view;
 mod uninstall;
 mod update;
