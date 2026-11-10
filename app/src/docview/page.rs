@@ -750,18 +750,7 @@ impl PageDoc {
                 target.anchor.clone(),
             ));
         }
-        let mut summary = format!(
-            "\nVISIBLE TIME — {}\nForeground exposure; overlapping elements are not additive.\n",
-            layout.revision
-        );
-        for target in &layout.targets {
-            let measured = totals
-                .as_ref()
-                .and_then(|totals| totals.get(&target.anchor))
-                .map(|ms| format!("{ms} ms"))
-                .unwrap_or_else(|| "unknown".into());
-            summary.push_str(&format!("[{}] {}\n", target.anchor, measured));
-        }
+        let mut summary = super::reading::summary(layout, totals.as_ref());
         let pending = self
             .exposure_record
             .as_ref()

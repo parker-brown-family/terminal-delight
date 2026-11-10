@@ -15,6 +15,65 @@ use super::notes;
 
 const MAX: u64 = (1_u64 << 53) - 1;
 
+/// The estimate briefing uses in `scripts/reading.py` and `assets/reading.js`, kept
+/// equal by hand: change all three together. Time on screen can show that a passage
+/// was scrolled past; it never shows that one was read.
+pub const WORDS_PER_MINUTE: u64 = 230;
+pub const FLOOR_MS: u64 = 4000;
+pub const PASSED_PERCENT: u64 = 40;
+
+/// How long a passage of `words` takes to read, rounded as the browser rounds it.
+pub fn reading_ms(words: u32) -> u64 {
+    ((u64::from(words) * 60_000 + WORDS_PER_MINUTE / 2) / WORDS_PER_MINUTE).max(FLOOR_MS)
+}
+
+/// The Copy map's word for one passage. No time is "not measured", which is not
+/// zero; a page that sent no word count gets no verdict rather than a guessed one.
+pub fn verdict(visible_ms: Option<u64>, words: Option<u32>) -> &'static str {
+    match (visible_ms, words) {
+        (None, _) => "not measured",
+        (Some(0), _) => "UNSEEN",
+        (Some(_), None) => "words unknown",
+        (Some(ms), Some(w)) if ms * 100 < PASSED_PERCENT * reading_ms(w) => "PASSED",
+        (Some(_), Some(_)) => "had time",
+    }
+}
+
+/// The VISIBLE TIME block of the Copy map, line for line as the browser writes it,
+/// so an agent reads the same verdicts whichever reader the person used.
+pub fn summary(layout: &ReadingLayout, totals: Option<&HashMap<String, u64>>) -> String {
+    let clock = |ms: u64| format!("{}:{:02}", ms / 60_000, ms / 1000 % 60);
+    let revision = layout.revision.get(7..19).unwrap_or(&layout.revision);
+    let mut out = format!(
+        "\nVISIBLE TIME — {} · {revision}\nOn screen vs ~reading time ({WORDS_PER_MINUTE} words/min, at least {} s). \
+         PASSED = under {PASSED_PERCENT}%: scrolled past, so either not needed here or needed and missed. \
+         Had time is room to read, not proof of reading.\n",
+        layout.document,
+        FLOOR_MS / 1000
+    );
+    let mut passed = Vec::new();
+    let mut lines = String::new();
+    for t in &layout.targets {
+        let ms = totals.and_then(|totals| totals.get(&t.anchor)).copied();
+        let word = verdict(ms, t.words);
+        if matches!(word, "PASSED" | "UNSEEN") {
+            passed.push(t.anchor.as_str());
+        }
+        let time = match (ms, t.words) {
+            (None, _) => String::new(),
+            (Some(ms), Some(w)) => format!("{} of ~{} · ", clock(ms), clock(reading_ms(w))),
+            (Some(ms), None) => format!("{} · ", clock(ms)),
+        };
+        lines.push_str(&format!("[{}] {} · {time}{word}\n", t.anchor, t.title));
+    }
+    if passed.is_empty() {
+        out.push_str("Nothing scrolled past.\n");
+    } else {
+        out.push_str(&format!("Scrolled past: {}\n", passed.join(", ")));
+    }
+    out + &lines
+}
+
 /// Positive exposed area after clipping and subtracting the real native chrome.
 pub fn exposed(rect: RectCss, viewport: RectCss, covers: &[RectCss]) -> bool {
     let intersect = |a: RectCss, b: RectCss| {
