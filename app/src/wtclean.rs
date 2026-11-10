@@ -413,15 +413,63 @@ pub fn scan(repo: &Path, occupied: &[PathBuf]) -> Result<Vec<Facts>, String> {
     }
     Ok(out)
 }
-
-/// Remove one worktree the way a person would: `git worktree remove`, with no
-/// `--force`, so git itself refuses a tree with changes. The branch stays.
+/// Remove the worktree at `path` of the repository at `repo`, with nobody
+/// able to walk in while it goes.
+///
+/// `git worktree remove` checks the tree and then deletes it, and the window
+/// re-reads who is inside before asking it, so a shell or an agent that walks
+/// in between the two was deleted from under (verify/worktree-cleanup,
+/// `NeverUnderAProcess`, `NeverDeletesWork`). So the tree is first moved to a
+/// name nobody else knows (`git worktree move`, a rename, which is never half
+/// done): anyone already inside is carried with it and seen under the new
+/// name, and nobody can walk in by the old one. Then `/proc` is read again;
+/// someone inside, or git refusing (changes in it), moves it back unharmed.
+/// No `--force` anywhere, so git itself refuses a tree with changes; the
+/// branch stays.
 pub fn remove(repo: &Path, path: &Path) -> Result<(), String> {
-    let p = path.to_string_lossy();
+    let Some(name) = path.file_name() else {
+        return Err(format!("{}: no folder name", path.display()));
+    };
+    let mut hidden = name.to_os_string();
+    hidden.push(format!(".td-removing-{}", std::process::id()));
+    let away = path.with_file_name(hidden);
+    if away.exists() {
+        return Err(format!("{}: already being removed", path.display()));
+    }
+    git_worktree(
+        repo,
+        &["move", &path.to_string_lossy(), &away.to_string_lossy()],
+    )?;
+    let back = |why: String| -> Result<(), String> {
+        match git_worktree(
+            repo,
+            &["move", &away.to_string_lossy(), &path.to_string_lossy()],
+        ) {
+            Ok(()) => Err(why),
+            Err(e) => Err(format!(
+                "{why}; and it could not be put back from {}: {e}",
+                away.display()
+            )),
+        }
+    };
+    let canon = std::fs::canonicalize(&away).unwrap_or_else(|_| away.clone());
+    if process_cwds().iter().any(|c| c.starts_with(&canon)) {
+        return back("someone is working in it".to_string());
+    }
+    match git_worktree(repo, &["remove", &away.to_string_lossy()]) {
+        Ok(()) => Ok(()),
+        Err(e) => back(e),
+    }
+}
+
+/// `git worktree <args>` in `repo`, bounded, with git's own words on failure.
+fn git_worktree(repo: &Path, args: &[&str]) -> Result<(), String> {
+    let mut all = vec!["worktree"];
+    all.extend_from_slice(args);
     let ran = crate::engstate::run_bounded(
         "git",
         repo,
-        &["worktree", "remove", &p],
+        &all,
         &[],
         Duration::from_secs(60),
         64 * 1024,
@@ -432,7 +480,7 @@ pub fn remove(repo: &Path, path: &Path) -> Result<(), String> {
     } else {
         let err = String::from_utf8_lossy(&ran.err).trim().to_string();
         Err(if err.is_empty() {
-            format!("git worktree remove exited {}", ran.code)
+            format!("git worktree {} exited {}", args[0], ran.code)
         } else {
             err
         })
@@ -442,6 +490,94 @@ pub fn remove(repo: &Path, path: &Path) -> Result<(), String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A repository with one commit and a worktree beside it, in a folder of
+    /// the test's own.
+    fn repo_with_worktree(tag: &str) -> (PathBuf, PathBuf, PathBuf) {
+        let root = std::env::temp_dir().join(format!("td-wtq-{tag}-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&root);
+        let repo = root.join("repo");
+        let tree = root.join("tree");
+        std::fs::create_dir_all(&repo).unwrap();
+        let git = |dir: &Path, args: &[&str]| {
+            let ok = std::process::Command::new("git")
+                .args([
+                    "-c",
+                    "user.name=t",
+                    "-c",
+                    "user.email=t@t",
+                    "-c",
+                    "init.defaultBranch=main",
+                ])
+                .args(args)
+                .current_dir(dir)
+                .output()
+                .unwrap();
+            assert!(
+                ok.status.success(),
+                "git {args:?}: {}",
+                String::from_utf8_lossy(&ok.stderr)
+            );
+        };
+        git(&repo, &["init", "-q"]);
+        std::fs::write(repo.join("a.txt"), "a\n").unwrap();
+        git(&repo, &["add", "a.txt"]);
+        git(&repo, &["commit", "-qm", "a"]);
+        git(
+            &repo,
+            &[
+                "worktree",
+                "add",
+                "-q",
+                "-b",
+                "side",
+                tree.to_str().unwrap(),
+            ],
+        );
+        (root, repo, tree)
+    }
+
+    /// Removal moves the tree out of reach first. Someone working in it is
+    /// seen under the new name and it is put back where it was, whole; a
+    /// tree with changes is refused by git and put back with them; a clean
+    /// one nobody is in goes. Nothing is left under the hidden name.
+    #[test]
+    fn a_tree_someone_is_in_or_that_has_changes_is_put_back_and_a_clean_one_goes() {
+        let _fork = crate::testsync::forks_and_locks();
+        let (root, repo, tree) = repo_with_worktree("occupied");
+        let mut inside = std::process::Command::new("sleep")
+            .arg("30")
+            .current_dir(&tree)
+            .spawn()
+            .unwrap();
+        let said = remove(&repo, &tree).expect_err("someone is in it");
+        assert!(said.contains("working in it"), "{said}");
+        assert!(tree.join("a.txt").exists(), "back where it was");
+        let _ = inside.kill();
+        let _ = inside.wait();
+
+        std::fs::write(tree.join("b.txt"), "new\n").unwrap();
+        assert!(
+            remove(&repo, &tree).is_err(),
+            "git refuses a tree with changes"
+        );
+        assert!(tree.join("b.txt").exists(), "put back with its change");
+        std::fs::remove_file(tree.join("b.txt")).unwrap();
+
+        remove(&repo, &tree).expect("clean, and nobody in it");
+        assert!(!tree.exists());
+        let left: Vec<_> = std::fs::read_dir(&root)
+            .unwrap()
+            .flatten()
+            .map(|e| e.file_name().to_string_lossy().into_owned())
+            .filter(|n| n.contains(".td-removing-"))
+            .collect();
+        assert!(
+            left.is_empty(),
+            "nothing left under a hidden name: {left:?}"
+        );
+        let _ = std::fs::remove_dir_all(&root);
+    }
 
     /// This process's own directory is among the ones read, so a worktree a
     /// shell or an agent is standing in is seen as occupied.
