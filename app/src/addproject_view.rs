@@ -106,8 +106,13 @@ pub(crate) struct Browse {
     default: bool,
     /// The clone-or-start field, while it is open.
     new: Option<EditBuffer>,
+    /// Opened from the machines straight onto that field, so closing it goes
+    /// back to them rather than to a folder list the person never saw.
+    from_machines: bool,
     work: Option<Work>,
-    note: Option<String>,
+    /// What the dialog has to say, and whether it is a failure: failures wear
+    /// the skin's danger ink, as the side panel's do, and guidance the accent.
+    note: Option<(String, bool)>,
     tasks: Vec<gpui::Task<()>>,
 }
 
@@ -723,6 +728,7 @@ impl Workspace {
             top: 0,
             default: true,
             new,
+            from_machines: then_new,
             work: None,
             note: None,
             tasks: Vec::new(),
@@ -819,7 +825,7 @@ impl Workspace {
         }
         let target = ap::field_target(&b.field.text());
         if !create && b.exists() != Some(true) {
-            b.note = Some(lang::fill(e.add_enter_creates, &[("path", &target)]));
+            b.note = Some((lang::fill(e.add_enter_creates, &[("path", &target)]), false));
             cx.notify();
             return;
         }
@@ -860,7 +866,7 @@ impl Workspace {
             Ok(asked) => asked,
             Err(ap::NewTrouble::Empty) => return,
             Err(ap::NewTrouble::BadName) => {
-                b.note = Some(e.add_bad_name.to_string());
+                b.note = Some((e.add_bad_name.to_string(), true));
                 cx.notify();
                 return;
             }
@@ -869,7 +875,7 @@ impl Workspace {
             NewProject::Clone { name, .. } | NewProject::Empty { name } => name.clone(),
         };
         if b.holds(&name) == Some(true) {
-            b.note = Some(lang::fill(e.add_exists, &[("name", &name)]));
+            b.note = Some((lang::fill(e.add_exists, &[("name", &name)]), true));
             cx.notify();
             return;
         }
@@ -966,7 +972,7 @@ impl Workspace {
         // Esc means do not go on, even when the run reached its end before the
         // program could be stopped: nothing becomes the project behind it.
         if let Some(w) = work.as_ref().filter(|w| w.stopped.load(Ordering::Relaxed)) {
-            b.note = Some(lang::fill(e.add_stopped, &[("path", &w.target)]));
+            b.note = Some((lang::fill(e.add_stopped, &[("path", &w.target)]), false));
             cx.notify();
             return;
         }
@@ -974,7 +980,7 @@ impl Workspace {
             Ok(made) => self.add_project_take(made, cx),
             Err(Fail::Missing) => {
                 let target = work.as_ref().map(|w| w.target.clone()).unwrap_or_default();
-                b.note = Some(lang::fill(e.add_enter_creates, &[("path", &target)]));
+                b.note = Some((lang::fill(e.add_enter_creates, &[("path", &target)]), false));
             }
             Err(Fail::Said(err)) => {
                 let host = b.machine.ssh.clone().unwrap_or_default();
@@ -983,7 +989,7 @@ impl Workspace {
                 } else {
                     trouble_text(e, &host, &err)
                 };
-                b.note = Some(lang::fill(e.add_failed, &[("error", &said)]));
+                b.note = Some((lang::fill(e.add_failed, &[("error", &said)]), true));
             }
         }
         cx.notify();
@@ -1072,9 +1078,10 @@ impl Workspace {
         cx.notify();
     }
 
-    /// Esc, one layer at a time: a run is stopped, the clone field closes, a
-    /// highlight clears, the folders go back to the machines, and the
-    /// machines back to the composer. No window needed: the caller redraws.
+    /// Esc, one layer at a time: a run is stopped, the clone field closes (to
+    /// the machines when it was opened from them), a highlight clears, the
+    /// folders go back to the machines, and the machines back to the
+    /// composer. No window needed: the caller redraws.
     pub(crate) fn add_project_escape(&mut self) {
         let Some(c) = self.composer.as_mut() else {
             return;
@@ -1092,8 +1099,12 @@ impl Workspace {
                         let _ = child.kill();
                     }
                 } else if b.new.is_some() {
-                    b.new = None;
-                    b.note = None;
+                    if b.from_machines {
+                        a.step = Step::Machines;
+                    } else {
+                        b.new = None;
+                        b.note = None;
+                    }
                 } else if b.at.is_some() {
                     b.at = None;
                 } else if a.skipped {
@@ -1317,13 +1328,33 @@ impl Workspace {
             .border_color(if on {
                 th.accent.alpha(0.6)
             } else {
-                th.faint.alpha(0.3)
+                sk.ink.edge_rest
             })
             .text_size(sk.text_px(12.5 * s))
             .text_color(th.text)
             .overflow_hidden()
             .whitespace_nowrap()
             .child(line)
+    }
+
+    /// A folder row's measure with nothing in it.
+    fn add_project_blank(sk: &skin::Skin, s: f32) -> gpui::Div {
+        div()
+            .w_full()
+            .px(px(10. * s))
+            .py(px(3. * s))
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap(px(9. * s))
+            .child(
+                div()
+                    .w(px(16. * s))
+                    .flex_none()
+                    .text_size(sk.text_px(12. * s))
+                    .child("\u{a0}"),
+            )
+            .child(div().text_size(sk.text_px(12.5 * s)).child("\u{a0}"))
     }
 
     /// A row of the dialog's lists: a glyph, a name, a line under it, a ›.
@@ -1358,7 +1389,7 @@ impl Workspace {
                     .w(px(16. * s))
                     .flex_none()
                     .text_size(sk.text_px(12. * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(glyph.to_string()),
             )
             .child(
@@ -1388,7 +1419,7 @@ impl Workspace {
                             .items_center()
                             .gap(px(5. * s))
                             .text_size(sk.text_px(9.5 * s))
-                            .text_color(th.text.alpha(0.6))
+                            .text_color(sk.ink.ink_faint)
                             .overflow_hidden()
                             .whitespace_nowrap()
                             .children(dot.map(|c| div().text_color(c).child("\u{25cf}")))
@@ -1399,7 +1430,7 @@ impl Workspace {
                 div()
                     .flex_none()
                     .text_size(sk.text_px(11. * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child("\u{203a}"),
             )
     }
@@ -1420,6 +1451,14 @@ impl Workspace {
                 .text_size(sk.text_px(10.5 * s))
                 .text_color(color)
                 .child(text)
+        };
+        // The key hint at the foot, the size and ink the composer's and the
+        // relate dialog's hints have.
+        let hint = |text: &str| {
+            div()
+                .text_size(sk.text_px(9.5 * s))
+                .text_color(sk.ink.ink_faint)
+                .child(text.to_string())
         };
         let button = |id: &'static str, label: &str, primary: bool| {
             Self::bezel_btn_s(sk, label, primary, s * 0.95)
@@ -1455,7 +1494,7 @@ impl Workspace {
         let sub = |text: String| {
             div()
                 .text_size(sk.text_px(11. * s))
-                .text_color(th.text.alpha(0.55))
+                .text_color(sk.ink.ink_dim)
                 .child(text)
         };
         let list_box = || {
@@ -1466,7 +1505,7 @@ impl Workspace {
                 .flex_col()
                 .rounded(sk.capped(8.))
                 .border(sk.box_border(1.))
-                .border_color(th.faint.alpha(0.25))
+                .border_color(sk.ink.rule)
                 .bg(darken(th.bg, 0.25).alpha(0.5))
                 .overflow_hidden()
         };
@@ -1529,9 +1568,10 @@ impl Workspace {
                         Place::Far(m, seen) => {
                             let ssh = m.ssh.clone().unwrap_or_default();
                             let detail = match seen {
-                                Seen::Checking => {
-                                    (lang::fill(e.add_checking, &[("ssh", &ssh)]), Some(th.faint))
-                                }
+                                Seen::Checking => (
+                                    lang::fill(e.add_checking, &[("ssh", &ssh)]),
+                                    Some(sk.ink.ink_faint),
+                                ),
                                 Seen::Reachable => (
                                     lang::fill(e.add_reachable, &[("ssh", &ssh)]),
                                     Some(sk.ink.ok),
@@ -1581,23 +1621,25 @@ impl Workspace {
                             .px(px(10. * s))
                             .py(px(2. * s))
                             .text_size(sk.text_px(9.5 * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(lang::fill(e.add_more, &[("n", &below.to_string())])),
                     );
                 }
                 col = col.child(rows);
                 let mut notes: Vec<(String, Hsla)> = Vec::new();
+                // Both are failures: a host that did not answer as it should,
+                // or an ssh config that could not be read.
                 if let Some(n) = &a.note {
-                    notes.push((n.clone(), th.accent));
+                    notes.push((n.clone(), sk.ink.danger));
                 }
                 if let Some(n) = &a.ssh_error {
-                    notes.push((n.clone(), th.accent));
+                    notes.push((n.clone(), sk.ink.danger));
                 }
-                notes.push((e.add_ssh_foot.to_string(), th.text.alpha(0.5)));
+                notes.push((e.add_ssh_foot.to_string(), sk.ink.ink_faint));
                 if a.git_hosts > 0 {
                     notes.push((
                         lang::fill(e.add_git_hosts, &[("n", &a.git_hosts.to_string())]),
-                        th.text.alpha(0.5),
+                        sk.ink.ink_faint,
                     ));
                 }
                 for (text, color) in notes {
@@ -1630,7 +1672,7 @@ impl Workspace {
                             ),
                         ),
                 );
-                col = col.child(small(e.add_hint_machines.to_string(), th.faint));
+                col = col.child(hint(e.add_hint_machines));
             }
             Step::Folder(b) => {
                 let machine = b.machine.name.clone();
@@ -1644,7 +1686,7 @@ impl Workspace {
                                 .id("add-project-progress")
                                 .debug_selector(|| "add-project-progress".into())
                                 .text_size(sk.text_px(11. * s))
-                                .text_color(th.faint)
+                                .text_color(sk.ink.ink_faint)
                                 .overflow_hidden()
                                 .whitespace_nowrap()
                                 .child(if progress.is_empty() {
@@ -1663,7 +1705,7 @@ impl Workspace {
                                 }),
                             ),
                         ))
-                        .child(small(e.add_hint_work.to_string(), th.faint));
+                        .child(hint(e.add_hint_work));
                     return Some(col.into_any_element());
                 }
                 if let Some(field) = &b.new {
@@ -1696,10 +1738,11 @@ impl Workspace {
                         }
                     };
                     if let Some(said) = said {
-                        col = col.child(small(said, th.text.alpha(0.75)));
+                        col = col.child(small(said, sk.ink.ink_dim));
                     }
-                    if let Some(n) = &b.note {
-                        col = col.child(small(n.clone(), th.accent));
+                    if let Some((n, failed)) = &b.note {
+                        let ink = if *failed { sk.ink.danger } else { th.accent };
+                        col = col.child(small(n.clone(), ink));
                     }
                     col = col
                         .child(
@@ -1722,7 +1765,7 @@ impl Workspace {
                                     }),
                                 )),
                         )
-                        .child(small(e.add_hint_new.to_string(), th.faint));
+                        .child(hint(e.add_hint_new));
                     return Some(col.into_any_element());
                 }
                 col = col
@@ -1735,6 +1778,7 @@ impl Workspace {
                     );
                 let rows = b.rows();
                 let total = rows.len();
+                let mut drawn = total.saturating_sub(b.top).min(FOLDER_ROWS);
                 let mut list = list_box()
                     .id("add-project-folders")
                     .on_scroll_wheel(cx.listener(|ws, ev: &ScrollWheelEvent, _w, cx| {
@@ -1790,18 +1834,21 @@ impl Workspace {
                 }
                 // What the list is waiting on, or why it is empty.
                 let status = match b.reads.get(&dir) {
-                    None | Some(Read::Pending) => Some((e.add_reading.to_string(), th.faint)),
-                    Some(Read::Failed(err)) => Some((err.clone(), th.accent)),
-                    Some(Read::Got(Listing::Missing)) => {
-                        Some((lang::fill(e.add_missing_dir, &[("dir", &dir)]), th.faint))
+                    None | Some(Read::Pending) => {
+                        Some((e.add_reading.to_string(), sk.ink.ink_faint))
                     }
+                    Some(Read::Failed(err)) => Some((err.clone(), sk.ink.danger)),
+                    Some(Read::Got(Listing::Missing)) => Some((
+                        lang::fill(e.add_missing_dir, &[("dir", &dir)]),
+                        sk.ink.ink_faint,
+                    )),
                     Some(Read::Got(Listing::At { folders, .. })) => {
                         if folders.is_empty() {
-                            Some((e.add_no_folders.to_string(), th.faint))
+                            Some((e.add_no_folders.to_string(), sk.ink.ink_faint))
                         } else if !rows.iter().any(|r| !r.up) {
                             Some((
                                 lang::fill(e.add_no_match, &[("partial", &partial)]),
-                                th.faint,
+                                sk.ink.ink_faint,
                             ))
                         } else {
                             None
@@ -1809,6 +1856,7 @@ impl Workspace {
                     }
                 };
                 if let Some((text, color)) = status {
+                    drawn += 1;
                     list = list.child(
                         div()
                             .px(px(10. * s))
@@ -1818,26 +1866,35 @@ impl Workspace {
                             .child(text),
                     );
                 }
-                let below = total.saturating_sub(b.top + FOLDER_ROWS);
-                if below > 0 {
-                    list = list.child(
-                        div()
-                            .px(px(10. * s))
-                            .py(px(2. * s))
-                            .text_size(sk.text_px(9.5 * s))
-                            .text_color(th.faint)
-                            .child(lang::fill(e.add_more, &[("n", &below.to_string())])),
-                    );
+                // Held at its full height: the card is centred, so a short
+                // folder moved every row, and the next click landed on a row
+                // the person was not pointing at.
+                for _ in drawn..FOLDER_ROWS {
+                    list = list.child(Self::add_project_blank(sk, s));
                 }
+                let below = total.saturating_sub(b.top + FOLDER_ROWS);
+                list = list.child(
+                    div()
+                        .px(px(10. * s))
+                        .py(px(2. * s))
+                        .text_size(sk.text_px(9.5 * s))
+                        .text_color(sk.ink.ink_faint)
+                        .child(if below > 0 {
+                            lang::fill(e.add_more, &[("n", &below.to_string())])
+                        } else {
+                            "\u{a0}".to_string()
+                        }),
+                );
                 col = col.child(list);
                 let target = ap::field_target(&b.field.text());
                 let said = match b.exists() {
                     Some(false) => lang::fill(e.add_creates, &[("path", &target)]),
                     _ => lang::fill(e.add_adds, &[("path", &target)]),
                 };
-                col = col.child(small(said, th.text.alpha(0.75)));
-                if let Some(n) = &b.note {
-                    col = col.child(small(n.clone(), th.accent));
+                col = col.child(small(said, sk.ink.ink_dim));
+                if let Some((n, failed)) = &b.note {
+                    let ink = if *failed { sk.ink.danger } else { th.accent };
+                    col = col.child(small(n.clone(), ink));
                 }
                 col = col
                     .child(
@@ -1883,7 +1940,7 @@ impl Workspace {
                                 }),
                             )),
                     )
-                    .child(small(e.add_hint_folder.to_string(), th.faint));
+                    .child(hint(e.add_hint_folder));
             }
         }
         Some(col.into_any_element())

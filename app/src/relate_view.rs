@@ -302,7 +302,7 @@ impl Workspace {
                 .rounded(sk.capped(10.))
                 .bg(darken(th.bg, 0.4).alpha(0.85))
                 .border(sk.box_border(1.))
-                .border_color(th.faint.alpha(0.3))
+                .border_color(sk.ink.edge_rest)
                 .text_size(sk.text_px(12. * s))
                 .text_color(th.text)
                 // One line, cut short: a long name wrapped at its narrowest
@@ -328,7 +328,7 @@ impl Workspace {
                     .child(
                         div()
                             .text_size(sk.text_px(9. * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(ui.floor_rel_can),
                     )
                     .child(
@@ -367,7 +367,7 @@ impl Workspace {
                         div()
                             .w(px(14. * s))
                             .text_size(sk.text_px(10. * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(format!("{}", n + 1)),
                     )
                     .child(
@@ -383,7 +383,7 @@ impl Workspace {
                             .min_w_0()
                             .truncate()
                             .text_size(sk.text_px(10.5 * s))
-                            .text_color(th.faint)
+                            .text_color(sk.ink.ink_faint)
                             .child(what),
                     )
                     .children((now == Some(g)).then(|| {
@@ -457,7 +457,7 @@ impl Workspace {
                     .debug_selector(|| "relate-move".into())
                     .cursor_pointer()
                     .text_size(sk.text_px(10.5 * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .hover(|st| st.text_color(th.text))
                     .child(e.relate_move)
                     .on_mouse_down(
@@ -496,22 +496,24 @@ impl Workspace {
             .child(
                 div()
                     .text_size(sk.text_px(11. * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_dim)
                     .child(e.relate_sub),
             )
             .child(pair)
             .child(verbs)
+            // Always a refusal, so the skin's danger ink, as the side panel
+            // draws its failures; the accent read as success in a green design.
             .children(r.error.clone().map(|err| {
                 div()
                     .text_size(sk.text_px(10.5 * s))
-                    .text_color(th.accent)
+                    .text_color(sk.ink.danger)
                     .child(err)
             }))
             .child(buttons)
             .child(
                 div()
                     .text_size(sk.text_px(9.5 * s))
-                    .text_color(th.faint)
+                    .text_color(sk.ink.ink_faint)
                     .child(e.relate_hint),
             );
 

@@ -29787,6 +29787,27 @@ impl Workspace {
             // The tree's own buttons (fold all, new project) act on the tree,
             // so the INBOX face leaves them out and carries + NEW instead.
             .child(self.render_spine_faces(&sk, s, cx))
+            // The INBOX face ends in a + that opens the composer, where the
+            // PROJECTS face ends in the + that makes a project: one glyph in
+            // one place, each face's own new thing. It was "+ NEW", which ran
+            // under the ◀ in the chalk skin, and in Spanish, French and Russian
+            // in every skin.
+            .when(self.spine_inbox(), |d| {
+                d.child(with_tip(
+                    Self::bezel_btn_s(&sk, "+", false, s * 0.85)
+                        .id("spine-new-chat")
+                        .debug_selector(|| "spine-new-chat".into())
+                        .flex_none()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.open_composer(window, cx);
+                            }),
+                        ),
+                    vec![self.lang.strings().entry.new_chat_tip.to_string()],
+                ))
+            })
             // Unboxed, ADD PROJECT lives here, beside the TABS handle with a
             // hairline between them: it is about the projects this tree lists,
             // and with it up here the top bar has nothing of its own left to
