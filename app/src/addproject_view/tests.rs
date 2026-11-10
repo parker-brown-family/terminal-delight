@@ -771,7 +771,6 @@ fn backspace_on_the_project_chip_starts_from_no_project(cx: &mut gpui::TestAppCo
                     machine: None,
                 },
             );
-            c.order = launcher::filter(&c.projects, "");
             c.project = Some(0);
             c.focus = entry::Focus::Project;
             c.query = "so".into();
@@ -820,7 +819,6 @@ fn the_project_list_keeps_the_chosen_project_in_view(cx: &mut gpui::TestAppConte
                     machine: None,
                 })
                 .collect();
-            c.order = launcher::filter(&c.projects, "");
             c.project = Some(11);
             c.focus = entry::Focus::Project;
         })
@@ -1009,7 +1007,6 @@ fn the_composer_stays_put_while_a_filter_narrows_its_list(cx: &mut gpui::TestApp
                     machine: None,
                 })
                 .collect();
-            c.order = launcher::filter(&c.projects, "");
             c.project = None;
             c.focus = entry::Focus::Project;
         })
@@ -1019,13 +1016,20 @@ fn the_composer_stays_put_while_a_filter_narrows_its_list(cx: &mut gpui::TestApp
     cx.simulate_keystrokes("p 1 3");
     redraw(cx);
     ws.read_with(cx, |ws, _| {
-        assert_eq!(ws.composer.as_ref().unwrap().order.len(), 1, "one match")
+        assert_eq!(
+            ws.composer.as_ref().unwrap().project_order().len(),
+            1,
+            "one match"
+        )
     });
     assert_eq!(cx.debug_bounds("composer-text"), Some(open), "one match");
     cx.simulate_keystrokes("q");
     redraw(cx);
     ws.read_with(cx, |ws, _| {
-        assert!(ws.composer.as_ref().unwrap().order.is_empty(), "no match")
+        assert!(
+            ws.composer.as_ref().unwrap().project_order().is_empty(),
+            "no match"
+        )
     });
     assert_eq!(cx.debug_bounds("composer-text"), Some(open), "no match");
 }
@@ -1086,7 +1090,6 @@ fn composer_with_projects(
                     machine: None,
                 })
                 .collect();
-            c.order = launcher::filter(&c.projects, "");
             c.project = chosen;
             // Not the person's launch defaults: a list's length must not
             // depend on what they last chose.
@@ -1097,6 +1100,54 @@ fn composer_with_projects(
         })
     });
     redraw(cx);
+}
+
+/// PROJECT's list shows what its field says. Letters typed on it narrow the
+/// list; leaving the chip clears the letters, so coming back must show every
+/// project again, not the list the letters left behind. The bug path of
+/// `ListMatchesField` in verify/composer, one step per action: open, Tab to
+/// PROJECT, type, Tab on, Shift+Tab back, and the same with Esc and a press.
+#[gpui::test]
+fn a_chip_left_with_letters_typed_opens_again_on_its_whole_list(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    redraw(cx);
+    composer_with_projects(&ws, cx, 14, None, entry::Focus::Text);
+    // Rows the list draws from, and what the field says.
+    let list = |cx: &mut gpui::VisualTestContext| {
+        ws.read_with(cx, |ws, _| {
+            let c = ws.composer.as_ref().unwrap();
+            (c.project_rows(ws.lang).len(), c.query.clone(), c.focus)
+        })
+    };
+    cx.simulate_keystrokes("tab");
+    redraw(cx);
+    assert_eq!(
+        list(cx),
+        (15, String::new(), entry::Focus::Project),
+        "no project and all 14"
+    );
+    cx.simulate_keystrokes("p 1 3");
+    redraw(cx);
+    assert_eq!(list(cx).0, 1, "narrowed to p13");
+    cx.simulate_keystrokes("tab shift-tab");
+    redraw(cx);
+    assert_eq!(
+        list(cx),
+        (15, String::new(), entry::Focus::Project),
+        "back on PROJECT with nothing typed: every project again"
+    );
+    // Esc off the chip, and a press back on it, the same.
+    cx.simulate_keystrokes("p 1 3 escape");
+    redraw(cx);
+    let chip = cx
+        .debug_bounds("composer-chip-Project")
+        .expect("the PROJECT chip is drawn");
+    cx.simulate_click(chip.center(), gpui::Modifiers::default());
+    redraw(cx);
+    assert_eq!(list(cx), (15, String::new(), entry::Focus::Project));
 }
 
 /// No project answers to its words while the PROJECT chip is filtered, as
@@ -1260,7 +1311,6 @@ fn typed_letters_pick_a_model_and_a_press_takes_an_effort(cx: &mut gpui::TestApp
                 repo: true,
                 machine: None,
             }];
-            c.order = launcher::filter(&c.projects, "");
             c.project = Some(0);
             c.harness = launcher::Harness::Codex;
             c.model = None;

@@ -8,6 +8,7 @@ Tests check the cases someone thought to write. These check every order of steps
 | [`rest-sleep/`](rest-sleep/SKILL.md) | rest never freezes a turn; sleep never loses pending work | TLA+ and the policy's tests (`agentrest.rs`) | 0 findings (a waiting `/loop` rested and slept, issue 1176; a timer in the look's gap; both fixed) |
 | [`worktree-cleanup/`](worktree-cleanup/SKILL.md) | removal never deletes work or a tree under a process | TLA+ | 2 findings; the quarantine fix holds |
 | [`overlay-stack/`](overlay-stack/SKILL.md) | what is on top gets your keys and your Esc | TLA+ and replays (`app/src/verify_overlay.rs`) | 3 findings, replayed |
+| [`composer/`](composer/SKILL.md) | PROJECT's list shows what its field says, and the add-a-project dialog is the only face while it is up | TLA+ and a window replay (`addproject_view/tests.rs`) | 0 findings (a list left narrowed under an empty field; fixed) |
 | [`side-panel-reading/`](side-panel-reading/SKILL.md) | a side-panel tab's red note is about its latest read, and trouble never blanks what you were reading | TLA+ and the real window (`flyout_view.rs` tests) | 0 findings (a stale red note; fixed) |
 | [`flows/`](flows/README.md) | the INBOX and the Settings book, as user flows | TLA+ | hold |
 
