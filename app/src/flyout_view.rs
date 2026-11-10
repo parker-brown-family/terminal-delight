@@ -1407,7 +1407,7 @@ impl Workspace {
 
     /// [`Self::flyout_show`] without touching the keyboard: for what a page in
     /// the flyout itself opened, where the keyboard already is.
-    fn flyout_put(
+    pub(crate) fn flyout_put(
         &mut self,
         task: usize,
         target: Target,
@@ -6921,6 +6921,103 @@ mod tests {
         ws.read_with(cx, |ws, _| {
             let tabs = &ws.side().unwrap().tabs;
             assert_eq!(tabs, &vec![page.clone()], "the ✕ closed the first tab");
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// `open_document` "side" on the window: with the panel shut, the agent's
+    /// page opens it without taking the keyboard; while the person reads
+    /// another tab there, a second one goes in beside it and the answer is
+    /// "held"; from a tab that is not on screen it waits in that tab's own
+    /// panel and the window's panel is left as it was.
+    ///
+    /// Mutation-tested: dropping the `reading` branch (so a send always
+    /// shows) fails the held assertions; dropping the not-on-screen branch
+    /// puts the page in the wrong tab's panel.
+    #[gpui::test]
+    fn an_agent_opens_its_page_in_its_own_tabs_side_panel_and_never_over_the_reader(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-side-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let file = |name: &str| {
+            let p = dir.join(name);
+            std::fs::write(&p, "# made\n").unwrap();
+            Target::File { path: p }
+        };
+        let (report, second, later) = (file("report.md"), file("second.md"), file("later.md"));
+        let pane_of = |ws: &Workspace, tab: usize| {
+            let mut leaves = vec![];
+            ws.tabs[tab].root.leaves(&mut leaves);
+            leaves[0].entity_id()
+        };
+
+        let said = cx.update(|_, cx| {
+            ws.update(cx, |ws, cx| {
+                let pane = pane_of(ws, ws.active);
+                ws.mcp_open_side(pane, report.clone(), cx)
+            })
+        });
+        redraw(cx);
+        assert!(said.starts_with("ok side"), "{said}");
+        ws.read_with(cx, |ws, _| {
+            assert!(ws.flyout.open, "the shut panel opens on the agent's page");
+            assert!(!ws.flyout.focused, "and the keyboard stays where it was");
+            assert_eq!(ws.side().unwrap().current(), Some(&report));
+        });
+
+        let code = dir.join("code.rs");
+        std::fs::write(&code, "fn main() {}\n").unwrap();
+        let code = Target::File { path: code };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                let task = ws.active;
+                ws.flyout_show(task, code.clone(), None, false, w, cx);
+            })
+        });
+        let said = cx.update(|_, cx| {
+            ws.update(cx, |ws, cx| {
+                let pane = pane_of(ws, ws.active);
+                ws.mcp_open_side(pane, second.clone(), cx)
+            })
+        });
+        assert!(said.starts_with("held side"), "{said}");
+        ws.read_with(cx, |ws, _| {
+            let side = ws.side().unwrap();
+            assert_eq!(side.current(), Some(&code), "the reader stays on the code");
+            assert!(side.tabs.contains(&second), "the page went in beside it");
+        });
+
+        let first_tab = cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                let first = ws.active;
+                ws.new_tab(w, cx);
+                first
+            })
+        });
+        redraw(cx);
+        let said = cx.update(|_, cx| {
+            ws.update(cx, |ws, cx| {
+                assert_ne!(ws.active, first_tab, "a new tab is on screen");
+                let pane = pane_of(ws, first_tab);
+                ws.mcp_open_side(pane, later.clone(), cx)
+            })
+        });
+        assert!(said.contains("not on screen"), "{said}");
+        ws.read_with(cx, |ws, _| {
+            assert!(
+                ws.tabs[first_tab].side.tabs.contains(&later),
+                "it waits in the agent's own tab's panel"
+            );
+            assert!(
+                !ws.side().unwrap().tabs.contains(&later),
+                "and not in the panel on screen"
+            );
         });
         let _ = std::fs::remove_dir_all(&dir);
     }

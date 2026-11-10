@@ -1424,6 +1424,9 @@ pub enum Placement {
     Beside,
     /// Floating over the caller's own pane, as Alt+click on its path opens it.
     Here,
+    /// A tab in the right-bar side panel of the caller's own tab, as "◨ side"
+    /// on its rail row opens it.
+    Side,
 }
 
 impl Placement {
@@ -1431,6 +1434,7 @@ impl Placement {
         match self {
             Placement::Beside => "beside",
             Placement::Here => "here",
+            Placement::Side => "side",
         }
     }
 }
@@ -1442,8 +1446,18 @@ impl Placement {
 #[derive(Clone, PartialEq, Debug)]
 pub struct OpenRequest {
     pub pid: u32,
-    pub target: crate::docopen::DocTarget,
+    pub target: Opening,
     pub placement: Placement,
+}
+
+/// What an `open_document` opens. "here" and "beside" open a document the
+/// pane draws; "side" opens what the right-bar side panel shows, which is
+/// also a code file or a pull request. `open_document` builds `Side` for the
+/// "side" placement and `Doc` for the other two, and nothing else builds one.
+#[derive(Clone, PartialEq, Debug)]
+pub enum Opening {
+    Doc(crate::docopen::DocTarget),
+    Side(crate::flyout::Target),
 }
 
 /// What the window did with an `open_document`: the router's own sentence, or
@@ -1484,6 +1498,51 @@ pub fn open_outcome(reply: &str) -> OpenOutcome {
 /// an image, a video or a PDF. Reads the file's first sixteen bytes and
 /// nothing else.
 pub fn validate_open_path(path: &str) -> Result<crate::docopen::DocTarget, String> {
+    let file = absolute_file(path)?;
+    crate::docopen::drawable_document(&file).ok_or_else(|| {
+        format!(
+            "{} is not a file TD can draw — Markdown, HTML, an image, a video or a PDF, and it \
+             has to exist",
+            file.display()
+        )
+    })
+}
+
+/// Check an `open_document` path for placement "side": a GitHub pull
+/// request's address, or an absolute path or `file://` URL to what the side
+/// panel shows — a page, a picture or a PDF drawn, any other text file as
+/// code. Reads at most the file's head, to tell text from binary.
+pub fn validate_side_path(path: &str) -> Result<crate::flyout::Target, String> {
+    let path = path.trim();
+    if crate::flyout::pull_of_url(path).is_some() {
+        return crate::flyout_view::artifact_target(path)
+            .map(|open| open.target)
+            .ok_or_else(|| format!("{path:?} is not a pull request the side panel can show"));
+    }
+    let lower = path.to_ascii_lowercase();
+    if lower.starts_with("http://") || lower.starts_with("https://") {
+        return Err(format!(
+            "{path:?} is a web address; the side panel shows a GitHub pull request \
+             (https://github.com/<owner>/<repo>/pull/<n>) and files on this machine. \
+             Declare any other page with declare_deliverable."
+        ));
+    }
+    let file = absolute_file(path)?;
+    crate::flyout_view::artifact_target(&file.to_string_lossy())
+        .map(|open| open.target)
+        .ok_or_else(|| {
+            format!(
+                "{} is not something the side panel shows — a page, a picture, a PDF or a \
+                 text file, and it has to exist (a clip or a sound opens \"here\" instead)",
+                file.display()
+            )
+        })
+}
+
+/// The file an `open_document` path names, if it is absolute: a path, or a
+/// `file://` URL decoded. A relative path would resolve against the
+/// TERMINAL's directory rather than the agent's.
+fn absolute_file(path: &str) -> Result<std::path::PathBuf, String> {
     let path = path.trim();
     if path.is_empty() {
         return Err("open_document needs a `path`: the absolute path of the file to open".into());
@@ -1511,13 +1570,7 @@ pub fn validate_open_path(path: &str) -> Result<crate::docopen::DocTarget, Strin
              working directory rather than yours, so give an absolute path."
         ));
     };
-    crate::docopen::drawable_document(&file).ok_or_else(|| {
-        format!(
-            "{} is not a file TD can draw — Markdown, HTML, an image, a video or a PDF, and it \
-             has to exist",
-            file.display()
-        )
-    })
+    Ok(file)
 }
 
 /// The read-only `apply`: refuses every update with a clear reason. Used by the
@@ -1984,7 +2037,13 @@ fn tool_defs() -> Value {
                  Explicit \"beside\" opens it in a pane to the right of yours, as \
                  Ctrl+Alt+click does: a pane in your tab already showing the file \
                  is focused instead, and at four panes it floats over your pane. \
-                 It only ever opens in your own pane or tab, and takes no pid. \
+                 \"side\" opens it as a tab in the right-bar side panel of your own \
+                 tab, beside the conversation, and also takes a code or text file \
+                 or a GitHub pull request URL: it shows at once if your tab is on \
+                 screen, goes in beside without taking over if the person is reading \
+                 another side tab (the answer begins \"held\"), and waits in your \
+                 tab's panel if your tab is not on screen. It never takes the \
+                 keyboard. It only ever opens in your own pane or tab, and takes no pid. \
                  A square the person already has open over your pane is never \
                  replaced: the answer then begins \"held\", the file is kept as \
                  your handover on the artifact rail, and you should not ask \
@@ -1993,8 +2052,8 @@ fn tool_defs() -> Value {
             "inputSchema": {
                 "type": "object",
                 "properties": {
-                    "path": { "type": "string", "description": "absolute path (/home/you/report.html) or file:// URL of a Markdown, HTML, image, video or PDF file" },
-                    "placement": { "type": "string", "enum": ["beside", "here"], "description": "\"here\" (default): floating inside your own pane; \"beside\": a pane of its own beside yours" }
+                    "path": { "type": "string", "description": "absolute path (/home/you/report.html) or file:// URL of a Markdown, HTML, image, video or PDF file; with placement \"side\" also a code or text file, or a GitHub pull request URL" },
+                    "placement": { "type": "string", "enum": ["beside", "here", "side"], "description": "\"here\" (default): floating inside your own pane; \"beside\": a pane of its own beside yours; \"side\": a tab in your tab's right-bar side panel" }
                 },
                 "required": ["path"],
                 "additionalProperties": false
@@ -3916,18 +3975,29 @@ where
     let placement = match args.get("placement").and_then(Value::as_str) {
         None | Some("here") => Placement::Here,
         Some("beside") => Placement::Beside,
+        Some("side") => Placement::Side,
         Some(other) => {
             return tool_err(&format!(
-                "placement {other:?} is not one of \"beside\" or \"here\""
+                "placement {other:?} is not one of \"beside\", \"here\" or \"side\""
             ))
         }
     };
     let path = args.get("path").and_then(Value::as_str).unwrap_or("");
-    let target = match validate_open_path(path) {
+    let checked = match placement {
+        Placement::Side => validate_side_path(path).map(Opening::Side),
+        Placement::Beside | Placement::Here => validate_open_path(path).map(Opening::Doc),
+    };
+    let target = match checked {
         Ok(t) => t,
         Err(why) => return tool_err(&why),
     };
-    let shown = target.path.display().to_string();
+    let shown = match &target {
+        Opening::Doc(d) => d.path.display().to_string(),
+        Opening::Side(t) => match t {
+            crate::flyout::Target::File { path } => path.display().to_string(),
+            other => other.url().unwrap_or_else(|| format!("{other:?}")),
+        },
+    };
     let request = OpenRequest {
         pid: me.pid,
         target,
@@ -6961,6 +7031,7 @@ mod tests {
             Ok(match r.placement {
                 Placement::Beside => "beside pane 9 — opened in pane 12".into(),
                 Placement::Here => "float pane 9".into(),
+                Placement::Side => "side pane 9 — opened in the side panel".into(),
             })
         };
         let line = json!({ "id": 9, "method": "tools/call",
@@ -7055,7 +7126,9 @@ mod tests {
         let md = TempDoc::new("my report.md", "# made this turn\n");
         let (out, seen) = open_as_caller(json!({ "path": md.path() }));
         assert_eq!(seen[0].placement, Placement::Here);
-        assert_eq!(seen[0].target.kind, crate::docopen::DocKind::Markdown);
+        assert!(
+            matches!(&seen[0].target, Opening::Doc(d) if d.kind == crate::docopen::DocKind::Markdown)
+        );
         assert_eq!(out["structuredContent"]["placement"], "here");
         assert!(text_of(&out).contains("float pane 9"), "{}", text_of(&out));
 
@@ -7072,10 +7145,71 @@ mod tests {
         let (out, seen) = open_as_caller(json!({ "path": url, "placement": "here" }));
         assert_ne!(out["isError"], true, "{}", text_of(&out));
         assert_eq!(seen[0].placement, Placement::Here);
-        assert_eq!(
-            seen[0].target.path, md.0,
+        assert!(
+            matches!(&seen[0].target, Opening::Doc(d) if d.path == md.0),
             "the URL was not decoded to the file"
         );
+    }
+
+    /// "side" puts a page, a code file or a pull request in the caller's
+    /// side panel, and refuses what that panel cannot show with a reason the
+    /// agent can act on. The other two placements still refuse a code file:
+    /// the square and a split draw documents, not source.
+    ///
+    /// Mutation-tested: routing "side" through `validate_open_path` fails the
+    /// code-file and pull-request cases; dropping the side panel's own
+    /// web-address refusal leaves the square's, which never says a pull
+    /// request is what the panel takes from the web.
+    #[test]
+    fn open_document_side_takes_pages_code_and_pull_requests_and_refuses_the_rest() {
+        let md = TempDoc::new("side report.md", "# made this turn\n");
+        let (out, seen) = open_as_caller(json!({ "path": md.path(), "placement": "side" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(seen[0].placement, Placement::Side);
+        assert!(
+            matches!(&seen[0].target, Opening::Side(crate::flyout::Target::File { path }) if path.ends_with("side report.md")),
+            "{:?}",
+            seen[0].target
+        );
+        assert_eq!(out["structuredContent"]["placement"], "side");
+
+        let code = TempDoc::new("lib.rs", "fn main() {}\n");
+        let (out, seen) = open_as_caller(json!({ "path": code.path(), "placement": "side" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert!(matches!(
+            &seen[0].target,
+            Opening::Side(crate::flyout::Target::File { .. })
+        ));
+        let (out, seen) = open_as_caller(json!({ "path": code.path() }));
+        assert_eq!(
+            out["isError"], true,
+            "the square draws documents, not source"
+        );
+        assert!(seen.is_empty());
+
+        let pr = "https://github.com/parker-brown-family/terminal-delight/pull/1404";
+        let (out, seen) = open_as_caller(json!({ "path": pr, "placement": "side" }));
+        assert_ne!(out["isError"], true, "{}", text_of(&out));
+        assert_eq!(
+            seen[0].target,
+            Opening::Side(crate::flyout::Target::Pull {
+                owner: "parker-brown-family".into(),
+                repo: "terminal-delight".into(),
+                number: 1404,
+            })
+        );
+        assert_eq!(out["structuredContent"]["path"], pr);
+
+        for (path, why) in [
+            ("https://example.com/page", "GitHub pull request"),
+            ("notes/report.md", "relative"),
+            ("/nowhere/at/all.md", "has to exist"),
+        ] {
+            let (out, seen) = open_as_caller(json!({ "path": path, "placement": "side" }));
+            assert_eq!(out["isError"], true, "{path} was let through");
+            assert!(text_of(&out).contains(why), "{path}: {}", text_of(&out));
+            assert!(seen.is_empty(), "{path} reached the window");
+        }
     }
 
     /// Changing the layout is a write: it needs the writes toggle, as a note

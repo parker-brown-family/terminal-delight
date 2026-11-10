@@ -254,3 +254,51 @@ in the panel (wired, untested by a window).
 Post-hoc difficulty: **6 / 10** held. The work was visible the moment it went wrong in every place
 but two: the strewn-letter match, which the tests found, and the symlinked handover, which the review
 found.
+
+## Round 3 (2026-11-09, evening): an agent opens its deliverable here
+
+**Difficulty: 4 / 10**, scored before the code: one more placement on a verb that already
+exists, routed to a panel that already opens things, and the only judgement in it is the
+courtesy rule. It buys one combined page, and this section is that page. Parker was away
+("smash work with full send judgement … I am AFK"), so the courtesy rule below is a call
+nobody made, recorded as one.
+
+**What it is.** `open_document` takes a third placement, `"side"`. The deliverable becomes a
+tab in the right-bar panel **of the tab the calling agent's pane is in**. Rounds 1 and 2 left
+this out because the rail's handover path covered a pull request, but Parker's direction in
+round 2 ("we have ARTIFACTS as a focal point … we will play into that with the flyout") made
+it the natural next step: an agent that has just written a brief or opened a pull request
+can now put it beside its own conversation without anyone clicking `◨ side`.
+
+**What it takes.** Everything `◨ side` takes, because the check is the rail's own
+`artifact_target`: a page, a picture or a PDF (drawn), any other text file (as code), or a
+GitHub pull request URL. A relative path, a web page that is not a pull request, a missing
+file and a binary are refused with a sentence the agent can act on. "here" and "beside" are
+unchanged and still refuse a code file: the square and a split draw documents, not source.
+
+**The courtesy rule (the call).** The square is never replaced under a person who has one
+open; this keeps the same promise for the panel:
+
+| Where the person is | What "side" does | The answer |
+|---|---|---|
+| on the agent's tab, panel shut | the panel opens on the deliverable; keyboard untouched | `ok side — …` |
+| on the agent's tab, reading another side tab or the `+` page | it goes in as a tab **beside** what they read; the current tab stays | `held side — …` |
+| on another tab | it waits in the agent's tab's panel; the window's open/shut is left alone | `ok side — … not on screen` |
+
+Never the keyboard: `flyout_put`, not `flyout_show`, so the panel opens without focus.
+
+**Code.** `mcp.rs`: `Placement::Side`, `Opening::{Doc, Side}` on `OpenRequest`,
+`validate_side_path`, the old absolute-path check factored into `absolute_file`, the schema
+and description. `main.rs`: `mcp_open` hands an `Opening::Side` to `mcp_open_side`.
+`flyout.rs`: `Side::add` (insert without taking over). `flyout_view.rs`: `flyout_put` is
+`pub(crate)`.
+
+**Tests.** `flyout::tests::an_added_tab_goes_beside_the_one_being_read_and_does_not_take_over`
+(pure), `mcp::tests::open_document_side_takes_pages_code_and_pull_requests_and_refuses_the_rest`
+(the verb's contract), and
+`flyout_view::tests::an_agent_opens_its_page_in_its_own_tabs_side_panel_and_never_over_the_reader`
+(a real window: all three rows of the table). The source-string test on `mcp_open` follows the
+rename of `request.target` to `doc`.
+
+**Not built.** A `ctl` spelling (`ctl doc side <path>`); a rail mark for a "held" side tab
+(the `+` page's handover ledger already lists it, with ✦).

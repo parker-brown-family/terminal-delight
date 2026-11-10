@@ -111,6 +111,8 @@ mod relate_view;
 mod restricted;
 mod screenread;
 mod session;
+mod settings;
+mod settings_view;
 mod skills;
 mod skin;
 mod threshing_floor_view;
@@ -118,6 +120,7 @@ mod uninstall;
 mod update;
 mod update_view;
 mod wirecheck;
+mod wtclean;
 use skin::parts::{
     color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
 };
@@ -5051,6 +5054,14 @@ struct Workspace {
     agents_prefs: agentcfg::Prefs,
     /// Whether the CONFIG › Agents page is open.
     agents_menu: bool,
+    /// Settings, the book that holds every setting, while it is open
+    /// (`settings_view.rs`), and the page it was last on.
+    settings: Option<settings::Book>,
+    settings_last: Option<settings::Page>,
+    /// The Worktrees page's cleanup switches (`worktrees.toml`) and its
+    /// review of what they would remove.
+    wt_prefs: wtclean::Prefs,
+    wt_review: settings_view::WtReview,
     skills_prefs: skills::Prefs,
     skills_error: Option<String>,
     skills_form: Option<SkillsForm>,
@@ -5693,6 +5704,15 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         let showing = ws.spine_inbox();
         ws.set_spine_inbox(!showing, cx);
     })
+    .detach();
+    // ctrl+, in any pane → open or close Settings.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, _pane, _ev: &pane::ToggleSettings, _window, cx| {
+            ws.toggle_settings(cx);
+        },
+    )
     .detach();
     // ctrl+shift+R in any pane → open or close the right-bar flyout.
     cx.subscribe_in(
@@ -6880,6 +6900,10 @@ impl Workspace {
             launch_defaults: launchpref::load(),
             agents_prefs: agentcfg::load(),
             agents_menu: false,
+            settings: None,
+            settings_last: None,
+            wt_prefs: wtclean::load(&instance::config_dir()),
+            wt_review: Default::default(),
             skills_prefs: skills::load().unwrap_or_default(),
             skills_error: None,
             skills_form: None,
@@ -12765,18 +12789,70 @@ impl Workspace {
             ));
             return;
         }
+        let doc = match request.target {
+            mcp::Opening::Side(target) => {
+                let said = self.mcp_open_side(leaf.entity_id(), target, cx);
+                let _ = reply.send(said);
+                return;
+            }
+            mcp::Opening::Doc(doc) => doc,
+        };
         match request.placement {
             mcp::Placement::Beside => leaf.update(cx, |v, cx| {
-                v.request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)
+                v.request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)
             }),
-            mcp::Placement::Here => {
-                let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+            mcp::Placement::Here | mcp::Placement::Side => {
+                let said = leaf.update(cx, |v, cx| v.open_here(doc, cx));
                 if said.starts_with("held ") {
                     self.art_held(cx);
                 }
                 let _ = reply.send(said);
             }
         }
+    }
+
+    /// `open_document` with placement "side": what the agent made becomes a
+    /// tab in the side panel of the tab its own pane is in, and the keyboard
+    /// stays where it is. On screen and not being read, the panel opens on
+    /// it. While the person reads another tab of that panel, or its `+` page,
+    /// it goes in beside and the answer is "held" — the same courtesy as the
+    /// square, which an agent never replaces. In a tab that is not on screen
+    /// it waits in that tab's panel, and the panel's open state, which is the
+    /// window's, is left alone.
+    fn mcp_open_side(
+        &mut self,
+        pane: EntityId,
+        target: flyout::Target,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let Some(task) = self.tab_with_leaf(pane) else {
+            return "err your pane is not in a tab of this window".into();
+        };
+        let name = target.short_name();
+        if task != self.active {
+            self.tabs[task].side.open(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "ok side — {name} waits in your tab's side panel; your tab is not on screen"
+            );
+        }
+        let reading = self.flyout.open
+            && (self.flyout.adding
+                || self.tabs[task]
+                    .side
+                    .current()
+                    .is_some_and(|t| !t.same_tab(&target)));
+        if reading {
+            self.tabs[task].side.add(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "held side — {name} is a tab in your side panel, beside what the person is reading"
+            );
+        }
+        self.flyout_put(task, target, None, cx);
+        format!("ok side — {name} is open in the side panel beside your pane")
     }
 
     /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
@@ -18059,7 +18135,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18070,7 +18146,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18336,7 +18414,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18347,7 +18425,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18520,7 +18600,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18531,7 +18611,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18551,7 +18633,7 @@ impl Workspace {
     fn agents_slider(
         &self,
         which: u8,
-        label: &str,
+        label: Option<&str>,
         th: &theme::Theme,
         sk: &skin::Skin,
         cx: &mut Context<Self>,
@@ -18621,6 +18703,11 @@ impl Workspace {
                         ))),
                 )
             });
+        // With no label it is the track alone, for a Settings row that
+        // carries the name and the value in its own type.
+        let Some(label) = label else {
+            return div().flex().flex_col().gap_0p5().child(track).child(ticks);
+        };
         div()
             .flex()
             .flex_row()
@@ -19205,7 +19292,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(0, ui.ag_rest_after, th, &sk, cx))
+            .child(self.agents_slider(0, Some(ui.ag_rest_after), th, &sk, cx))
             .child(
                 switch_row(
                     "\u{1f4a4}",
@@ -19229,7 +19316,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(1, ui.ag_sleep_after, th, &sk, cx))
+            .child(self.agents_slider(1, Some(ui.ag_sleep_after), th, &sk, cx))
             .child(
                 div()
                     .px_2()
@@ -19358,7 +19445,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -19372,7 +19459,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -22069,6 +22158,7 @@ impl Workspace {
             || self.plugins_menu
             || self.notif_menu
             || self.agents_menu
+            || self.settings.is_some()
             || self.bug_menu
             || self.admin_menu
             || self.update_menu
@@ -22197,6 +22287,12 @@ impl Workspace {
         // plain no.
         if self.relate.is_some() {
             self.relate = None;
+            return true;
+        }
+        // Settings is a book over the whole window: Esc clears its search
+        // first, then puts it away on the page it was on.
+        if self.settings.is_some() {
+            self.settings_peel();
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -32389,6 +32485,7 @@ impl Render for Workspace {
                 || self.plugins_menu
                 || self.notif_menu
                 || self.agents_menu
+                || self.settings.is_some()
                 || self.bug_menu
                 || self.admin_menu
                 || self.update_menu
@@ -32458,6 +32555,41 @@ impl Render for Workspace {
                         })
                     }
                     "help" => self.help_open = true,
+                    // Settings, at the page TD_SETTINGS_PAGE names.
+                    "settings" => {
+                        let page = std::env::var("TD_SETTINGS_PAGE")
+                            .ok()
+                            .and_then(|p| settings::Page::from_id(&p));
+                        self.open_settings(Some(page.unwrap_or(settings::Page::General)), cx);
+                        // A panel shown in place: TD_SETTINGS_HOST=palette|gauges|keys.
+                        match std::env::var("TD_SETTINGS_HOST").ok().as_deref() {
+                            Some("palette") => {
+                                self.menu_at = None;
+                                self.theme_menu = Some(MenuScope::Outer);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Palette);
+                                }
+                            }
+                            Some("gauges") => {
+                                self.open_osd(MenuScope::Outer, None);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Gauges);
+                                }
+                            }
+                            Some("keys") => {
+                                self.help_open = true;
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Keys);
+                                }
+                            }
+                            _ => {}
+                        }
+                        if let Ok(q) = std::env::var("TD_SETTINGS_QUERY") {
+                            if let Some(b) = self.settings.as_mut() {
+                                b.query = q;
+                            }
+                        }
+                    }
                     "size" => self.scale_menu = true,
                     "tab" => self.open_tab_menu(self.active, point(px(350.), px(90.)), cx),
                     "launcher" => {
@@ -33350,6 +33482,33 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // ⚙ Settings: the book every setting lives in. It leads the corner and
+        // nothing hides it, like CONFIG, because it is the way to everything
+        // the other glyphs open.
+        let ic_settings = with_tip(
+            Self::hicon_s(&sk, self.settings.is_some(), scale)
+                .id("toolbar-settings")
+                .debug_selector(|| "toolbar-settings".into())
+                .text_size(sk.text_px(if sk.text_controls() {
+                    11. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .line_height(px(if sk.text_controls() {
+                    14. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .child(sk.control("\u{2699}", self.lang.strings().settings.title)),
+            vec![self.lang.strings().settings.glyph_tip.to_string()],
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.toggle_settings(cx);
+            }),
+        );
         let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
             .id("toolbar-agents")
             .debug_selector(|| "toolbar-agents".into())
@@ -33618,6 +33777,7 @@ impl Render for Workspace {
                             artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
                         })
                     })
+                    .child(ic_settings)
                     .when(ui_glyph[6], |d| {
                         d.child(artifact_rail::art_news(ic_art, art_dot, art_bumps, scale))
                     })
@@ -35081,7 +35241,15 @@ impl Render for Workspace {
                 panel_w
             };
             let panel_h_est = tray_panel_h_est();
-            let mut panel = sk.sheet().id("theme-panel").absolute().w(px(panel_w));
+            // Shown in place on Settings' Appearance page: no anchor to the
+            // footer, no cap to the band, the page scrolls it.
+            let hosted = self.hosting() == Some(settings::Host::Palette);
+            let mut panel = sk
+                .sheet()
+                .id("theme-panel")
+                .debug_selector(|| "theme-panel".into())
+                .when(!hosted, |d| d.absolute())
+                .w(px(panel_w));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -35093,13 +35261,14 @@ impl Render for Workspace {
                 // top of the band it hangs over, so that is what caps it.
                 None => self.tray_band().0,
             };
-            panel = match self.menu_at {
-                Some(at) => {
+            panel = match (hosted, self.menu_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
                 .when(sk.text_controls(), |d| d.right(px(8.)))
@@ -35113,7 +35282,7 @@ impl Render for Workspace {
                 // bottom bezel. The cap is the terminal band this tray hangs
                 // over plus one hairline — not the window, which is how the
                 // densest tray in the app came to cover the split buttons.
-                .max_h(px(self.tray_max_h(tray_top)))
+                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -35145,12 +35314,20 @@ impl Render for Workspace {
                         d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
                     })
                 }))
-                .children(design_menu);
-            // full-screen scrim: click anywhere outside closes
+                .children(design_menu)
+                // Over the window it frosts what is behind it; in the book,
+                // the book already does.
+                .when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("theme-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
+                .when(hosted, |d| {
+                    d.overflow_y_scroll().flex().justify_center().items_start()
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -35385,7 +35562,12 @@ impl Render for Workspace {
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
-            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
+            let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let mut panel = sk
+                .sheet()
+                .id("osd-panel")
+                .when(!hosted, |d| d.absolute())
+                .w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
@@ -35395,19 +35577,20 @@ impl Render for Workspace {
                 // the band's top, as the theme tray is
                 None => self.tray_band().0,
             };
-            panel = match self.osd_at {
-                Some(at) => {
+            panel = match (hosted, self.osd_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
                 // Nine slider rows on a short window is taller than the render
                 // it covers, and this tray had no cap at all — it simply drew
                 // past the bottom.
-                .max_h(px(self.tray_max_h(tray_top)))
+                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .p_3()
@@ -35691,11 +35874,17 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
-            // full-screen scrim: click anywhere outside closes
+            let panel = panel.when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("osd-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
+                .when(hosted, |d| {
+                    d.overflow_y_scroll().flex().justify_center().items_start()
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38018,7 +38207,7 @@ impl Render for Workspace {
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38026,7 +38215,9 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel)
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                }))
         });
 
         let confirm_overlay = self.confirm_close.and_then(|i| {
@@ -40343,6 +40534,24 @@ impl Render for Workspace {
             .children(self.render_rail_docked(cx))
             .child(self.render_spine(cx));
 
+        // A panel Settings is showing in place is drawn on the book's page,
+        // not over the window (`settings_view::host_or_root`).
+        let mut hosted: Option<AnyElement> = None;
+        use settings::Host as H;
+        let menu_overlay = self.host_or_root(H::Palette, menu_overlay, &mut hosted);
+        let osd_overlay = self.host_or_root(H::Gauges, osd_overlay, &mut hosted);
+        let scale_overlay = self.host_or_root(H::Scale, scale_overlay, &mut hosted);
+        let lang_picker_overlay = self.host_or_root(H::Language, lang_picker_overlay, &mut hosted);
+        let update_overlay = self.host_or_root(H::Updates, update_overlay, &mut hosted);
+        let admin_overlay = self.host_or_root(H::Admin, admin_overlay, &mut hosted);
+        let notif_overlay = self.host_or_root(H::Notices, notif_overlay, &mut hosted);
+        let help_overlay = self.host_or_root(H::Keys, help_overlay, &mut hosted);
+        let agents_overlay = self.host_or_root(H::Skills, agents_overlay, &mut hosted);
+        let savings_overlay = self.host_or_root(H::Savings, savings_overlay, &mut hosted);
+        let bug_overlay = self.host_or_root(H::Bug, bug_overlay, &mut hosted);
+        let plugins_overlay = self.host_or_root(H::Plugins, plugins_overlay, &mut hosted);
+        let dead_overlay = self.host_or_root(H::Recover, dead_overlay, &mut hosted);
+        let settings_overlay = self.render_settings(&th, hosted, cx);
         let root = div()
             .size_full()
             .relative()
@@ -40370,6 +40579,13 @@ impl Render for Workspace {
                     return;
                 }
                 if ws.help_capture_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                // Settings takes its keys before the pane under it does: the
+                // pane keeps the focus it had when Ctrl+, was pressed, and a
+                // letter typed into the search must not reach its shell.
+                if ws.settings_key(&ev.keystroke, cx) {
                     cx.stop_propagation();
                     return;
                 }
@@ -40520,6 +40736,7 @@ impl Render for Workspace {
                     .children(bug_overlay)
                     .children(admin_overlay)
                     .children(update_overlay)
+                    .children(settings_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -45495,8 +45712,10 @@ mod tests {
                 tray.contains(&format!("\"{id}\"")),
                 "the {what} tray region no longer holds its panel"
             );
+            // `(false, None)`: not shown in place in Settings, raised from
+            // the glyph row. Shown in place, the book's page holds it.
             assert!(
-                tray.contains("None => over_the_footer(panel, scale),"),
+                tray.contains("(false, None) => over_the_footer(panel, scale),"),
                 "the {what} tray, raised from the glyph row, must open over it"
             );
             assert!(
@@ -46973,12 +47192,10 @@ mod tests {
             "the pane is the one the request names, which is the caller: {open}"
         );
         assert!(
-            open.contains(
-                "request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)"
-            ),
+            open.contains("request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)"),
             "beside goes through the pane's own request: {open}"
         );
-        assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        assert!(open.contains(".open_here(doc, cx)"), "{open}");
         // A held open is news on the window: the 📜 bumps and keeps a dot.
         // Mutation-tested: the `art_held` call taken out fails this.
         assert!(

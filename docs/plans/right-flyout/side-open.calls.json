@@ -1,0 +1,65 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-an-agent-s-page-never-takes-over-the-side-tab-yo",
+      "at": "2026-11-09T23:51Z",
+      "title": "An agent's page never takes over the side tab you are reading",
+      "context": null,
+      "chose": "It goes in beside, answered held; the panel opens only when shut",
+      "because": "The square already promises an agent never replaces what a person has open.",
+      "passed_over": [
+        "Always show the agent's page",
+        "Refuse while the person reads"
+      ],
+      "undo": "One branch in mcp_open_side",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-rule"
+    },
+    {
+      "id": "call-a-tab-that-is-not-on-screen-keeps-its-page-waiti",
+      "at": "2026-11-09T23:51Z",
+      "title": "A tab that is not on screen keeps its page waiting",
+      "context": null,
+      "chose": "Added to that tab's panel; the window's panel left open or shut as it was",
+      "because": "The panel's open state is the window's, so opening it would change the tab you are on.",
+      "passed_over": [
+        "Open the panel anyway"
+      ],
+      "undo": "One branch in mcp_open_side",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-rule"
+    }
+  ]
+}
