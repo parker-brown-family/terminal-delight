@@ -926,6 +926,7 @@ impl PageEngine for FakeBriefEngine {
             geometry: req.geometry,
             height_css: 2400.0,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 1,
                 concurs_island: false,
@@ -976,6 +977,7 @@ impl PageEngine for FakeFilmEngine {
             geometry: req.geometry,
             height_css: 2400.0,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 0,
                 concurs_island: false,

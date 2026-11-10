@@ -69,7 +69,7 @@ pub const EXTRACT_JS: &str = include_str!("extract.js");
 /// 8: every `<audio>` is reported beside the videos, saying it is a sound,
 ///    so a press on it opens the sound as a clip too.
 /// 9: viewport-sized bands and a validated local-resource inventory.
-pub const EXTRACT_VERSION: u32 = 9;
+pub const EXTRACT_VERSION: u32 = 10;
 /// With no call for this long, the browser is closed.
 pub const IDLE_SHUTDOWN: Duration = Duration::from_secs(300);
 /// The names looked for on PATH, in order.
@@ -82,7 +82,7 @@ pub const BROWSER_NAMES: [&str; 4] = [
 
 /// Collects the page's own errors from the first byte of its script on, for
 /// the render's diagnostics.
-const ERROR_HOOK: &str = "window.__tdErrors = []; \
+const ERROR_HOOK: &str = "window.BRIEF_READING_HOST = { recording: false }; window.__tdErrors = []; \
     window.addEventListener('error', function (e) { window.__tdErrors.push(String(e.message)); }); \
     window.addEventListener('unhandledrejection', function (e) { window.__tdErrors.push(String(e.reason)); });";
 
@@ -90,7 +90,7 @@ const ERROR_HOOK: &str = "window.__tdErrors = []; \
 /// the rule it draws beside an anchor with notes (extract.js says why). The
 /// probe hides them again with the same rule; a test holds the two together.
 const NOTES_UI_HIDE: &str =
-    ".notebar, .note-btn, .concur-zone { visibility: hidden !important; }\n\
+    ".notebar, .note-btn, .concur-zone, nav.sections[data-reader-ui] { visibility: hidden !important; }\n\
     .notable.has-note, tr.notable.has-note > td:first-child { box-shadow: none !important; }";
 
 /// Run before the page's own first byte, beside [`ERROR_HOOK`]: the notes
@@ -287,6 +287,8 @@ fn local_resource(url: &str) -> Option<PathBuf> {
 struct Extracted {
     height_css: f32,
     notes_file: Option<String>,
+    #[serde(default)]
+    reading_layout: Option<super::engine::ReadingLayout>,
     capability: NotesCapability,
     anchors: Vec<Anchor>,
     links: Vec<Link>,
@@ -1234,6 +1236,7 @@ impl PageEngine for SnapshotEngine {
                 geometry: req.geometry,
                 height_css: got.height_css,
                 notes_file: got.notes_file,
+                reading_layout: got.reading_layout,
                 capability: got.capability,
                 anchors: got.anchors,
                 links: got.links,

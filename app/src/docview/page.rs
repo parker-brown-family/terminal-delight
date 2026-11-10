@@ -63,6 +63,7 @@ use super::engine::{
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said, Words};
 use super::progress::Reading;
+use super::reading;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -560,6 +561,18 @@ pub struct PageDoc {
     rereading: Option<Task<()>>,
     hidden: bool,
     epoch: u64,
+    exposure_clock: Option<reading::Clock>,
+    exposure_start: Instant,
+    exposure_saved: Duration,
+    exposure_record: Option<reading::Record>,
+    exposure_error: Option<String>,
+    exposure_saving: bool,
+    exposure_sent: Option<reading::Session>,
+    exposure_on: bool,
+    reading_zones: Vec<(Bounds<Pixels>, String)>,
+    reading_offset: Option<usize>,
+    reading_active_anchor: Option<String>,
+    reading_cover: Option<Bounds<Pixels>>,
 }
 
 /// Elapsed milliseconds from the view's open request. Missing stages remain
@@ -607,6 +620,327 @@ fn page_of(view: &mut DocumentView) -> Option<&mut PageDoc> {
 }
 
 impl PageDoc {
+    fn draw_reading(&mut self, th: &Theme) -> Vec<gpui::AnyElement> {
+        self.reading_zones.clear();
+        self.reading_cover = None;
+        let (Some(r), Some(m), Some(clock)) = (&self.current, self.view, &self.exposure_clock)
+        else {
+            return vec![];
+        };
+        let Some(layout) = &r.layout.reading_layout else {
+            return vec![];
+        };
+        if layout.targets.is_empty() {
+            return vec![];
+        }
+        let totals = self
+            .exposure_record
+            .as_ref()
+            .map(|record| record.totals(&layout.revision, Some(&clock.session)));
+        let (label, saved, waiting, paused) = match crate::lang::current() {
+            crate::lang::Lang::En => ("Visible time", "Active", "Waiting to save", "Paused"),
+            crate::lang::Lang::Es => (
+                "Tiempo visible",
+                "Activo",
+                "Pendiente de guardar",
+                "En pausa",
+            ),
+            crate::lang::Lang::De => (
+                "Sichtbare Zeit",
+                "Aktiv",
+                "Speichern ausstehend",
+                "Pausiert",
+            ),
+            crate::lang::Lang::Fr => ("Temps visible", "Actif", "En attente", "En pause"),
+            crate::lang::Lang::Ru => ("Время на экране", "Активно", "Ожидает сохранения", "Пауза"),
+            crate::lang::Lang::Zh => ("可见时长", "活动中", "等待保存", "已暂停"),
+            crate::lang::Lang::Ja => ("表示時間", "計測中", "保存待ち", "一時停止"),
+            crate::lang::Lang::Ko => ("표시 시간", "기록 중", "저장 대기", "일시 중지"),
+            crate::lang::Lang::Hi => ("दिखाई देने का समय", "सक्रिय", "सहेजने की प्रतीक्षा", "रुका हुआ"),
+        };
+        let status = if self.exposure_error.is_some() || self.exposure_saving {
+            waiting
+        } else if !self.exposure_on {
+            paused
+        } else {
+            saved
+        };
+        let wide = r.layout.geometry.css_width >= 1100;
+        let width: f32 = m.size.width.into();
+        let height: f32 = m.size.height.into();
+        let active = layout
+            .targets
+            .iter()
+            .enumerate()
+            .rfind(|(_, t)| {
+                matches!(t.kind.as_str(), "opening" | "section")
+                    && t.rect.is_some_and(|rc| rc.y <= self.scroll_css + 120.0)
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let rows = if wide {
+            ((height - 105.0) / 36.0).max(1.0) as usize
+        } else {
+            2
+        };
+        let automatic_start = active
+            .saturating_sub(rows / 2)
+            .min(layout.targets.len().saturating_sub(rows));
+        if self.reading_active_anchor.as_deref() != Some(&layout.targets[active].anchor) {
+            self.reading_offset = None;
+            self.reading_active_anchor = Some(layout.targets[active].anchor.clone());
+        }
+        let start = self
+            .reading_offset
+            .unwrap_or(automatic_start)
+            .min(layout.targets.len().saturating_sub(rows));
+        let rail_w = if wide { 216.0 } else { (width - 24.0).max(1.0) };
+        self.reading_cover = Some(Bounds {
+            origin: point(px(12.0), px(12.0)),
+            size: size(px(rail_w), px(28.0 + rows as f32 * 36.0)),
+        });
+        let mut children: Vec<gpui::AnyElement> = vec![div()
+            .absolute()
+            .left(px(8.0))
+            .top(px(6.0))
+            .text_size(px(11.0))
+            .text_color(th.text.alpha(0.8))
+            .child(format!("{label} · {status}"))
+            .into_any_element()];
+        for (offset, target) in layout.targets.iter().skip(start).take(rows).enumerate() {
+            let y = 28.0 + offset as f32 * 36.0;
+            let time = totals
+                .as_ref()
+                .and_then(|totals| totals.get(&target.anchor))
+                .map(|ms| format!("{}:{:02}", ms / 60000, ms / 1000 % 60))
+                .unwrap_or_else(|| "—".into());
+            let prefix = if target.parent.is_some() { "  " } else { "" };
+            children.push(
+                div()
+                    .absolute()
+                    .left(px(8.0))
+                    .top(px(y))
+                    .w(px(rail_w - 16.0))
+                    .h(px(34.0))
+                    .overflow_hidden()
+                    .text_size(px(12.0))
+                    .text_color(th.text)
+                    .bg(th
+                        .text
+                        .alpha(if target.anchor == layout.targets[active].anchor {
+                            0.14
+                        } else {
+                            0.03
+                        }))
+                    .child(
+                        div()
+                            .w(px((rail_w - 80.0).max(1.0)))
+                            .h(px(34.0))
+                            .overflow_hidden()
+                            .child(format!("{prefix}{}", target.title)),
+                    )
+                    .child(div().absolute().right(px(4.0)).top(px(8.0)).child(time))
+                    .into_any_element(),
+            );
+            self.reading_zones.push((
+                Bounds {
+                    origin: point(px(20.0), px(12.0 + y)),
+                    size: size(px(rail_w - 16.0), px(34.0)),
+                },
+                target.anchor.clone(),
+            ));
+        }
+        let mut summary = format!(
+            "\nVISIBLE TIME — {}\nForeground exposure; overlapping elements are not additive.\n",
+            layout.revision
+        );
+        for target in &layout.targets {
+            let measured = totals
+                .as_ref()
+                .and_then(|totals| totals.get(&target.anchor))
+                .map(|ms| format!("{ms} ms"))
+                .unwrap_or_else(|| "unknown".into());
+            summary.push_str(&format!("[{}] {}\n", target.anchor, measured));
+        }
+        let pending = self
+            .exposure_record
+            .as_ref()
+            .and_then(|r| {
+                r.sessions
+                    .iter()
+                    .find(|s| s.session == clock.session.session)
+            })
+            .is_none_or(|s| s != &clock.session);
+        if pending {
+            summary.push_str("Live time includes a checkpoint not yet saved into the file.\n");
+        }
+        if let Some(error) = &self.exposure_error {
+            summary.push_str(&format!("Save is pending: {error}\n"));
+        }
+        if let Some(notes) = &mut self.notes {
+            let measured = clock.started
+                || self
+                    .exposure_record
+                    .as_ref()
+                    .is_some_and(|r| r.sessions.iter().any(|s| s.revision == layout.revision));
+            notes.set_reading_summary(if measured { summary } else { String::new() });
+        }
+        vec![div()
+            .absolute()
+            .left(px(12.0))
+            .top(px(12.0))
+            .w(px(rail_w))
+            .h(px(28.0 + rows as f32 * 36.0))
+            .bg(th.bg.alpha(0.93))
+            .children(children)
+            .into_any_element()]
+    }
+
+    fn exposure_tick(&mut self, active: bool, cx: &mut Context<DocumentView>) {
+        if std::env::var("TD_READING_RECORDING").as_deref() == Ok("0") {
+            return;
+        }
+        let Some(r) = &self.current else { return };
+        let Some(layout) = &r.layout.reading_layout else {
+            return;
+        };
+        if layout.targets.is_empty() {
+            return;
+        }
+        let map = self.map_for(r);
+        let rect = |b: Bounds<Pixels>| RectCss {
+            x: b.origin.x.into(),
+            y: b.origin.y.into(),
+            w: b.size.width.into(),
+            h: b.size.height.into(),
+        };
+        let mut covers = match &self.notes {
+            Some(layer) => self.view.and_then(|m| m.origin).and_then(|origin| {
+                layer.obscuring_bounds().map(|bounds| {
+                    bounds
+                        .into_iter()
+                        .map(|mut b| {
+                            b.origin -= origin;
+                            rect(b)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            }),
+            None => Some(vec![]),
+        };
+        if let (Some(covers), Some(rail)) = (&mut covers, self.reading_cover) {
+            covers.push(rect(rail));
+        }
+        let eligible: Vec<String> = layout
+            .targets
+            .iter()
+            .filter(|t| t.rect.is_some())
+            .map(|t| t.anchor.clone())
+            .collect();
+        let visible: Vec<String> = layout
+            .targets
+            .iter()
+            .filter(|t| {
+                map.as_ref().zip(t.rect).is_some_and(|(m, rc)| {
+                    covers
+                        .as_ref()
+                        .zip(place(rc, m))
+                        .is_some_and(|(covers, b)| reading::exposed(rect(b), rect(m.clip), covers))
+                })
+            })
+            .map(|t| t.anchor.clone())
+            .collect();
+        let now = self.exposure_start.elapsed();
+        let on = active
+            && !self.hidden
+            && self.dialog.is_none()
+            && self.notes.as_ref().is_none_or(|n| n.note_box().is_none());
+        let state = if !on {
+            reading::Activity::Inactive
+        } else if map.is_none() || covers.is_none() || !self.covers_view() {
+            reading::Activity::Unknown
+        } else {
+            reading::Activity::Active
+        };
+        let Some(clock) = &mut self.exposure_clock else {
+            return;
+        };
+        let before: Vec<_> = clock
+            .session
+            .targets
+            .iter()
+            .map(|t| t.visible_ms.map(|ms| ms / 1000))
+            .collect();
+        if let Err(e) = clock.sample(now, state, &visible, &eligible) {
+            self.exposure_error = Some(e);
+            return;
+        }
+        let measuring = state == reading::Activity::Active;
+        let transitioned = self.exposure_on != measuring;
+        self.exposure_on = measuring;
+        let after: Vec<_> = clock
+            .session
+            .targets
+            .iter()
+            .map(|t| t.visible_ms.map(|ms| ms / 1000))
+            .collect();
+        if transitioned || before != after {
+            cx.notify();
+        }
+        let session = clock.checkpoint();
+        if !self.exposure_saving
+            && (now.saturating_sub(self.exposure_saved) >= Duration::from_secs(5)
+                || transitioned
+                || (!on && self.exposure_error.is_none()))
+        {
+            if let Some(session) = session
+                .filter(|s| self.exposure_sent.as_ref() != Some(s) || self.exposure_error.is_some())
+            {
+                // The detached write outlives a view being closed. The journal is
+                // retained on failure and retried on the next active checkpoint.
+                self.exposure_sent = Some(session.clone());
+                let path = self.path.clone();
+                let expected = r.layout.rendered;
+                self.exposure_saving = true;
+                self.exposure_saved = now;
+                let session_id = session.session.clone();
+                cx.spawn(async move |this, cx| {
+                    let saved = cx
+                        .background_spawn(
+                            async move { reading::persist(&path, expected, &session) },
+                        )
+                        .await;
+                    this.update(cx, |view, cx| {
+                        if let Ok((_, written)) = &saved {
+                            view.own_write = Some(FileStamp {
+                                mtime: written.mtime,
+                                len: written.len,
+                            });
+                        }
+                        let Some(p) = page_of(view) else { return };
+                        p.exposure_saving = false;
+                        if p.exposure_clock
+                            .as_ref()
+                            .is_none_or(|c| c.session.session != session_id)
+                        {
+                            return;
+                        }
+                        match saved {
+                            Ok((record, _)) => {
+                                p.exposure_record = Some(record);
+                                p.exposure_error = None;
+                            }
+                            Err(e) => p.exposure_error = Some(e),
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        }
+    }
+
     pub fn new(path: &Path, engine: Result<Arc<dyn PageEngine>, Unavailable>) -> Self {
         Self {
             timing: OpenTiming::new(),
@@ -636,6 +970,18 @@ impl PageDoc {
             rereading: None,
             hidden: false,
             epoch: 0,
+            exposure_clock: None,
+            exposure_start: Instant::now(),
+            exposure_saved: Duration::ZERO,
+            exposure_record: None,
+            exposure_error: None,
+            exposure_saving: false,
+            exposure_sent: None,
+            exposure_on: false,
+            reading_zones: Vec::new(),
+            reading_offset: None,
+            reading_active_anchor: None,
+            reading_cover: None,
         }
     }
 
@@ -1145,6 +1491,45 @@ impl PageDoc {
     ) {
         self.epoch = self.epoch.wrapping_add(1);
         self.timing.layout = Some(self.timing.elapsed());
+        if let Some(geometry) = &layout.reading_layout {
+            let same = self.exposure_clock.as_ref().is_some_and(|c| {
+                c.session.document == geometry.document && c.session.revision == geometry.revision
+            });
+            if !same {
+                self.exposure_clock = reading::Clock::new(geometry).ok();
+                self.exposure_record = None;
+                self.exposure_sent = None;
+                self.exposure_start = Instant::now();
+                self.exposure_saved = Duration::ZERO;
+                let path = self.path.clone();
+                let identity = (geometry.document.clone(), geometry.revision.clone());
+                cx.spawn(async move |this, cx| {
+                    let got = cx
+                        .background_spawn(async move {
+                            std::fs::read(path)
+                                .map_err(|e| e.to_string())
+                                .and_then(|b| reading::read(&b))
+                        })
+                        .await;
+                    this.update(cx, |v, cx| {
+                        let Some(p) = page_of(v) else { return };
+                        if p.exposure_clock.as_ref().is_some_and(|c| {
+                            (c.session.document.clone(), c.session.revision.clone()) == identity
+                        }) {
+                            match got {
+                                Ok(record) => p.exposure_record = Some(record),
+                                Err(e) => p.exposure_error = Some(e),
+                            }
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        } else {
+            self.exposure_clock = None;
+        }
         // The notes the new render's bytes hold, read as its own page reads
         // them. A note box open on an anchor the new render still has stays
         // open: a resize re-lays the page out and moves nothing it says.
@@ -1459,6 +1844,37 @@ impl PageDoc {
             cx.notify();
             return;
         }
+        if self
+            .pointer
+            .is_some_and(|at| self.reading_zones.iter().any(|(b, _)| b.contains(&at)))
+        {
+            if let Some(layout) = self
+                .current
+                .as_ref()
+                .and_then(|r| r.layout.reading_layout.as_ref())
+            {
+                let first = self
+                    .reading_zones
+                    .first()
+                    .and_then(|(_, id)| layout.targets.iter().position(|t| &t.anchor == id))
+                    .unwrap_or(0);
+                let next = if dy < 0.0 {
+                    first.saturating_add(1)
+                } else {
+                    first.saturating_sub(1)
+                };
+                self.reading_offset = Some(
+                    next.min(
+                        layout
+                            .targets
+                            .len()
+                            .saturating_sub(self.reading_zones.len()),
+                    ),
+                );
+                cx.notify();
+                return;
+            }
+        }
         let stretch = self
             .current
             .as_ref()
@@ -1578,6 +1994,14 @@ impl PageDoc {
         report["send_to"] = serde_json::json!(layer
             .send_button(&r.layout.anchors, self.beside.as_deref())
             .map(|(label, _)| label));
+        report["reading"] = serde_json::json!({
+            "active": self.exposure_on,
+            "session": self.exposure_clock.as_ref().and_then(|c| c.checkpoint()),
+            "saved": self.exposure_record,
+            "saving": self.exposure_saving,
+            "pending_error": self.exposure_error,
+            "rail_targets": self.reading_zones.len()
+        });
         Some(report)
     }
 
@@ -2039,6 +2463,17 @@ impl PageDoc {
         }
         if self.old.is_some() && self.dialog.is_none() && !self.covers_view() {
             return Pressed::Took;
+        }
+        if self.dialog.is_none() {
+            if let Some((_, anchor)) = self
+                .reading_zones
+                .iter()
+                .find(|(bounds, _)| bounds.contains(&at))
+            {
+                let anchor = anchor.clone();
+                self.show_fragment(anchor, cx);
+                return Pressed::Took;
+            }
         }
         let marks = match self.dialog.is_some() {
             true => self.dialog_marks(),
@@ -2539,6 +2974,7 @@ impl PageDoc {
         if origin.is_some() {
             m.origin = origin;
         }
+        self.view = Some(m);
         if let Some(old) = self.old.as_ref() {
             layers.extend(self.tiles_of(old, m));
         }
@@ -2565,6 +3001,9 @@ impl PageDoc {
                     eprintln!("[doc] drew {} tiles={r}", self.path.display());
                 }
             }
+        }
+        if self.dialog.is_none() {
+            layers.extend(self.draw_reading(th));
         }
         // Forget where the bar and the note box were; the canvases below
         // record where they land this frame.
@@ -2633,6 +3072,7 @@ fn write_notes(
     concurs: bool,
     rendered: super::engine::LayoutHash,
 ) -> Result<(notes::WritePlan, notes::Written), Words> {
+    let _lock = reading::review_lock(path).map_err(Words::as_is)?;
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -2717,6 +3157,9 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
 // fragment, follows its file and carries a brief's notes. It does not zoom or
 // follow a drag, so those are the trait's defaults.
 impl Backend for PageDoc {
+    fn exposure(&mut self, active: bool, cx: &mut Context<DocumentView>) {
+        self.exposure_tick(active, cx);
+    }
     fn painted(&mut self) {
         if self.hidden {
             return;
@@ -2761,6 +3204,25 @@ impl Backend for PageDoc {
     }
 
     fn give_back(&mut self, path: &Path, cx: &mut App) {
+        // The release hook also covers tab/window destruction, where no close
+        // gesture gets a chance to run. Settle and save outside the dropped view.
+        if let (Some(clock), Some(r)) = (&mut self.exposure_clock, &self.current) {
+            let _ = clock.sample(
+                self.exposure_start.elapsed(),
+                reading::Activity::Inactive,
+                &[],
+                &[],
+            );
+            if let Some(session) = clock.checkpoint() {
+                let path = self.path.clone();
+                let expected = r.layout.rendered;
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = reading::persist(&path, expected, &session);
+                    })
+                    .detach();
+            }
+        }
         let n = self.release(cx);
         if debug() {
             eprintln!("[doc] released {} textures={n}", path.display());
@@ -2964,6 +3426,7 @@ mod tests {
                 },
                 height_css: 4000.,
                 notes_file: None,
+                reading_layout: None,
                 capability: NotesCapability {
                     notes_islands: 0,
                     concurs_island: false,

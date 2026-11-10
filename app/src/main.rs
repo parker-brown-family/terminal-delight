@@ -7408,7 +7408,7 @@ impl Workspace {
                 .await;
             if this
                 .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.prompt_tick(window, cx)
+                    ws.prompt_tick(window, cx);
                 })
                 .is_err()
             {
@@ -22124,6 +22124,10 @@ impl Workspace {
     /// picker, a rename box, a menu, the reader. Typing belongs to it, not to a
     /// terminal, so the focus watchdog must keep its hands off.
     fn overlay_owns_keyboard(&self) -> bool {
+        self.focus_read.is_some() || self.overlay_covers_document()
+    }
+
+    fn overlay_covers_document(&self) -> bool {
         self.find.is_some()
             || self.lookup.is_some()
             || self.lang_picker.is_some()
@@ -22139,7 +22143,6 @@ impl Workspace {
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
             || self.group_menu.is_some()
-            || self.focus_read.is_some()
             || self.help_open
             || self.scale_menu
             || self.more_menu
@@ -28236,7 +28239,18 @@ impl Workspace {
     /// for a frame now or every `pane::OFFSCREEN_REFRESH` (#964). Set here
     /// because the draw is the one place that knows exactly what is on
     /// screen, so a pane that has just come into view is told in that frame.
-    fn mark_shown_panes(&self, cx: &mut Context<Self>) {
+    fn mark_shown_panes(&self, window: &Window, cx: &mut Context<Self>) {
+        let reader = self
+            .focus_read
+            .as_ref()
+            .and_then(|p| p.upgrade())
+            .map(|p| p.entity_id());
+        let foreground = window.is_window_active() && !self.overlay_covers_document();
+        let popup = self.tabs.get(self.active).is_some_and(|tab| {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.read(cx).popup_open())
+        });
         let mut active = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
             tab.root.leaves(&mut active);
@@ -28247,7 +28261,14 @@ impl Workspace {
             for leaf in leaves {
                 let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
                 leaf.read(cx).mark_shown(shown);
-                leaf.update(cx, |v, cx| v.document_visibility(shown, cx));
+                let in_reader = reader == Some(leaf.entity_id());
+                let focused = leaf.focus_handle(cx).contains_focused(window, cx);
+                let active =
+                    foreground && !popup && focused && shown && (reader.is_none() || in_reader);
+                leaf.update(cx, |v, cx| {
+                    v.document_visibility(shown, cx);
+                    v.document_exposure(active, in_reader, cx);
+                });
             }
         }
     }
@@ -32294,7 +32315,7 @@ impl Render for Workspace {
             self.fold_open = None;
             self.fold_hover = None;
         }
-        self.mark_shown_panes(cx);
+        self.mark_shown_panes(window, cx);
         self.prepare_focused_artifact(window, cx);
         self.reap(window, cx);
         self.forget_pictures_out_of_sight(cx);
@@ -42922,7 +42943,13 @@ mod tests {
             .expect("overlay_owns_keyboard");
         let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         assert!(
-            code[at..end].contains("self.bar_rename.is_some()"),
+            code[at..end].contains("self.overlay_covers_document()") && {
+                let start = code
+                    .find("fn overlay_covers_document(")
+                    .expect("shared overlay predicate");
+                let end = code[start..].find("\n    }\n").expect("end of fn") + start;
+                code[start..end].contains("self.bar_rename.is_some()")
+            },
             "overlay_owns_keyboard no longer counts the left bar's name box, so the \
              deferred pane focus takes the keyboard back the moment a branch is made"
         );

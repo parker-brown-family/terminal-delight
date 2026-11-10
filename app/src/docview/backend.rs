@@ -235,6 +235,9 @@ pub trait Backend {
         None
     }
 
+    /// The real host's foreground signal, independent of raster-probe activity.
+    fn exposure(&mut self, _active: bool, _cx: &mut Context<DocumentView>) {}
+
     /// Go back to a place the saved layout kept, as soon as the document has
     /// been laid out. A picture has no scroll to go back to.
     fn restore_scroll(&mut self, _at: DocScroll, _cx: &mut Context<DocumentView>) {}
