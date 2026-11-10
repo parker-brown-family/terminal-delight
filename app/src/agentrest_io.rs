@@ -169,6 +169,23 @@ pub fn run(mut job: Job) -> Outcome {
     if let Some(r) = &report {
         job.look.said_idle_for = r.idle_for(now_ms());
     }
+    // A wakeup it scheduled for itself, from the end of its conversation.
+    if job.agent == Some(Agent::Claude) {
+        let home = crate::session::home_dir();
+        let cwd = agent_pid.and_then(|pid| agent_cwd(pid, job.shell));
+        let session = report.as_ref().and_then(|r| r.session_id.as_deref());
+        job.look.wakeup_pending = match (cwd, session) {
+            (Some(cwd), Some(session)) => {
+                match conversation_tail(&home, &cwd, session, agentrest::WAKEUP_TAIL) {
+                    // No file: no turn has run, so nothing is scheduled.
+                    Ok(None) => Some(false),
+                    Ok(Some(tail)) => Some(agentrest::wakeup_pending(&tail, now_ms())),
+                    Err(_) => None,
+                }
+            }
+            _ => None,
+        };
+    }
     let census = agent_pid.map(|agent| {
         let listening = panegroup::listening_inodes();
         let procs: Vec<_> = panegroup::procs(&group)
@@ -187,13 +204,26 @@ pub fn run(mut job: Job) -> Outcome {
     match job.stage {
         Stage::Awake => match agentrest::may_rest(&job.look, &job.thresholds) {
             Ok(()) => {
-                if job.gate.freeze_if_quiet(&group, job.epoch) {
+                if !job.gate.freeze_if_quiet(&group, job.epoch) {
+                    out.refusal = Some(Refusal::Touched);
+                } else if !agentrest::said_the_same(
+                    report.as_ref(),
+                    match (job.agent, agent_pid) {
+                        (Some(Agent::Claude), Some(pid)) => agentrest::self_report(pid),
+                        _ => None,
+                    }
+                    .as_ref(),
+                ) {
+                    // The look is out of date: the agent moved between it and
+                    // the freeze (a timer fired, a turn began). Frozen, it can
+                    // write nothing more, so this reading is final.
+                    job.gate.release();
+                    out.refusal = Some(Refusal::MovedSinceTheLook);
+                } else {
                     let before = out.usage.resident;
                     let _ = panegroup::reclaim_paced(&group);
                     out.act = Act::Rested { before };
                     out.usage = panegroup::usage(&group);
-                } else {
-                    out.refusal = Some(Refusal::Touched);
                 }
             }
             Err(r) => out.refusal = Some(r),
@@ -230,9 +260,7 @@ pub fn run(mut job: Job) -> Outcome {
             // report an id it has not written down yet. The agent's own folder
             // is where it filed the conversation, and where the wake goes
             // back to; the shell's stands in only when the agent's is unread.
-            let cwd = std::fs::read_link(format!("/proc/{pid}/cwd"))
-                .or_else(|_| std::fs::read_link(format!("/proc/{}/cwd", job.shell)))
-                .ok();
+            let cwd = agent_cwd(pid, job.shell);
             if job.agent != Some(Agent::Codex)
                 && !cwd
                     .as_deref()
@@ -425,6 +453,50 @@ fn shell_words(line: &str) -> Option<Vec<String>> {
         words.push(word);
     }
     Some(words)
+}
+
+/// The agent's own folder, where Claude files its conversation and where a
+/// wake goes back to; the shell's stands in only when the agent's is unread.
+fn agent_cwd(pid: i32, shell: i32) -> Option<PathBuf> {
+    std::fs::read_link(format!("/proc/{pid}/cwd"))
+        .or_else(|_| std::fs::read_link(format!("/proc/{shell}/cwd")))
+        .ok()
+}
+
+/// The last `bytes` of a Claude conversation file, whole lines only.
+/// `Ok(None)` when there is no such file: no turn has run in it yet.
+pub fn conversation_tail(
+    home: &Path,
+    cwd: &Path,
+    session: &str,
+    bytes: u64,
+) -> std::io::Result<Option<String>> {
+    use std::io::{Read, Seek, SeekFrom};
+    let Some(cwd) = cwd.to_str() else {
+        return Err(std::io::Error::other("folder is not UTF-8"));
+    };
+    let file = home
+        .join(".claude/projects")
+        .join(crate::session::claude_slug(cwd))
+        .join(format!("{session}.jsonl"));
+    let mut f = match std::fs::File::open(&file) {
+        Ok(f) => f,
+        Err(e) if e.kind() == std::io::ErrorKind::NotFound => return Ok(None),
+        Err(e) => return Err(e),
+    };
+    let len = f.metadata()?.len();
+    let from = len.saturating_sub(bytes);
+    f.seek(SeekFrom::Start(from))?;
+    let mut raw = Vec::with_capacity((len - from) as usize);
+    f.read_to_end(&mut raw)?;
+    let text = String::from_utf8_lossy(&raw);
+    // Read from the middle of the file, the first line is a piece of one.
+    let whole = if from > 0 {
+        text.split_once('\n').map_or("", |(_, rest)| rest)
+    } else {
+        &text
+    };
+    Ok(Some(whole.to_owned()))
 }
 
 /// Has Claude Code saved conversation `session` where a wake started in `cwd`
@@ -1113,6 +1185,38 @@ mod tests {
             "{wake:?}"
         );
         assert_eq!(&wake[1..], ["--model", "o3", "resume", sid]);
+    }
+
+    /// The end of a conversation is read in whole lines: a read that starts
+    /// mid-file drops the piece of a line it starts in, and a wakeup called
+    /// last in a long conversation is still found. No file reads as none.
+    #[test]
+    fn the_end_of_a_conversation_is_read_in_whole_lines_and_finds_the_last_wakeup() {
+        let home = std::env::temp_dir().join(format!("td-rest-tail-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        let cwd = std::path::Path::new("/home/p/loop-on-ci");
+        let here = home
+            .join(".claude/projects")
+            .join(crate::session::claude_slug("/home/p/loop-on-ci"));
+        std::fs::create_dir_all(&here).unwrap();
+        let id = "4b2c4f7e-9b1d-4a52-8f7a-0c1d2e3f4a5b";
+        assert_eq!(conversation_tail(&home, cwd, id, 1024).unwrap(), None);
+
+        let filler = format!("{{\"type\":\"user\",\"text\":\"{}\"}}\n", "x".repeat(200));
+        let call = "{\"type\":\"assistant\",\"timestamp\":\"2026-11-10T18:00:00Z\",\
+                    \"message\":{\"content\":[{\"type\":\"tool_use\",\"id\":\"t\",\
+                    \"name\":\"ScheduleWakeup\",\"input\":{\"delaySeconds\":1200}}]}}\n";
+        std::fs::write(here.join(format!("{id}.jsonl")), filler.repeat(50) + call).unwrap();
+        let tail = conversation_tail(&home, cwd, id, 1024).unwrap().unwrap();
+        assert!(tail.len() < 1024 && tail.ends_with(call));
+        assert!(
+            tail.lines()
+                .all(|l| serde_json::from_str::<serde_json::Value>(l).is_ok()),
+            "every line whole"
+        );
+        let called = crate::flyout::rfc3339_ms("2026-11-10T18:00:00Z").unwrap() as u64;
+        assert!(agentrest::wakeup_pending(&tail, called + 600_000));
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]
