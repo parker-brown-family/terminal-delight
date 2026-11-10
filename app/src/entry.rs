@@ -414,6 +414,32 @@ pub fn with_pictures(sentence: &str, pictures: &[PathBuf]) -> String {
     out
 }
 
+/// A paste longer than this many lines, or this many characters, goes into
+/// the composer's text box as one token rather than as its text. Parker,
+/// 2026-11-10, on a pasted plan filling the whole composer: *"if i paste a
+/// giant block - it gets fully printed out - we gotta be smarter than that"*.
+pub const FOLD_LINES: usize = 4;
+pub const FOLD_CHARS: usize = 600;
+
+/// Whether a paste is long enough to fold into a token.
+pub fn folds(text: &str) -> bool {
+    text.lines().count() > FOLD_LINES || text.chars().count() > FOLD_CHARS
+}
+
+/// The sentence as it is sent: each paste's token, where it still stands
+/// whole, replaced by the text it stands for. A token the person broke by
+/// editing it stays as they left it, and its paste goes nowhere, since they
+/// were the last to say what that part of the sentence was.
+pub fn unfold(sentence: &str, pastes: &[(String, String)]) -> String {
+    let mut out = sentence.to_string();
+    for (token, text) in pastes {
+        if let Some(at) = out.find(token.as_str()) {
+            out.replace_range(at..at + token.len(), text);
+        }
+    }
+    out
+}
+
 /// What the composer would start, before the launcher prepares a briefing for
 /// it. `opener` is the sentence, trimmed; an empty sentence starts an agent
 /// that waits to be told, the way the panel's launch does.
@@ -438,6 +464,34 @@ pub fn recipe(
 
 #[cfg(test)]
 mod tests {
+    use super::{folds, unfold};
+
+    /// A long paste folds; a line or two stays as typed text.
+    #[test]
+    fn a_long_paste_folds_and_a_short_one_does_not() {
+        assert!(!folds("fix the left bar"));
+        assert!(!folds("one\ntwo\nthree\nfour"));
+        assert!(folds("1\n2\n3\n4\n5"));
+        assert!(folds(&"x".repeat(601)));
+    }
+
+    /// Sending puts each paste back where its token stands, around what was
+    /// typed before and after it; a token the person edited is left alone.
+    #[test]
+    fn sending_puts_each_paste_back_in_its_place() {
+        let pastes = vec![
+            (
+                "[pasted text #1 · 5 lines]".to_string(),
+                "a\nb\nc\nd\ne".to_string(),
+            ),
+            ("[pasted text #2 · 9 lines]".to_string(), "PLAN".to_string()),
+        ];
+        let typed = "do this: [pasted text #1 · 5 lines] then [pasted text #2 · 9 lines].";
+        assert_eq!(unfold(typed, &pastes), "do this: a\nb\nc\nd\ne then PLAN.");
+        let broken = "do this: [pasted text #1 · 5 line";
+        assert_eq!(unfold(broken, &pastes), broken);
+    }
+
     use super::*;
 
     #[test]
