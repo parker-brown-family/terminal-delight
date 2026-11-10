@@ -4813,7 +4813,7 @@ struct Workspace {
     /// What was typed into the composer when it was last put away, kept for
     /// the next time it opens.
     /// With the long pastes its tokens stand for.
-    composer_stash: Option<(String, Vec<std::path::PathBuf>, Vec<(String, String)>)>,
+    composer_stash: Option<entry_view::Draft>,
     /// The relate dialog: a pane or tab dropped on another tab, asking how the
     /// two agents work together (`relate_view.rs`).
     relate: Option<relate_view::Relate>,
