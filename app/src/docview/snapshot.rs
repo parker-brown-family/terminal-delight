@@ -466,8 +466,6 @@ impl SnapshotEngine {
             ] {
                 a.push(s.into());
             }
-        } else {
-            a.push("--in-process-gpu".into());
         }
         a.push(format!("--enable-features={}", features.join(",")).into());
         a
