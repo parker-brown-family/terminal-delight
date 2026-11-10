@@ -1366,3 +1366,72 @@ fn the_card_holds_still_while_the_chips_wrap_and_unwrap(cx: &mut gpui::TestAppCo
         "and the card held still"
     );
 }
+
+/// A long paste into the composer goes in as one token, not as its text;
+/// Backspace takes the token whole; a second paste gets a token of its own;
+/// and the draft put away keeps what each token stands for. Parker,
+/// 2026-11-10: *"if i paste a giant block - it gets fully printed out"*.
+///
+/// Mutation-tested: inserting the text instead of the token fails "the box
+/// holds the token"; skipping `delete_back_run` fails "one press takes it".
+#[gpui::test]
+fn a_long_paste_stands_in_the_composer_as_one_token(cx: &mut gpui::TestAppContext) {
+    let _warp = crate::warp::WARP_SERIAL
+        .lock()
+        .unwrap_or_else(|p| p.into_inner());
+    let (ws, cx) = window(cx);
+    cx.update(|w, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.open_composer(w, cx);
+            let c = ws.composer.as_mut().unwrap();
+            c.machines = vec![here()];
+            c.text = EditBuffer::at_end("do this: ");
+        })
+    });
+    redraw(cx);
+    let plan: String = (1..=40)
+        .map(|i| format!("{i}. a step of the plan\n"))
+        .collect();
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(plan.clone())));
+    cx.simulate_keystrokes("ctrl-v");
+    redraw(cx);
+    let text = |cx: &mut gpui::VisualTestContext| {
+        ws.read_with(cx, |ws, _| ws.composer.as_ref().unwrap().text.text())
+    };
+    assert_eq!(
+        text(cx),
+        "do this: [pasted text #1 · 40 lines]",
+        "the box holds the token"
+    );
+    let unfolded = ws.read_with(cx, |ws, _| {
+        let c = ws.composer.as_ref().unwrap();
+        entry::unfold(&c.text.text(), &c.pastes)
+    });
+    assert_eq!(
+        unfolded,
+        format!("do this: {plan}"),
+        "the send has the text"
+    );
+    // A short paste is typed text, as before.
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(" now".into())));
+    cx.simulate_keystrokes("ctrl-v");
+    redraw(cx);
+    assert!(text(cx).ends_with(" · 40 lines] now"));
+    cx.simulate_keystrokes("backspace backspace backspace backspace");
+    redraw(cx);
+    cx.simulate_keystrokes("backspace");
+    redraw(cx);
+    assert_eq!(text(cx), "do this: ", "one press takes it");
+    assert!(ws.read_with(cx, |ws, _| ws.composer.as_ref().unwrap().pastes.is_empty()));
+    // Pasted again: a token of its own, kept with the draft put away.
+    cx.update(|_, cx| cx.write_to_clipboard(gpui::ClipboardItem::new_string(plan.clone())));
+    cx.simulate_keystrokes("ctrl-v");
+    redraw(cx);
+    ws.update(cx, |ws, _| ws.composer_put_away());
+    let kept = ws.read_with(cx, |ws, _| {
+        ws.composer_stash
+            .as_ref()
+            .map(|(t, _, p)| entry::unfold(t, p))
+    });
+    assert_eq!(kept, Some(format!("do this: {plan}")));
+}

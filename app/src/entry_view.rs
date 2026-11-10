@@ -21,6 +21,10 @@ pub(crate) struct Composer {
     /// Pictures pasted in, saved under the session's surfaces; they go with
     /// the sentence as paths (see [`entry::with_pictures`]).
     pictures: Vec<std::path::PathBuf>,
+    /// Long pastes, each as the token that stands for it in `text` and the
+    /// text itself; the text takes the token's place when the prompt is sent
+    /// (see [`entry::unfold`]).
+    pub(crate) pastes: Vec<(String, String)>,
     pub(crate) focus: entry::Focus,
     /// What the scan found, with what was added from the composer
     /// (`projects.toml`) in front; a far one carries its machine.
@@ -418,10 +422,11 @@ impl Workspace {
             // repository sorts first.
             let order = launcher::filter(&projects, "");
             let pref = &self.launch_defaults;
-            let (draft, pictures) = self.composer_stash.take().unwrap_or_default();
+            let (draft, pictures, pastes) = self.composer_stash.take().unwrap_or_default();
             self.composer = Some(Composer {
                 text: EditBuffer::seeded(&draft),
                 pictures,
+                pastes,
                 focus: entry::Focus::Text,
                 projects,
                 query: String::new(),
@@ -462,8 +467,8 @@ impl Workspace {
     pub(crate) fn composer_put_away(&mut self) {
         if let Some(c) = self.composer.take() {
             let text = c.text.text();
-            self.composer_stash =
-                (!text.trim().is_empty() || !c.pictures.is_empty()).then_some((text, c.pictures));
+            self.composer_stash = (!text.trim().is_empty() || !c.pictures.is_empty())
+                .then_some((text, c.pictures, c.pastes));
         }
     }
 
@@ -571,7 +576,28 @@ impl Workspace {
                     }
                     None => {
                         if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
-                            c.text.insert_capped(&text, 20_000);
+                            if entry::folds(&text) {
+                                // A long paste goes in as its token; the text
+                                // itself waits for the send.
+                                let lines = text.lines().count().max(1);
+                                let token_for = |n: usize| {
+                                    lang::fill(
+                                        self.lang.strings().entry.composer_paste,
+                                        &[("n", &n.to_string()), ("lines", &lines.to_string())],
+                                    )
+                                };
+                                // Numbered past every paste still held, so no
+                                // two tokens read alike after one is deleted.
+                                let mut n = c.pastes.len() + 1;
+                                while c.pastes.iter().any(|(t, _)| *t == token_for(n)) {
+                                    n += 1;
+                                }
+                                let token = token_for(n);
+                                c.text.insert_capped(&token, 20_000);
+                                c.pastes.push((token, text));
+                            } else {
+                                c.text.insert_capped(&text, 20_000);
+                            }
                         }
                     }
                 }
@@ -579,7 +605,21 @@ impl Workspace {
             }
             key => match c.focus {
                 entry::Focus::Text => {
-                    c.text.apply(key, m, ks.key_char.as_deref(), 20_000);
+                    // Backspace right after a paste's token takes the whole
+                    // token, and the paste with it.
+                    let gone = (key == "backspace" && !m.control)
+                        .then(|| {
+                            c.pastes
+                                .iter()
+                                .position(|(token, _)| c.text.delete_back_run(token))
+                        })
+                        .flatten();
+                    match gone {
+                        Some(i) => {
+                            c.pastes.remove(i);
+                        }
+                        None => c.text.apply(key, m, ks.key_char.as_deref(), 20_000),
+                    }
                     c.note = None;
                 }
                 // Every chip's list the same way: the arrows step through it,
@@ -632,7 +672,8 @@ impl Workspace {
             return;
         };
         let e = self.lang.strings().entry;
-        let sentence = c.text.text();
+        // What was typed, with each long paste back in its token's place.
+        let sentence = entry::unfold(&c.text.text(), &c.pastes);
         if sentence.trim().is_empty() && c.pictures.is_empty() {
             c.note = Some(e.composer_placeholder.to_string());
             self.composer = Some(c);

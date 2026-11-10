@@ -2268,6 +2268,24 @@ impl EditBuffer {
         self.anchor = self.cursor;
     }
 
+    /// Backspace over a whole run: when nothing is selected and the text
+    /// just before the caret is `run`, delete it in one press. Answers
+    /// whether it did. A folded paste's token goes this way, all at once.
+    pub(crate) fn delete_back_run(&mut self, run: &str) -> bool {
+        let run: Vec<char> = run.chars().collect();
+        if self.has_sel() || run.is_empty() || run.len() > self.cursor {
+            return false;
+        }
+        let from = self.cursor - run.len();
+        if self.chars[from..self.cursor] != run[..] {
+            return false;
+        }
+        self.chars.drain(from..self.cursor);
+        self.cursor = from;
+        self.anchor = from;
+        true
+    }
+
     /// [`Self::insert`] for a paste: the selection goes, then as much of `s`
     /// as leaves the text at most `max` characters long, with the caret after
     /// it. Answers how many characters went in. Spliced in one move rather
@@ -4794,7 +4812,8 @@ struct Workspace {
     composer: Option<entry_view::Composer>,
     /// What was typed into the composer when it was last put away, kept for
     /// the next time it opens.
-    composer_stash: Option<(String, Vec<std::path::PathBuf>)>,
+    /// With the long pastes its tokens stand for.
+    composer_stash: Option<(String, Vec<std::path::PathBuf>, Vec<(String, String)>)>,
     /// The relate dialog: a pane or tab dropped on another tab, asking how the
     /// two agents work together (`relate_view.rs`).
     relate: Option<relate_view::Relate>,
