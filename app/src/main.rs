@@ -18131,7 +18131,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18142,7 +18142,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18408,7 +18410,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18419,7 +18421,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18592,7 +18596,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18603,7 +18607,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -19435,7 +19441,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -19449,7 +19455,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -32549,6 +32557,29 @@ impl Render for Workspace {
                             .ok()
                             .and_then(|p| settings::Page::from_id(&p));
                         self.open_settings(Some(page.unwrap_or(settings::Page::General)), cx);
+                        // A panel shown in place: TD_SETTINGS_HOST=palette|gauges|keys.
+                        match std::env::var("TD_SETTINGS_HOST").ok().as_deref() {
+                            Some("palette") => {
+                                self.menu_at = None;
+                                self.theme_menu = Some(MenuScope::Outer);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Palette);
+                                }
+                            }
+                            Some("gauges") => {
+                                self.open_osd(MenuScope::Outer, None);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Gauges);
+                                }
+                            }
+                            Some("keys") => {
+                                self.help_open = true;
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Keys);
+                                }
+                            }
+                            _ => {}
+                        }
                         if let Ok(q) = std::env::var("TD_SETTINGS_QUERY") {
                             if let Some(b) = self.settings.as_mut() {
                                 b.query = q;
@@ -35206,7 +35237,15 @@ impl Render for Workspace {
                 panel_w
             };
             let panel_h_est = tray_panel_h_est();
-            let mut panel = sk.sheet().id("theme-panel").absolute().w(px(panel_w));
+            // Shown in place on Settings' Appearance page: no anchor to the
+            // footer, no cap to the band, the page scrolls it.
+            let hosted = self.hosting() == Some(settings::Host::Palette);
+            let mut panel = sk
+                .sheet()
+                .id("theme-panel")
+                .debug_selector(|| "theme-panel".into())
+                .when(!hosted, |d| d.absolute())
+                .w(px(panel_w));
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -35218,13 +35257,14 @@ impl Render for Workspace {
                 // top of the band it hangs over, so that is what caps it.
                 None => self.tray_band().0,
             };
-            panel = match self.menu_at {
-                Some(at) => {
+            panel = match (hosted, self.menu_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
                 .when(sk.text_controls(), |d| d.right(px(8.)))
@@ -35238,7 +35278,7 @@ impl Render for Workspace {
                 // bottom bezel. The cap is the terminal band this tray hangs
                 // over plus one hairline — not the window, which is how the
                 // densest tray in the app came to cover the split buttons.
-                .max_h(px(self.tray_max_h(tray_top)))
+                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
@@ -35270,12 +35310,20 @@ impl Render for Workspace {
                         d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
                     })
                 }))
-                .children(design_menu);
-            // full-screen scrim: click anywhere outside closes
+                .children(design_menu)
+                // Over the window it frosts what is behind it; in the book,
+                // the book already does.
+                .when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("theme-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
+                .when(hosted, |d| {
+                    d.overflow_y_scroll().flex().justify_center().items_start()
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -35510,7 +35558,12 @@ impl Render for Workspace {
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
-            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
+            let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let mut panel = sk
+                .sheet()
+                .id("osd-panel")
+                .when(!hosted, |d| d.absolute())
+                .w(px(panel_w));
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
@@ -35520,19 +35573,20 @@ impl Render for Workspace {
                 // the band's top, as the theme tray is
                 None => self.tray_band().0,
             };
-            panel = match self.osd_at {
-                Some(at) => {
+            panel = match (hosted, self.osd_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
                 // Nine slider rows on a short window is taller than the render
                 // it covers, and this tray had no cap at all — it simply drew
                 // past the bottom.
-                .max_h(px(self.tray_max_h(tray_top)))
+                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
                 .overflow_y_scroll()
                 .p_3()
@@ -35816,11 +35870,17 @@ impl Render for Workspace {
                 }
                 panel = panel.child(block);
             }
-            // full-screen scrim: click anywhere outside closes
+            let panel = panel.when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("osd-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
+                .when(hosted, |d| {
+                    d.overflow_y_scroll().flex().justify_center().items_start()
+                })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -35840,7 +35900,6 @@ impl Render for Workspace {
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
         let agents_overlay = self.render_agents_overlay(&th, cx);
-        let settings_overlay = self.render_settings(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
         let admin_overlay = self.render_admin_overlay(&th, cx);
         let update_overlay = self.render_update_overlay(&th, cx);
@@ -38144,7 +38203,7 @@ impl Render for Workspace {
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -38152,7 +38211,9 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel)
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                }))
         });
 
         let confirm_overlay = self.confirm_close.and_then(|i| {
@@ -40469,6 +40530,24 @@ impl Render for Workspace {
             .children(self.render_rail_docked(cx))
             .child(self.render_spine(cx));
 
+        // A panel Settings is showing in place is drawn on the book's page,
+        // not over the window (`settings_view::host_or_root`).
+        let mut hosted: Option<AnyElement> = None;
+        use settings::Host as H;
+        let menu_overlay = self.host_or_root(H::Palette, menu_overlay, &mut hosted);
+        let osd_overlay = self.host_or_root(H::Gauges, osd_overlay, &mut hosted);
+        let scale_overlay = self.host_or_root(H::Scale, scale_overlay, &mut hosted);
+        let lang_picker_overlay = self.host_or_root(H::Language, lang_picker_overlay, &mut hosted);
+        let update_overlay = self.host_or_root(H::Updates, update_overlay, &mut hosted);
+        let admin_overlay = self.host_or_root(H::Admin, admin_overlay, &mut hosted);
+        let notif_overlay = self.host_or_root(H::Notices, notif_overlay, &mut hosted);
+        let help_overlay = self.host_or_root(H::Keys, help_overlay, &mut hosted);
+        let agents_overlay = self.host_or_root(H::Skills, agents_overlay, &mut hosted);
+        let savings_overlay = self.host_or_root(H::Savings, savings_overlay, &mut hosted);
+        let bug_overlay = self.host_or_root(H::Bug, bug_overlay, &mut hosted);
+        let plugins_overlay = self.host_or_root(H::Plugins, plugins_overlay, &mut hosted);
+        let dead_overlay = self.host_or_root(H::Recover, dead_overlay, &mut hosted);
+        let settings_overlay = self.render_settings(&th, hosted, cx);
         let root = div()
             .size_full()
             .relative()
@@ -45629,8 +45708,10 @@ mod tests {
                 tray.contains(&format!("\"{id}\"")),
                 "the {what} tray region no longer holds its panel"
             );
+            // `(false, None)`: not shown in place in Settings, raised from
+            // the glyph row. Shown in place, the book's page holds it.
             assert!(
-                tray.contains("None => over_the_footer(panel, scale),"),
+                tray.contains("(false, None) => over_the_footer(panel, scale),"),
                 "the {what} tray, raised from the glyph row, must open over it"
             );
             assert!(

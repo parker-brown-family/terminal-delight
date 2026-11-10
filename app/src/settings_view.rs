@@ -10,7 +10,7 @@
 //! while the panels move in one by one (`docs/plans/settings-monolith/`).
 
 use super::*;
-use crate::settings::{self, Book, Heading, Item, Page};
+use crate::settings::{self, Book, Heading, Host, Item, Page};
 use crate::wtclean;
 use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
@@ -64,6 +64,34 @@ fn wt_gather(cwds: &[PathBuf], home: &Path) -> Result<(Vec<wtclean::Facts>, usiz
 type Then = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
 /// What a switch does when pressed.
 type Flip = fn(&mut Workspace, &mut Context<Workspace>);
+
+/// Frost everything outside the element this sits in, for the frame: the
+/// CRT post-pass blurs the window behind an overlay and leaves the overlay
+/// sharp. Parker, 2026-11-09: *"BLUR the main surface while an over lay is
+/// displayed."* Re-armed every frame it is drawn, so it lifts the frame after.
+pub(crate) fn frost_behind() -> gpui::Div {
+    div().absolute().inset_0().child(
+        gpui::canvas(
+            |bounds, window, _cx| {
+                let sf = window.scale_factor();
+                crate::warp::set_focus_blur(
+                    [
+                        f32::from(bounds.origin.x) * sf,
+                        f32::from(bounds.origin.y) * sf,
+                        f32::from(bounds.size.width) * sf,
+                        f32::from(bounds.size.height) * sf,
+                    ],
+                    22.0 * sf,
+                    12.0 * sf,
+                    0.55,
+                    10.0 * sf,
+                );
+            },
+            |_, _, _, _| {},
+        )
+        .size_full(),
+    )
+}
 
 /// The nav page's width, as T3's sidebar is narrower than its page.
 const NAV_W: f32 = 232.;
@@ -208,7 +236,108 @@ impl Workspace {
         cx.notify();
     }
 
+    /// Whether a hosted panel is still open, by its own flag.
+    fn host_open(&self, h: Host) -> bool {
+        match h {
+            Host::Palette => self.theme_menu.is_some(),
+            Host::Gauges => self.osd_menu.is_some(),
+            Host::Scale => self.scale_menu,
+            Host::Language => self.lang_picker.is_some(),
+            Host::Updates => self.update_menu,
+            Host::Admin => self.admin_menu,
+            Host::Notices => self.notif_menu,
+            Host::Keys => self.help_open,
+            Host::Skills => self.agents_menu,
+            Host::Savings => self.savings_menu,
+            Host::Bug => self.bug_menu,
+            Host::Plugins => self.plugins_menu,
+            Host::Recover => self.dead_menu,
+        }
+    }
+
+    /// The panel the book is showing in place, while it is open.
+    pub(crate) fn hosting(&self) -> Option<Host> {
+        self.settings
+            .as_ref()
+            .and_then(|b| b.host)
+            .filter(|h| self.host_open(*h))
+    }
+
+    /// Close the panel shown in place and go back to the page. True when
+    /// there was one.
+    pub(crate) fn unhost(&mut self) -> bool {
+        let Some(h) = self.hosting() else {
+            if let Some(b) = self.settings.as_mut() {
+                b.host = None;
+            }
+            return false;
+        };
+        match h {
+            Host::Palette => {
+                self.theme_menu = None;
+                self.design_menu = None;
+            }
+            Host::Gauges => self.osd_menu = None,
+            Host::Scale => self.scale_menu = false,
+            Host::Language => self.lang_picker = None,
+            Host::Updates => self.close_updates(),
+            Host::Admin => self.close_admin(),
+            Host::Notices => self.notif_menu = false,
+            Host::Keys => self.help_open = false,
+            Host::Skills => {
+                self.close_skill_form();
+                self.agents_menu = false;
+            }
+            Host::Savings => self.savings_menu = false,
+            Host::Bug => self.close_bug_menu(),
+            Host::Plugins => self.plugins_menu = false,
+            Host::Recover => self.dead_menu = false,
+        }
+        if let Some(b) = self.settings.as_mut() {
+            b.host = None;
+        }
+        true
+    }
+
+    /// A panel's drawing goes onto the book's page when the book is showing
+    /// it in place, and onto the window otherwise.
+    pub(crate) fn host_or_root<E: IntoElement>(
+        &self,
+        h: Host,
+        el: Option<E>,
+        slot: &mut Option<AnyElement>,
+    ) -> Option<AnyElement> {
+        let el = el.map(IntoElement::into_any_element);
+        if self.hosting() == Some(h) {
+            *slot = el;
+            None
+        } else {
+            el
+        }
+    }
+
+    /// The title of the row that opened `h`, for the breadcrumb.
+    fn host_title(&self, h: Host) -> &'static str {
+        let s = self.lang.strings().settings;
+        match h {
+            Host::Palette => s.r_palette,
+            Host::Gauges => s.r_gauges,
+            Host::Scale => s.r_scale,
+            Host::Language => s.r_language,
+            Host::Updates => s.r_updates,
+            Host::Admin => s.r_admin,
+            Host::Notices => s.r_notices,
+            Host::Keys => s.r_keys,
+            Host::Skills => s.r_skill_list,
+            Host::Savings => s.r_savings,
+            Host::Bug => s.r_bug,
+            Host::Plugins => s.r_plugins,
+            Host::Recover => s.r_recover,
+        }
+    }
+
     pub(crate) fn close_settings(&mut self, cx: &mut Context<Self>) {
+        self.unhost();
         if let Some(b) = self.settings.take() {
             self.settings_last = Some(b.page);
         }
@@ -221,6 +350,10 @@ impl Workspace {
     /// Esc without a context: a search is cleared, else the book is put
     /// away on the page it was on (`close_popups`).
     pub(crate) fn settings_peel(&mut self) {
+        // A panel shown in place closes first, back to its page.
+        if self.unhost() {
+            return;
+        }
         match self.settings.as_mut() {
             Some(b) if b.searching() => {
                 b.query.clear();
@@ -242,6 +375,7 @@ impl Workspace {
     }
 
     fn settings_go(&mut self, page: Page, cx: &mut Context<Self>) {
+        self.unhost();
         if let Some(b) = self.settings.as_mut() {
             b.page = page;
             b.query.clear();
@@ -263,7 +397,10 @@ impl Workspace {
                 true
             }
             Some(_) => {
-                self.close_settings(cx);
+                if !self.unhost() {
+                    self.close_settings(cx);
+                }
+                cx.notify();
                 true
             }
             None => false,
@@ -277,6 +414,12 @@ impl Workspace {
     /// Ctrl+Backspace, which clears the search.
     pub(crate) fn settings_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
         if self.settings.is_none() {
+            return false;
+        }
+        // A panel shown in place keeps its own keys (the language search,
+        // the keys sheet's filter); Esc reaches `close_popups`, which closes
+        // it back to the page.
+        if self.hosting().is_some() {
             return false;
         }
         let m = &ks.modifiers;
@@ -599,13 +742,16 @@ impl Workspace {
             .into_any_element()
     }
 
-    /// The button on a row whose setting still opens in a panel of its own:
-    /// the book closes and the panel opens.
+    /// The button on a row whose setting still has a panel of its own. With a
+    /// `host` the panel opens in place, on this page of the book; without one
+    /// (the composer, the Threshing Floor, which are whole surfaces) the book
+    /// closes and the surface opens.
     fn st_open(
         &self,
         th: &theme::Theme,
         sk: &skin::Skin,
         id: &'static str,
+        host: Option<Host>,
         then: Then,
         cx: &mut Context<Self>,
     ) -> AnyElement {
@@ -631,7 +777,15 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
                     cx.stop_propagation();
-                    ws.close_settings(cx);
+                    match host {
+                        Some(h) => {
+                            ws.unhost();
+                            if let Some(b) = ws.settings.as_mut() {
+                                b.host = Some(h);
+                            }
+                        }
+                        None => ws.close_settings(cx),
+                    }
                     then(ws, w, cx);
                     cx.notify();
                 }),
@@ -981,6 +1135,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-language",
+                                Some(Host::Language),
                                 |ws, _, _| {
                                     ws.lang_picker = Some(LangPicker {
                                         query: EditBuffer::seeded(""),
@@ -1005,6 +1160,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-scale",
+                                Some(Host::Scale),
                                 |ws, _, _| ws.scale_menu = true,
                                 cx,
                             ),
@@ -1016,6 +1172,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-updates",
+                                Some(Host::Updates),
                                 |ws, _, cx| ws.open_updates(cx),
                                 cx,
                             ),
@@ -1027,6 +1184,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-admin",
+                                Some(Host::Admin),
                                 |ws, _, cx| ws.open_admin(cx),
                                 cx,
                             ),
@@ -1048,6 +1206,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-palette",
+                                Some(Host::Palette),
                                 |ws, _, _| ws.theme_menu = Some(MenuScope::Outer),
                                 cx,
                             ),
@@ -1059,6 +1218,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-gauges",
+                                Some(Host::Gauges),
                                 |ws, _, _| ws.open_osd(MenuScope::Outer, None),
                                 cx,
                             ),
@@ -1096,6 +1256,7 @@ impl Workspace {
                         th,
                         sk,
                         "st-open-notices",
+                        Some(Host::Notices),
                         |ws, _, _| {
                             ws.notif = notifpref::load();
                             ws.notif_menu = true;
@@ -1113,7 +1274,14 @@ impl Workspace {
                     row(
                         s.r_keys,
                         s.r_keys_sub,
-                        self.st_open(th, sk, "st-open-keys", |ws, _, _| ws.help_open = true, cx),
+                        self.st_open(
+                            th,
+                            sk,
+                            "st-open-keys",
+                            Some(Host::Keys),
+                            |ws, _, _| ws.help_open = true,
+                            cx,
+                        ),
                     ),
                     row(
                         s.r_settings_key,
@@ -1155,6 +1323,7 @@ impl Workspace {
                                     th,
                                     sk,
                                     "st-open-skills",
+                                    Some(Host::Skills),
                                     |ws, _, cx| ws.open_agents(cx),
                                     cx,
                                 ),
@@ -1274,6 +1443,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-add-project",
+                                None,
                                 |ws, w, cx| {
                                     ws.open_composer(w, cx);
                                     ws.add_project_open(cx);
@@ -1314,6 +1484,7 @@ impl Workspace {
                             th,
                             sk,
                             "st-open-machines",
+                            None,
                             |ws, w, cx| {
                                 ws.open_composer(w, cx);
                                 ws.add_project_open(cx);
@@ -1437,6 +1608,7 @@ impl Workspace {
                                 th,
                                 sk,
                                 "st-open-floor",
+                                None,
                                 |ws, _, _| {
                                     ws.mcp_menu = false;
                                     ws.threshing_floor = true;
@@ -1462,6 +1634,7 @@ impl Workspace {
                             th,
                             sk,
                             "st-open-savings",
+                            Some(Host::Savings),
                             |ws, _, cx| ws.fetch_savings(None, cx),
                             cx,
                         ),
@@ -1469,7 +1642,14 @@ impl Workspace {
                     row(
                         s.r_bug,
                         s.r_bug_sub,
-                        self.st_open(th, sk, "st-open-bug", |ws, _, _| ws.open_bug_menu(), cx),
+                        self.st_open(
+                            th,
+                            sk,
+                            "st-open-bug",
+                            Some(Host::Bug),
+                            |ws, _, _| ws.open_bug_menu(),
+                            cx,
+                        ),
                     ),
                 ],
             )],
@@ -1485,6 +1665,7 @@ impl Workspace {
                         th,
                         sk,
                         "st-open-plugins",
+                        Some(Host::Plugins),
                         |ws, _, _| ws.plugins_menu = true,
                         cx,
                     ),
@@ -1546,6 +1727,7 @@ impl Workspace {
                         th,
                         sk,
                         "st-open-recover",
+                        Some(Host::Recover),
                         |ws, _, _| {
                             ws.dead_filter = None;
                             ws.dead_menu = true;
@@ -1716,6 +1898,7 @@ impl Workspace {
     pub(crate) fn render_settings(
         &self,
         th: &theme::Theme,
+        hosted: Option<AnyElement>,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         let b = self.settings.clone()?;
@@ -1726,8 +1909,11 @@ impl Workspace {
             .last_win
             .map(|(_, _, w, h)| (w, h))
             .unwrap_or((1200., 800.));
-        let w = 1080_f32.min((vw - 48.).max(320.));
-        let h = 760_f32.min((vh - 72.).max(300.));
+        // Nearly the whole window: the surface config alone is four columns
+        // wide, and it opens on this page now.
+        let w = (vw - 48.).max(320.);
+        let h = (vh - 64.).max(300.);
+        let host = self.hosting();
         let acc = th.accent;
         let header = div()
             .flex()
@@ -1751,10 +1937,41 @@ impl Workspace {
                         div()
                             .id("st-crumb")
                             .debug_selector(|| "st-crumb".into())
-                            .text_color(th.text)
-                            .font_weight(gpui::FontWeight::SEMIBOLD)
+                            .when(host.is_some(), |d| {
+                                d.cursor_pointer()
+                                    .hover(move |st| st.text_color(acc))
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                            cx.stop_propagation();
+                                            ws.unhost();
+                                            cx.notify();
+                                        }),
+                                    )
+                            })
+                            .text_color(if host.is_some() {
+                                th.text.alpha(0.55)
+                            } else {
+                                th.text
+                            })
+                            .font_weight(if host.is_some() {
+                                gpui::FontWeight::NORMAL
+                            } else {
+                                gpui::FontWeight::SEMIBOLD
+                            })
                             .child(SharedString::from(self.page_name(b.page).to_string())),
-                    ),
+                    )
+                    .when_some(host, |d, h| {
+                        d.child(div().text_color(th.text.alpha(0.35)).child("/"))
+                            .child(
+                                div()
+                                    .id("st-crumb-host")
+                                    .debug_selector(|| "st-crumb-host".into())
+                                    .text_color(th.text)
+                                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                                    .child(SharedString::from(self.host_title(h).to_string())),
+                            )
+                    }),
             )
             .child(
                 with_tip(
@@ -1792,7 +2009,20 @@ impl Workspace {
             .gap_5()
             .overflow_y_scroll()
             .child(header)
-            .children(self.settings_page(b.page, th, &sk, &sk1, cx));
+            .map(|d| match hosted {
+                // The panel, in place: it fills the page, and a press on the
+                // page around it closes it back to the rows.
+                Some(el) => d.child(
+                    div()
+                        .id("st-hosted")
+                        .debug_selector(|| "st-hosted".into())
+                        .relative()
+                        .flex_1()
+                        .min_h(px(0.))
+                        .child(el),
+                ),
+                None => d.children(self.settings_page(b.page, th, &sk, &sk1, cx)),
+            });
         let book = div()
             .id("settings-book")
             .debug_selector(|| "settings-book".into())
@@ -1813,7 +2043,11 @@ impl Workspace {
                 cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
             )
             .child(self.settings_nav(&b, th, &sk, cx))
-            .child(body);
+            .child(body)
+            // Everything behind the book is frosted while it is open, and the
+            // book itself stays sharp: the same post-pass the FOCUS reader
+            // and the agent wall use.
+            .child(frost_behind());
         Some(
             div()
                 .absolute()
@@ -2104,5 +2338,78 @@ mod tests {
             "the branch is kept"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Open shows the panel in place: the surface config draws inside the
+    /// book's page and the book stays open, the first Esc goes back to the
+    /// page, the second puts the book away; and the keys sheet opens in place
+    /// the same way. Parker, 2026-11-09: *"Open SHOULD open it in place!"*
+    ///
+    /// Mutation-tested: closing the book in `st_open` again fails "the book
+    /// stays open"; leaving `unhost` out of `settings_peel` fails "back to
+    /// the page".
+    #[gpui::test]
+    fn open_shows_the_panel_in_place_and_esc_goes_back_to_the_page(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        redraw(cx);
+        let open = cx.debug_bounds("st-open-palette").expect("the Open button");
+        cx.simulate_click(open.center(), gpui::Modifiers::none());
+        redraw(cx);
+        let state = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| {
+                (
+                    ws.settings.as_ref().map(|b| b.page),
+                    ws.hosting(),
+                    ws.theme_menu.is_some(),
+                )
+            })
+        };
+        assert_eq!(
+            state(cx),
+            (Some(Page::Appearance), Some(Host::Palette), true),
+            "the book stays open, showing the surface config"
+        );
+        let page = cx.debug_bounds("st-hosted").expect("the page holds it");
+        let tray = cx.debug_bounds("theme-panel").expect("the tray is drawn");
+        assert!(
+            page.contains(&tray.origin),
+            "the tray is drawn on the page, not over the window: {tray:?} in {page:?}"
+        );
+        assert!(
+            cx.debug_bounds("st-crumb-host").is_some(),
+            "the breadcrumb names it"
+        );
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert_eq!(
+            state(cx),
+            (Some(Page::Appearance), None, false),
+            "Esc goes back to the page"
+        );
+        ws.update(cx, |ws, cx| ws.settings_go(Page::Keybindings, cx));
+        redraw(cx);
+        let open = cx
+            .debug_bounds("st-open-keys")
+            .expect("the keys row's Open");
+        cx.simulate_click(open.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| (ws.hosting(), ws.help_open)),
+            (Some(Host::Keys), true),
+            "the keys sheet opens in place too"
+        );
+        cx.simulate_keystrokes("escape");
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| (ws.settings.is_some(), ws.help_open)),
+            (false, false),
+            "and the second Esc puts the book away"
+        );
     }
 }
