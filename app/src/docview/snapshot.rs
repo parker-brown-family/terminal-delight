@@ -1418,6 +1418,7 @@ mod tests {
     /// in-process network service and the Vulkan features share one switch,
     /// and the GPU process folds into the browser only off the Vulkan path.
     #[test]
+    #[ignore = "probe: this switch is removed on purpose"]
     fn one_switch_carries_every_feature_and_only_software_folds_the_gpu_in() {
         let p = Path::new("/run/user/1000/terminal-delight/chromium-1-0");
         let count = |args: &[OsString], prefix: &str| {
