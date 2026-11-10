@@ -1114,6 +1114,15 @@ impl DocumentView {
             .block_at_top()
     }
 
+    /// The source line of the Markdown block under a window point, for an
+    /// editor that opens the source where the page was clicked: `None` for
+    /// any other document, and before a layout.
+    pub(crate) fn source_line_at(&mut self, at: Point<Pixels>) -> Option<usize> {
+        self.backend
+            .downcast_mut::<markdown::MarkdownDoc>()?
+            .source_line_at(at.y)
+    }
+
     /// Which seat the view is in, and the palette it was last handed, for a
     /// test driving a pane: both are the pane's decisions, and neither shows
     /// in anything else a test can read.
