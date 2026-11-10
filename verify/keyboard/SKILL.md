@@ -23,7 +23,7 @@ cargo test --locked --manifest-path app/Cargo.toml -- verify_keyboard
 
 ## Coverage (the case table is the record)
 
-Settings search (Ctrl+,), the keys sheet's filter (F1), the language picker from the keys sheet's 🌐 and from Settings › General, the composer (Ctrl+Shift+E), find across panes (Ctrl+Shift+F), the agent launcher (Alt+A), project lookup.
+Settings search (Ctrl+,), the keys sheet's filter (F1), the language picker from the keys sheet's 🌐 (Settings › General now picks a language with native chips, no picker), the composer (Ctrl+Shift+E), find across panes (Ctrl+Shift+F), the agent launcher (Alt+A), project lookup.
 
 **Sync commit:** `62f87a5b`. A new surface that takes typing is a new row in `CASES`.
 

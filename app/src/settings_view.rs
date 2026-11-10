@@ -241,8 +241,6 @@ impl Workspace {
         match h {
             Host::Palette => self.theme_menu.is_some(),
             Host::Gauges => self.osd_menu.is_some(),
-            Host::Scale => self.scale_menu,
-            Host::Language => self.lang_picker.is_some(),
             Host::Updates => self.update_menu,
             Host::Admin => self.admin_menu,
             Host::Notices => self.notif_menu,
@@ -278,8 +276,6 @@ impl Workspace {
                 self.design_menu = None;
             }
             Host::Gauges => self.osd_menu = None,
-            Host::Scale => self.scale_menu = false,
-            Host::Language => self.lang_picker = None,
             Host::Updates => self.close_updates(),
             Host::Admin => self.close_admin(),
             Host::Notices => self.notif_menu = false,
@@ -322,8 +318,6 @@ impl Workspace {
         match h {
             Host::Palette => s.r_palette,
             Host::Gauges => s.r_gauges,
-            Host::Scale => s.r_scale,
-            Host::Language => s.r_language,
             Host::Updates => s.r_updates,
             Host::Admin => s.r_admin,
             Host::Notices => s.r_notices,
@@ -530,6 +524,126 @@ fn page_name_in(l: lang::Lang, p: Page) -> &'static str {
     }
 }
 
+/// A row title as a sentence: the tray spells its switches in lower case,
+/// a book row starts with a capital. Words in capitals stay as they are, and
+/// a script with no case is untouched.
+fn sentence(title: &str) -> String {
+    let mut c = title.chars();
+    match c.next() {
+        Some(first) => first.to_uppercase().chain(c).collect(),
+        None => String::new(),
+    }
+}
+
+/// The window size's range, as the scrubber and `set_scale` clamp it.
+const SCALE_MIN: f32 = 0.7;
+const SCALE_MAX: f32 = 1.6;
+
+/// One step of the size from `at`: to the next tenth `by` points at, so a
+/// size dragged to 1.03 steps to 1.1 or 1.0, never to 1.13.
+fn scale_step(at: f32, by: f32) -> f32 {
+    let tenths = at * 10.;
+    let next = if by > 0. {
+        (tenths + 0.001).floor() + 1.
+    } else {
+        (tenths - 0.001).ceil() - 1.
+    };
+    (next / 10.).clamp(SCALE_MIN, SCALE_MAX)
+}
+
+/// UI CONFIG's switches as Appearance rows: what the window's own chrome
+/// shows, then what every pane shows. One table, read by the page that draws
+/// the rows and by the search that finds them. Each row flips its keys
+/// together, as the surface config's switch for it does.
+type UiRow = (
+    &'static str,
+    fn(&'static lang::Strings) -> &'static str,
+    &'static [uiconfig::Key],
+);
+
+const UI_INTERFACE: &[UiRow] = &[
+    (
+        "st-ui-glyphs",
+        |t| t.ui.ui_menu_glyphs,
+        uiconfig::Key::MENU_GLYPHS,
+    ),
+    ("st-ui-counts", |t| t.ui.ui_counts, &[uiconfig::Key::Counts]),
+    ("st-ui-scale", |t| t.ui.ui_scale, &[uiconfig::Key::Scale]),
+    (
+        "st-ui-splits",
+        |t| t.ui.ui_splits,
+        &[uiconfig::Key::SplitButtons],
+    ),
+    (
+        "st-ui-mark",
+        |t| t.ui.ui_app_mark,
+        &[uiconfig::Key::AppMark],
+    ),
+    (
+        "st-ui-notice",
+        |t| t.ui.ui_git_notice,
+        &[uiconfig::Key::GitNotice],
+    ),
+    (
+        "st-ui-counter",
+        |t| t.ui.ui_agent_counter,
+        &[uiconfig::Key::AgentCounter],
+    ),
+    ("st-ui-spine", |t| t.ui.ui_spine, &[uiconfig::Key::Spine]),
+    ("st-ui-bar", |t| t.ui.ui_left_bar, &[uiconfig::Key::LeftBar]),
+    (
+        "st-ui-bar-head",
+        |t| t.ui.ui_bar_header,
+        &[uiconfig::Key::LeftBarHeader],
+    ),
+    (
+        "st-ui-allowance",
+        |t| t.ui.ui_allowance,
+        &[uiconfig::Key::Allowance],
+    ),
+    (
+        "st-ui-rows",
+        |t| t.ui.ui_option_rows,
+        &[uiconfig::Key::OptionRows],
+    ),
+];
+
+const UI_PANE_PARTS: &[UiRow] = &[
+    ("st-ui-p-logo", |t| t.ui.ui_logo, &[uiconfig::Key::PaneLogo]),
+    ("st-ui-p-mode", |t| t.ui.ui_mode, &[uiconfig::Key::PaneMode]),
+    ("st-ui-p-face", |t| t.ui.ui_face, &[uiconfig::Key::PaneFace]),
+    (
+        "st-ui-p-agent",
+        |t| t.parts.pane_launch_agent_chip,
+        &[uiconfig::Key::PaneAgent],
+    ),
+    (
+        "st-ui-p-handover",
+        |t| t.ui.ui_handover,
+        &[uiconfig::Key::PaneHandover],
+    ),
+    (
+        "st-ui-p-surface",
+        |t| t.ui.ui_surface,
+        &[uiconfig::Key::PaneSurface],
+    ),
+    (
+        "st-ui-p-sliders",
+        |t| t.ui.ui_sliders,
+        &[uiconfig::Key::PaneSliders],
+    ),
+    (
+        "st-ui-p-close",
+        |t| t.ui.ui_close,
+        &[uiconfig::Key::PaneClose],
+    ),
+    (
+        "st-ui-p-notes",
+        |t| t.ui.ui_notes,
+        &[uiconfig::Key::PaneNotes],
+    ),
+];
+
 /// Everything the search can find: each page by its name, and each row by
 /// its title, with its plain line, its section and its page as terms.
 /// Kept beside the pages that draw the rows; the test
@@ -625,8 +739,18 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::About, s.s_build, s.r_core, ""),
         (Page::Archive, s.s_recover, s.r_recover, s.r_recover_sub),
     ];
+    let ui_rows = UI_INTERFACE
+        .iter()
+        .map(|(_, title, _)| (Page::Appearance, s.s_interface, title(l.strings()), ""))
+        .chain(
+            UI_PANE_PARTS
+                .iter()
+                .map(|(_, title, _)| (Page::Appearance, s.s_pane_parts, title(l.strings()), "")),
+        )
+        .collect::<Vec<_>>();
     let mut items: Vec<Item> = rows
         .iter()
+        .chain(ui_rows.iter())
         .map(|(page, section, title, sub)| Item {
             page: *page,
             title: (*title).to_string(),
@@ -749,6 +873,121 @@ impl Workspace {
                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     flip(ws, cx);
+                    cx.notify();
+                }),
+            )
+            .into_any_element()
+    }
+
+    /// Every language by its own name, the one in use lit. A press changes
+    /// every word in the window at once.
+    fn st_languages(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let now = self.lang;
+        div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .justify_end()
+            .max_w(px(640.))
+            .gap_1()
+            .children(lang::Lang::ALL.iter().copied().map(|l| {
+                let id = SharedString::from(format!("st-lang-{}", l.code()));
+                let sel = id.to_string();
+                sk.chip(l == now)
+                    .id(id)
+                    .debug_selector(move || sel.clone())
+                    .cursor_pointer()
+                    .text_size(sk.text_px(9.5))
+                    .text_color(th.text)
+                    .child(l.native())
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.lang = l;
+                            lang::set_current(l);
+                            ws.save(cx);
+                            cx.notify();
+                        }),
+                    )
+            }))
+            .into_any_element()
+    }
+
+    /// The window's size as a stepper: smaller, the size now, larger. The
+    /// steps are the scrubber's own range in tenths.
+    fn st_scale(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> AnyElement {
+        let now = theme::outer_choice(cx).grade.scale;
+        let step = |id: &'static str, glyph: &'static str, by: f32, live: bool| {
+            sk.chip(false)
+                .id(id)
+                .debug_selector(move || id.into())
+                .text_size(sk.text_px(10.5))
+                .text_color(th.text.alpha(if live { 0.95 } else { 0.3 }))
+                .when(live, |d| d.cursor_pointer())
+                .child(glyph)
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        let at = theme::outer_choice(cx).grade.scale;
+                        ws.set_scale(scale_step(at, by), cx);
+                        cx.notify();
+                    }),
+                )
+        };
+        div()
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_2()
+            .child(step(
+                "st-scale-down",
+                "\u{2212}",
+                -0.1,
+                now > SCALE_MIN + 0.001,
+            ))
+            .child(
+                div()
+                    .id("st-scale-now")
+                    .debug_selector(|| "st-scale-now".into())
+                    .min_w(px(44.))
+                    .flex()
+                    .justify_center()
+                    .text_size(sk.text_px(10.))
+                    .text_color(th.text)
+                    .child(format!("{}%", (now * 100.).round() as i32)),
+            )
+            .child(step("st-scale-up", "+", 0.1, now < SCALE_MAX - 0.001))
+            .into_any_element()
+    }
+
+    /// A UI CONFIG row's switch: on while every key it holds is shown, and a
+    /// press flips them together, as the surface config's own switch does.
+    fn st_ui_switch(
+        &self,
+        th: &theme::Theme,
+        sk1: &skin::Skin,
+        id: &'static str,
+        keys: &'static [uiconfig::Key],
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
+        div()
+            .id(id)
+            .debug_selector(move || id.into())
+            .cursor_pointer()
+            .child(slider_switch(on, th, sk1))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.flip_ui(keys, !on, cx);
                     cx.notify();
                 }),
             )
@@ -1139,25 +1378,7 @@ impl Workspace {
                     vec![row(
                         s.r_language,
                         s.r_language_sub,
-                        div()
-                            .flex()
-                            .items_center()
-                            .gap_3()
-                            .child(Self::st_value(th, sk, self.lang.native().to_string()))
-                            .child(self.st_open(
-                                th,
-                                sk,
-                                "st-open-language",
-                                Some(Host::Language),
-                                |ws, _, _| {
-                                    ws.lang_picker = Some(LangPicker {
-                                        query: EditBuffer::seeded(""),
-                                        selected: 0,
-                                    })
-                                },
-                                cx,
-                            ))
-                            .into_any_element(),
+                        self.st_languages(th, sk, cx),
                     )],
                 ),
                 Self::st_section(
@@ -1166,18 +1387,7 @@ impl Workspace {
                     "st-sec-window",
                     s.s_window,
                     vec![
-                        row(
-                            s.r_scale,
-                            s.r_scale_sub,
-                            self.st_open(
-                                th,
-                                sk,
-                                "st-open-scale",
-                                Some(Host::Scale),
-                                |ws, _, _| ws.scale_menu = true,
-                                cx,
-                            ),
-                        ),
+                        row(s.r_scale, s.r_scale_sub, self.st_scale(th, sk, cx)),
                         row(
                             s.r_updates,
                             s.r_updates_sub,
@@ -1255,6 +1465,42 @@ impl Workspace {
                             cx,
                         ),
                     )],
+                ),
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-interface",
+                    s.s_interface,
+                    UI_INTERFACE
+                        .iter()
+                        .map(|(id, title, keys)| {
+                            Self::st_row(
+                                th,
+                                sk,
+                                &sentence(title(t)),
+                                None,
+                                Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                            )
+                        })
+                        .collect(),
+                ),
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-pane-parts",
+                    s.s_pane_parts,
+                    UI_PANE_PARTS
+                        .iter()
+                        .map(|(id, title, keys)| {
+                            Self::st_row(
+                                th,
+                                sk,
+                                &sentence(title(t)),
+                                None,
+                                Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                            )
+                        })
+                        .collect(),
                 ),
             ],
             Page::Notifications => vec![Self::st_section(
@@ -2396,6 +2642,131 @@ mod tests {
             "the branch is kept"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A size step goes to the next tenth in its direction and stops at the
+    /// ends of the scrubber's range.
+    ///
+    /// Mutation-tested: stepping by a plain `at + by` fails the 1.03 case.
+    #[test]
+    fn a_size_step_lands_on_the_next_tenth_inside_the_range() {
+        let near = |a: f32, b: f32| (a - b).abs() < 1e-4;
+        assert!(near(scale_step(1.0, 0.1), 1.1));
+        assert!(near(scale_step(1.0, -0.1), 0.9));
+        assert!(near(scale_step(1.03, 0.1), 1.1));
+        assert!(near(scale_step(1.03, -0.1), 1.0));
+        assert!(near(scale_step(1.6, 0.1), 1.6));
+        assert!(near(scale_step(0.7, -0.1), 0.7));
+    }
+
+    /// General picks a language and a size in place: a press on a language
+    /// changes the book's own words, and + makes the window a tenth larger.
+    /// No Open button is left on either row.
+    #[gpui::test]
+    fn language_and_size_are_set_on_their_rows(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        assert!(cx.debug_bounds("st-open-language").is_none());
+        assert!(cx.debug_bounds("st-open-scale").is_none());
+        let es = cx.debug_bounds("st-lang-es").expect("Español is offered");
+        cx.simulate_click(es.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.lang), lang::Lang::Es);
+        let en = cx.debug_bounds("st-lang-en").unwrap();
+        cx.simulate_click(en.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.lang), lang::Lang::En);
+
+        let before = cx.update(|_, cx| theme::outer_choice(cx).grade.scale);
+        let up = cx.debug_bounds("st-scale-up").expect("the + step");
+        cx.simulate_click(up.center(), gpui::Modifiers::none());
+        redraw(cx);
+        let after = cx.update(|_, cx| theme::outer_choice(cx).grade.scale);
+        assert!(
+            (after - scale_step(before, 0.1)).abs() < 1e-4,
+            "+ steps {before} to {after}"
+        );
+        let down = cx.debug_bounds("st-scale-down").unwrap();
+        cx.simulate_click(down.center(), gpui::Modifiers::none());
+        redraw(cx);
+    }
+
+    /// UI CONFIG's switches are Appearance rows: a press flips what the
+    /// window shows, and the search finds them by their titles. The menu
+    /// glyphs row flips every corner glyph together.
+    ///
+    /// Mutation-tested: flipping to `on` instead of `!on` leaves the switch
+    /// where it was.
+    #[gpui::test]
+    fn ui_config_switches_are_appearance_rows_the_search_finds(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        redraw(cx);
+        let shown = |cx: &mut gpui::VisualTestContext, k| cx.update(|_, cx| uiconfig::shown(cx, k));
+        // The page is taller than the window: wheel it until a row is in view.
+        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
+            for _ in 0..20 {
+                let page = cx.debug_bounds("st-page").expect("the page");
+                let row = cx.debug_bounds(id).expect("the row's switch is drawn");
+                if row.bottom() <= page.bottom() && row.top() >= page.top() {
+                    return;
+                }
+                let down = row.top() > page.top();
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: page.center(),
+                    delta: gpui::ScrollDelta::Pixels(point(
+                        px(0.),
+                        px(if down { -120. } else { 120. }),
+                    )),
+                    ..Default::default()
+                });
+                redraw(cx);
+            }
+            panic!("{id} never came into view");
+        };
+        for (id, key) in [
+            ("st-ui-counts", uiconfig::Key::Counts),
+            ("st-ui-p-close", uiconfig::Key::PaneClose),
+        ] {
+            into_view(cx, id);
+            let before = shown(cx, key);
+            let at = cx.debug_bounds(id).expect("the row's switch is drawn");
+            cx.simulate_click(at.center(), gpui::Modifiers::none());
+            redraw(cx);
+            assert_eq!(shown(cx, key), !before, "{id} flips {key:?}");
+            let at = cx.debug_bounds(id).unwrap();
+            cx.simulate_click(at.center(), gpui::Modifiers::none());
+            redraw(cx);
+            assert_eq!(shown(cx, key), before, "and back");
+        }
+        into_view(cx, "st-ui-glyphs");
+        let at = cx.debug_bounds("st-ui-glyphs").expect("the glyphs row");
+        cx.simulate_click(at.center(), gpui::Modifiers::none());
+        redraw(cx);
+        let hidden = cx.update(|_, cx| {
+            uiconfig::Key::MENU_GLYPHS
+                .iter()
+                .filter(|k| !uiconfig::shown(cx, **k))
+                .count()
+        });
+        assert!(
+            hidden == 0 || hidden == uiconfig::Key::MENU_GLYPHS.len(),
+            "the glyphs flip together: {hidden} hidden"
+        );
+        let en = settings_items_in(lang::Lang::En);
+        let title = lang::Lang::En.strings().ui.ui_counts;
+        let hit = settings::search(title, &en);
+        assert_eq!(en[hit[0]].page, Page::Appearance, "{title:?} is found");
     }
 
     /// Open shows the panel in place: the surface config draws inside the

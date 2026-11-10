@@ -40516,8 +40516,6 @@ impl Render for Workspace {
         use settings::Host as H;
         let menu_overlay = self.host_or_root(H::Palette, menu_overlay, &mut hosted);
         let osd_overlay = self.host_or_root(H::Gauges, osd_overlay, &mut hosted);
-        let scale_overlay = self.host_or_root(H::Scale, scale_overlay, &mut hosted);
-        let lang_picker_overlay = self.host_or_root(H::Language, lang_picker_overlay, &mut hosted);
         let update_overlay = self.host_or_root(H::Updates, update_overlay, &mut hosted);
         let admin_overlay = self.host_or_root(H::Admin, admin_overlay, &mut hosted);
         let notif_overlay = self.host_or_root(H::Notices, notif_overlay, &mut hosted);
