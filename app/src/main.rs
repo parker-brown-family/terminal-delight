@@ -112,6 +112,7 @@ mod restricted;
 mod screenread;
 mod session;
 mod settings;
+mod settings_preview;
 mod settings_view;
 mod skills;
 mod skin;
@@ -24650,6 +24651,10 @@ impl Workspace {
     ) -> gpui::Div {
         let sk = skin::for_theme(cx, th, 1.);
         const TRACK: f32 = 150.;
+        // Shown in Settings, a gauge has the column's room: a label that
+        // does not wrap, a track that runs to the readout, a target as tall
+        // as the row.
+        let wide = self.hosting() == Some(settings::Host::Gauges);
         let store = self.slider_bounds.clone();
         // `value` is in the channel's stored units; normalise to a 0..1 track
         // fraction so colour channels (0..1) and text size (0.7..1.6) share the
@@ -24705,7 +24710,8 @@ impl Workspace {
         });
         let label_el = div()
             .relative()
-            .w(px(74.))
+            .flex_shrink_0()
+            .w(px(if wide { 168. } else { 74. }))
             .text_size(sk.text_px(10.))
             .text_color(th.text.alpha(0.8))
             .child(if pinned {
@@ -24740,17 +24746,32 @@ impl Workspace {
             }
             None => label_el.into_any_element(),
         };
+        let acc = th.accent;
         div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
+            .when(wide, |d| {
+                d.w_full()
+                    .gap_4()
+                    .px_3()
+                    .py(px(5.))
+                    .rounded(sk.radius())
+                    .hover(move |st| st.bg(acc.alpha(0.07)))
+            })
             .child(label_el)
             .child(
                 div()
-                    .w(px(TRACK))
-                    .h(px(14.))
+                    .map(|d| {
+                        if wide {
+                            d.flex_1().min_w(px(120.)).h(px(22.))
+                        } else {
+                            d.w(px(TRACK)).h(px(14.))
+                        }
+                    })
                     .relative()
+                    .debug_selector(move || format!("osd-slider-{key:?}"))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
@@ -24775,7 +24796,9 @@ impl Workspace {
             )
             .child(
                 div()
-                    .w(px(sk.fit(28., 42.)))
+                    .flex_shrink_0()
+                    .w(px(if wide { 52. } else { sk.fit(28., 42.) }))
+                    .when(wide, |d| d.flex().justify_end())
                     .whitespace_nowrap()
                     .text_size(sk.text_px(9.))
                     .text_color(th.accent)
@@ -25052,24 +25075,41 @@ impl Workspace {
     ) -> gpui::Div {
         let sk = skin::for_theme(cx, th, 1.);
         const TRACK: f32 = 108.;
+        let wide = self.hosting() == Some(settings::Host::Gauges);
         let store = self.track_bounds[idx].clone();
         let frac = value.clamp(0.0, 1.0);
+        let acc = th.accent;
         div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
+            .when(wide, |d| {
+                d.w_full()
+                    .gap_4()
+                    .px_3()
+                    .py(px(5.))
+                    .pr(px(52. + 16. + 12.))
+                    .rounded(sk.radius())
+                    .hover(move |st| st.bg(acc.alpha(0.07)))
+            })
             .child(
                 div()
-                    .w(px(58.))
+                    .flex_shrink_0()
+                    .w(px(if wide { 168. } else { 58. }))
                     .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.8))
                     .child(label.to_string()),
             )
             .child(
                 div()
-                    .w(px(TRACK))
-                    .h(px(14.))
+                    .map(|d| {
+                        if wide {
+                            d.flex_1().min_w(px(120.)).h(px(22.))
+                        } else {
+                            d.w(px(TRACK)).h(px(14.))
+                        }
+                    })
                     .relative()
                     .cursor_pointer()
                     .on_mouse_down(
@@ -32607,6 +32647,12 @@ impl Render for Workspace {
                         }
                     }
                     "size" => self.scale_menu = true,
+                    // The window's GAUGES tray, two groups open, so each shows
+                    // its picture over its sliders.
+                    "gauges" => {
+                        self.open_osd(MenuScope::Outer, None);
+                        self.osd_groups = vec![false, true, false, false, true];
+                    }
                     "tab" => self.open_tab_menu(self.active, point(px(350.), px(90.)), cx),
                     "launcher" => {
                         let cwd = first
@@ -35223,7 +35269,13 @@ impl Render for Workspace {
                 .id("theme-panel")
                 .debug_selector(|| "theme-panel".into())
                 .when(!hosted, |d| d.absolute())
-                .w(px(panel_w));
+                .map(|d| {
+                    if hosted {
+                        d.w_full().flex_wrap().items_start()
+                    } else {
+                        d.w(px(panel_w))
+                    }
+                });
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -35245,22 +35297,32 @@ impl Render for Workspace {
                 (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
-                .when(sk.text_controls(), |d| d.right(px(8.)))
-                .p_3()
-                .rounded(sk.rad_raw(6.))
-                .border(sk.box_border(2.))
-                .border_color(th.accent.alpha(0.85))
-                .bg(sk.region_face(th.surface.alpha(0.82)))
+                .when(sk.text_controls() && !hosted, |d| d.right(px(8.)))
                 // never spill past the RENDER: clip horizontally, scroll a
                 // tall tray vertically rather than running down over the
                 // bottom bezel. The cap is the terminal band this tray hangs
                 // over plus one hairline — not the window, which is how the
                 // densest tray in the app came to cover the split buttons.
-                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
+                // In the book, the book is the frame and the page scrolls.
+                .when(!hosted, |d| {
+                    d.p_3()
+                        .rounded(sk.rad_raw(6.))
+                        .border(sk.box_border(2.))
+                        .border_color(th.accent.alpha(0.85))
+                        .bg(sk.region_face(th.surface.alpha(0.82)))
+                        .max_h(px(self.tray_max_h(tray_top)))
+                        .overflow_y_scroll()
+                        .shadow(float_shadows(th.accent, th.grade.phosphor))
+                        .map(|d| sk.popup(sk.finish(d)))
+                })
+                .when(hosted, |d| {
+                    d.p_3()
+                        .rounded(sk.radius())
+                        .border(sk.box_border(1.))
+                        .border_color(th.text.alpha(0.14))
+                        .bg(th.text.alpha(0.03))
+                })
                 .overflow_x_hidden()
-                .overflow_y_scroll()
-                .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -35300,16 +35362,49 @@ impl Render for Workspace {
                 .absolute()
                 .inset_0()
                 .when(hosted, |d| {
-                    d.overflow_y_scroll().flex().justify_center().items_start()
+                    d.overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .pb_8()
                 })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.theme_menu = None;
-                        ws.design_menu = None;
-                        cx.notify();
-                    }),
-                )
+                .when(!hosted, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.theme_menu = None;
+                            ws.design_menu = None;
+                            cx.notify();
+                        }),
+                    )
+                })
+                // In the book, the look as it is now, over the choices that
+                // change it: each press below redraws it.
+                .when(hosted, |d| {
+                    let look = theme::resolve(cx, &cur);
+                    d.child(
+                        div()
+                            .w_full()
+                            .mb_4()
+                            .flex()
+                            .flex_row()
+                            .gap_3()
+                            .child(settings_preview::gauge(
+                                &look,
+                                &sk,
+                                settings_preview::Gauge::Picture,
+                                260.,
+                                120.,
+                            ))
+                            .child(settings_preview::gauge(
+                                &look,
+                                &sk,
+                                settings_preview::Gauge::Inactive,
+                                360.,
+                                120.,
+                            )),
+                    )
+                })
                 .child(panel)
         });
 
@@ -35437,12 +35532,72 @@ impl Render for Workspace {
                     ],
                 ),
             ];
+            // Shown in Settings, every group is open and is a section of the
+            // page, with a picture of what its gauges do beside its sliders.
+            // Parker, 2026-11-10: *"we are no longer concerned about space, so
+            // gauges should be UNCOLLAPSED"*. In the window's tray they fold,
+            // and an open group shows its picture over its sliders.
+            let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let look = theme::resolve(cx, &cur);
+            let samples = [
+                settings_preview::Gauge::Type,
+                settings_preview::Gauge::Picture,
+                settings_preview::Gauge::Document,
+                settings_preview::Gauge::Active,
+                settings_preview::Gauge::Inactive,
+            ];
+            // The tray's capitals in sentence case, keeping an acronym
+            // (CRT) as it is written.
+            let section_title = |s: &str| {
+                let s: String = s
+                    .split(' ')
+                    .enumerate()
+                    .map(|(i, w)| {
+                        if w.chars().count() <= 3 && w.chars().all(|c| c.is_uppercase()) {
+                            return w.to_string();
+                        }
+                        let mut c = w.chars();
+                        match c.next() {
+                            Some(f) if i == 0 => f
+                                .to_uppercase()
+                                .chain(c.flat_map(|c| c.to_lowercase()))
+                                .collect(),
+                            Some(_) => w.to_lowercase(),
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                div()
+                    .text_size(sk.text_px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(th.text.alpha(0.92))
+                    .child(s)
+            };
+            // A section's card in the book: the sliders, then the picture.
+            let card = |sliders: gpui::Div, sample: Option<AnyElement>| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_4()
+                    .p_3()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(th.text.alpha(0.14))
+                    .bg(th.text.alpha(0.03))
+                    .child(sliders.flex_1().min_w(px(0.)).items_start())
+                    .children(sample)
+            };
+            const SAMPLE_W: f32 = 240.;
+            const SAMPLE_H: f32 = 132.;
             let mut rows = div()
                 .relative()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .when(sk.m.frost > 0., |d| sk.finish_group(d).p_2());
+                .when(hosted, |d| d.gap_6())
+                .when(sk.m.frost > 0. && !hosted, |d| sk.finish_group(d).p_2());
             // A group is its heading until opened; a press on the heading opens
             // or shuts it. Unboxed, each group ends on a short rule, as the
             // CONFIG surfaces' sections do.
@@ -35454,12 +35609,22 @@ impl Render for Workspace {
             };
             let mut lingers_shown = false;
             for (gi, (heading, controls)) in groups.into_iter().enumerate() {
-                let open = self.osd_groups.get(gi).copied().unwrap_or(false);
-                let mut section = div().flex().flex_col().gap_1().child(
+                let open = hosted || self.osd_groups.get(gi).copied().unwrap_or(false);
+                let acc = th.accent;
+                let mut section = div().flex().flex_col().gap_1();
+                // In the book the group's title heads its card; in the tray
+                // the heading is the fold, lit under the pointer.
+                let mut head = if hosted {
+                    section_title(heading)
+                        .id(SharedString::from(format!("osd-group-{gi}")))
+                        .debug_selector(move || format!("osd-group-{gi}"))
+                } else {
                     div()
                         .id(SharedString::from(format!("osd-group-{gi}")))
                         .debug_selector(move || format!("osd-group-{gi}"))
                         .cursor_pointer()
+                        .rounded(sk.radius())
+                        .hover(move |st| st.bg(acc.alpha(0.10)))
                         .child(label(&format!("{} {heading}", fold_mark(open))))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -35471,8 +35636,20 @@ impl Render for Workspace {
                                 ws.osd_groups[gi] = !ws.osd_groups[gi];
                                 cx.notify();
                             }),
-                        ),
-                );
+                        )
+                };
+                if hosted {
+                    head = head.pb_1();
+                }
+                section = section.child(head);
+                let sample = samples.get(gi).map(|which| {
+                    if hosted {
+                        settings_preview::gauge(&look, &sk, *which, SAMPLE_W, SAMPLE_H)
+                    } else {
+                        settings_preview::gauge(&look, &sk, *which, sk.fit(300., 320.) - 30., 64.)
+                    }
+                });
+                let mut sliders = div().flex().flex_col().gap_1();
                 if open {
                     if controls
                         .first()
@@ -35484,20 +35661,22 @@ impl Render for Workspace {
                         } else {
                             t.g_doc_reader
                         };
-                        section = section.child(
-                            Self::bezel_btn(
-                                &sk,
-                                &format!("{} {mode}", if glow { "◉" } else { "◯" }),
-                                glow,
-                            )
-                            .id("osd-doc-mode")
-                            .debug_selector(|| "osd-doc-mode".to_string())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
-                                    cx.stop_propagation();
-                                    ws.toggle_doc_glow_pane(w, cx);
-                                }),
+                        sliders = sliders.child(
+                            div().flex().child(
+                                Self::bezel_btn(
+                                    &sk,
+                                    &format!("{} {mode}", if glow { "◉" } else { "◯" }),
+                                    glow,
+                                )
+                                .id("osd-doc-mode")
+                                .debug_selector(|| "osd-doc-mode".to_string())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                        cx.stop_propagation();
+                                        ws.toggle_doc_glow_pane(w, cx);
+                                    }),
+                                ),
                             ),
                         );
                     }
@@ -35509,14 +35688,21 @@ impl Render for Workspace {
                                 | G::InactiveCursorLingerMs
                                 | G::InactiveOffCursorLingerMs
                         );
-                        section = section.child(self.slider_row(key, name, value, &th, cx));
+                        sliders = sliders.child(self.slider_row(key, name, value, &th, cx));
                         if key == G::InactiveText {
-                            section = section.child(label(t.g_text_relative));
+                            sliders = sliders.child(label(t.g_text_relative));
                         }
                     }
                 }
+                if open {
+                    section = if hosted {
+                        section.child(card(sliders, sample))
+                    } else {
+                        section.children(sample).child(sliders)
+                    };
+                }
                 rows = rows.child(section);
-                if sk.unboxed() {
+                if sk.unboxed() && !hosted {
                     rows = rows.child(div().mx(px(18.)).child(sk.rule_h()));
                 }
             }
@@ -35536,12 +35722,11 @@ impl Render for Workspace {
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
-            let hosted = self.hosting() == Some(settings::Host::Gauges);
             let mut panel = sk
                 .sheet()
                 .id("osd-panel")
                 .when(!hosted, |d| d.absolute())
-                .w(px(panel_w));
+                .map(|d| if hosted { d.w_full() } else { d.w(px(panel_w)) });
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
@@ -35566,38 +35751,62 @@ impl Render for Workspace {
                 // past the bottom.
                 .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
-                .overflow_y_scroll()
-                .p_3()
-                .rounded(sk.rad_raw(6.))
-                .border(sk.box_border(2.))
-                .border_color(th.accent.alpha(0.85))
-                .bg(sk.region_face(darken(th.surface, 0.6)))
-                .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.popup(sk.finish(d)))
+                .when(!hosted, |d| {
+                    // The tray's own frame. In the book, the book is the frame
+                    // and the page scrolls.
+                    d.overflow_y_scroll()
+                        .p_3()
+                        .rounded(sk.rad_raw(6.))
+                        .border(sk.box_border(2.))
+                        .border_color(th.accent.alpha(0.85))
+                        .bg(sk.region_face(darken(th.surface, 0.6)))
+                        .shadow(float_shadows(th.accent, th.grade.phosphor))
+                        .map(|d| sk.popup(sk.finish(d)))
+                })
                 .flex()
                 .flex_col()
                 .gap_2()
+                .when(hosted, |d| d.gap_6())
                 .text_size(sk.text_px(10.))
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                )
-                .child(label(&format!(
-                    "{} — {}",
-                    t.d_display,
-                    if is_pane { t.scope_pane } else { t.scope_outer }
-                )))
-                .child(rows)
-                .child(
-                    Self::bezel_btn(&sk, t.d_reset, grade.is_neutral()).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.reset_grade(cx);
-                        }),
-                    ),
                 );
+            let reset = Self::bezel_btn(&sk, t.d_reset, grade.is_neutral())
+                .id("osd-reset")
+                .debug_selector(|| "osd-reset".into())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.reset_grade(cx);
+                    }),
+                );
+            let scope_word = if is_pane { t.scope_pane } else { t.scope_outer };
+            panel = if hosted {
+                // In the book: whose gauges these are, and the reset, above
+                // the sections rather than between them.
+                panel
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(section_title(&format!(
+                                "{} \u{2014} {scope_word}",
+                                t.d_display
+                            )))
+                            .child(div().flex_shrink_0().child(reset)),
+                    )
+                    .child(rows)
+            } else {
+                panel
+                    .child(label(&format!("{} \u{2014} {scope_word}", t.d_display)))
+                    .child(rows)
+                    .child(reset)
+            };
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -35623,17 +35832,21 @@ impl Render for Workspace {
             // everything else here, so it scopes to pane/outer and inherits via
             // "follow outer". The angle/depth sliders only appear while crawl is
             // on.
-            panel = panel.child(
-                egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.crawl {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.crawl {
                 let crawl_on = grade.crawl;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -35670,24 +35883,39 @@ impl Render for Workspace {
                             cx,
                         ));
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_crawl_hdr).pb_1())
+                            .child(card(block, None)),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
             // ---- CRT: the master switch, then the tube it switches — warp, the
             // glass glare and the roll bar — behind the second collapsed row. Off is a flat
             // screen, and the knobs only appear while it is on, as crawl's do:
             // the dials keep their values either way, so switching on restores
             // exactly the tube they describe (see `theme::flatten_tube`).
-            panel = panel.child(
-                egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.crt = !ws.osd_eggs.crt;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.crt {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.crt = !ws.osd_eggs.crt;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.crt {
                 let crt_on = grade.crt;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -35763,23 +35991,47 @@ impl Render for Workspace {
                                 ),
                         );
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_crt_hdr).pb_1())
+                            .child(card(
+                                block,
+                                Some(settings_preview::gauge(
+                                    &look,
+                                    &sk,
+                                    settings_preview::Gauge::Crt,
+                                    SAMPLE_W,
+                                    SAMPLE_H,
+                                )),
+                            )),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
             // ---- CURSOR TRAIL: the cursor's phosphor afterimage, behind the
             // third collapsed row. Off until somebody turns it on; the style
             // and its two dials appear only while it is on, as the tube's do,
             // and keep their values when it goes off.
-            panel = panel.child(
-                egg_row("osd-egg-trail", self.osd_eggs.trail, t.d_trail_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.trail = !ws.osd_eggs.trail;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.trail {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-trail", self.osd_eggs.trail, t.d_trail_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.trail = !ws.osd_eggs.trail;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.trail {
                 let trail = grade.cursor_trail.filter(|t| t.on);
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -35846,7 +36098,18 @@ impl Render for Workspace {
                         block = block.child(label(why));
                     }
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_trail_hdr).pb_1())
+                            .child(card(block, None)),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
             let panel = panel.when(!hosted, |d| d.child(settings_view::frost_behind()));
             // full-screen scrim: click anywhere outside closes. Shown in
@@ -35856,16 +36119,24 @@ impl Render for Workspace {
                 .id("osd-scrim")
                 .absolute()
                 .inset_0()
+                // In the book the page is the scrim: it scrolls, and a press
+                // on its margin does nothing (the breadcrumb and Esc go back).
                 .when(hosted, |d| {
-                    d.overflow_y_scroll().flex().justify_center().items_start()
+                    d.overflow_y_scroll()
+                        .flex()
+                        .justify_center()
+                        .items_start()
+                        .pb_8()
                 })
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.osd_menu = None;
-                        cx.notify();
-                    }),
-                )
+                .when(!hosted, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.osd_menu = None;
+                            cx.notify();
+                        }),
+                    )
+                })
                 .child(panel)
         });
 
