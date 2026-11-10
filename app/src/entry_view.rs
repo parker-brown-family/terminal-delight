@@ -14,6 +14,10 @@
 
 use super::*;
 
+/// A draft put away: the text, the pictures pasted in, and the long pastes
+/// its tokens stand for, each as (token, text).
+pub(crate) type Draft = (String, Vec<std::path::PathBuf>, Vec<(String, String)>);
+
 /// The composer's state while it is up.
 pub(crate) struct Composer {
     /// What the person is asking for.
