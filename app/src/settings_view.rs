@@ -65,6 +65,49 @@ type Then = fn(&mut Workspace, &mut Window, &mut Context<Workspace>);
 /// What a switch does when pressed.
 type Flip = fn(&mut Workspace, &mut Context<Workspace>);
 
+/// A press, ready to hang on any element.
+type Press = Box<dyn Fn(&MouseDownEvent, &mut Window, &mut App) + 'static>;
+
+/// A row's control, and what a press anywhere on its row does. A switch or
+/// an Open button is only the mark that says what the row does: the whole
+/// row is the target, as it is in every settings page people know. Parker,
+/// 2026-11-10: *"click ANYWHERE on the card should open"*. The control keeps
+/// its own press too, so it still works where it is drawn outside a row.
+pub(crate) struct Ctl {
+    el: AnyElement,
+    press: Option<Press>,
+    /// The control's id, which names its row (`<id>-row`) for the tests.
+    id: Option<&'static str>,
+}
+
+impl From<AnyElement> for Ctl {
+    fn from(el: AnyElement) -> Ctl {
+        Ctl {
+            el,
+            press: None,
+            id: None,
+        }
+    }
+}
+
+impl Ctl {
+    /// The control drawn inside `f`'s element; the row's press is kept.
+    fn wrap(self, f: impl FnOnce(AnyElement) -> AnyElement) -> Ctl {
+        Ctl {
+            el: f(self.el),
+            ..self
+        }
+    }
+}
+
+/// The group every row is, so a row's hover can light its control.
+const ROW: &str = "st-row";
+
+/// The content column's widest: the measure a settings page reads at,
+/// whatever the window. One width for every page and every panel shown in
+/// place, so nothing stretches across a wide screen or shrinks to a tray.
+pub(crate) const COLUMN_W: f32 = 880.;
+
 /// Frost everything outside the element this sits in, for the frame: the
 /// CRT post-pass blurs the window behind an overlay and leaves the overlay
 /// sharp. Parker, 2026-11-09: *"BLUR the main surface while an over lay is
@@ -723,6 +766,12 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
             s.r_artifacts,
             s.r_artifacts_sub,
         ),
+        (
+            Page::Threads,
+            s.s_handovers,
+            s.r_art_where,
+            s.r_art_where_sub,
+        ),
         (Page::Environments, s.s_machines, s.r_machines, ""),
         (Page::Access, s.s_access, s.r_server, s.r_server_sub),
         (Page::Access, s.s_access, s.r_expose, s.r_expose_sub),
@@ -780,9 +829,35 @@ impl Workspace {
         sk: &skin::Skin,
         title: &str,
         sub: Option<String>,
-        control: Option<AnyElement>,
+        control: Option<Ctl>,
     ) -> gpui::Div {
+        Self::st_row_shown(th, sk, title, sub, None, control)
+    }
+
+    /// A row with a picture of what it changes between its words and its
+    /// control. A row whose control acts is one target: a press anywhere on
+    /// it acts, and it lights under the pointer.
+    fn st_row_shown(
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        title: &str,
+        sub: Option<String>,
+        sample: Option<AnyElement>,
+        control: Option<Ctl>,
+    ) -> gpui::Div {
+        let acc = th.accent;
+        let (control, press, id) = match control {
+            Some(c) => (Some(c.el), c.press, c.id),
+            None => (None, None, None),
+        };
         div()
+            .group(ROW)
+            .when_some(id, |d, id| d.debug_selector(move || format!("{id}-row")))
+            .when_some(press, |d, press| {
+                d.cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.08)))
+                    .on_mouse_down(MouseButton::Left, press)
+            })
             .flex()
             .flex_row()
             .items_center()
@@ -804,15 +879,21 @@ impl Workspace {
                             .text_color(th.text)
                             .child(SharedString::from(title.to_string())),
                     )
-                    .when_some(sub.filter(|s| !s.is_empty()), |d, s| {
-                        d.child(
-                            div()
-                                .text_size(sk.text_px(8.5))
-                                .text_color(th.text.alpha(0.6))
-                                .child(SharedString::from(s)),
-                        )
-                    }),
+                    // One line each: a line break inside one text measures
+                    // short, and the section clips what overflows its rows.
+                    .children(sub.into_iter().flat_map(|s| {
+                        s.lines()
+                            .filter(|l| !l.is_empty())
+                            .map(|l| {
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(0.6))
+                                    .child(SharedString::from(l.to_string()))
+                            })
+                            .collect::<Vec<_>>()
+                    })),
             )
+            .children(sample)
             .children(control)
     }
 
@@ -829,6 +910,10 @@ impl Workspace {
         div()
             .id(id)
             .debug_selector(move || id.into())
+            // A section never shrinks to the column: its box clips (for the
+            // rows' hover at its rounded corners), and a clipping flex item
+            // may otherwise be squeezed below its content.
+            .flex_shrink_0()
             .flex()
             .flex_col()
             .gap_2()
@@ -844,6 +929,8 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .rounded(sk.radius())
+                    .flex_shrink_0()
+                    .overflow_hidden()
                     .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.14))
                     .bg(th.text.alpha(0.03))
@@ -862,31 +949,30 @@ impl Workspace {
         on: bool,
         flip: Flip,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
-        div()
-            .id(id)
-            .debug_selector(move || id.into())
-            .cursor_pointer()
-            .child(slider_switch(on, th, sk1))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    flip(ws, cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element()
+    ) -> Ctl {
+        let press = move |cx: &mut Context<Self>| -> Press {
+            Box::new(cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                flip(ws, cx);
+                cx.notify();
+            }))
+        };
+        Ctl {
+            el: div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .cursor_pointer()
+                .child(slider_switch(on, th, sk1))
+                .on_mouse_down(MouseButton::Left, press(cx))
+                .into_any_element(),
+            press: Some(press(cx)),
+            id: Some(id),
+        }
     }
 
     /// Every language by its own name, the one in use lit. A press changes
     /// every word in the window at once.
-    fn st_languages(
-        &self,
-        th: &theme::Theme,
-        sk: &skin::Skin,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn st_languages(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
         let now = self.lang;
         div()
             .flex()
@@ -898,10 +984,12 @@ impl Workspace {
             .children(lang::Lang::ALL.iter().copied().map(|l| {
                 let id = SharedString::from(format!("st-lang-{}", l.code()));
                 let sel = id.to_string();
+                let acc = th.accent;
                 sk.chip(l == now)
                     .id(id)
                     .debug_selector(move || sel.clone())
                     .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.14)))
                     .text_size(sk.text_px(9.5))
                     .text_color(th.text)
                     .child(l.native())
@@ -917,19 +1005,23 @@ impl Workspace {
                     )
             }))
             .into_any_element()
+            .into()
     }
 
     /// The window's size as a stepper: smaller, the size now, larger. The
     /// steps are the scrubber's own range in tenths.
-    fn st_scale(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> AnyElement {
+    fn st_scale(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
         let now = theme::outer_choice(cx).grade.scale;
         let step = |id: &'static str, glyph: &'static str, by: f32, live: bool| {
+            let acc = th.accent;
             sk.chip(false)
                 .id(id)
                 .debug_selector(move || id.into())
                 .text_size(sk.text_px(10.5))
                 .text_color(th.text.alpha(if live { 0.95 } else { 0.3 }))
-                .when(live, |d| d.cursor_pointer())
+                .when(live, |d| {
+                    d.cursor_pointer().hover(move |st| st.bg(acc.alpha(0.14)))
+                })
                 .child(glyph)
                 .on_mouse_down(
                     MouseButton::Left,
@@ -965,6 +1057,50 @@ impl Workspace {
             )
             .child(step("st-scale-up", "+", 0.1, now < SCALE_MAX - 0.001))
             .into_any_element()
+            .into()
+    }
+
+    /// Where a person's click opens an artifact: the floating square or the
+    /// side panel, the one in force lit.
+    fn st_art_place(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let s = self.lang.strings().settings;
+        let now = docopen::artifact_place();
+        let acc = th.accent;
+        div()
+            .flex()
+            .flex_row()
+            .flex_shrink_0()
+            .gap_1()
+            .children(
+                [
+                    (
+                        docopen::ArtifactPlace::Square,
+                        "st-art-square",
+                        s.art_square,
+                    ),
+                    (docopen::ArtifactPlace::Side, "st-art-side", s.art_side),
+                ]
+                .into_iter()
+                .map(|(place, id, word)| {
+                    sk.chip(place == now)
+                        .id(id)
+                        .debug_selector(move || id.into())
+                        .cursor_pointer()
+                        .hover(move |st| st.bg(acc.alpha(0.14)))
+                        .text_size(sk.text_px(9.5))
+                        .text_color(th.text)
+                        .child(word)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_artifact_place(place, cx);
+                            }),
+                        )
+                }),
+            )
+            .into_any_element()
+            .into()
     }
 
     /// A UI CONFIG row's switch: on while every key it holds is shown, and a
@@ -976,22 +1112,26 @@ impl Workspace {
         id: &'static str,
         keys: &'static [uiconfig::Key],
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Ctl {
         let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
-        div()
-            .id(id)
-            .debug_selector(move || id.into())
-            .cursor_pointer()
-            .child(slider_switch(on, th, sk1))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.flip_ui(keys, !on, cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element()
+        let press = move |cx: &mut Context<Self>| -> Press {
+            Box::new(cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.flip_ui(keys, !on, cx);
+                cx.notify();
+            }))
+        };
+        Ctl {
+            el: div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .cursor_pointer()
+                .child(slider_switch(on, th, sk1))
+                .on_mouse_down(MouseButton::Left, press(cx))
+                .into_any_element(),
+            press: Some(press(cx)),
+            id: Some(id),
+        }
     }
 
     /// The button on a row whose setting still has a panel of its own. With a
@@ -1006,43 +1146,57 @@ impl Workspace {
         host: Option<Host>,
         then: Then,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Ctl {
         let acc = th.accent;
-        div()
-            .id(id)
-            .debug_selector(move || id.into())
-            .flex_shrink_0()
-            .px_3()
-            .py_1()
-            .rounded(sk.radius())
-            .border(sk.box_border(1.))
-            .border_color(th.text.alpha(0.22))
-            .text_size(sk.text_px(9.5))
-            .text_color(th.text.alpha(0.9))
-            .cursor_pointer()
-            .hover(move |s| s.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
-            .child(SharedString::from(format!(
-                "{} \u{2197}",
-                self.lang.strings().settings.open
-            )))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
-                    cx.stop_propagation();
-                    match host {
-                        Some(h) => {
-                            ws.unhost();
-                            if let Some(b) = ws.settings.as_mut() {
-                                b.host = Some(h);
-                            }
+        let press = move |cx: &mut Context<Self>| -> Press {
+            Box::new(cx.listener(move |ws, _: &MouseDownEvent, w, cx| {
+                cx.stop_propagation();
+                match host {
+                    Some(h) => {
+                        ws.unhost();
+                        if let Some(b) = ws.settings.as_mut() {
+                            b.host = Some(h);
                         }
-                        None => ws.close_settings(cx),
                     }
-                    then(ws, w, cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element()
+                    None => ws.close_settings(cx),
+                }
+                then(ws, w, cx);
+                cx.notify();
+            }))
+        };
+        // In place, the panel opens on this page (a chevron); otherwise the
+        // book closes and the surface opens (an arrow out).
+        let mark = if host.is_some() {
+            "\u{203a}"
+        } else {
+            "\u{2197}"
+        };
+        Ctl {
+            el: div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .flex_shrink_0()
+                .px_3()
+                .py_1()
+                .rounded(sk.radius())
+                .border(sk.box_border(1.))
+                .border_color(th.text.alpha(0.22))
+                .text_size(sk.text_px(9.5))
+                .text_color(th.text.alpha(0.9))
+                .cursor_pointer()
+                .group_hover(ROW, move |s| {
+                    s.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7))
+                })
+                .hover(move |s| s.bg(acc.alpha(0.2)).border_color(acc.alpha(0.85)))
+                .child(SharedString::from(format!(
+                    "{} {mark}",
+                    self.lang.strings().settings.open
+                )))
+                .on_mouse_down(MouseButton::Left, press(cx))
+                .into_any_element(),
+            press: Some(press(cx)),
+            id: Some(id),
+        }
     }
 
     /// A button that acts inside the book.
@@ -1054,32 +1208,39 @@ impl Workspace {
         lit: bool,
         flip: Flip,
         cx: &mut Context<Self>,
-    ) -> AnyElement {
+    ) -> Ctl {
         let acc = th.accent;
-        div()
-            .id(id)
-            .debug_selector(move || id.into())
-            .flex_shrink_0()
-            .px_3()
-            .py_1()
-            .rounded(sk.radius())
-            .border(sk.box_border(1.))
-            .border_color(if lit { acc } else { th.text.alpha(0.22) })
-            .when(lit, |d| d.bg(acc.alpha(0.18)))
-            .text_size(sk.text_px(9.5))
-            .text_color(th.text.alpha(0.9))
-            .cursor_pointer()
-            .hover(move |st| st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7)))
-            .child(SharedString::from(label))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    flip(ws, cx);
-                    cx.notify();
-                }),
-            )
-            .into_any_element()
+        let press = move |cx: &mut Context<Self>| -> Press {
+            Box::new(cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                flip(ws, cx);
+                cx.notify();
+            }))
+        };
+        Ctl {
+            el: div()
+                .id(id)
+                .debug_selector(move || id.into())
+                .flex_shrink_0()
+                .px_3()
+                .py_1()
+                .rounded(sk.radius())
+                .border(sk.box_border(1.))
+                .border_color(if lit { acc } else { th.text.alpha(0.22) })
+                .when(lit, |d| d.bg(acc.alpha(0.18)))
+                .text_size(sk.text_px(9.5))
+                .text_color(th.text.alpha(0.9))
+                .cursor_pointer()
+                .group_hover(ROW, move |st| {
+                    st.bg(acc.alpha(0.14)).border_color(acc.alpha(0.7))
+                })
+                .hover(move |st| st.bg(acc.alpha(0.2)).border_color(acc.alpha(0.85)))
+                .child(SharedString::from(label))
+                .on_mouse_down(MouseButton::Left, press(cx))
+                .into_any_element(),
+            press: Some(press(cx)),
+            id: Some(id),
+        }
     }
 
     /// The Worktrees page: T3's Cleanup rules, then the review of what they
@@ -1157,23 +1318,26 @@ impl Workspace {
                 s.r_wt_inactive,
                 Some(s.r_wt_inactive_sub.into()),
                 Some(
-                    div()
-                        .flex()
-                        .items_center()
-                        .gap_4()
-                        .child(stepper)
-                        .child(self.st_switch(
-                            th,
-                            sk1,
-                            "st-wt-inactive",
-                            p.inactive_on(),
-                            |ws, _| {
-                                ws.wt_prefs.inactive = Some(!ws.wt_prefs.inactive_on());
-                                ws.wt_save();
-                            },
-                            cx,
-                        ))
-                        .into_any_element(),
+                    self.st_switch(
+                        th,
+                        sk1,
+                        "st-wt-inactive",
+                        p.inactive_on(),
+                        |ws, _| {
+                            ws.wt_prefs.inactive = Some(!ws.wt_prefs.inactive_on());
+                            ws.wt_save();
+                        },
+                        cx,
+                    )
+                    .wrap(|sw| {
+                        div()
+                            .flex()
+                            .items_center()
+                            .gap_4()
+                            .child(stepper)
+                            .child(sw)
+                            .into_any_element()
+                    }),
                 ),
             ),
             Self::st_row(
@@ -1316,12 +1480,8 @@ impl Workspace {
                 lang::fill(s.wt_remove, &[("n", &n_remove.to_string())])
             };
             review.push(
-                div()
-                    .flex()
-                    .justify_end()
-                    .px_3()
-                    .py_2()
-                    .child(Self::st_button(
+                div().flex().justify_end().px_3().py_2().child(
+                    Self::st_button(
                         th,
                         sk,
                         "st-wt-remove",
@@ -1329,7 +1489,9 @@ impl Workspace {
                         r.armed,
                         |ws, cx| ws.wt_remove_press(cx),
                         cx,
-                    )),
+                    )
+                    .el,
+                ),
             );
         }
         if let Some(said) = &r.said {
@@ -1342,7 +1504,7 @@ impl Workspace {
     }
 
     /// A read-only value on the right of a row.
-    fn st_value(th: &theme::Theme, sk: &skin::Skin, text: String) -> AnyElement {
+    fn st_value(th: &theme::Theme, sk: &skin::Skin, text: String) -> Ctl {
         div()
             .flex_shrink_0()
             .max_w(px(320.))
@@ -1350,6 +1512,7 @@ impl Workspace {
             .text_color(th.text.alpha(0.75))
             .child(SharedString::from(text))
             .into_any_element()
+            .into()
     }
 
     // ---- the pages -----------------------------------------------------
@@ -1365,7 +1528,9 @@ impl Workspace {
         let s = self.lang.strings().settings;
         let t = self.lang.strings();
         let ui = t.ui;
-        let row = |title: &str, sub: &str, c: AnyElement| {
+        // The window's look as its panes wear it, for the pictures.
+        let look = theme::resolve(cx, &theme::outer_choice(cx));
+        let row = |title: &str, sub: &str, c: Ctl| {
             Self::st_row(th, sk, title, Some(sub.to_string()), Some(c))
         };
         match page {
@@ -1422,29 +1587,49 @@ impl Workspace {
                     "st-sec-look",
                     s.s_look,
                     vec![
-                        row(
+                        // Each with the window as it looks now: the colours
+                        // the theme gives it, and the gauges on its panes.
+                        Self::st_row_shown(
+                            th,
+                            sk,
                             s.r_palette,
-                            s.r_palette_sub,
-                            self.st_open(
+                            Some(s.r_palette_sub.to_string()),
+                            Some(settings_preview::gauge(
+                                &look,
+                                sk,
+                                settings_preview::Gauge::Picture,
+                                settings_preview::MAP_W,
+                                settings_preview::MAP_H,
+                            )),
+                            Some(self.st_open(
                                 th,
                                 sk,
                                 "st-open-palette",
                                 Some(Host::Palette),
                                 |ws, _, _| ws.theme_menu = Some(MenuScope::Outer),
                                 cx,
-                            ),
+                            )),
                         ),
-                        row(
+                        Self::st_row_shown(
+                            th,
+                            sk,
                             s.r_gauges,
-                            s.r_gauges_sub,
-                            self.st_open(
+                            Some(s.r_gauges_sub.to_string()),
+                            Some(settings_preview::gauge(
+                                &look,
+                                sk,
+                                settings_preview::Gauge::Active,
+                                settings_preview::MAP_W * 1.5,
+                                settings_preview::MAP_H,
+                            )),
+                            Some(self.st_open(
                                 th,
                                 sk,
                                 "st-open-gauges",
                                 Some(Host::Gauges),
                                 |ws, _, _| ws.open_osd(MenuScope::Outer, None),
                                 cx,
-                            ),
+                            )),
                         ),
                     ],
                 ),
@@ -1474,11 +1659,14 @@ impl Workspace {
                     UI_INTERFACE
                         .iter()
                         .map(|(id, title, keys)| {
-                            Self::st_row(
+                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
+                            Self::st_row_shown(
                                 th,
                                 sk,
                                 &sentence(title(t)),
                                 None,
+                                settings_preview::Spot::of(keys)
+                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
                                 Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                             )
                         })
@@ -1492,11 +1680,14 @@ impl Workspace {
                     UI_PANE_PARTS
                         .iter()
                         .map(|(id, title, keys)| {
-                            Self::st_row(
+                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
+                            Self::st_row_shown(
                                 th,
                                 sk,
                                 &sentence(title(t)),
                                 None,
+                                settings_preview::Spot::of(keys)
+                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
                                 Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                             )
                         })
@@ -1649,7 +1840,11 @@ impl Workspace {
                                 sk,
                                 ui.ag_rest_after,
                                 Some(self.agents_minutes_label(p.rest_after_min())),
-                                Some(self.agents_slider(0, None, th, sk, cx).into_any_element()),
+                                Some(
+                                    self.agents_slider(0, None, th, sk, cx)
+                                        .into_any_element()
+                                        .into(),
+                                ),
                             ),
                             row(
                                 ui.ag_sleep_name,
@@ -1676,7 +1871,11 @@ impl Workspace {
                                 sk,
                                 ui.ag_sleep_after,
                                 Some(self.agents_minutes_label(p.sleep_after_rest_min())),
-                                Some(self.agents_slider(1, None, th, sk, cx).into_any_element()),
+                                Some(
+                                    self.agents_slider(1, None, th, sk, cx)
+                                        .into_any_element()
+                                        .into(),
+                                ),
                             ),
                             Self::st_row(
                                 th,
@@ -1693,18 +1892,25 @@ impl Workspace {
                         sk,
                         "st-sec-handovers",
                         s.s_handovers,
-                        vec![row(
-                            s.r_artifacts,
-                            s.r_artifacts_sub,
-                            self.st_open(
-                                th,
-                                sk,
-                                "st-open-artifacts",
-                                None,
-                                |ws, _, cx| ws.art_open(cx),
-                                cx,
+                        vec![
+                            row(
+                                s.r_artifacts,
+                                s.r_artifacts_sub,
+                                self.st_open(
+                                    th,
+                                    sk,
+                                    "st-open-artifacts",
+                                    None,
+                                    |ws, _, cx| ws.art_open(cx),
+                                    cx,
+                                ),
                             ),
-                        )],
+                            row(
+                                s.r_art_where,
+                                s.r_art_where_sub,
+                                self.st_art_place(th, sk, cx),
+                            ),
+                        ],
                     ),
                 ]
             }
@@ -1857,7 +2063,7 @@ impl Workspace {
                                 cx,
                             ),
                         ),
-                        row(s.r_expose, s.r_expose_sub, picker),
+                        row(s.r_expose, s.r_expose_sub, picker.into()),
                         row(
                             s.r_events,
                             s.r_events_sub,
@@ -2219,114 +2425,127 @@ impl Workspace {
         let h = (vh - 64.).max(300.);
         let host = self.hosting();
         let acc = th.accent;
-        let header = div()
-            .flex()
-            .flex_row()
-            .items_center()
-            .justify_between()
-            .pb_3()
-            .child(
-                div()
-                    .flex()
-                    .items_center()
-                    .gap_2()
-                    .text_size(sk.text_px(10.))
-                    .child(
-                        div()
-                            .text_color(th.text.alpha(0.55))
-                            .child(SharedString::from(s.title.to_string())),
-                    )
-                    .child(div().text_color(th.text.alpha(0.35)).child("/"))
-                    .child(
-                        div()
-                            .id("st-crumb")
-                            .debug_selector(|| "st-crumb".into())
-                            .when(host.is_some(), |d| {
-                                d.cursor_pointer()
-                                    .hover(move |st| st.text_color(acc))
-                                    .on_mouse_down(
-                                        MouseButton::Left,
-                                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                                            cx.stop_propagation();
-                                            ws.unhost();
-                                            cx.notify();
-                                        }),
-                                    )
-                            })
-                            .text_color(if host.is_some() {
-                                th.text.alpha(0.55)
-                            } else {
-                                th.text
-                            })
-                            .font_weight(if host.is_some() {
-                                gpui::FontWeight::NORMAL
-                            } else {
-                                gpui::FontWeight::SEMIBOLD
-                            })
-                            .child(SharedString::from(self.page_name(b.page).to_string())),
-                    )
-                    .when_some(host, |d, h| {
-                        d.child(div().text_color(th.text.alpha(0.35)).child("/"))
-                            .child(
-                                div()
-                                    .id("st-crumb-host")
-                                    .debug_selector(|| "st-crumb-host".into())
-                                    .text_color(th.text)
-                                    .font_weight(gpui::FontWeight::SEMIBOLD)
-                                    .child(SharedString::from(self.host_title(h).to_string())),
-                            )
-                    }),
-            )
-            .child(
-                with_tip(
+        let header = div().flex().flex_row().items_center().pb_3().child(
+            div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .text_size(sk.text_px(10.))
+                .child(
                     div()
-                        .id("st-close")
-                        .debug_selector(|| "st-close".into())
-                        .px_2()
-                        .rounded(sk.radius())
-                        .text_size(sk.text_px(12.))
-                        .text_color(th.text.alpha(0.7))
-                        .cursor_pointer()
-                        .hover(move |st| st.bg(acc.alpha(0.14)))
-                        .child("\u{2715}"),
-                    vec![format!("{} · Esc", s.close)],
+                        .text_color(th.text.alpha(0.55))
+                        .child(SharedString::from(s.title.to_string())),
                 )
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.close_settings(cx);
-                    }),
-                ),
-            );
-        let body = div()
-            .id("st-page")
-            .debug_selector(|| "st-page".into())
-            .flex_1()
-            .min_w(px(0.))
-            .h_full()
-            .px_5()
-            .pt_3()
-            .pb_5()
+                .child(div().text_color(th.text.alpha(0.35)).child("/"))
+                .child(
+                    div()
+                        .id("st-crumb")
+                        .debug_selector(|| "st-crumb".into())
+                        .when(host.is_some(), |d| {
+                            d.cursor_pointer()
+                                .hover(move |st| st.text_color(acc))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                        cx.stop_propagation();
+                                        ws.unhost();
+                                        cx.notify();
+                                    }),
+                                )
+                        })
+                        .text_color(if host.is_some() {
+                            th.text.alpha(0.55)
+                        } else {
+                            th.text
+                        })
+                        .font_weight(if host.is_some() {
+                            gpui::FontWeight::NORMAL
+                        } else {
+                            gpui::FontWeight::SEMIBOLD
+                        })
+                        .child(SharedString::from(self.page_name(b.page).to_string())),
+                )
+                .when_some(host, |d, h| {
+                    d.child(div().text_color(th.text.alpha(0.35)).child("/"))
+                        .child(
+                            div()
+                                .id("st-crumb-host")
+                                .debug_selector(|| "st-crumb-host".into())
+                                .text_color(th.text)
+                                .font_weight(gpui::FontWeight::SEMIBOLD)
+                                .child(SharedString::from(self.host_title(h).to_string())),
+                        )
+                }),
+        );
+        // Close sits in the book's corner, where a dialog keeps it, not at
+        // the end of the column.
+        let close = div().absolute().top(px(10.)).right(px(12.)).child(
+            with_tip(
+                div()
+                    .id("st-close")
+                    .debug_selector(|| "st-close".into())
+                    .px_2()
+                    .rounded(sk.radius())
+                    .text_size(sk.text_px(12.))
+                    .text_color(th.text.alpha(0.7))
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.14)))
+                    .child("\u{2715}"),
+                vec![format!("{} · Esc", s.close)],
+            )
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.close_settings(cx);
+                }),
+            ),
+        );
+        // The page reads at one measure, centred in whatever room the book
+        // has, as a settings page does on the web: never stretched across a
+        // wide window, never a tray in the middle of an empty page. A panel
+        // shown in place takes the same column and fills it.
+        // A definite width, not a maximum: text that wraps inside a width
+        // that is only a cap is measured a line short, and its section then
+        // runs into the next. The page's room is the book less the nav and
+        // the page's own padding (`px_8`, 32 each side).
+        let column_w = COLUMN_W.min((w - NAV_W - 64.).max(240.));
+        let column = div()
+            .id("st-column")
+            .debug_selector(|| "st-column".into())
+            .w(px(column_w))
+            .mx_auto()
+            .min_h_full()
             .flex()
             .flex_col()
             .gap_5()
-            .overflow_y_scroll()
             .child(header)
             .map(|d| match hosted {
-                // The panel, in place: it fills the page, and a press on the
-                // page around it closes it back to the rows.
+                // The panel fills the column under the breadcrumb and scrolls
+                // there itself.
                 Some(el) => d.child(
                     div()
                         .id("st-hosted")
                         .debug_selector(|| "st-hosted".into())
                         .relative()
+                        .w_full()
                         .flex_1()
                         .min_h(px(0.))
                         .child(el),
                 ),
                 None => d.children(self.settings_page(b.page, th, &sk, &sk1, cx)),
             });
+        let body = div()
+            .id("st-page")
+            .debug_selector(|| "st-page".into())
+            .flex_1()
+            .min_w(px(0.))
+            .h_full()
+            .px_8()
+            .pt_3()
+            .pb_8()
+            .overflow_y_scroll()
+            .child(column);
         let book = div()
             .id("settings-book")
             .debug_selector(|| "settings-book".into())
@@ -2346,8 +2565,10 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
             )
+            .relative()
             .child(self.settings_nav(&b, th, &sk, cx))
             .child(body)
+            .child(close)
             // Everything behind the book is frosted while it is open, and the
             // book itself stays sharp: the same post-pass the FOCUS reader
             // and the agent wall use.
@@ -2767,6 +2988,161 @@ mod tests {
         let title = lang::Lang::En.strings().ui.ui_counts;
         let hit = settings::search(title, &en);
         assert_eq!(en[hit[0]].page, Page::Appearance, "{title:?} is found");
+    }
+
+    /// A press anywhere on a row does what the row's control does: on a
+    /// switch row's words it flips the switch, and on the Gauges row's words
+    /// it shows the gauges in place, every group open, with nothing shut by
+    /// a press on the page's margin. Parker, 2026-11-10: *"click ANYWHERE on
+    /// the card should open"* and *"gauges should be UNCOLLAPSED"*.
+    ///
+    /// Mutation-tested: dropping the row's press fails "the words flip it";
+    /// reading the fold in the book again fails "group 4 is open".
+    #[gpui::test]
+    fn a_press_anywhere_on_a_row_does_what_its_control_does(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        redraw(cx);
+        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
+            for _ in 0..20 {
+                let page = cx.debug_bounds("st-page").expect("the page");
+                let row = cx.debug_bounds(id).expect("the row is drawn");
+                if row.bottom() <= page.bottom() && row.top() >= page.top() {
+                    return;
+                }
+                let down = row.top() > page.top();
+                cx.simulate_event(gpui::ScrollWheelEvent {
+                    position: page.center(),
+                    delta: gpui::ScrollDelta::Pixels(point(
+                        px(0.),
+                        px(if down { -120. } else { 120. }),
+                    )),
+                    ..Default::default()
+                });
+                redraw(cx);
+            }
+            panic!("{id} never came into view");
+        };
+        // The words of a switch row, well clear of its switch.
+        into_view(cx, "st-ui-counts-row");
+        let shown = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|_, cx| uiconfig::shown(cx, uiconfig::Key::Counts))
+        };
+        let before = shown(cx);
+        let row = cx.debug_bounds("st-ui-counts-row").unwrap();
+        let switch = cx.debug_bounds("st-ui-counts").unwrap();
+        let words = point(row.left() + px(24.), row.center().y);
+        assert!(words.x < switch.left(), "the press is not on the switch");
+        cx.simulate_click(words, gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(shown(cx), !before, "the words flip it");
+        // The switch itself still flips it once, not twice.
+        let switch = cx.debug_bounds("st-ui-counts").unwrap();
+        cx.simulate_click(switch.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(shown(cx), before, "the switch flips it once");
+        // The words of the Gauges row open the gauges in place.
+        into_view(cx, "st-open-gauges-row");
+        let row = cx.debug_bounds("st-open-gauges-row").unwrap();
+        cx.simulate_click(
+            point(row.left() + px(24.), row.center().y),
+            gpui::Modifiers::none(),
+        );
+        redraw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.hosting()),
+            Some(Host::Gauges),
+            "the gauges are shown in place"
+        );
+        for id in [
+            "osd-group-0",
+            "osd-group-1",
+            "osd-group-2",
+            "osd-group-3",
+            "osd-group-4",
+        ] {
+            assert!(cx.debug_bounds(id).is_some(), "{id} is drawn");
+        }
+        // Every group open: the inactive terminals' sliders are drawn
+        // though nobody pressed their heading.
+        assert!(
+            ws.read_with(cx, |ws, _| ws.osd_groups.get(4).copied() != Some(true)),
+            "nobody opened group 4"
+        );
+        assert!(
+            cx.debug_bounds("osd-slider-InactiveBlur").is_some(),
+            "group 4 is open"
+        );
+        let page = cx.debug_bounds("st-page").unwrap();
+        // A press on the page's margin, beside the column, leaves it shown.
+        cx.simulate_click(
+            point(page.left() + px(6.), page.center().y),
+            gpui::Modifiers::none(),
+        );
+        redraw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.hosting()),
+            Some(Host::Gauges),
+            "a press on the margin leaves the gauges shown"
+        );
+        let _ = page;
+    }
+
+    /// Settings › Threads sends artifacts to the side panel: the chip sets
+    /// the place and the window saves it, and a deliverable opened from the
+    /// rail then lands as a tab in the side panel of the tab on screen.
+    /// Parker, 2026-11-10: *"New setting for where artifacts open: Right
+    /// flyout now an option"*.
+    ///
+    /// Mutation-tested: dropping the side branch from `rail_open_here` fails
+    /// "the rail opens it in the side panel".
+    #[gpui::test]
+    fn artifacts_open_in_the_side_panel_when_settings_says_so(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-art-place-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("note.md");
+        std::fs::write(&note, "# A note\n\nhanded over\n").unwrap();
+        let href = format!("file://{}", note.display());
+        let place = |cx: &mut gpui::VisualTestContext| cx.update(|_, _| docopen::artifact_place());
+        assert_eq!(
+            place(cx),
+            docopen::ArtifactPlace::Square,
+            "unset is the square"
+        );
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Threads), cx));
+        redraw(cx);
+        let chip = cx
+            .debug_bounds("st-art-side")
+            .expect("the side chip is drawn");
+        cx.simulate_click(chip.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(place(cx), docopen::ArtifactPlace::Side);
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.build_state(cx).artifact_place),
+            Some(docopen::ArtifactPlace::Side),
+            "the window saves it"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.close_settings(cx);
+            ws.rail_open_here(&href, cx);
+        });
+        redraw(cx);
+        let (open, tabs) = ws.read_with(cx, |ws, _| {
+            (ws.flyout.open, ws.tabs[ws.active].side.tabs.len())
+        });
+        assert!(open && tabs == 1, "the rail opens it in the side panel");
+        cx.update(|_, _| docopen::set_artifact_place(docopen::ArtifactPlace::Square));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Open shows the panel in place: the surface config draws inside the

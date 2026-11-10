@@ -1802,6 +1802,19 @@ impl Workspace {
         }
     }
 
+    /// A deliverable into the flyout of the task on screen without taking
+    /// the keys, for a door that has no window to hand them over with (the
+    /// rail's Enter, when Settings sends artifacts to the side). Answers
+    /// whether the panel could take it.
+    pub(crate) fn rail_put_side(&mut self, href: &str, cx: &mut Context<Self>) -> bool {
+        let Some(open) = artifact_target(href) else {
+            return false;
+        };
+        let task = self.active;
+        self.flyout_put(task, open.target, open.line, cx);
+        true
+    }
+
     /// "◨ side" on a rail row: the deliverable opens in the flyout of the
     /// task the person is looking at, as the rail's own click opens it where
     /// the person already is. Answers whether it opened.

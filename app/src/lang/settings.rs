@@ -188,6 +188,13 @@ pub struct Settings {
     pub s_handovers: &'static str,
     pub r_artifacts: &'static str,
     pub r_artifacts_sub: &'static str,
+    /// Where a person's click opens an agent's artifact.
+    pub r_art_where: &'static str,
+    pub r_art_where_sub: &'static str,
+    /// Its two answers: the floating square over the pane, or a tab in the
+    /// right-hand side panel.
+    pub art_square: &'static str,
+    pub art_side: &'static str,
     /// The ⚙ glyph's tooltip in the menu corner. Keep the keycap.
     pub glyph_tip: &'static str,
 }
@@ -328,6 +335,10 @@ pub const EN: Settings = Settings {
     s_handovers: "Handovers",
     r_artifacts: "Artifacts",
     r_artifacts_sub: "Everything agents handed over, newest first. Alt+O opens it from anywhere.",
+    r_art_where: "Artifacts open in",
+    r_art_where_sub: "Where a click on something an agent handed over opens it: over the pane, or in the side panel on the right.",
+    art_square: "Floating square",
+    art_side: "Side panel",
     glyph_tip: "Settings · Ctrl+,",
 };
 
@@ -467,6 +478,10 @@ pub const ES: Settings = Settings {
     s_handovers: "Entregas",
     r_artifacts: "Artefactos",
     r_artifacts_sub: "Todo lo que entregaron los agentes, lo más reciente primero. Alt+O lo abre desde cualquier lugar.",
+    r_art_where: "Los artefactos se abren en",
+    r_art_where_sub: "Dónde abre un clic lo que entregó un agente: sobre el panel o en el panel lateral de la derecha.",
+    art_square: "Recuadro flotante",
+    art_side: "Panel lateral",
     glyph_tip: "Ajustes · Ctrl+,",
 };
 
@@ -606,6 +621,10 @@ pub const DE: Settings = Settings {
     s_handovers: "Übergaben",
     r_artifacts: "Artefakte",
     r_artifacts_sub: "Alles, was Agenten übergeben haben, das Neueste zuerst. Alt+O öffnet es von überall.",
+    r_art_where: "Artefakte öffnen sich in",
+    r_art_where_sub: "Wo ein Klick öffnet, was ein Agent übergeben hat: über dem Bereich oder im Seitenbereich rechts.",
+    art_square: "Schwebendes Fenster",
+    art_side: "Seitenbereich",
     glyph_tip: "Einstellungen · Strg+,",
 };
 
@@ -745,6 +764,10 @@ pub const FR: Settings = Settings {
     s_handovers: "Remises",
     r_artifacts: "Artefacts",
     r_artifacts_sub: "Tout ce que les agents ont remis, le plus récent d'abord. Alt+O l'ouvre de partout.",
+    r_art_where: "Les artefacts s'ouvrent dans",
+    r_art_where_sub: "Où un clic ouvre ce qu'un agent a remis : par-dessus le volet, ou dans le panneau latéral à droite.",
+    art_square: "Carré flottant",
+    art_side: "Panneau latéral",
     glyph_tip: "Réglages · Ctrl+,",
 };
 
@@ -884,6 +907,10 @@ pub const RU: Settings = Settings {
     s_handovers: "Передачи",
     r_artifacts: "Артефакты",
     r_artifacts_sub: "Всё, что передали агенты, сначала новое. Alt+O открывает отовсюду.",
+    r_art_where: "Артефакты открываются в",
+    r_art_where_sub: "Где клик открывает то, что передал агент: поверх панели или в боковой панели справа.",
+    art_square: "Плавающем окне",
+    art_side: "Боковой панели",
     glyph_tip: "Настройки · Ctrl+,",
 };
 
@@ -1023,6 +1050,10 @@ pub const ZH: Settings = Settings {
     s_handovers: "交付",
     r_artifacts: "成果",
     r_artifacts_sub: "智能体交付的所有内容，最新的在前。Alt+O 可随处打开。",
+    r_art_where: "工件打开位置",
+    r_art_where_sub: "点击智能体交付的内容时在哪里打开：浮在窗格上，或在右侧的侧边栏中。",
+    art_square: "浮动方框",
+    art_side: "侧边栏",
     glyph_tip: "设置 · Ctrl+,",
 };
 
@@ -1162,6 +1193,10 @@ pub const JA: Settings = Settings {
     s_handovers: "引き渡し",
     r_artifacts: "成果物",
     r_artifacts_sub: "エージェントが引き渡したものすべて、新しい順。Alt+O でどこからでも開けます。",
+    r_art_where: "成果物を開く場所",
+    r_art_where_sub: "エージェントが引き渡したものをクリックで開く場所：ペインの上、または右側のサイドパネル。",
+    art_square: "フローティング",
+    art_side: "サイドパネル",
     glyph_tip: "設定 · Ctrl+,",
 };
 
@@ -1301,6 +1336,10 @@ pub const KO: Settings = Settings {
     s_handovers: "인계",
     r_artifacts: "결과물",
     r_artifacts_sub: "에이전트가 넘긴 모든 것, 최신순. Alt+O로 어디서든 엽니다.",
+    r_art_where: "산출물이 열리는 곳",
+    r_art_where_sub: "에이전트가 넘긴 것을 클릭하면 열리는 곳: 창 위, 또는 오른쪽 사이드 패널.",
+    art_square: "떠 있는 창",
+    art_side: "사이드 패널",
     glyph_tip: "설정 · Ctrl+,",
 };
 
@@ -1440,5 +1479,9 @@ pub const HI: Settings = Settings {
     s_handovers: "सौंपे गए काम",
     r_artifacts: "कलाकृतियाँ",
     r_artifacts_sub: "एजेंटों ने जो कुछ सौंपा, नया सबसे पहले। Alt+O इसे कहीं से भी खोलता है।",
+    r_art_where: "आर्टिफ़ैक्ट यहाँ खुलते हैं",
+    r_art_where_sub: "एजेंट ने जो सौंपा, उस पर क्लिक कहाँ खोलता है: पेन के ऊपर, या दाईं ओर के साइड पैनल में।",
+    art_square: "तैरता चौकोर",
+    art_side: "साइड पैनल",
     glyph_tip: "सेटिंग्स · Ctrl+,",
 };
