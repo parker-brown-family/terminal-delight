@@ -273,6 +273,10 @@ pub struct ReadingTarget {
     pub title: String,
     pub kind: String,
     pub parent: Option<String>,
+    /// Words in the passage the clock measures, from the page's `describe()`.
+    /// Absent on a page built before it sent them: unknown, never zero.
+    #[serde(default)]
+    pub words: Option<u32>,
     #[serde(default, deserialize_with = "rect_or_none")]
     pub rect: Option<RectCss>,
 }

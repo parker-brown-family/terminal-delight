@@ -67,6 +67,7 @@ fn layout() -> ReadingLayout {
                 title: "One".into(),
                 kind: "section".into(),
                 parent: None,
+                words: Some(15),
                 rect: None,
             },
             ReadingTarget {
@@ -74,6 +75,7 @@ fn layout() -> ReadingLayout {
                 title: "Two".into(),
                 kind: "section".into(),
                 parent: None,
+                words: Some(15),
                 rect: None,
             },
             ReadingTarget {
@@ -81,6 +83,7 @@ fn layout() -> ReadingLayout {
                 title: "Unavailable".into(),
                 kind: "figure".into(),
                 parent: Some("two".into()),
+                words: None,
                 rect: None,
             },
         ],
@@ -214,4 +217,41 @@ fn exact_original_save_preserves_notes_and_authored_bytes_and_layout_hash() {
     std::fs::write(&path, [after.as_slice(), b"changed"].concat()).unwrap();
     assert!(reading::save(&path, expected, &s).is_err());
     std::fs::remove_dir_all(directory).unwrap();
+}
+
+#[test]
+fn copy_map_names_what_was_scrolled_past_as_the_browser_does() {
+    // Same estimate as briefing's reading.py/reading.js: 15 words needs the 4 s floor; 16 would not.
+    assert_eq!(reading::reading_ms(15), 4000);
+    assert_eq!(reading::reading_ms(16), 4174);
+    assert_eq!(reading::reading_ms(161), 42_000);
+    assert_eq!(reading::verdict(None, Some(15)), "not measured");
+    assert_eq!(reading::verdict(Some(0), Some(15)), "UNSEEN");
+    assert_eq!(reading::verdict(Some(1599), Some(15)), "PASSED");
+    assert_eq!(reading::verdict(Some(1600), Some(15)), "had time");
+    assert_eq!(reading::verdict(Some(9000), None), "words unknown");
+
+    let totals: std::collections::HashMap<String, u64> =
+        [("one".to_string(), 1000), ("two".to_string(), 6000)].into();
+    let map = reading::summary(&layout(), Some(&totals));
+    assert!(
+        map.starts_with("\nVISIBLE TIME — test-reading · 111111111111\n"),
+        "{map}"
+    );
+    assert!(map.contains("Scrolled past: one\n"), "{map}");
+    assert!(
+        map.contains("[one] One · 0:01 of ~0:04 · PASSED\n"),
+        "{map}"
+    );
+    assert!(
+        map.contains("[two] Two · 0:06 of ~0:04 · had time\n"),
+        "{map}"
+    );
+    assert!(
+        map.contains("[unknown] Unavailable · not measured\n"),
+        "{map}"
+    );
+
+    let none = reading::summary(&layout(), None);
+    assert!(none.contains("Nothing scrolled past.\n"), "{none}");
 }
