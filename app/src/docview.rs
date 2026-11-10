@@ -102,6 +102,7 @@ pub mod poppler;
 pub mod pref;
 pub mod prepare;
 pub mod progress;
+pub mod reading;
 pub mod snapshot;
 pub mod video;
 
@@ -226,6 +227,8 @@ pub struct DocumentView {
     /// notch in many small pieces, and each step re-lays a page out.
     zoom_notches: f32,
     _watch: Task<()>,
+    exposure_active: Option<bool>,
+    _exposure: Option<Task<()>>,
 }
 
 /// A view's measured size, in logical pixels, and the scale factor it was
@@ -824,6 +827,8 @@ impl DocumentView {
             own_write: None,
             zoom_notches: 0.0,
             _watch: Task::ready(()),
+            exposure_active: None,
+            _exposure: None,
         };
         if watch {
             view._watch = view.watch(cx);
@@ -1070,7 +1075,11 @@ impl DocumentView {
     /// answers whether it kept itself open, once, because closing would lose
     /// notes not yet saved into the file. Only a brief carries notes.
     pub fn guard_close(&mut self, cx: &mut Context<Self>) -> bool {
-        self.backend.guard_close(cx)
+        let guarded = self.backend.guard_close(cx);
+        if !guarded {
+            self.backend.exposure(false, cx);
+        }
+        guarded
     }
 
     /// A square lent to the FOCUS reader is not closed by Escape — the reader
@@ -1269,6 +1278,11 @@ impl DocumentView {
         self.backend.visible(shown || self.lent.is_some(), cx);
     }
 
+    pub(crate) fn exposure(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.exposure_active = Some(active);
+        self.backend.exposure(active, cx);
+    }
+
     /// Show what a fragment names as soon as the document has been laid out:
     /// a link that named a heading in another file, or an element of a
     /// brief, opens that file there.
@@ -1332,6 +1346,28 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.target.kind == DocKind::Html && self._exposure.is_none() {
+            self._exposure = Some(cx.spawn_in(window, async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this
+                    .update_in(cx, |view: &mut DocumentView, window, cx| {
+                        if let Some(active) = view.exposure_active {
+                            view.backend
+                                .exposure(active && window.is_window_active(), cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }));
+        }
+        // Settle transitions when their changed pixels are about to be drawn,
+        // including scroll and a note dialog, without waiting for the heartbeat.
+        if let Some(active) = self.exposure_active {
+            self.backend
+                .exposure(active && window.is_window_active(), cx);
+        }
         #[cfg(test)]
         {
             self.render_count += 1;
@@ -1515,6 +1551,10 @@ mod tests {
                 strip(include_str!("docview/progress.rs")),
             ),
             ("docview/notes.rs", strip(include_str!("docview/notes.rs"))),
+            (
+                "docview/reading.rs",
+                strip(include_str!("docview/reading.rs")),
+            ),
             (
                 "docview/md_notes.rs",
                 strip(include_str!("docview/md_notes.rs")),

@@ -205,6 +205,9 @@ pub struct PageLayout {
     /// notes.js's FILE: `window.NOTES_FILE`, else the location's basename.
     /// `None` when no notes.js ran.
     pub notes_file: Option<String>,
+    /// Explicit target geometry from a brief's reading script; absent is unsupported/unknown.
+    #[serde(default)]
+    pub reading_layout: Option<ReadingLayout>,
     pub capability: NotesCapability,
     /// Document order, as notes.js tags them. Collected in the same pass as
     /// the tiles for the notes layer, which reads them; this slice draws none.
@@ -255,6 +258,23 @@ pub struct PageVideo {
     /// is one a script feeds.
     #[serde(default)]
     pub unkept: Option<String>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadingLayout {
+    pub document: String,
+    pub revision: String,
+    pub targets: Vec<ReadingTarget>,
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct ReadingTarget {
+    pub anchor: String,
+    pub title: String,
+    pub kind: String,
+    pub parent: Option<String>,
+    #[serde(default, deserialize_with = "rect_or_none")]
+    pub rect: Option<RectCss>,
 }
 
 impl PageLayout {
@@ -345,6 +365,7 @@ impl PageLayout {
             },
             height_css,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 0,
                 concurs_island: false,
