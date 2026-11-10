@@ -1,0 +1,2 @@
+NeverFrozenMidTurn
+SleepLosesNothing

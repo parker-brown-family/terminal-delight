@@ -14,3 +14,8 @@ For each PR:
 - State why the change fits the release and preserve its validation evidence. A milestone is a plan; passing review and tests, integration and the tagged candidate determine what actually ships.
 
 For release management, follow the PR-survey procedure in RELEASING.md. Survey unassigned work, readiness, dependencies and changes since the previous candidate. Record inclusion or deferral decisions; do not include every open PR automatically.
+
+## Verification
+
+Before changing a subsystem listed in [verify/README.md](verify/README.md) (keyboard ownership, rest and sleep, worktree cleanup, the overlay stack, the INBOX and Settings flows), read its `SKILL.md` and run its check before and after. Each one says what it covers, the commit it was last confirmed against, and how to tell a real break from a model that has drifted. `scripts/link-verify-skills.sh` links them where Claude Code finds project skills.
+
