@@ -8,6 +8,7 @@ Tests check the cases someone thought to write. These check every order of steps
 | [`rest-sleep/`](rest-sleep/SKILL.md) | rest never freezes a turn; sleep never loses pending work | TLA+ | 2 findings |
 | [`worktree-cleanup/`](worktree-cleanup/SKILL.md) | removal never deletes work or a tree under a process | TLA+ | 2 findings; the quarantine fix holds |
 | [`overlay-stack/`](overlay-stack/SKILL.md) | what is on top gets your keys and your Esc | TLA+ and replays (`app/src/verify_overlay.rs`) | 3 findings, replayed |
+| [`side-panel-reading/`](side-panel-reading/SKILL.md) | a side-panel tab's red note is about its latest read, and trouble never blanks what you were reading | TLA+ and the real window (`flyout_view.rs` tests) | 0 findings (a stale red note; fixed) |
 | [`flows/`](flows/README.md) | the INBOX and the Settings book, as user flows | TLA+ | hold |
 
 `verify/check.sh SPEC.tla [CONFIG.cfg]` checks one model, each rule on its own, against the folder's `findings.txt`. `verify/mutate.sh` proves a rule can fail. Each folder's `view.ts` is the reader's words for the pstack `/statechart` skill, which draws the model and gives each break as a path. `scripts/link-verify-skills.sh` links each `SKILL.md` where Claude Code finds project skills.
