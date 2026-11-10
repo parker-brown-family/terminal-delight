@@ -1021,6 +1021,39 @@ pub fn send_label(agents_in_tab: usize, name: &str) -> String {
     }
 }
 
+/// Where a person's click opens an artifact an agent handed over: the
+/// floating square over the pane, as it always has, or a tab in the
+/// right-hand side panel of the tab it is in. One setting for every door a
+/// person opens one by (the attention rail's row and Enter, the artifacts
+/// list, a pane's own handover chip and Alt+O), read here so a pane needs no
+/// line back to the window. An agent's own `open_document` keeps the
+/// placement it names. Parker, 2026-11-10: *"New setting for where artifacts
+/// open: Right flyout now an option"*.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactPlace {
+    #[default]
+    Square,
+    Side,
+}
+
+// Per thread, because every door that reads it runs on the window's own
+// thread, and so that one test's choice cannot leak into another running
+// beside it.
+thread_local! {
+    static ARTIFACT_PLACE: std::cell::Cell<ArtifactPlace> =
+        const { std::cell::Cell::new(ArtifactPlace::Square) };
+}
+
+/// The place in force on the window's thread.
+pub fn artifact_place() -> ArtifactPlace {
+    ARTIFACT_PLACE.with(|p| p.get())
+}
+
+pub fn set_artifact_place(p: ArtifactPlace) {
+    ARTIFACT_PLACE.with(|c| c.set(p));
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

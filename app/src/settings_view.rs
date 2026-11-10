@@ -766,6 +766,12 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
             s.r_artifacts,
             s.r_artifacts_sub,
         ),
+        (
+            Page::Threads,
+            s.s_handovers,
+            s.r_art_where,
+            s.r_art_where_sub,
+        ),
         (Page::Environments, s.s_machines, s.r_machines, ""),
         (Page::Access, s.s_access, s.r_server, s.r_server_sub),
         (Page::Access, s.s_access, s.r_expose, s.r_expose_sub),
@@ -873,14 +879,19 @@ impl Workspace {
                             .text_color(th.text)
                             .child(SharedString::from(title.to_string())),
                     )
-                    .when_some(sub.filter(|s| !s.is_empty()), |d, s| {
-                        d.child(
-                            div()
-                                .text_size(sk.text_px(8.5))
-                                .text_color(th.text.alpha(0.6))
-                                .child(SharedString::from(s)),
-                        )
-                    }),
+                    // One line each: a line break inside one text measures
+                    // short, and the section clips what overflows its rows.
+                    .children(sub.into_iter().flat_map(|s| {
+                        s.lines()
+                            .filter(|l| !l.is_empty())
+                            .map(|l| {
+                                div()
+                                    .text_size(sk.text_px(8.5))
+                                    .text_color(th.text.alpha(0.6))
+                                    .child(SharedString::from(l.to_string()))
+                            })
+                            .collect::<Vec<_>>()
+                    })),
             )
             .children(sample)
             .children(control)
@@ -899,6 +910,10 @@ impl Workspace {
         div()
             .id(id)
             .debug_selector(move || id.into())
+            // A section never shrinks to the column: its box clips (for the
+            // rows' hover at its rounded corners), and a clipping flex item
+            // may otherwise be squeezed below its content.
+            .flex_shrink_0()
             .flex()
             .flex_col()
             .gap_2()
@@ -914,6 +929,7 @@ impl Workspace {
                     .flex()
                     .flex_col()
                     .rounded(sk.radius())
+                    .flex_shrink_0()
                     .overflow_hidden()
                     .border(sk.box_border(1.))
                     .border_color(th.text.alpha(0.14))
@@ -1040,6 +1056,49 @@ impl Workspace {
                     .child(format!("{}%", (now * 100.).round() as i32)),
             )
             .child(step("st-scale-up", "+", 0.1, now < SCALE_MAX - 0.001))
+            .into_any_element()
+            .into()
+    }
+
+    /// Where a person's click opens an artifact: the floating square or the
+    /// side panel, the one in force lit.
+    fn st_art_place(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let s = self.lang.strings().settings;
+        let now = docopen::artifact_place();
+        let acc = th.accent;
+        div()
+            .flex()
+            .flex_row()
+            .flex_shrink_0()
+            .gap_1()
+            .children(
+                [
+                    (
+                        docopen::ArtifactPlace::Square,
+                        "st-art-square",
+                        s.art_square,
+                    ),
+                    (docopen::ArtifactPlace::Side, "st-art-side", s.art_side),
+                ]
+                .into_iter()
+                .map(|(place, id, word)| {
+                    sk.chip(place == now)
+                        .id(id)
+                        .debug_selector(move || id.into())
+                        .cursor_pointer()
+                        .hover(move |st| st.bg(acc.alpha(0.14)))
+                        .text_size(sk.text_px(9.5))
+                        .text_color(th.text)
+                        .child(word)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                cx.stop_propagation();
+                                ws.set_artifact_place(place, cx);
+                            }),
+                        )
+                }),
+            )
             .into_any_element()
             .into()
     }
@@ -1833,18 +1892,25 @@ impl Workspace {
                         sk,
                         "st-sec-handovers",
                         s.s_handovers,
-                        vec![row(
-                            s.r_artifacts,
-                            s.r_artifacts_sub,
-                            self.st_open(
-                                th,
-                                sk,
-                                "st-open-artifacts",
-                                None,
-                                |ws, _, cx| ws.art_open(cx),
-                                cx,
+                        vec![
+                            row(
+                                s.r_artifacts,
+                                s.r_artifacts_sub,
+                                self.st_open(
+                                    th,
+                                    sk,
+                                    "st-open-artifacts",
+                                    None,
+                                    |ws, _, cx| ws.art_open(cx),
+                                    cx,
+                                ),
                             ),
-                        )],
+                            row(
+                                s.r_art_where,
+                                s.r_art_where_sub,
+                                self.st_art_place(th, sk, cx),
+                            ),
+                        ],
                     ),
                 ]
             }
@@ -2439,11 +2505,15 @@ impl Workspace {
         // has, as a settings page does on the web: never stretched across a
         // wide window, never a tray in the middle of an empty page. A panel
         // shown in place takes the same column and fills it.
+        // A definite width, not a maximum: text that wraps inside a width
+        // that is only a cap is measured a line short, and its section then
+        // runs into the next. The page's room is the book less the nav and
+        // the page's own padding (`px_8`, 32 each side).
+        let column_w = COLUMN_W.min((w - NAV_W - 64.).max(240.));
         let column = div()
             .id("st-column")
             .debug_selector(|| "st-column".into())
-            .w_full()
-            .max_w(px(COLUMN_W))
+            .w(px(column_w))
             .mx_auto()
             .min_h_full()
             .flex()
@@ -3021,6 +3091,58 @@ mod tests {
             "a press on the margin leaves the gauges shown"
         );
         let _ = page;
+    }
+
+    /// Settings › Threads sends artifacts to the side panel: the chip sets
+    /// the place and the window saves it, and a deliverable opened from the
+    /// rail then lands as a tab in the side panel of the tab on screen.
+    /// Parker, 2026-11-10: *"New setting for where artifacts open: Right
+    /// flyout now an option"*.
+    ///
+    /// Mutation-tested: dropping the side branch from `rail_open_here` fails
+    /// "the rail opens it in the side panel".
+    #[gpui::test]
+    fn artifacts_open_in_the_side_panel_when_settings_says_so(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-art-place-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let note = dir.join("note.md");
+        std::fs::write(&note, "# A note\n\nhanded over\n").unwrap();
+        let href = format!("file://{}", note.display());
+        let place = |cx: &mut gpui::VisualTestContext| cx.update(|_, _| docopen::artifact_place());
+        assert_eq!(
+            place(cx),
+            docopen::ArtifactPlace::Square,
+            "unset is the square"
+        );
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Threads), cx));
+        redraw(cx);
+        let chip = cx
+            .debug_bounds("st-art-side")
+            .expect("the side chip is drawn");
+        cx.simulate_click(chip.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(place(cx), docopen::ArtifactPlace::Side);
+        assert_eq!(
+            ws.read_with(cx, |ws, cx| ws.build_state(cx).artifact_place),
+            Some(docopen::ArtifactPlace::Side),
+            "the window saves it"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.close_settings(cx);
+            ws.rail_open_here(&href, cx);
+        });
+        redraw(cx);
+        let (open, tabs) = ws.read_with(cx, |ws, _| {
+            (ws.flyout.open, ws.tabs[ws.active].side.tabs.len())
+        });
+        assert!(open && tabs == 1, "the rail opens it in the side panel");
+        cx.update(|_, _| docopen::set_artifact_place(docopen::ArtifactPlace::Square));
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Open shows the panel in place: the surface config draws inside the

@@ -3014,6 +3014,10 @@ struct StateFile {
     /// Unset means no choice yet: person-opened briefs use the fullscreen reader.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     doc_glow_pane: Option<bool>,
+    /// Where a person's click opens an artifact. Unset is nobody's choice
+    /// yet, which opens the floating square everyone had before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_place: Option<docopen::ArtifactPlace>,
     /// Global "anchor terminal content to TOP" preference. Absent on old files →
     /// `false` (the classic bottom-anchored prompt). When `true`, every pane skips
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
@@ -3124,6 +3128,7 @@ impl Default for StateFile {
             // what everyone had before the preference existed.
             focus_inherit: true,
             doc_glow_pane: None,
+            artifact_place: None,
             anchor_top: false,
             agent_tint: false,
             card_art: None,
@@ -5510,6 +5515,9 @@ struct Workspace {
     focus_inherit_theme: bool,
     /// Window-wide document presentation, selected in FLOATING DOCUMENT gauges.
     doc_glow_pane: Option<bool>,
+    /// Where a person's click opens an artifact; `docopen::artifact_place`
+    /// holds the same for the panes. Settings › Threads.
+    artifact_place: Option<docopen::ArtifactPlace>,
     /// Global, persisted: when on, terminal content anchors to the TOP of each
     /// pane (the prompt/typing area sits near the top) instead of hugging the
     /// bottom. Published into [`pane::set_anchor_top`] each render frame so the
@@ -7084,6 +7092,10 @@ impl Workspace {
             focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
             doc_glow_pane: saved.doc_glow_pane,
+            artifact_place: {
+                docopen::set_artifact_place(saved.artifact_place.unwrap_or_default());
+                saved.artifact_place
+            },
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
             lang: saved.lang,
@@ -9021,6 +9033,7 @@ impl Workspace {
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
             doc_glow_pane: self.doc_glow_pane,
+            artifact_place: self.artifact_place,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
             card_art: self.card_art,
@@ -21675,6 +21688,18 @@ impl Workspace {
     }
 
     /// Switch document presentation without replacing the view or its notes.
+    /// Settings › Threads: where a person's click opens an artifact.
+    pub(crate) fn set_artifact_place(
+        &mut self,
+        place: docopen::ArtifactPlace,
+        cx: &mut Context<Self>,
+    ) {
+        self.artifact_place = Some(place);
+        docopen::set_artifact_place(place);
+        self.save(cx);
+        cx.notify();
+    }
+
     fn toggle_doc_glow_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let glow = self.doc_glow_pane != Some(true);
         self.doc_glow_pane = Some(glow);
@@ -28364,6 +28389,14 @@ impl Workspace {
     /// Parker, 2026-09-25: *"the single click open artifacts will now use this
     /// instead of goto new window on OS"*.
     fn rail_open_here(&mut self, href: &str, cx: &mut Context<Self>) {
+        // Settings › Threads can send artifacts to the side panel instead,
+        // as "◨ side" on the row does; what the panel cannot take still
+        // opens as below.
+        if docopen::artifact_place() == docopen::ArtifactPlace::Side && self.rail_put_side(href, cx)
+        {
+            self.rail_close();
+            return;
+        }
         let Some(target) = deliverable_file(href).and_then(|p| docopen::drawable_document(&p))
         else {
             pane::open_with_system(href);
