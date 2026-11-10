@@ -1,3 +1,0 @@
-RaisedIsOnTop
-TypingGoesToTheTop
-EscClosesTheTop

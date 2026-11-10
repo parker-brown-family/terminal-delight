@@ -5622,6 +5622,12 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     let pane = &pane;
     cx.observe(pane, |_, _, cx| cx.notify()).detach();
     cx.subscribe(pane, |ws, pane, ev: &OpenThemeMenu, cx| {
+        // A pane's design menu is drawn under the Settings book, so the
+        // book is put away first rather than left over the menu it raised
+        // (verify/overlay-stack, RaisedIsOnTop).
+        if ws.settings.is_some() {
+            ws.close_settings(cx);
+        }
         ws.theme_menu = Some(MenuScope::Pane(pane));
         ws.menu_at = Some(ev.at);
         cx.notify();

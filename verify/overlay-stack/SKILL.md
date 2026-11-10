@@ -17,17 +17,20 @@ The code decides these three things in separate places, each its own list: the r
 
 ```bash
 verify/check.sh verify/overlay-stack/OverlayStack.tla
-cargo test --locked --manifest-path app/Cargo.toml -- --ignored verify_overlay
+verify/check.sh verify/overlay-stack/OverlayStack.tla verify/overlay-stack/OverlayStack-before.cfg
+cargo test --locked --manifest-path app/Cargo.toml verify_overlay
 ```
 
-The second runs the replays: `app/src/verify_overlay.rs` drives each counterexample on the real window. They are `#[ignore]`d while the finding stands, and each asserts the promise, so they fail today. Read model breaks as paths with the pstack `/statechart` skill, using `view.ts`.
+The first checks the code as it is (`Fixed = TRUE`): all three rules hold and `findings.txt` is empty. The second keeps the code before 2026-11-10 (`Fixed = FALSE`) and must still read `breaks (finding)` for all three. The third runs the replays in `app/src/verify_overlay.rs`, which drive each counterexample on the real window and assert the promise: all three pass, and all three fail with the fix taken out. Read model breaks as paths with the pstack `/statechart` skill, using `view.ts`.
 
-## What it found (2026-11-10), both replayed on the real window
+## What it found (2026-11-10), replayed on the real window, and what fixed it
 
-- **RaisedIsOnTop breaks:** Ctrl+, then Ctrl+Shift+E raises the composer behind the Settings book.
-- **TypingGoesToTheTop and EscClosesTheTop break:** Ctrl+Shift+D (a pane's design menu) then Ctrl+Shift+E raises the composer under the menu; a letter goes into the hidden composer, and Esc closes it while the menu stays.
+- **RaisedIsOnTop broke:** Ctrl+, then Ctrl+Shift+E raises the composer behind the Settings book.
+- **TypingGoesToTheTop and EscClosesTheTop broke:** Ctrl+Shift+D (a pane's design menu) then Ctrl+Shift+E raises the composer under the menu; a letter goes into the hidden composer, and Esc closes it while the menu stays.
 
-The fix the audit proposes: one explicit stack of surfaces in the window, ordered by when each was raised, that the render, the key routing and Esc all read.
+- **RaisedIsOnTop also broke by a second path:** Ctrl+, then Ctrl+Shift+D raises a pane's design menu under the book (the pane's `OpenThemeMenu` set the menu and ignored the book). Replayed as `verify_overlay_a_panes_design_menu_never_opens_behind_the_book`.
+- **The fix:** a surface a chord raises puts away the ones it would otherwise open beneath. `open_composer` closes the book and the design menu first, as T3 leaves its settings page for a new thread (the composer's draft is kept, as ever); a pane's `OpenThemeMenu` closes the book first. The palette the book hosts in place (Settings › Appearance) is a different path and is untouched.
+- **Not done:** the audit's proposal, one explicit stack of all ~30 surfaces that the render, the keys and Esc all read. The three surfaces this model covers now keep their promises without it; the stack remains the shape to reach for when another pair is found to disagree.
 
 ## Coverage
 
@@ -36,12 +39,12 @@ The fix the audit proposes: one explicit stack of surfaces in the window, ordere
 | `Z` (draw order) | `main.rs` render: `render_composer` inside the screen; `menu_overlay` … `settings_overlay` … `help_overlay` in the root's children |
 | `TypeLetter` | capture chain (`settings_key`), `on_key` → `composer_key` |
 | `PressEsc` | capture chain, `close_popups` (composer, then settings, then theme menu) |
-| `Raise` | pane chords: `pane::ToggleSettings`, `OpenComposer`, Ctrl+Shift+D (the pane's DESIGN menu) |
+| `Raise` | pane chords: `pane::ToggleSettings`, `OpenComposer` (`open_composer`, which puts the book and the menu away), Ctrl+Shift+D (the pane's DESIGN menu: `wire_pane`'s `OpenThemeMenu`, which puts the book away) |
 
-**Sync commit:** `62f87a5b`. Run `git diff 62f87a5b -- app/src/main.rs app/src/entry_view.rs app/src/settings_view.rs` and re-read the render children order and `close_popups` before trusting a result.
+**Sync commit:** the commit that last changed this skill (`git log -1 --format=%h -- verify/overlay-stack/SKILL.md`). Run `git diff <that commit> -- app/src/main.rs app/src/entry_view.rs app/src/settings_view.rs` and re-read the render children order and `close_popups` before trusting a result.
 
 **Left out:** the other ~25 overlays, the keys sheet (it is drawn above all three and takes its keys first, so it keeps every promise), the mouse.
 
 ## When you change the code on purpose
 
-Update `Z`, `TypeLetter`'s or `PressEsc`'s order to match the code. A fix should turn findings into `FIXED?`; then remove them from `findings.txt` and drop the `#[ignore]` on the matching replay test.
+Update `Z`, `TypeLetter`'s or `PressEsc`'s order, or what `Raise` puts away, to match the code. A new surface a chord can raise over these three joins `Surfaces` with its place in `Z`, and gets a replay.
