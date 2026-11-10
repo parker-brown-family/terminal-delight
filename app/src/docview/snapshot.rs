@@ -423,13 +423,15 @@ impl SnapshotEngine {
             // its own can never use: one process and about 10 MiB, for
             // nothing.
             "--disable-features=PreloadTopChromeWebUI,WebUIOmniboxAimPopup,WebUIOmniboxPopup,WebUIOmniboxFullPopup,SpareRendererForSitePerProcess",
-            // The GPU process (37 MiB idle), a component extension's renderer
-            // (30 MiB) and the network service (25 MiB) each ran as a process
-            // of their own. Software compositing does the same work in the
-            // browser process; a page here reaches no network; no brief uses
-            // an extension. Idle 241 -> 190 MiB, a page open 329 -> 289 MiB,
-            // with no change in how long an open takes. The GPU and network
-            // halves are below, beside the switches they share.
+            // A component extension's renderer (30 MiB) and the network
+            // service (25 MiB) each ran as a process of their own; a page here
+            // reaches no network and no brief uses an extension. The network
+            // half is below, beside the switch it shares. The GPU process
+            // (37 MiB idle) stays its own: folding it into the browser
+            // (`--in-process-gpu`) closed every page on the CI runner's
+            // Chromium, the snapshot tests red from 2026-11-07, while
+            // Chromium 155 here took it, so a person on a Chromium like the
+            // runner's would have had every brief close on them.
             "--disable-component-extensions-with-background-pages",
         ]
         .iter()
@@ -466,8 +468,6 @@ impl SnapshotEngine {
             ] {
                 a.push(s.into());
             }
-        } else {
-            a.push("--in-process-gpu".into());
         }
         a.push(format!("--enable-features={}", features.join(",")).into());
         a
@@ -1415,10 +1415,11 @@ mod tests {
     }
 
     /// Chromium keeps only the last `--enable-features` it is given, so the
-    /// in-process network service and the Vulkan features share one switch,
-    /// and the GPU process folds into the browser only off the Vulkan path.
+    /// in-process network service and the Vulkan features share one switch;
+    /// and the GPU process is never folded into the browser, which closed
+    /// every page on the CI runner's Chromium.
     #[test]
-    fn one_switch_carries_every_feature_and_only_software_folds_the_gpu_in() {
+    fn one_switch_carries_every_feature_and_the_gpu_keeps_its_process() {
         let p = Path::new("/run/user/1000/terminal-delight/chromium-1-0");
         let count = |args: &[OsString], prefix: &str| {
             args.iter()
@@ -1446,8 +1447,9 @@ mod tests {
         assert!(vulkan
             .iter()
             .any(|a| a.to_string_lossy() == "--enable-features=NetworkServiceInProcess2,Vulkan,VulkanFromANGLE,DefaultANGLEVulkan"));
-        assert!(plain.iter().any(|a| a == "--in-process-gpu"));
-        assert!(!vulkan.iter().any(|a| a == "--in-process-gpu"));
+        for args in [&plain, &vulkan] {
+            assert!(!args.iter().any(|a| a == "--in-process-gpu"));
+        }
     }
 
     /// The first screen is photographed as the page shows it, and every other
