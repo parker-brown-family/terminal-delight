@@ -22,29 +22,37 @@ pub(crate) struct Composer {
     /// the sentence as paths (see [`entry::with_pictures`]).
     pictures: Vec<std::path::PathBuf>,
     pub(crate) focus: entry::Focus,
-    projects: Vec<launcher::Project>,
+    /// What the scan found, with what was added from the composer
+    /// (`projects.toml`) in front; a far one carries its machine.
+    pub(crate) projects: Vec<launcher::Project>,
     /// Typed on the PROJECT chip.
-    query: String,
+    pub(crate) query: String,
     /// Indices into `projects` that match `query`, best first.
-    order: Vec<usize>,
+    pub(crate) order: Vec<usize>,
     /// The chosen project, an index into `projects`. `None` is a choice of its
     /// own, *none, don't know yet*: the agent starts in the home folder and
     /// its tab is filed under no project.
-    project: Option<usize>,
+    pub(crate) project: Option<usize>,
     harness: launcher::Harness,
     model: Option<String>,
     effort: Option<String>,
     reach: launcher::Reach,
     /// This machine first, then any far ones from `machines.toml`.
-    machines: Vec<entry::Machine>,
-    machine: usize,
+    pub(crate) machines: Vec<entry::Machine>,
+    pub(crate) machine: usize,
     machines_error: Option<String>,
+    /// What `projects.toml` could not give: a read error, or a machine it
+    /// names that `machines.toml` no longer lists.
+    projects_note: Option<String>,
     /// The custom runner from `local-agent.toml`, read when the page opens —
     /// the LAUNCH AGENT panel's habit — so the preview reads no file a frame.
     local_adapter: Result<launcher::LocalAdapter, String>,
     /// The last thing the composer has to say: an error, or what it started
     /// in the background.
-    note: Option<String>,
+    pub(crate) note: Option<String>,
+    /// The add-a-project dialog, while it is up over the composer
+    /// (`addproject_view.rs`).
+    pub(crate) adding: Option<addproject_view::AddProject>,
 }
 
 impl Composer {
@@ -59,6 +67,23 @@ impl Composer {
         self.project_path()
             .map(std::path::Path::to_path_buf)
             .unwrap_or_else(session::home_dir)
+    }
+
+    /// The chosen project's own machine, when it is on a far one.
+    fn project_machine(&self) -> Option<&str> {
+        self.project
+            .and_then(|i| self.projects.get(i))
+            .and_then(|p| p.machine.as_deref())
+    }
+
+    /// A far project takes its machine with it: choosing it chooses where it
+    /// is. A project on this machine leaves the MACHINE chip as it was.
+    fn follow_project(&mut self) {
+        if let Some(name) = self.project_machine() {
+            if let Some(i) = self.machines.iter().position(|m| m.name == name) {
+                self.machine = i;
+            }
+        }
     }
 
     fn catalog(&self) -> model_catalog::Snapshot {
@@ -76,6 +101,7 @@ impl Composer {
         if !self.query.is_empty() {
             if let Some(&first) = self.order.first() {
                 self.project = Some(first);
+                self.follow_project();
             }
         }
     }
@@ -95,6 +121,7 @@ impl Composer {
                     .collect();
                 if let Some(next) = entry::cycle(&list, &self.project, back) {
                     self.project = next;
+                    self.follow_project();
                 }
             }
             entry::Focus::Harness => {
@@ -169,28 +196,6 @@ impl Workspace {
         }
         if self.composer.is_none() {
             let home = session::home_dir();
-            let projects = launcher::scan(&launcher::default_roots(&home), 1000);
-            let here = self
-                .tabs
-                .get(self.active)
-                .and_then(|t| t.focused)
-                .and_then(|id| self.pane_by_id(id))
-                .and_then(|p| p.read(cx).current_cwd())
-                .map(std::path::PathBuf::from);
-            // The longest project path the cwd sits in: standing in
-            // `~/Work/td/app/src` is standing in `~/Work/td`, not in `~/Work`.
-            let project = here.as_ref().and_then(|cwd| {
-                projects
-                    .iter()
-                    .enumerate()
-                    .filter(|(_, p)| cwd.starts_with(&p.path))
-                    .max_by_key(|(_, p)| p.path.as_os_str().len())
-                    .map(|(i, _)| i)
-            });
-            // Standing in no project opens on none rather than on whichever
-            // repository sorts first.
-            let order = launcher::filter(&projects, "");
-            let pref = &self.launch_defaults;
             let config = instance::config_dir();
             let (far, machines_error) = match entry::load_machines(&config) {
                 Ok(far) => (far, None),
@@ -208,6 +213,43 @@ impl Workspace {
                 self.lang.strings().entry.composer_machine,
             )];
             machines.extend(far);
+            let scanned = launcher::scan(&launcher::default_roots(&home), 1000);
+            let e = self.lang.strings().entry;
+            let (projects, projects_note) = match addproject::load_projects(&config) {
+                Ok(added) => {
+                    let (projects, lost) =
+                        addproject::with_added(scanned, &added, &machines, &home);
+                    let note = lost
+                        .first()
+                        .map(|m| lang::fill(e.add_lost_machine, &[("machine", m)]));
+                    (projects, note)
+                }
+                Err(err) => (
+                    scanned,
+                    Some(lang::fill(e.add_projects_error, &[("error", &err)])),
+                ),
+            };
+            let here = self
+                .tabs
+                .get(self.active)
+                .and_then(|t| t.focused)
+                .and_then(|id| self.pane_by_id(id))
+                .and_then(|p| p.read(cx).current_cwd())
+                .map(std::path::PathBuf::from);
+            // The longest project path the cwd sits in: standing in
+            // `~/Work/td/app/src` is standing in `~/Work/td`, not in `~/Work`.
+            let project = here.as_ref().and_then(|cwd| {
+                projects
+                    .iter()
+                    .enumerate()
+                    .filter(|(_, p)| p.machine.is_none() && cwd.starts_with(&p.path))
+                    .max_by_key(|(_, p)| p.path.as_os_str().len())
+                    .map(|(i, _)| i)
+            });
+            // Standing in no project opens on none rather than on whichever
+            // repository sorts first.
+            let order = launcher::filter(&projects, "");
+            let pref = &self.launch_defaults;
             let (draft, pictures) = self.composer_stash.take().unwrap_or_default();
             self.composer = Some(Composer {
                 text: EditBuffer::seeded(&draft),
@@ -224,8 +266,10 @@ impl Workspace {
                 machines,
                 machine: 0,
                 machines_error,
+                projects_note,
                 local_adapter: launcher::LocalAdapter::load(),
                 note: None,
+                adding: None,
             });
             self.watch_model_catalogs(cx);
         }
@@ -259,6 +303,10 @@ impl Workspace {
     /// No window here, and none needed: with no overlay up, the next frame
     /// hands the keyboard back to the active pane (`plan_focus`).
     pub(crate) fn composer_escape(&mut self) {
+        if self.composer.as_ref().is_some_and(|c| c.adding.is_some()) {
+            self.add_project_escape();
+            return;
+        }
         let Some(mut c) = self.composer.take() else {
             return;
         };
@@ -296,6 +344,13 @@ impl Workspace {
                 }
                 _ => {}
             }
+        }
+        if self.composer.as_ref().is_some_and(|c| c.adding.is_some()) {
+            return self.add_project_key(ks, window, cx);
+        }
+        if ks.key == "o" && m.control && !m.alt && !m.shift {
+            self.add_project_open(cx);
+            return true;
         }
         let Some(mut c) = self.composer.take() else {
             return false;
@@ -407,6 +462,32 @@ impl Workspace {
             .get(c.machine)
             .cloned()
             .unwrap_or_else(|| entry::Machine::here(None, e.composer_machine));
+        // A far project's folder is on its own machine: started anywhere else,
+        // the agent would begin in a folder that is not there.
+        let far_project = c.project_machine().map(str::to_string);
+        if let Some(home_of) = &far_project {
+            if *home_of != machine.name {
+                let name = c
+                    .project
+                    .and_then(|i| c.projects.get(i))
+                    .map(|p| p.name.clone())
+                    .unwrap_or_default();
+                c.note = Some(lang::fill(
+                    e.add_elsewhere,
+                    &[("project", &name), ("machine", home_of)],
+                ));
+                self.composer = Some(c);
+                cx.notify();
+                return;
+            }
+        }
+        // The pane that types the ssh line is this machine's, so it starts in
+        // a folder this machine has.
+        let pane_cwd = if far_project.is_some() {
+            session::home_dir()
+        } else {
+            cwd.clone()
+        };
         let catalog = c.catalog();
         let parts = self.lang.strings().parts;
         if c.harness != launcher::Harness::Local {
@@ -470,7 +551,7 @@ impl Workspace {
             );
         }
         let seat = if filed {
-            self.composer_seat(&cwd, cx)
+            self.composer_seat(&cwd, far_project.is_some(), cx)
         } else {
             Seat::Loose
         };
@@ -493,7 +574,7 @@ impl Workspace {
             self.composer_stash = None;
         }
         self.adopt_pane(
-            Some(cwd.to_string_lossy().to_string()),
+            Some(pane_cwd.to_string_lossy().to_string()),
             Some(line),
             seat,
             window,
@@ -578,8 +659,12 @@ impl Workspace {
     /// folders* names one. Never in whatever branch the person happens to be
     /// standing in: a project was chosen, so the tab belongs to it, and on a
     /// fresh window that branch is no branch at all.
-    fn composer_seat(&mut self, cwd: &std::path::Path, cx: &mut Context<Self>) -> Seat {
-        for (ti, tab) in self.tabs.iter().enumerate() {
+    ///
+    /// A far project's folder is on another machine, so no terminal here is
+    /// standing in it, whatever path the two share: its tab is filed by name
+    /// only (Codex's review, round one).
+    fn composer_seat(&mut self, cwd: &std::path::Path, far: bool, cx: &mut Context<Self>) -> Seat {
+        for (ti, tab) in self.tabs.iter().enumerate().filter(|_| !far) {
             if self.place_of(ti).unfiled() {
                 continue;
             }
@@ -727,6 +812,10 @@ impl Workspace {
         let c = self.composer.as_ref()?;
         let s = theme::outer_choice(cx).grade.scale;
         let sk = skin::skin(cx, s);
+        if c.adding.is_some() {
+            let card = self.render_add_project(th, &sk, s, cx)?;
+            return Some(Self::composer_page(th, s, card));
+        }
         let e = self.lang.strings().entry;
         let ui = self.lang.strings().ui;
         let catalog = c.catalog();
@@ -853,6 +942,22 @@ impl Workspace {
                         }),
                     ),
             );
+            // Adding a project sits beside the chip that chooses one.
+            if focus == entry::Focus::Project {
+                chip_row = chip_row.child(
+                    Self::bezel_btn_s(&sk, e.add_button, false, s * 0.9)
+                        .id("composer-add-project")
+                        .debug_selector(|| "composer-add-project".into())
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.add_project_open(cx);
+                                window.focus(&ws.focus_handle, cx);
+                            }),
+                        ),
+                );
+            }
         }
         if machine.is_some_and(entry::Machine::is_far) {
             chip_row = chip_row.child(
@@ -876,7 +981,28 @@ impl Workspace {
                 .flex()
                 .flex_col()
                 .gap(px(1. * s))
-                .max_h(px(8. * 24. * s));
+                .max_h(px(9. * 24. * s));
+            list = list.child(
+                div()
+                    .id("composer-project-add")
+                    .debug_selector(|| "composer-project-add".into())
+                    .px(px(8. * s))
+                    .py(px(2. * s))
+                    .rounded(sk.radius())
+                    .cursor_pointer()
+                    .hover(|st| st.bg(hsla(0., 0., 1., 0.06)))
+                    .text_size(sk.text_px(11.5 * s))
+                    .text_color(th.accent)
+                    .child(e.add_row)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.add_project_open(cx);
+                            window.focus(&ws.focus_handle, cx);
+                        }),
+                    ),
+            );
             if c.order.is_empty() {
                 list = list.child(
                     div()
@@ -905,7 +1031,13 @@ impl Workspace {
                 .collect();
             for (row, i) in rows.into_iter().enumerate() {
                 let (name, path) = match i.and_then(|i| c.projects.get(i)) {
-                    Some(p) => (p.name.clone(), p.path.to_string_lossy().to_string()),
+                    Some(p) => (
+                        p.name.clone(),
+                        match &p.machine {
+                            Some(m) => format!("{m} \u{00b7} {}", p.path.to_string_lossy()),
+                            None => p.path.to_string_lossy().to_string(),
+                        },
+                    ),
                     None => (e.project_none.to_string(), String::new()),
                 };
                 let on = c.project == i;
@@ -942,6 +1074,7 @@ impl Workspace {
                                 cx.stop_propagation();
                                 if let Some(c) = ws.composer.as_mut() {
                                     c.project = i;
+                                    c.follow_project();
                                     c.query.clear();
                                     c.focus = entry::Focus::Text;
                                 }
@@ -1004,10 +1137,15 @@ impl Workspace {
         let far_note = machine
             .filter(|m| m.is_far())
             .map(|m| lang::fill(e.composer_far_note, &[("machine", &m.name)]));
-        let notes: Vec<String> = [c.note.clone(), c.machines_error.clone(), far_note]
-            .into_iter()
-            .flatten()
-            .collect();
+        let notes: Vec<String> = [
+            c.note.clone(),
+            c.machines_error.clone(),
+            c.projects_note.clone(),
+            far_note,
+        ]
+        .into_iter()
+        .flatten()
+        .collect();
         let local_note = (c.harness == launcher::Harness::Local).then_some(ui.la_local_note);
 
         let column = div()
@@ -1092,28 +1230,32 @@ impl Workspace {
                     .child(e.composer_hint),
             );
 
-        Some(
-            div()
-                // The card stands over the panes, so the warp's grade is kept
-                // off it, the way every floating card in the house is.
-                .on_children_prepainted(keep_panels_from_doc_grade)
-                .id("composer-page")
-                .debug_selector(|| "composer-page".into())
-                .absolute()
-                .inset_0()
-                .occlude()
-                .flex()
-                .items_center()
-                .justify_center()
-                .p(px(24. * s))
-                .bg(th.bg.alpha(0.72))
-                // The page owns the pointer over the whole screen: nothing
-                // behind it is clicked through it.
-                .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
-                .child(column)
-                .into_any_element(),
-        )
+        Some(Self::composer_page(th, s, column))
+    }
+
+    /// The page the composer's card, or the add-a-project dialog's, stands
+    /// on: over the panes, owning the pointer.
+    fn composer_page(th: &theme::Theme, s: f32, card: impl IntoElement) -> AnyElement {
+        div()
+            // The card stands over the panes, so the warp's grade is kept
+            // off it, the way every floating card in the house is.
+            .on_children_prepainted(keep_panels_from_doc_grade)
+            .id("composer-page")
+            .debug_selector(|| "composer-page".into())
+            .absolute()
+            .inset_0()
+            .occlude()
+            .flex()
+            .items_center()
+            .justify_center()
+            .p(px(24. * s))
+            .bg(th.bg.alpha(0.72))
+            // The page owns the pointer over the whole screen: nothing
+            // behind it is clicked through it.
+            .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
+            .on_scroll_wheel(|_, _, cx| cx.stop_propagation())
+            .child(card)
+            .into_any_element()
     }
 }
 

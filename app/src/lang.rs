@@ -3361,6 +3361,9 @@ mod tests {
         "parts.vitals_bar_fatigue",
         // A file's name and a placeholder; only the colon could change.
         "entry.composer_machines_error",
+        // A file name and the reader's own message: the same words everywhere.
+        "entry.add_ssh_error",
+        "entry.add_projects_error",
         // French writes it the same way, and means the same thing.
         "flyout.pr_description",
         // French says "Page" for a page.
