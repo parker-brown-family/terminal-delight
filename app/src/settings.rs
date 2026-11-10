@@ -214,8 +214,6 @@ pub enum Host {
     /// The surface config: theme, style, rules, UI CONFIG.
     Palette,
     Gauges,
-    Scale,
-    Language,
     Updates,
     Admin,
     Notices,
