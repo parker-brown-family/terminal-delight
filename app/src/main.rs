@@ -121,6 +121,8 @@ mod update;
 mod update_view;
 #[cfg(test)]
 mod verify_keyboard;
+#[cfg(test)]
+mod verify_overlay;
 mod wirecheck;
 mod wtclean;
 use skin::parts::{
