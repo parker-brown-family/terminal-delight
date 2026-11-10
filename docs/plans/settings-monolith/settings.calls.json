@@ -1,0 +1,217 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-t3-pages-terminal-delight-has-nothing-for-are-le",
+      "at": "2026-11-10T05:57Z",
+      "title": "T3 pages Terminal Delight has nothing for are left out",
+      "context": null,
+      "chose": "Thirteen pages; Chat, Diffs, Voice, SnapShots, Browser, Devices, Scheduled tasks, Secrets omitted",
+      "because": "An empty page under a T3 name promises a setting that is not there.",
+      "passed_over": [
+        "Draw every T3 page, empty ones greyed"
+      ],
+      "undo": "One line in settings::GROUPS",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-the-surface-config-stays-its-own-surface",
+      "at": "2026-11-10T05:57Z",
+      "title": "The surface config stays its own surface",
+      "context": null,
+      "chose": "Appearance opens it; the book does not swallow it",
+      "because": "You called it beautiful; moving it into a row list would lose the swatches.",
+      "passed_over": [
+        "Rebuild it as Appearance rows"
+      ],
+      "undo": "None needed",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-the-gear-leads-the-menu-corner-and-cannot-be-hid",
+      "at": "2026-11-10T05:57Z",
+      "title": "The gear leads the menu corner and cannot be hidden",
+      "context": null,
+      "chose": "Always shown, like CONFIG, beside Ctrl+,",
+      "because": "It is the way to every other glyph's settings.",
+      "passed_over": [
+        "A UI CONFIG switch for it"
+      ],
+      "undo": "One child in the corner",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-rows-wear-the-skin-s-ink-not-t3-s-colours",
+      "at": "2026-11-10T05:57Z",
+      "title": "Rows wear the skin's ink, not T3's colours",
+      "context": null,
+      "chose": "T3's anatomy, each skin's radius, border and palette",
+      "because": "Hacker should still look like hacker inside Settings.",
+      "passed_over": [
+        "T3's own greys"
+      ],
+      "undo": "The row and section helpers",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-worktree-cleanup-runs-when-you-press-it-not-on-a",
+      "at": "2026-11-10T06:28Z",
+      "title": "Worktree cleanup runs when you press it, not on a timer",
+      "context": null,
+      "chose": "A review list, then a second press; no automatic sweep yet",
+      "because": "Removal is one-way, and on this machine every rule on would take 95 of 136.",
+      "passed_over": [
+        "T3's automatic cleanup on its own schedule"
+      ],
+      "undo": "Add the timer later; nothing to undo now",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-worktrees"
+    },
+    {
+      "id": "call-anything-running-in-a-worktree-keeps-it",
+      "at": "2026-11-10T06:28Z",
+      "title": "Anything running in a worktree keeps it",
+      "context": null,
+      "chose": "Every process cwd from /proc, not only this window's panes",
+      "because": "An agent in another window can stand in a fresh, clean worktree the unchanged rule would take.",
+      "passed_over": [
+        "Only this window's panes"
+      ],
+      "undo": "One line in wt_gather",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-worktrees"
+    },
+    {
+      "id": "call-ignored-files-go-with-a-removed-worktree-and-the",
+      "at": "2026-11-10T06:28Z",
+      "title": "Ignored files go with a removed worktree, and the list says which",
+      "context": null,
+      "chose": "T3's behaviour; each candidate names up to four ignored entries first",
+      "because": "Build folders are the space cleanup is for; a .env is named before the press.",
+      "passed_over": [
+        "Keep any worktree holding ignored files"
+      ],
+      "undo": "One filter in judge",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-worktrees"
+    }
+  ]
+}

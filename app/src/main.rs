@@ -111,6 +111,8 @@ mod relate_view;
 mod restricted;
 mod screenread;
 mod session;
+mod settings;
+mod settings_view;
 mod skills;
 mod skin;
 mod threshing_floor_view;
@@ -118,6 +120,7 @@ mod uninstall;
 mod update;
 mod update_view;
 mod wirecheck;
+mod wtclean;
 use skin::parts::{
     color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
 };
@@ -5051,6 +5054,14 @@ struct Workspace {
     agents_prefs: agentcfg::Prefs,
     /// Whether the CONFIG › Agents page is open.
     agents_menu: bool,
+    /// Settings, the book that holds every setting, while it is open
+    /// (`settings_view.rs`), and the page it was last on.
+    settings: Option<settings::Book>,
+    settings_last: Option<settings::Page>,
+    /// The Worktrees page's cleanup switches (`worktrees.toml`) and its
+    /// review of what they would remove.
+    wt_prefs: wtclean::Prefs,
+    wt_review: settings_view::WtReview,
     skills_prefs: skills::Prefs,
     skills_error: Option<String>,
     skills_form: Option<SkillsForm>,
@@ -5693,6 +5704,15 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         let showing = ws.spine_inbox();
         ws.set_spine_inbox(!showing, cx);
     })
+    .detach();
+    // ctrl+, in any pane → open or close Settings.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, _pane, _ev: &pane::ToggleSettings, _window, cx| {
+            ws.toggle_settings(cx);
+        },
+    )
     .detach();
     // ctrl+shift+R in any pane → open or close the right-bar flyout.
     cx.subscribe_in(
@@ -6880,6 +6900,10 @@ impl Workspace {
             launch_defaults: launchpref::load(),
             agents_prefs: agentcfg::load(),
             agents_menu: false,
+            settings: None,
+            settings_last: None,
+            wt_prefs: wtclean::load(&instance::config_dir()),
+            wt_review: Default::default(),
             skills_prefs: skills::load().unwrap_or_default(),
             skills_error: None,
             skills_form: None,
@@ -18603,7 +18627,7 @@ impl Workspace {
     fn agents_slider(
         &self,
         which: u8,
-        label: &str,
+        label: Option<&str>,
         th: &theme::Theme,
         sk: &skin::Skin,
         cx: &mut Context<Self>,
@@ -18673,6 +18697,11 @@ impl Workspace {
                         ))),
                 )
             });
+        // With no label it is the track alone, for a Settings row that
+        // carries the name and the value in its own type.
+        let Some(label) = label else {
+            return div().flex().flex_col().gap_0p5().child(track).child(ticks);
+        };
         div()
             .flex()
             .flex_row()
@@ -19257,7 +19286,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(0, ui.ag_rest_after, th, &sk, cx))
+            .child(self.agents_slider(0, Some(ui.ag_rest_after), th, &sk, cx))
             .child(
                 switch_row(
                     "\u{1f4a4}",
@@ -19281,7 +19310,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(1, ui.ag_sleep_after, th, &sk, cx))
+            .child(self.agents_slider(1, Some(ui.ag_sleep_after), th, &sk, cx))
             .child(
                 div()
                     .px_2()
@@ -22121,6 +22150,7 @@ impl Workspace {
             || self.plugins_menu
             || self.notif_menu
             || self.agents_menu
+            || self.settings.is_some()
             || self.bug_menu
             || self.admin_menu
             || self.update_menu
@@ -22249,6 +22279,12 @@ impl Workspace {
         // plain no.
         if self.relate.is_some() {
             self.relate = None;
+            return true;
+        }
+        // Settings is a book over the whole window: Esc clears its search
+        // first, then puts it away on the page it was on.
+        if self.settings.is_some() {
+            self.settings_peel();
             return true;
         }
         // Overlays that stack ON TOP of the agent wall — peel these first.
@@ -32441,6 +32477,7 @@ impl Render for Workspace {
                 || self.plugins_menu
                 || self.notif_menu
                 || self.agents_menu
+                || self.settings.is_some()
                 || self.bug_menu
                 || self.admin_menu
                 || self.update_menu
@@ -32510,6 +32547,18 @@ impl Render for Workspace {
                         })
                     }
                     "help" => self.help_open = true,
+                    // Settings, at the page TD_SETTINGS_PAGE names.
+                    "settings" => {
+                        let page = std::env::var("TD_SETTINGS_PAGE")
+                            .ok()
+                            .and_then(|p| settings::Page::from_id(&p));
+                        self.open_settings(Some(page.unwrap_or(settings::Page::General)), cx);
+                        if let Ok(q) = std::env::var("TD_SETTINGS_QUERY") {
+                            if let Some(b) = self.settings.as_mut() {
+                                b.query = q;
+                            }
+                        }
+                    }
                     "size" => self.scale_menu = true,
                     "tab" => self.open_tab_menu(self.active, point(px(350.), px(90.)), cx),
                     "launcher" => {
@@ -33402,6 +33451,33 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // ⚙ Settings: the book every setting lives in. It leads the corner and
+        // nothing hides it, like CONFIG, because it is the way to everything
+        // the other glyphs open.
+        let ic_settings = with_tip(
+            Self::hicon_s(&sk, self.settings.is_some(), scale)
+                .id("toolbar-settings")
+                .debug_selector(|| "toolbar-settings".into())
+                .text_size(sk.text_px(if sk.text_controls() {
+                    11. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .line_height(px(if sk.text_controls() {
+                    14. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .child(sk.control("\u{2699}", self.lang.strings().settings.title)),
+            vec![self.lang.strings().settings.glyph_tip.to_string()],
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.toggle_settings(cx);
+            }),
+        );
         let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
             .id("toolbar-agents")
             .debug_selector(|| "toolbar-agents".into())
@@ -33670,6 +33746,7 @@ impl Render for Workspace {
                             artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
                         })
                     })
+                    .child(ic_settings)
                     .when(ui_glyph[6], |d| {
                         d.child(artifact_rail::art_news(ic_art, art_dot, art_bumps, scale))
                     })
@@ -35767,6 +35844,7 @@ impl Render for Workspace {
         let plugins_overlay = self.render_plugins_overlay(&th, cx);
         let notif_overlay = self.render_notif_overlay(&th, cx);
         let agents_overlay = self.render_agents_overlay(&th, cx);
+        let settings_overlay = self.render_settings(&th, cx);
         let bug_overlay = self.render_bug_overlay(&th, cx);
         let admin_overlay = self.render_admin_overlay(&th, cx);
         let update_overlay = self.render_update_overlay(&th, cx);
@@ -40425,6 +40503,13 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     return;
                 }
+                // Settings takes its keys before the pane under it does: the
+                // pane keeps the focus it had when Ctrl+, was pressed, and a
+                // letter typed into the search must not reach its shell.
+                if ws.settings_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ev.keystroke.key.as_str() == "escape" && ws.close_popups() {
                     cx.stop_propagation();
                     cx.notify();
@@ -40572,6 +40657,7 @@ impl Render for Workspace {
                     .children(bug_overlay)
                     .children(admin_overlay)
                     .children(update_overlay)
+                    .children(settings_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)

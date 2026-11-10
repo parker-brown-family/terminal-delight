@@ -658,6 +658,10 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
                     | "w"
             );
         }
+        // ctrl+, opens Settings (`pane::ToggleSettings`).
+        if k.key == "," {
+            return true;
+        }
         // ctrl+w puts away the document box on top, one press per box. With no
         // box up it is ^W, werase, again: closing the tab moved to ctrl+shift+w,
         // because the close nearest to hand should take the smallest thing, and
