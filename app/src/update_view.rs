@@ -946,7 +946,7 @@ impl Workspace {
             div()
                 .absolute()
                 .inset_0()
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -957,7 +957,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 

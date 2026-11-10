@@ -199,10 +199,34 @@ pub fn search(query: &str, items: &[Item]) -> Vec<usize> {
     hits.into_iter().map(|(_, _, i)| i).collect()
 }
 
+/// A panel that still has its own drawing, shown on the book's right page
+/// in place of the page's rows rather than over the window. Parker,
+/// 2026-11-09: *"Open SHOULD open it in place! not LCOSE seetinga and open
+/// the fconfig being explored"*.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Host {
+    /// The surface config: theme, style, rules, UI CONFIG.
+    Palette,
+    Gauges,
+    Scale,
+    Language,
+    Updates,
+    Admin,
+    Notices,
+    Keys,
+    Skills,
+    Savings,
+    Bug,
+    Plugins,
+    Recover,
+}
+
 /// The book's state while it is open.
 #[derive(Clone, Debug, PartialEq)]
 pub struct Book {
     pub page: Page,
+    /// The panel shown in place on this page, while it is open.
+    pub host: Option<Host>,
     /// The search box's text.
     pub query: String,
     /// The lit result while searching.
@@ -213,6 +237,7 @@ impl Book {
     pub fn at(page: Page) -> Book {
         Book {
             page,
+            host: None,
             query: String::new(),
             pick: 0,
         }
