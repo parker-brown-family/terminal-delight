@@ -3747,6 +3747,10 @@ impl gpui::EventEmitter<ToggleInbox> for TerminalView {}
 pub struct OpenComposer;
 impl gpui::EventEmitter<OpenComposer> for TerminalView {}
 
+/// Ctrl+, — open or close Settings (`settings_view.rs`).
+pub struct ToggleSettings;
+impl gpui::EventEmitter<ToggleSettings> for TerminalView {}
+
 /// Ctrl+Shift+R — open or close the right-bar flyout (`flyout_view.rs`).
 pub struct ToggleFlyout;
 impl gpui::EventEmitter<ToggleFlyout> for TerminalView {}
@@ -8192,6 +8196,13 @@ impl TerminalView {
                     self.sticky_peel(cx);
                 }
             }
+            return Handled::Consumed;
+        }
+        // Ctrl+, opens Settings, as it does in T3 Code and most apps. A
+        // terminal has nothing for the chord: Ctrl with a comma sends a bare
+        // comma, or nothing at all.
+        if k.control && !k.shift && k.key == "," {
+            cx.emit(ToggleSettings);
             return Handled::Consumed;
         }
         // Ctrl+Insert is the copy Ctrl+Shift+C is, and Shift+Insert the paste

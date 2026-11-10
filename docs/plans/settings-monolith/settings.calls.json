@@ -1,0 +1,126 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-t3-pages-terminal-delight-has-nothing-for-are-le",
+      "at": "2026-11-10T05:57Z",
+      "title": "T3 pages Terminal Delight has nothing for are left out",
+      "context": null,
+      "chose": "Thirteen pages; Chat, Diffs, Voice, SnapShots, Browser, Devices, Scheduled tasks, Secrets omitted",
+      "because": "An empty page under a T3 name promises a setting that is not there.",
+      "passed_over": [
+        "Draw every T3 page, empty ones greyed"
+      ],
+      "undo": "One line in settings::GROUPS",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-the-surface-config-stays-its-own-surface",
+      "at": "2026-11-10T05:57Z",
+      "title": "The surface config stays its own surface",
+      "context": null,
+      "chose": "Appearance opens it; the book does not swallow it",
+      "because": "You called it beautiful; moving it into a row list would lose the swatches.",
+      "passed_over": [
+        "Rebuild it as Appearance rows"
+      ],
+      "undo": "None needed",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-the-gear-leads-the-menu-corner-and-cannot-be-hid",
+      "at": "2026-11-10T05:57Z",
+      "title": "The gear leads the menu corner and cannot be hidden",
+      "context": null,
+      "chose": "Always shown, like CONFIG, beside Ctrl+,",
+      "because": "It is the way to every other glyph's settings.",
+      "passed_over": [
+        "A UI CONFIG switch for it"
+      ],
+      "undo": "One child in the corner",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-shape"
+    },
+    {
+      "id": "call-rows-wear-the-skin-s-ink-not-t3-s-colours",
+      "at": "2026-11-10T05:57Z",
+      "title": "Rows wear the skin's ink, not T3's colours",
+      "context": null,
+      "chose": "T3's anatomy, each skin's radius, border and palette",
+      "because": "Hacker should still look like hacker inside Settings.",
+      "passed_over": [
+        "T3's own greys"
+      ],
+      "undo": "The row and section helpers",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent (Opus), slot unwired until Jev",
+        "uncertainty": "low",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "asked",
+      "verdict": null,
+      "see": "sec-shape"
+    }
+  ]
+}

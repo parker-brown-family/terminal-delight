@@ -18,12 +18,14 @@ mod entry;
 mod flyout;
 mod help;
 mod parts;
+mod settings;
 pub use chrome::Chrome;
 pub use coord::Coord;
 pub use entry::Entry;
 pub use flyout::Flyout;
 pub use help::Help;
 pub use parts::Parts;
+pub use settings::Settings;
 
 /// A UI language. Serialised lowercase into `state.toml` (`lang = "zh"`); an
 /// unknown value falls back to English so old/foreign files always load.
@@ -468,6 +470,9 @@ pub struct Strings {
     /// The right-bar flyout: the chip beside the attention pill and the
     /// panel of changes, files and pull requests it opens.
     pub flyout: &'static Flyout,
+    /// Settings: the book that holds every setting, laid out as T3 Code
+    /// lays out its own.
+    pub settings: &'static Settings,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -827,6 +832,7 @@ pub const EN: Strings = Strings {
     hs: &help::EN,
     entry: &entry::EN,
     flyout: &flyout::EN,
+    settings: &settings::EN,
 };
 
 /// Español.
@@ -1106,6 +1112,7 @@ pub const ES: Strings = Strings {
     hs: &help::ES,
     entry: &entry::ES,
     flyout: &flyout::ES,
+    settings: &settings::ES,
 };
 
 /// Deutsch.
@@ -1385,6 +1392,7 @@ pub const DE: Strings = Strings {
     hs: &help::DE,
     entry: &entry::DE,
     flyout: &flyout::DE,
+    settings: &settings::DE,
 };
 
 /// 中文 (简体).
@@ -1664,6 +1672,7 @@ pub const ZH: Strings = Strings {
     hs: &help::ZH,
     entry: &entry::ZH,
     flyout: &flyout::ZH,
+    settings: &settings::ZH,
 };
 
 /// Français.
@@ -1943,6 +1952,7 @@ pub const FR: Strings = Strings {
     hs: &help::FR,
     entry: &entry::FR,
     flyout: &flyout::FR,
+    settings: &settings::FR,
 };
 
 /// Русский.
@@ -2222,6 +2232,7 @@ pub const RU: Strings = Strings {
     hs: &help::RU,
     entry: &entry::RU,
     flyout: &flyout::RU,
+    settings: &settings::RU,
 };
 
 /// 日本語.
@@ -2501,6 +2512,7 @@ pub const JA: Strings = Strings {
     hs: &help::JA,
     entry: &entry::JA,
     flyout: &flyout::JA,
+    settings: &settings::JA,
 };
 
 /// 한국어.
@@ -2780,6 +2792,7 @@ pub const KO: Strings = Strings {
     hs: &help::KO,
     entry: &entry::KO,
     flyout: &flyout::KO,
+    settings: &settings::KO,
 };
 
 /// हिन्दी.
@@ -3060,6 +3073,7 @@ pub const HI: Strings = Strings {
     hs: &help::HI,
     entry: &entry::HI,
     flyout: &flyout::HI,
+    settings: &settings::HI,
 };
 
 #[cfg(test)]
@@ -3368,6 +3382,15 @@ mod tests {
         "flyout.pr_description",
         // French says "Page" for a page.
         "flyout.face_page",
+        // French and German say Agents and Code; Spanish says General; French
+        // says Notifications and Machines. The same words, the same meaning.
+        "settings.h_agents",
+        "settings.h_code",
+        "settings.p_general",
+        "settings.p_notifications",
+        "settings.s_machines",
+        // A product surface's name, kept as the window draws it.
+        "settings.r_floor",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -3415,6 +3438,7 @@ mod tests {
             ("help", include_str!("lang/help.rs")),
             ("entry", include_str!("lang/entry.rs")),
             ("flyout", include_str!("lang/flyout.rs")),
+            ("settings", include_str!("lang/settings.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
