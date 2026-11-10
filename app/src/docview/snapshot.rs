@@ -454,7 +454,7 @@ impl SnapshotEngine {
         }
         // One switch: Chromium keeps only the last `--enable-features` it is
         // given, so a second one would silently drop the first.
-        let mut features = vec!["NetworkServiceInProcess2"];
+        let mut features: Vec<&str> = vec![];
         if pref.vulkan() {
             // A real GPU keeps its process: the Vulkan path is the one
             // measured that way, and a driver fault stays out of the browser.
