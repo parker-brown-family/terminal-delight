@@ -1771,13 +1771,18 @@ impl Workspace {
                 .text_color(if lit { th.text } else { th.text.alpha(0.78) })
                 .cursor_pointer()
                 .hover(move |st| st.bg(acc.alpha(0.10)))
-                .child(
-                    div()
-                        .w(px(18.))
-                        .flex_shrink_0()
-                        .text_size(sk.text_px(11.))
-                        .child(sk.control(glyph, word)),
-                )
+                // A skin that spells its glyphs as words (TERMINIMALIST) would
+                // spell the page's own name here, beside the name: the label
+                // already says it, so the glyph column goes.
+                .when(!sk.text_controls(), |d| {
+                    d.child(
+                        div()
+                            .w(px(18.))
+                            .flex_shrink_0()
+                            .text_size(sk.text_px(11.))
+                            .child(sk.control(glyph, word)),
+                    )
+                })
                 .child(
                     div()
                         .flex_1()
