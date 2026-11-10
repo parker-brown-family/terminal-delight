@@ -1060,7 +1060,6 @@ impl Workspace {
             }
         };
         c.query.clear();
-        c.order = launcher::filter(&c.projects, "");
         c.project = Some(at);
         c.machine = if far {
             match c.machines.iter().position(|m| m.name == made.machine.name) {

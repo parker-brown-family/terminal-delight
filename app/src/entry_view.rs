@@ -35,8 +35,6 @@ pub(crate) struct Composer {
     pub(crate) projects: Vec<launcher::Project>,
     /// Typed on the chip that has the keyboard: it narrows that chip's list.
     pub(crate) query: String,
-    /// Indices into `projects` that match `query`, best first.
-    pub(crate) order: Vec<usize>,
     /// The chosen project, an index into `projects`. `None` is a choice of its
     /// own, *none, don't know yet*: the agent starts in a new folder of its
     /// own under `~/.scratch`, as a T3 "No project" thread does, and its tab is
@@ -128,10 +126,18 @@ impl Composer {
         self.machines.len() > 1
     }
 
+    /// Indices into `projects` that match what is typed, best first. Worked
+    /// out each time it is read and never kept: a kept copy went stale when
+    /// leaving the chip cleared the letters, and the list came back narrowed
+    /// under an empty field (verify/composer, `ListMatchesField`).
+    pub(crate) fn project_order(&self) -> Vec<usize> {
+        launcher::filter(&self.projects, &self.query)
+    }
+
     /// The PROJECT list's rows: none first, then the projects that match.
     /// None is there while nothing is typed, or when what is typed asks for
     /// it ("no", "none", its own word), as T3 finds its "No project" row.
-    fn project_rows(&self, l: lang::Lang) -> Vec<Option<usize>> {
+    pub(crate) fn project_rows(&self, l: lang::Lang) -> Vec<Option<usize>> {
         let e = l.strings().entry;
         let none = self.query.trim().is_empty()
             || entry::asks_for_none(
@@ -140,7 +146,7 @@ impl Composer {
             );
         none.then_some(None)
             .into_iter()
-            .chain(self.order.iter().copied().map(Some))
+            .chain(self.project_order().into_iter().map(Some))
             .collect()
     }
 
@@ -312,7 +318,6 @@ impl Composer {
     fn refilter(&mut self, l: lang::Lang) {
         let typed = !self.query.trim().is_empty();
         if self.focus == entry::Focus::Project {
-            self.order = launcher::filter(&self.projects, &self.query);
             if typed {
                 if let Some(&first) = self.project_rows(l).first() {
                     self.project = first;
@@ -424,7 +429,6 @@ impl Workspace {
             });
             // Standing in no project opens on none rather than on whichever
             // repository sorts first.
-            let order = launcher::filter(&projects, "");
             let pref = &self.launch_defaults;
             let (draft, pictures, pastes) = self.composer_stash.take().unwrap_or_default();
             self.composer = Some(Composer {
@@ -434,7 +438,6 @@ impl Workspace {
                 focus: entry::Focus::Text,
                 projects,
                 query: String::new(),
-                order,
                 project,
                 harness: pref.harness().unwrap_or(launcher::Harness::Claude),
                 model: pref.model.clone().filter(|id| id != "configured"),
