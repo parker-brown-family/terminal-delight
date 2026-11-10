@@ -486,13 +486,38 @@ def clean_run(path):
         shutil.rmtree(path, ignore_errors=True)
 
 
+def wake_named_runs():
+    """Run folders a sleeping agent's wake script still names.
+
+    A window older than the wake-through-the-bridge fix replays a sleeper's
+    launch line word for word, folder and all, so pruning that folder leaves
+    the agent unable to wake ("Settings file not found"). Unreadable scripts
+    name nothing; a folder they might have named is pruned as before."""
+    named = set()
+    try:
+        scripts = sorted((state_root().parent / "wake").glob("*.sh"))[:4096]
+    except OSError:
+        return named
+    for script in scripts:
+        try:
+            text = script.read_text(errors="replace")
+        except OSError:
+            continue
+        named.update(re.findall(r"skill-receipts/runs/(\d+-[A-Za-z0-9_]+)", text))
+    return named
+
+
 def prune_runs(runs):
+    keep = None
     for index, path in enumerate(runs.iterdir()):
         if index >= 256:
             break
         match = re.fullmatch(r"(\d+)-[A-Za-z0-9_]+", path.name)
         if match and start_tick(int(match[1])) is None:
-            clean_run(path)
+            if keep is None:
+                keep = wake_named_runs()
+            if path.name not in keep:
+                clean_run(path)
 
 
 def stage(entries, destination):

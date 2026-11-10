@@ -132,6 +132,13 @@ impl Geometry {
         (f64::from(band.top_dev) / s, f64::from(band.height_dev) / s)
     }
 
+    /// How tall every band but the last is: one screen, bounded so a very
+    /// tall window still decodes in manageable pieces.
+    pub fn band_step(&self) -> u32 {
+        self.height_dev(self.viewport_css_height as f32)
+            .clamp(256, 4096)
+    }
+
     /// The page's height in device pixels, rounded up so the last row of
     /// the page is never cut off.
     pub fn height_dev(&self, height_css: f32) -> u32 {
@@ -256,10 +263,7 @@ impl PageLayout {
     /// Bound very tall windows to keep individual decodes manageable.
     pub fn bands(&self) -> Vec<Band> {
         let height = self.geometry.height_dev(self.height_css);
-        let step = self
-            .geometry
-            .height_dev(self.geometry.viewport_css_height as f32)
-            .clamp(256, 4096);
+        let step = self.geometry.band_step();
         if step == TILE_DEV {
             return bands(height);
         }

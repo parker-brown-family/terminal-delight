@@ -185,6 +185,22 @@ subprocess.run(hook,shell=True,input='{"session_id":"fixture"}',text=True,check=
         self.assertEqual(value["available"][0]["origin"], "existing agent skill")
         self.assertEqual((personal / "helper.txt").read_text(), "personal version")
 
+    def test_pruning_keeps_a_folder_a_sleeping_agents_wake_script_names(self):
+        # A window older than the wake-through-the-bridge fix wrote this line;
+        # pruning the folder it names would leave that agent unable to wake.
+        state = self.root / "state/terminal-delight"
+        runs = state / "skill-receipts/runs"
+        named, loose = runs / "999999991-sleeper", runs / "999999992-ended"
+        for run in (named, loose):
+            run.mkdir(parents=True)
+            (run / "settings.json").write_text("{}")
+        (state / "wake").mkdir(parents=True)
+        (state / "wake/sleeper.sh").write_text(
+            f"exec /home/p/.local/bin/claude --add-dir {named} --settings {named}/settings.json --resume s\n")
+        self.assertEqual(self.run_provider(args=["task"]).returncode, 27)
+        self.assertTrue((named / "settings.json").is_file(), "a named folder is kept")
+        self.assertFalse(loose.exists(), "an ended launch nobody names is still pruned")
+
     def test_cleanup_cannot_remove_a_source_or_another_directory(self):
         bridge.clean_run(self.extra)
         self.assertTrue((self.extra / "SKILL.md").is_file())

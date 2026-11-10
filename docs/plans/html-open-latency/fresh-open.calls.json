@@ -1,0 +1,76 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-keep-the-ready-page-out",
+      "at": "2026-11-07T19:40Z",
+      "title": "Keep the ready page out",
+      "context": null,
+      "chose": "Each open makes its own page; the ready-page version waits on a saved ref",
+      "because": "It saved about 60 ms for about 48 MiB, the retained-page trade you declined last round",
+      "passed_over": [
+        "Ship one ready page for the next open"
+      ],
+      "undo": "Merge refs/attempts/html-fresh-open/ready-page",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "evidence/fresh-open/engine-ready-vs-not.jsonl",
+          "sha256": "sha256:b3a0632edba840626eb059ece39d54391f032619e1c7a583c52fee1bb147b72f",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-left"
+    },
+    {
+      "id": "call-photograph-the-first-screen-unclipped",
+      "at": "2026-11-07T19:40Z",
+      "title": "Photograph the first screen unclipped",
+      "context": null,
+      "chose": "Capture the first screen as the page shows it, with a clipped retry",
+      "because": "A clip redrew every glass pane four times; the pixels matched at four scales",
+      "passed_over": [
+        "Keep clipping every band"
+      ],
+      "undo": "Revert screenshot_params' first-screen branch",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "evidence/fresh-open/README.md",
+          "sha256": "sha256:0bd8d67a61c9bcff93fdbc7d52fe961179af20d6a1c39c7587b3e557ecbfc5df",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-changed"
+    }
+  ]
+}
