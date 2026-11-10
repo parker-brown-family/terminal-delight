@@ -2764,7 +2764,7 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
 /// It is also what makes "spent once" true by construction rather than by
 /// convention: the returned grade answers `true` here, so a second pass is a
 /// clone.
-fn graded_palette(th: &Theme) -> Theme {
+pub(crate) fn graded_palette(th: &Theme) -> Theme {
     if th.grade.colour_is_neutral() {
         return th.clone();
     }
@@ -11197,7 +11197,7 @@ fn grid_face(th: &Theme, weight: FontWeight) -> Font {
 /// The live grid's font: per-glyph fallback so CJK / Devanagari content renders
 /// real glyphs instead of tofu boxes, once a row has needed it (see
 /// [`FallbackLatch`]); it only fires for glyphs the primary mono font is missing.
-fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+pub(crate) fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     let mut f = grid_face(th, weight);
     f.fallbacks = GRID_FALLBACKS.chain();
     f
