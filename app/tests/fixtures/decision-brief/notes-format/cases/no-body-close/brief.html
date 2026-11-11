@@ -189,6 +189,17 @@ dialog#d-export { max-width: 780px; }
   .concurrable { --concur-size: 96px; }
   .concur-q { font-size: 38px; }
 }
+
+/* Copy map's confirmation: it says the map is on the clipboard, then gets out of the way. */
+.notes-toast {
+  position: fixed; left: 50%; bottom: 76px; z-index: 950; max-width: min(560px, calc(100vw - 32px));
+  transform: translate(-50%, 8px); opacity: 0; pointer-events: none;
+  padding: 10px 16px; border-radius: 12px; font: 13px/1.4 var(--mono, ui-monospace, monospace);
+  color: var(--surface-1, #111); background: var(--warning, #e8b04a);
+  box-shadow: 0 8px 24px rgb(0 0 0 / .35); transition: opacity .18s ease, transform .18s ease;
+}
+.notes-toast.on { opacity: 1; transform: translate(-50%, 0); }
+@media (prefers-reduced-motion: reduce) { .notes-toast { transition: none; } }
 </style>
 </head>
 <body>
@@ -452,9 +463,11 @@ dialog#d-export { max-width: 780px; }
   /* The sync record goes with every write, so what it says was seen is always stored. */
   function save() {
     try { localStorage.setItem(KEY, JSON.stringify(N)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+    document.dispatchEvent(new CustomEvent('brief:notes-changed'));
   }
   function saveConcurs() {
     try { localStorage.setItem(CKEY, JSON.stringify(C)); localStorage.setItem(SKEY, JSON.stringify(SYNC)); } catch (e) {}
+    document.dispatchEvent(new CustomEvent('brief:notes-changed'));
   }
   function stamp() { return new Date().toISOString().slice(0, 16).replace('T', ' '); }
   function concurCount() {
@@ -716,19 +729,63 @@ dialog#d-export { max-width: 780px; }
       list.forEach(function (n) { out.push('  · ' + n.text.replace(/\n+/g, ' ')); });
       out.push('');
     });
-    return out.join('\n');
+    var map = out.join('\n');
+    return map + (window.BriefReading ? window.BriefReading.summary() : '');
   }
 
   function exportNotes() {
     var txt = buildMap();
     document.getElementById('export-out').value = txt;
+    var tokens = Math.ceil(txt.length / 4);
     var est = document.getElementById('export-est');
     if (est) {
-      est.textContent = txt.length + ' characters ≈ ' + Math.ceil(txt.length / 4) +
+      est.textContent = txt.length + ' characters ≈ ' + tokens +
         ' tokens — versus ~' + Math.ceil(document.body.innerText.length / 4) +
         ' for the whole document.';
     }
-    document.getElementById('d-export').showModal();
+    /* One click copies (Parker, 2026-11-10: "copy map should always be just a single click").
+       The dialog opens only when the browser refuses the clipboard, so the map is never lost. */
+    copyText(txt).then(function () {
+      toast('Note map copied · ≈' + tokens + ' tokens — paste it into the agent\'s prompt');
+    }, function (err) {
+      if (est) est.textContent += ' This browser would not let the page copy (' +
+        ((err && (err.name || err.message)) || 'refused') + '): select the map and copy it here.';
+      document.getElementById('d-export').showModal();
+    });
+  }
+
+  function copyText(txt) {
+    function legacy() {
+      var ta = document.createElement('textarea');
+      ta.value = txt; ta.setAttribute('readonly', '');
+      ta.style.cssText = 'position:fixed;top:0;left:0;opacity:0;pointer-events:none';
+      document.body.appendChild(ta); ta.select();
+      var ok = false;
+      try { ok = document.execCommand('copy'); } catch (e) {}
+      ta.remove();
+      return ok ? Promise.resolve() : Promise.reject(new Error('clipboard refused'));
+    }
+    if (navigator.clipboard && window.isSecureContext) {
+      return navigator.clipboard.writeText(txt).catch(function (first) {
+        return legacy().catch(function () { throw first; });
+      });
+    }
+    return legacy();
+  }
+
+  function toast(text) {
+    var t = document.querySelector('.notes-toast');
+    if (!t) {
+      t = document.createElement('div');
+      t.className = 'notes-toast';
+      t.setAttribute('role', 'status');
+      t.setAttribute('aria-live', 'polite');
+      document.body.appendChild(t);
+    }
+    t.textContent = text;
+    t.classList.add('on');
+    clearTimeout(toast.timer);
+    toast.timer = setTimeout(function () { t.classList.remove('on'); }, 3200);
   }
 
   function copyExport(btn) {
@@ -775,7 +832,7 @@ dialog#d-export { max-width: 780px; }
   function snapshotNotes() {
     var rev = new Date().toISOString();
     var doc = document.documentElement.cloneNode(true);
-    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn, .notes-persistence'), function (n) { n.remove(); });
+    Array.prototype.forEach.call(doc.querySelectorAll('.note-btn, .notes-persistence, .notes-toast, [data-review-connection]'), function (n) { n.remove(); });
     Array.prototype.forEach.call(doc.querySelectorAll('.notable'), function (n) {
       n.classList.remove('notable', 'has-note');
     });
@@ -799,6 +856,8 @@ dialog#d-export { max-width: 780px; }
       else if (doc.querySelector('body')) doc.querySelector('body').appendChild(cisl);
     }
     if (cisl) { cisl.textContent = islandJson(C); stampIsland(cisl, rev); }
+    var readingIsland = doc.querySelector('#report-reading');
+    if (readingIsland && window.BriefReading) readingIsland.textContent = islandJson(window.BriefReading.record());
 
     /* A plain-text mirror as well, so grep and ctx_read find the notes without anyone
        having to parse JSON out of a script tag. A save replaces the last one rather than
@@ -820,6 +879,11 @@ dialog#d-export { max-width: 780px; }
     if (!confirm('Delete every note in this brief?')) return;
     N = {}; save(); badges();
   }
+
+  // The local review adapter diffs exact entries; it never sends replacement note maps.
+  window.BriefNotes = { snapshot: function () {
+    return JSON.parse(JSON.stringify({ notes: N, concurs: C }));
+  }};
 
   /* ---- wiring ---- */
   function init() {
