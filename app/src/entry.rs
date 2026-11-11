@@ -157,11 +157,20 @@ pub fn line_on(machine: &Machine, home: &Path, cwd: &Path, agent_line: &str, mak
         // A folder of its own, claimed the way `claim_scratch` claims one
         // here: the name, then name-2, name-3…, never one that exists, so two
         // agents asked the same thing on the same day never share a folder.
-        (true, Some(parent)) => format!(
-            "mkdir -p {p} && d={target} && n=1 && while ! mkdir \"$d\" 2>/dev/null; do \
-             n=$((n+1)); [ $n -gt 99 ] && exit 1; d={target}-$n; done && cd \"$d\"",
-            p = far(parent)
-        ),
+        // Through `sh -c`, as `addproject::remote_command` does: the loop is
+        // POSIX shell, and the far account's login shell may be fish, which
+        // would refuse it before the agent started (Greptile on PR 1438).
+        (true, Some(parent)) => {
+            let claim = format!(
+                "mkdir -p {p} && d={target} && n=1 && while ! mkdir \"$d\" 2>/dev/null; do \
+                 n=$((n+1)); [ $n -gt 99 ] && exit 1; d={target}-$n; done && cd \"$d\" && {agent_line}",
+                p = far(parent)
+            );
+            return format!(
+                "ssh -t {dest} {}",
+                launcher::shell_quote(&crate::addproject::remote_command(&claim, &[]))
+            );
+        }
         (true, None) => format!("mkdir -p {target} && cd {target}"),
         (false, _) => format!("cd {target}"),
     };
@@ -685,16 +694,14 @@ mod tests {
             .collect();
         assert_eq!(words.len(), 2, "{words:?}");
         assert_eq!(words[0], "box");
+        // One `sh -c`, so the far login shell only has to read POSIX quoting.
         assert!(
-            words[1].starts_with("mkdir -p ~/'.scratch' && d=~/'.scratch/2026-11-09-fix-it'"),
+            words[1].starts_with("sh -c '") && words[1].ends_with("' td"),
             "{}",
             words[1]
         );
-        assert!(
-            words[1].ends_with("&& cd \"$d\" && claude 'fix it'"),
-            "{}",
-            words[1]
-        );
+        assert!(words[1].contains(".scratch"), "{}", words[1]);
+        assert!(words[1].contains("claude"), "{}", words[1]);
     }
 
     /// Two agents asked the same thing on the same day on one far machine get
