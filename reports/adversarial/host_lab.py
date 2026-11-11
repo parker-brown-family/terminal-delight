@@ -46,6 +46,14 @@ def process_stats(pid):
         return None
 
 
+def process_identity(pid):
+    try:
+        raw = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+        return {"parent": int(raw[1]), "start_ticks": int(raw[19])}
+    except (OSError, ValueError, IndexError):
+        return None
+
+
 class Host:
     def __init__(self, binary, name):
         self.tmp = tempfile.TemporaryDirectory(prefix="td-adversarial-")
@@ -104,8 +112,16 @@ class Host:
         p = r.get("outcome", {}).get("ok")
         if not p:
             raise RuntimeError("spawn refused: " + json.dumps(r))
-        self.panes.append(p)
+        self.remember(p)
         return p
+
+    def remember(self, pane):
+        identity = process_identity(pane["shell_pid"])
+        # A protocol field is not ownership. Record a kernel-observed direct
+        # child before later cleanup is allowed to signal it.
+        if identity and identity["parent"] == self.proc.pid:
+            pane["_owned_start_ticks"] = identity["start_ticks"]
+        self.panes.append(pane)
 
     def attach(self, pane):
         s = self.connect()
@@ -127,6 +143,9 @@ class Host:
         # The harness owns these exact children. Never scan/kill by program name.
         for p in self.panes:
             pid = p["shell_pid"]
+            identity = process_identity(pid)
+            if identity is None or p.get("_owned_start_ticks") != identity["start_ticks"]:
+                continue
             try:
                 os.kill(pid, signal.SIGKILL)
             except ProcessLookupError:
@@ -296,7 +315,7 @@ def zero_geometry(host):
             r = host.ask({"verb": "spawn-pane", "cwd": str(host.root), "geom": geom})
             p = r.get("outcome", {}).get("ok")
             if p:
-                host.panes.append(p)
+                host.remember(p)
                 close = host.ask({"verb": "close-pane", "pane": p["pane"]})
             else:
                 close = None
@@ -378,6 +397,43 @@ def resize_and_unicode(host):
         "scope": "Progress and snapshot text after bounded geometry changes; no client renderer hash comparison."}
 
 
+def crash_and_reclaim(host):
+    pane = host.spawn()
+    body = f'active = 0\nfuture_field = "keep-me"\n[[tabs]]\nname = "crash-fixture"\n[tabs.node.Leaf]\npane_id = {pane["pane"]}\ncwd = "/stale"\n'
+    reply = host.ask({"verb": "save", "schema": 1, "body": body})
+    if "written" not in reply.get("outcome", {}).get("ok", {}):
+        raise RuntimeError("crash fixture could not establish a saved layout")
+    state = host.root / "config/terminal-delight/sessions" / f"{host.name}.toml"
+    before = state.read_bytes()
+    old = host.proc.pid
+    host.proc.kill()
+    host.proc.wait(timeout=5)
+    parseable_after_kill = tomllib.loads(state.read_text()).get("future_field") == "keep-me"
+    host.proc = subprocess.Popen([str(BINARY), "serve", "--session", host.name], env=host.env,
+        cwd=host.root, stdin=subprocess.DEVNULL, stdout=host.log, stderr=subprocess.STDOUT,
+        start_new_session=True)
+    deadline = time.monotonic() + TIMEOUT
+    hello = None
+    while time.monotonic() < deadline:
+        if host.proc.poll() is not None:
+            break
+        try:
+            hello = host.ask({"verb": "hello", "proto": 1, "kind": "tool"})
+            if hello.get("host") == host.proc.pid:
+                break
+        except (OSError, RuntimeError, ValueError):
+            pass
+        time.sleep(.01)
+    same_file = state.read_bytes() == before
+    preserved = tomllib.loads(state.read_text()).get("future_field") == "keep-me"
+    owns = bool(hello and hello.get("host") == host.proc.pid and host.proc.pid != old)
+    return owns and parseable_after_kill and same_file and preserved, {
+        "saved_file_parseable_after_sigkill": parseable_after_kill,
+        "replacement_claimed_stale_socket": owns, "saved_layout_bytes_preserved": same_file,
+        "unknown_client_field_preserved": preserved, "replacement_pane_count": hello.get("panes") if hello else None,
+        "scope": "Saved layout recovery after host death; live PTYs do not survive killing their host and were not promised to."}
+
+
 def main():
     global BINARY
     parser = argparse.ArgumentParser(description=__doc__)
@@ -387,6 +443,7 @@ def main():
     parser.add_argument("--rounds", type=int, default=12)
     args = parser.parse_args()
     BINARY = args.binary.resolve(strict=True)
+    binary_sha_start = hashlib.sha256(BINARY.read_bytes()).hexdigest()
     counts = [int(x) for x in args.counts.split(",")]
     if not counts or any(x < 1 or x > 50 for x in counts) or not 1 <= args.rounds <= 50:
         parser.error("counts must be 1..50; rounds 1..50")
@@ -395,7 +452,7 @@ def main():
     cases += [("fragmented-wire", fragmented_wire), ("concurrent-lifecycle", concurrent_lifecycle),
               ("stalled-clients", stalled_clients), ("duplicate-host", host_duplicate),
               ("zero-geometry", zero_geometry), ("interrupted-concurrent-saves", interrupted_saves),
-              ("resize-unicode", resize_and_unicode)]
+              ("resize-unicode", resize_and_unicode), ("host-crash-reclaim", crash_and_reclaim)]
     results = []
     for name, experiment in cases:
         host = None
@@ -412,14 +469,16 @@ def main():
                 host.close()
         results.append({"id": name, "status": status, "wall_s": time.monotonic() - started, "evidence": evidence})
         print(f"{status:12} {name}", flush=True)
+    binary_sha_end = hashlib.sha256(BINARY.read_bytes()).hexdigest()
     doc = {"schema": "td-host-adversarial-v1", "binary": str(BINARY),
-           "binary_sha256": hashlib.sha256(BINARY.read_bytes()).hexdigest(),
+           "binary_sha256": binary_sha_end, "binary_sha256_before": binary_sha_start,
+           "binary_unchanged_during_run": binary_sha_start == binary_sha_end,
            "source_revision": subprocess.run(["git", "rev-parse", "HEAD"], cwd=Path(__file__).resolve().parents[2], capture_output=True, text=True).stdout.strip(),
            "source_binary_match": None, "paid_model_calls": 0, "gui_opened": False,
            "results": results}
     args.out.parent.mkdir(parents=True, exist_ok=True)
     args.out.write_text(json.dumps(doc, indent=2) + "\n")
-    return int(any(r["status"] != "corroborated" for r in results))
+    return int(binary_sha_start != binary_sha_end or any(r["status"] != "corroborated" for r in results))
 
 
 if __name__ == "__main__":
