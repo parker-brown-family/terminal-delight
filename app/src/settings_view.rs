@@ -378,7 +378,7 @@ impl Workspace {
         if let Some(b) = self.settings.take() {
             self.settings_last = Some(b.page);
         }
-        if self.agents_drag.take().is_some() {
+        if self.take_agents_drag().is_some() {
             agentcfg::save(&self.agents_prefs);
         }
         cx.notify();

@@ -61,9 +61,11 @@ mod dirlogo;
 mod doc;
 mod docopen;
 mod docview;
+mod drag;
 mod emphasis;
 mod engstate;
 mod entry;
+use drag::Drag;
 mod entry_view;
 mod fav;
 mod feedback;
@@ -4910,8 +4912,8 @@ struct Workspace {
     /// to move the agent in or build a relationship (with the org, or a member).
     /// `Some` means the drop popup is open.
     floor_drop: Option<threshing_floor_view::DropChoice>,
-    /// Transient membership gesture; GPUI remains the authority on its lifetime.
-    floor_drag: Option<Entity<TerminalView>>,
+    /// The one drag the pointer is making (see [`Drag`]).
+    drag: Option<Drag>,
     floor_tether: Option<Point<Pixels>>,
     floor_view: threshing_floor_view::FloorViewport,
     floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
@@ -5098,8 +5100,6 @@ struct Workspace {
     skills_scroll: ScrollHandle,
     skills_importing: bool,
     skills_import_generation: u64,
-    /// Which agents-page slider is being dragged, if any: 0 rest, 1 sleep.
-    agents_drag: Option<u8>,
     /// Where the two sliders' tracks were drawn, for mapping a pointer.
     agents_tracks: [std::sync::Arc<std::sync::Mutex<Option<Bounds<Pixels>>>>; 2],
     /// What the last rest-and-sleep tick did, for the Agents page's readout.
@@ -5188,21 +5188,12 @@ struct Workspace {
     /// Agent-wall program/mode filter, generated from the live pane modes.
     /// Combines with group and state filters.
     mcp_program_filter: Option<String>,
-    /// The OSD slider being dragged, if any (which channel).
-    slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
     slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
-    /// Which wheel marker (seed / text / complement) is being dragged, if any.
-    /// The three markers live on the wheel; you grab one and drag it around.
-    wheel_drag: Option<WheelTarget>,
     /// The marker the lightness slider edits — the one most recently grabbed.
     wheel_active: WheelTarget,
-    /// True while the lightness slider (white↔black) is being dragged.
-    light_drag: bool,
     /// Live lightness-slider rect, for ratio math during a drag.
     light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// Which tracking-band slider (0=intensity,1=speed,2=size) is being dragged.
-    track_drag: Option<usize>,
     /// Live tracking-slider rects, for ratio math during a drag.
     track_bounds: [Arc<Mutex<Option<Bounds<Pixels>>>>; 5],
     /// Live colour-wheel rect, for polar hit-testing during a drag.
@@ -5211,13 +5202,9 @@ struct Workspace {
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     jiggle: FrameJiggle,
     last_action: Instant,
-    /// split-id being dragged, if any
-    drag_split: Option<u64>,
     split_bounds: Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
     /// Last seen window bounds (x, y, w, h), refreshed each render for save().
     last_win: Option<(f32, f32, f32, f32)>,
-    /// A sub-tab being dragged by its header, if any.
-    drag_pane: Option<PaneDrag>,
     /// The resolved drop landing under the cursor while dragging (for overlay).
     drop_target: Option<DropTarget>,
     /// Live per-pane content rects (entity → box) for drop hit-testing.
@@ -5233,10 +5220,6 @@ struct Workspace {
     render_band: Option<(f32, f32)>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
-    /// An outer tab being dragged along the strip to reorder it, if any.
-    tab_drag: Option<TabDrag>,
-    /// A whole group being dragged by its handle to reorder it, if any.
-    group_drag: Option<GroupDrag>,
     /// The insertion slot (0..=len) a tab-reorder release would land in.
     tab_drop: Option<usize>,
     /// `true` when the resolved tab-drop slot is a fresh row below the last row
@@ -5324,13 +5307,8 @@ struct Workspace {
     /// buffer. Tasks are renamed with the strip's own editor (`renaming`), so
     /// this only ever holds a project or an initiative.
     bar_rename: Option<(BarBranch, EditBuffer)>,
-    /// A left-bar row being dragged onto a branch, if any — how a task is filed
-    /// into a project without a menu.
-    bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
     bar_bounds: BarBoxes,
-    /// An INBOX row being dragged onto another agent's row (`inbox_view.rs`).
-    inbox_drag: Option<inbox_view::InboxDrag>,
     /// Where each INBOX row was drawn last frame, by the pane it stands for.
     inbox_bounds: inbox_view::InboxBoxes,
     /// Where the bay was drawn this frame, for the same hit-testing. Separate
@@ -5360,12 +5338,8 @@ struct Workspace {
     tab_scope: TabScope,
     /// Which pip (Fill / Text) the tab pane's wheel + lightness slider drive.
     tab_pip: TabPip,
-    /// The tab-pane wheel pip being dragged, if any.
-    tab_wheel_drag: Option<TabPip>,
     /// Live tab-pane wheel rect, for polar hit-testing during a drag.
     tab_wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// True while the tab-pane lightness slider is being dragged.
-    tab_light_drag: bool,
     /// Live tab-pane lightness-slider rect, for ratio math during a drag.
     tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
@@ -5377,13 +5351,9 @@ struct Workspace {
     /// [`reader_scale`]). Non-destructive — it scales only the reader, never the
     /// real terminal's grid. Reset to 1.0 whenever the modal (re)opens on a pane.
     focus_zoom: f32,
-    /// True while the FOCUS text-size slider thumb is being dragged.
-    focus_zoom_drag: bool,
     /// On-screen box of the FOCUS slider track (captured each frame), so a drag
     /// anywhere in the window maps the cursor-x back to a 0..1 track fraction.
     focus_zoom_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// True while the dashboard card-size slider is being dragged.
-    card_scale_drag: bool,
     /// Live card-slider track rect, for ratio math during a drag.
     card_scale_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Vertical pan offset (px) of the zoomed mirror inside the FOCUS panel. When
@@ -5507,8 +5477,6 @@ struct Workspace {
     /// `(anchor, head)`. Stored in SOURCE coordinates so it survives a zoom/wrap
     /// reflow. `None` = nothing selected.
     focus_sel: Option<((usize, usize), (usize, usize))>,
-    /// True while a left-drag is actively extending the reader selection.
-    focus_sel_drag: bool,
     /// A press in the reader went to the document the pane lent it, and so
     /// do the moves until the button comes up: a picture being panned, a
     /// video's track being scrubbed.
@@ -5802,14 +5770,14 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
     cx.subscribe(pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
-        ws.drag_pane = Some(PaneDrag {
+        ws.set_drag_pane(Some(PaneDrag {
             id: pane.entity_id(),
             start,
             at: start,
             engaged: false,
             left_window: false,
             over_bay: false,
-        });
+        }));
         ws.drop_target = None;
         cx.notify();
     })
@@ -6822,6 +6790,7 @@ impl Workspace {
         };
         let ask_seq = prompts.latest_receipt_id();
         let mut ws = Self {
+            drag: None,
             tabs: vec![],
             active: 0,
             focus_handle: cx.focus_handle(),
@@ -6869,7 +6838,6 @@ impl Workspace {
             floor_settings: false,
             floor_map: None,
             floor_drop: None,
-            floor_drag: None,
             floor_tether: None,
             floor_view: Default::default(),
             floor_context: None,
@@ -6950,7 +6918,6 @@ impl Workspace {
             skills_scroll: ScrollHandle::new(),
             skills_importing: false,
             skills_import_generation: 0,
-            agents_drag: None,
             agents_tracks: Default::default(),
             rest_census: RestCensus::default(),
             rest_store_saved: Default::default(),
@@ -6998,29 +6965,21 @@ impl Workspace {
             mcp_filter: McpFilter::All,
             mcp_state_filter: None,
             mcp_program_filter: None,
-            slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            wheel_drag: None,
             wheel_active: WheelTarget::Seed,
-            light_drag: false,
             light_bounds: Arc::new(Mutex::new(None)),
-            track_drag: None,
             track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
-            drag_split: None,
             split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             last_win: None,
-            drag_pane: None,
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             render_band: None,
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            tab_drag: None,
-            group_drag: None,
             tab_drop: None,
             tab_drop_newrow: false,
             groups: Vec::new(),
@@ -7050,9 +7009,7 @@ impl Workspace {
             bar_carry: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
-            bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
-            inbox_drag: None,
             inbox_bounds: Arc::new(Mutex::new(Vec::new())),
             bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
@@ -7064,15 +7021,11 @@ impl Workspace {
             group_menu_at: None,
             tab_scope: TabScope::ThisTab,
             tab_pip: TabPip::Fill,
-            tab_wheel_drag: None,
             tab_wheel_bounds: Arc::new(Mutex::new(None)),
-            tab_light_drag: false,
             tab_light_bounds: Arc::new(Mutex::new(None)),
             focus_read: None,
             focus_zoom: 1.0,
-            focus_zoom_drag: false,
             focus_zoom_bounds: Arc::new(Mutex::new(None)),
-            card_scale_drag: false,
             card_scale_bounds: Arc::new(Mutex::new(None)),
             focus_scroll_y: 0.0,
             focus_at_bottom: true,
@@ -7108,7 +7061,6 @@ impl Workspace {
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
-            focus_sel_drag: false,
             focus_doc_holding: false,
             focus_read_seen: false,
             focus_clip_bounds: Arc::new(Mutex::new(None)),
@@ -13688,7 +13640,7 @@ impl Workspace {
     /// Open a left-bar context menu at `at`.
     fn open_bar_menu(&mut self, which: BarMenu, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.bar_menu = Some((which, at));
-        self.bar_drag = None;
+        self.take_bar_drag();
         cx.notify();
     }
 
@@ -14503,8 +14455,8 @@ impl Workspace {
         // pane off its own header — and the doors answer to both. A door that
         // opens for one of the two gestures teaches that the other one cannot be
         // dropped there, which is the opposite of what is true.
-        let bar = self.bar_drag.as_ref().filter(|d| d.engaged);
-        let pane = self.drag_pane.as_ref().filter(|d| d.engaged);
+        let bar = self.bar_drag().filter(|d| d.engaged);
+        let pane = self.drag_pane().filter(|d| d.engaged);
         let over = bar.is_some_and(|d| d.over_bay) || pane.is_some_and(|d| d.over_bay);
         match (over, bar.is_some() || pane.is_some()) {
             (true, _) => 1.0,
@@ -16190,7 +16142,7 @@ impl Workspace {
         self.focus_at_bottom = true;
         self.focus_layout = None;
         self.focus_sel = None;
-        self.focus_sel_drag = false;
+        self.take_focus_sel_drag();
         self.focus_doc_holding = false;
         // Another pane's conversation is not this one's; the render starts
         // reading this pane's, if it has one bound.
@@ -16221,7 +16173,7 @@ impl Workspace {
         }
         self.focus_read_seen = false;
         self.focus_sel = None;
-        self.focus_sel_drag = false;
+        self.take_focus_sel_drag();
         *self.focus_map.lock().unwrap() = None;
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
@@ -18706,7 +18658,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.agents_drag = Some(which);
+                    ws.drag = Some(Drag::Agents(which));
                     if let Some(pos) = ws.agents_track_pos(which, ev.position.x) {
                         let (scale, detents) = Self::agents_scale(which);
                         let landed = agentrest::click(detents, scale.minutes_at(pos));
@@ -19497,7 +19449,7 @@ impl Workspace {
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        if ws.agents_drag.take().is_some() {
+                        if ws.take_agents_drag().is_some() {
                             agentcfg::save(&ws.agents_prefs);
                         }
                         ws.agents_menu = false;
@@ -21176,7 +21128,7 @@ impl Workspace {
     /// handler there the head never advanced and the selection stayed a single
     /// cell that copied nothing (#87).
     fn focus_drag_extend(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
-        if !self.focus_sel_drag {
+        if !self.focus_sel_drag() {
             return;
         }
         if let (Some(cell), Some((anchor, head))) = (self.focus_cell_at(pos), self.focus_sel) {
@@ -21193,7 +21145,7 @@ impl Workspace {
     /// root `on_mouse_up` and the occluding FOCUS scrim (#87). Idempotent: the
     /// first caller takes the latch, a second sees it cleared and returns `false`.
     fn focus_drag_release(&mut self, cx: &mut Context<Self>) -> bool {
-        if !std::mem::take(&mut self.focus_sel_drag) {
+        if !self.take_focus_sel_drag() {
             return false;
         }
         match self.focus_sel {
@@ -21326,7 +21278,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.card_scale_drag = true;
+                            ws.drag = Some(Drag::CardScale);
                             if let Some(fr) = ws.card_scale_from_pos(ev.position.x) {
                                 ws.set_card_scale(fr, cx);
                             }
@@ -21389,7 +21341,7 @@ impl Workspace {
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             // don't let the panel/scrim see this (no close, no move)
                             cx.stop_propagation();
-                            ws.focus_zoom_drag = true;
+                            ws.drag = Some(Drag::FocusZoom);
                             if let Some(f) = ws.focus_zoom_from_pos(ev.position.x) {
                                 ws.set_focus_zoom(f, cx);
                             }
@@ -23431,9 +23383,9 @@ impl Workspace {
         }
         // an INBOX row carried toward another agent's row: engage past the
         // same threshold as the tree, so a press on a row is still a click
-        if let Some(d) = self.inbox_drag.as_mut() {
+        if let Some(d) = self.inbox_drag_mut() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.inbox_drag = None;
+                self.take_inbox_drag();
             } else {
                 d.at = ev.position;
                 let dx = f32::from(d.at.x) - f32::from(d.start.x);
@@ -23445,20 +23397,19 @@ impl Workspace {
         }
         // a left-bar filing drag: engage past a threshold (so a click on a row
         // is still a click) and resolve which branch a release would file into
-        if self.bar_drag.is_some() {
+        if self.bar_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.bar_drag = None;
+                self.take_bar_drag();
                 cx.notify();
                 return;
             }
             let pos = ev.position;
             let relate = self
-                .bar_drag
-                .as_ref()
+                .bar_drag()
                 .and_then(|d| self.bar_relate_drop(d.what, pos, cx));
             let over = relate.or_else(|| self.resolve_bar_drop(pos));
             let in_bay = self.point_in_bay(pos);
-            if let Some(d) = self.bar_drag.as_mut() {
+            if let Some(d) = self.bar_drag_mut() {
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -23480,9 +23431,9 @@ impl Workspace {
         // an outer-tab reorder in flight owns the move: track the cursor, engage
         // past a small threshold (so a plain tab click still activates), and
         // resolve which slot a release would drop the tab into.
-        if self.tab_drag.is_some() {
+        if self.tab_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.tab_drag = None;
+                self.take_tab_drag();
                 self.tab_drop = None;
                 self.tab_drop_newrow = false;
                 cx.notify();
@@ -23490,7 +23441,7 @@ impl Workspace {
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.tab_drag.as_mut().unwrap();
+                let d = self.tab_drag_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -23515,9 +23466,9 @@ impl Workspace {
         // a group drag in flight: track the cursor, engage past the threshold (so a
         // plain handle click still folds the group), and resolve the drop slot —
         // the whole group lands at the slot a release would drop it into.
-        if self.group_drag.is_some() {
+        if self.group_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.group_drag = None;
+                self.take_group_drag();
                 self.tab_drop = None;
                 self.tab_drop_newrow = false;
                 cx.notify();
@@ -23525,7 +23476,7 @@ impl Workspace {
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.group_drag.as_mut().unwrap();
+                let d = self.group_drag_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -23550,16 +23501,16 @@ impl Workspace {
         // a sub-tab drag in flight owns the move: track the cursor, engage past
         // a small threshold (so a plain header click still focuses), and resolve
         // the drop landing under the cursor for the overlay.
-        if self.drag_pane.is_some() {
+        if self.drag_pane().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.drag_pane = None;
+                self.take_drag_pane();
                 self.drop_target = None;
                 cx.notify();
                 return;
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.drag_pane.as_mut().unwrap();
+                let d = self.drag_pane_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -23578,7 +23529,7 @@ impl Workspace {
                 .unwrap_or((0.0, 0.0));
             let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
             let in_bay = engaged && !outside && self.point_in_bay(pos);
-            if let Some(d) = self.drag_pane.as_mut() {
+            if let Some(d) = self.drag_pane_mut() {
                 d.left_window = outside;
                 d.over_bay = in_bay;
             }
@@ -23586,7 +23537,7 @@ impl Workspace {
             // in-window landing zones stop being offered: two affordances lit at
             // once is a release whose outcome nobody can predict.
             self.drop_target = if engaged && !outside && !in_bay {
-                let id = self.drag_pane.as_ref().unwrap().id;
+                let id = self.drag_pane().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
                 None
@@ -23600,37 +23551,37 @@ impl Workspace {
         // self-clear above, with their own drop teardown.)
         if ev.pressed_button != Some(MouseButton::Left)
             && (self.scrubbing
-                || self.wheel_drag.is_some()
-                || self.light_drag
-                || self.slider_drag.is_some()
-                || self.track_drag.is_some()
-                || self.tab_wheel_drag.is_some()
-                || self.tab_light_drag
-                || self.focus_zoom_drag
-                || self.card_scale_drag
-                || self.agents_drag.is_some()
-                || self.focus_sel_drag
-                || self.drag_split.is_some())
+                || self.wheel_drag().is_some()
+                || self.light_drag()
+                || self.slider_drag().is_some()
+                || self.track_drag().is_some()
+                || self.tab_wheel_drag().is_some()
+                || self.tab_light_drag()
+                || self.focus_zoom_drag()
+                || self.card_scale_drag()
+                || self.agents_drag().is_some()
+                || self.focus_sel_drag()
+                || self.drag_split().is_some())
         {
-            if self.agents_drag.take().is_some() {
+            if self.take_agents_drag().is_some() {
                 agentcfg::save(&self.agents_prefs);
             }
             self.scrubbing = false;
-            self.wheel_drag = None;
-            self.light_drag = false;
-            self.slider_drag = None;
-            self.track_drag = None;
-            self.tab_wheel_drag = None;
-            self.tab_light_drag = false;
-            self.focus_zoom_drag = false;
-            self.card_scale_drag = false;
-            self.focus_sel_drag = false;
-            self.drag_split = None;
+            self.take_wheel_drag();
+            self.take_light_drag();
+            self.take_slider_drag();
+            self.take_track_drag();
+            self.take_tab_wheel_drag();
+            self.take_tab_light_drag();
+            self.take_focus_zoom_drag();
+            self.take_card_scale_drag();
+            self.take_focus_sel_drag();
+            self.take_drag_split();
             cx.notify();
             return;
         }
         if ev.pressed_button == Some(MouseButton::Left) {
-            if let Some(split_id) = self.drag_split {
+            if let Some(split_id) = self.drag_split().copied() {
                 let bounds = self.split_bounds.lock().unwrap().get(&split_id).copied();
                 if std::env::var("TD_KEYDEBUG").is_ok() {
                     eprintln!(
@@ -23664,25 +23615,27 @@ impl Workspace {
                 self.set_scale(s, cx);
             }
         }
-        if let Some(key) = self.slider_drag {
+        if let Some(key) = self.slider_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(v) = self.grade_from_pos(key, ev.position.x) {
                     self.apply_grade(key, v, cx);
                 }
             }
         }
-        if self.focus_zoom_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.focus_zoom_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.focus_zoom_from_pos(ev.position.x) {
                 self.set_focus_zoom(frac, cx);
             }
         }
-        if self.card_scale_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.card_scale_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.card_scale_from_pos(ev.position.x) {
                 self.set_card_scale(frac, cx);
             }
         }
         // The Agents page's thresholds: a drag is smooth, to the minute.
-        if let (Some(which), Some(MouseButton::Left)) = (self.agents_drag, ev.pressed_button) {
+        if let (Some(which), Some(MouseButton::Left)) =
+            (self.agents_drag().copied(), ev.pressed_button)
+        {
             if let Some(pos) = self.agents_track_pos(which, ev.position.x) {
                 let (scale, _) = Self::agents_scale(which);
                 self.set_agents_minutes(which, agentrest::drag(&scale, pos));
@@ -23695,7 +23648,7 @@ impl Workspace {
         if ev.pressed_button == Some(MouseButton::Left) {
             self.focus_drag_extend(ev.position, cx);
         }
-        if let Some(target) = self.wheel_drag {
+        if let Some(target) = self.wheel_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 // hue + saturation follow the cursor; keep the marker's lightness
                 let l = self.wheel_color(target, cx).l;
@@ -23704,12 +23657,12 @@ impl Workspace {
                 }
             }
         }
-        if self.light_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.light_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(l) = self.light_from_pos(ev.position.x) {
                 self.set_active_lightness(l, cx);
             }
         }
-        if let Some(idx) = self.track_drag {
+        if let Some(idx) = self.track_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(v) = self.track_from_pos(idx, ev.position.x) {
                     self.apply_track(idx, v, cx);
@@ -23717,7 +23670,7 @@ impl Workspace {
             }
         }
         // tab-config wheel pip drag: hue + saturation follow the cursor, keep `l`
-        if let (Some(pip), Some(i)) = (self.tab_wheel_drag, self.tab_menu) {
+        if let (Some(pip), Some(i)) = (self.tab_wheel_drag().copied(), self.tab_menu) {
             if ev.pressed_button == Some(MouseButton::Left) {
                 let b = *self.tab_wheel_bounds.lock().unwrap();
                 if let Some(b) = b {
@@ -23729,7 +23682,7 @@ impl Workspace {
             }
         }
         // tab-config lightness drag for the active pip
-        if self.tab_light_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.tab_light_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(i) = self.tab_menu {
                 let b = *self.tab_light_bounds.lock().unwrap();
                 if let Some(b) = b {
@@ -23762,7 +23715,7 @@ impl Workspace {
         // an INBOX row let go over another agent's row: the two are introduced
         // through the relate dialog. Anywhere else, the press was the click
         // that already went to the row's pane.
-        if let Some(drag) = self.inbox_drag.take() {
+        if let Some(drag) = self.take_inbox_drag() {
             if drag.engaged {
                 if let Some(to) = self.inbox_relate_target(drag.from, ev.position, cx) {
                     if let Some(actor) = self.pane_by_id(drag.from) {
@@ -23776,7 +23729,7 @@ impl Workspace {
         // a left-bar drag lands: file what was grabbed into the branch under the
         // cursor. A drag that never engaged was a click, and the click has
         // already done its work (activate / scope) on the way down.
-        if let Some(drag) = self.bar_drag.take() {
+        if let Some(drag) = self.take_bar_drag() {
             self.bay = 0.;
             if drag.engaged && drag.over_bay {
                 self.drop_in_bay(drag.what, window, cx);
@@ -23818,31 +23771,31 @@ impl Workspace {
                 return;
             }
         }
-        if self.wheel_drag.take().is_some()
-            || std::mem::take(&mut self.light_drag)
-            || self.track_drag.take().is_some()
-            || self.tab_wheel_drag.take().is_some()
-            || std::mem::take(&mut self.tab_light_drag)
+        if self.take_wheel_drag().is_some()
+            || self.take_light_drag()
+            || self.take_track_drag().is_some()
+            || self.take_tab_wheel_drag().is_some()
+            || self.take_tab_light_drag()
         {
             self.save(cx);
             cx.notify();
             return;
         }
-        if self.slider_drag.take().is_some() {
+        if self.take_slider_drag().is_some() {
             self.save(cx);
             cx.notify();
             return;
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
-        if std::mem::take(&mut self.focus_zoom_drag) {
+        if self.take_focus_zoom_drag() {
             cx.notify();
             return;
         }
-        if std::mem::take(&mut self.card_scale_drag) {
+        if self.take_card_scale_drag() {
             cx.notify();
             return;
         }
-        if self.agents_drag.take().is_some() {
+        if self.take_agents_drag().is_some() {
             agentcfg::save(&self.agents_prefs);
             cx.notify();
             return;
@@ -23855,7 +23808,7 @@ impl Workspace {
         }
         // a group drag: drop the whole group into its resolved slot, or — if it
         // never engaged — treat the handle press as a click that folds the group.
-        if let Some(drag) = self.group_drag.take() {
+        if let Some(drag) = self.take_group_drag() {
             let slot = self.tab_drop.take();
             if drag.engaged {
                 if let Some(to) = slot {
@@ -23868,7 +23821,7 @@ impl Workspace {
             return;
         }
         // a tab reorder: drop the grabbed tab into its resolved slot
-        if let Some(drag) = self.tab_drag.take() {
+        if let Some(drag) = self.take_tab_drag() {
             let slot = self.tab_drop.take();
             self.tab_drop_newrow = false;
             if drag.engaged {
@@ -23879,7 +23832,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if let Some(drag) = self.drag_pane.take() {
+        if let Some(drag) = self.take_drag_pane() {
             let target = self.drop_target.take();
             if drag.engaged {
                 let (ow, oh) = self
@@ -23937,7 +23890,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.drag_split.take().is_some() {
+        if self.take_drag_split().is_some() {
             self.save(cx);
         }
     }
@@ -24831,7 +24784,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.slider_drag = Some(key);
+                            ws.drag = Some(Drag::Slider(key));
                             if let Some(v) = ws.grade_from_pos(key, ev.position.x) {
                                 ws.apply_grade(key, v, cx);
                             }
@@ -25170,7 +25123,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.track_drag = Some(idx);
+                            ws.drag = Some(Drag::Track(idx));
                             if let Some(v) = ws.track_from_pos(idx, ev.position.x) {
                                 ws.apply_track(idx, v, cx);
                             }
@@ -25226,7 +25179,7 @@ impl Workspace {
                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     if let Some(t) = ws.wheel_grab(ev.position.x, ev.position.y, cx) {
-                        ws.wheel_drag = Some(t);
+                        ws.drag = Some(Drag::Wheel(t));
                         ws.wheel_active = t; // the lightness slider follows it
                         let l = ws.wheel_color(t, cx).l;
                         if let Some(hex) = ws.wheel_color_at(ev.position.x, ev.position.y, l) {
@@ -25340,7 +25293,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.light_drag = true;
+                    ws.drag = Some(Drag::Light);
                     if let Some(l) = ws.light_from_pos(ev.position.x) {
                         ws.set_active_lightness(l, cx);
                     }
@@ -25612,7 +25565,7 @@ impl Workspace {
         self.tab_menu = Some(i);
         self.tab_menu_at = Some(at);
         self.group_menu = None;
-        self.tab_drag = None;
+        self.take_tab_drag();
         self.tab_scope = TabScope::ThisTab;
         self.tab_pip = TabPip::Fill;
         cx.notify();
@@ -25629,7 +25582,7 @@ impl Workspace {
         self.tab_menu = self.tabs.iter().position(|t| t.group == Some(gid));
         self.tab_scope = TabScope::Group;
         self.tab_pip = TabPip::Fill;
-        self.tab_drag = None;
+        self.take_tab_drag();
         cx.notify();
     }
 
@@ -26112,8 +26065,7 @@ impl Workspace {
                 // when a drag is over it.
                 let store = self.bar_bounds.clone();
                 let hot = self
-                    .bar_drag
-                    .as_ref()
+                    .bar_drag()
                     .filter(|d| d.engaged)
                     .and_then(|d| d.over)
                     .is_some_and(|drop| {
@@ -26437,14 +26389,14 @@ impl Workspace {
                     };
                     match what {
                         Some(what) => {
-                            ws.bar_drag = Some(BarDrag {
+                            ws.set_bar_drag(Some(BarDrag {
                                 what,
                                 start: ev.position,
                                 at: ev.position,
                                 engaged: false,
                                 over: None,
                                 over_bay: false,
-                            });
+                            }));
                         }
                         // UNFILED: nothing to drag, so the press goes straight
                         // to the loose tabs, as any other branch press does
@@ -26471,12 +26423,7 @@ impl Workspace {
         th: &theme::Theme,
         sk: &skin::Skin,
     ) -> (bool, Option<gpui::Div>) {
-        let Some(drop) = self
-            .bar_drag
-            .as_ref()
-            .filter(|d| d.engaged)
-            .and_then(|d| d.over)
-        else {
+        let Some(drop) = self.bar_drag().filter(|d| d.engaged).and_then(|d| d.over) else {
             return (false, None);
         };
         let caret = |top: bool| {
@@ -26781,14 +26728,14 @@ impl Workspace {
                     return;
                 }
                 ws.activate_tab(i, window, cx);
-                ws.bar_drag = Some(BarDrag {
+                ws.set_bar_drag(Some(BarDrag {
                     what: BarDragged::Task(i),
                     start: ev.position,
                     at: ev.position,
                     engaged: false,
                     over: None,
                     over_bay: false,
-                });
+                }));
             }),
         )
         .into_any_element()
@@ -26946,14 +26893,8 @@ impl Workspace {
             .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
             .map(|(what, _)| what.line(self.lang));
         // Aimed at the bin, by either gesture that can be.
-        let hot = self
-            .bar_drag
-            .as_ref()
-            .is_some_and(|d| d.engaged && d.over_bay)
-            || self
-                .drag_pane
-                .as_ref()
-                .is_some_and(|d| d.engaged && d.over_bay);
+        let hot = self.bar_drag().is_some_and(|d| d.engaged && d.over_bay)
+            || self.drag_pane().is_some_and(|d| d.engaged && d.over_bay);
 
         // How far each door slides to be fully open — its own width. Derived
         // from the bar rather than measured, because a door has to know where
@@ -30387,12 +30328,12 @@ impl Workspace {
                         // select now; arm a reorder drag that engages only if the
                         // cursor travels far enough (else it stays a plain click)
                         ws.activate_tab(i, window, cx);
-                        ws.tab_drag = Some(TabDrag {
+                        ws.set_tab_drag(Some(TabDrag {
                             from: i,
                             start: ev.position,
                             at: ev.position,
                             engaged: false,
-                        });
+                        }));
                         ws.tab_drop = None;
                     }
                 }),
@@ -30890,7 +30831,7 @@ impl Workspace {
                     if let Some(idx) = disk_grab(b, ev.position.x, ev.position.y, &cols) {
                         let pip = ws.tab_pip_colors(i, cx)[idx].0;
                         ws.tab_pip = pip;
-                        ws.tab_wheel_drag = Some(pip);
+                        ws.drag = Some(Drag::TabWheel(pip));
                         if let Some(hex) =
                             disk_color_at(b, ev.position.x, ev.position.y, cols[idx].l)
                         {
@@ -30970,7 +30911,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.tab_light_drag = true;
+                    ws.drag = Some(Drag::TabLight);
                     let Some(i) = ws.tab_menu else { return };
                     let Some(b) = *ws.tab_light_bounds.lock().unwrap() else {
                         return;
@@ -32020,7 +31961,7 @@ fn render_node(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.drag_split = Some(id);
+                            ws.drag = Some(Drag::Split(id));
                             cx.notify();
                         }),
                     );
@@ -32079,7 +32020,7 @@ fn render_node(
                                         .map(|b| (b.origin.x, b.size.width))
                                 );
                             }
-                            if ws.drag_split.is_some() {
+                            if ws.drag_split().is_some() {
                                 return; // an inner split already claimed this press
                             }
                             let Some(b) = store2.lock().unwrap().get(&id).copied() else {
@@ -32100,7 +32041,7 @@ fn render_node(
                                 if std::env::var("TD_KEYDEBUG").is_ok() {
                                     eprintln!("split handle grabbed: {id}");
                                 }
-                                ws.drag_split = Some(id);
+                                ws.drag = Some(Drag::Split(id));
                                 cx.notify();
                             }
                         }),
@@ -33241,8 +33182,8 @@ impl Render for Workspace {
             }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
-        let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
-            || self.group_drag.as_ref().is_some_and(|d| d.engaged);
+        let dragging_tab = self.tab_drag().is_some_and(|d| d.engaged)
+            || self.group_drag().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
         let new_row_drop = dragging_tab && self.tab_drop_newrow;
         // the between-tabs insertion caret — bold + glowing so it can't be missed
@@ -40569,7 +40510,7 @@ impl Render for Workspace {
                             match ws.focus_cell_at(ev.position) {
                                 Some(cell) => {
                                     ws.focus_sel = Some((cell, cell));
-                                    ws.focus_sel_drag = true;
+                                    ws.drag = Some(Drag::FocusSel);
                                 }
                                 None => ws.focus_sel = None,
                             }
@@ -40714,7 +40655,7 @@ impl Render for Workspace {
         // filing a task or an initiative from the tree: the chip says where the
         // release would put it, in that branch's own colour, so a drop is never
         // a guess
-        let bar_chip = self.bar_drag.as_ref().filter(|d| d.engaged).map(|d| {
+        let bar_chip = self.bar_drag().filter(|d| d.engaged).map(|d| {
             let ui = self.lang.strings().ui;
             let named = |row: tree::RowId| match row {
                 tree::RowId::Project(p) => (
@@ -40772,7 +40713,7 @@ impl Render for Workspace {
                 .child(label)
         });
 
-        let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
+        let drag_chip = self.drag_pane().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
                 .left(px(f32::from(d.at.x) + 12.))
@@ -40789,7 +40730,7 @@ impl Render for Workspace {
                         .unwrap_or_else(|| self.lang.strings().ui.drag_moving_subtab.to_string()),
                 )
         });
-        let inbox_chip = self.inbox_drag.as_ref().filter(|d| d.engaged).map(|d| {
+        let inbox_chip = self.inbox_drag().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
                 .left(px(f32::from(d.at.x) + 12.))
@@ -40807,7 +40748,7 @@ impl Render for Workspace {
                 )
         });
 
-        let dragging = self.drag_split;
+        let dragging = self.drag_split().copied();
         let registry = self.split_bounds.clone();
         let pane_reg = self.pane_bounds.clone();
         let drop = self.drop_target.clone();

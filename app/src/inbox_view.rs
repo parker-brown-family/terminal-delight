@@ -678,12 +678,12 @@ impl Workspace {
     /// The row a drag in flight would land on, if any: lit so the drop is
     /// never a guess.
     fn inbox_drop_over(&self, cx: &App) -> Option<EntityId> {
-        if let Some(d) = self.inbox_drag.as_ref().filter(|d| d.engaged) {
+        if let Some(d) = self.inbox_drag().filter(|d| d.engaged) {
             return self
                 .inbox_relate_target(d.from, d.at, cx)
                 .map(|e| e.entity_id());
         }
-        let d = self.drag_pane.as_ref().filter(|d| d.engaged)?;
+        let d = self.drag_pane().filter(|d| d.engaged)?;
         self.inbox_relate_target(d.id, d.at, cx)
             .map(|e| e.entity_id())
     }
@@ -1396,12 +1396,12 @@ impl Workspace {
                     ws.inbox_go(key, pane, cx);
                     // A press is a click; carried past the threshold it is a
                     // drag toward another agent's row.
-                    ws.inbox_drag = id.map(|from| InboxDrag {
+                    ws.set_inbox_drag(id.map(|from| InboxDrag {
                         from,
                         start: ev.position,
                         at: ev.position,
                         engaged: false,
-                    });
+                    }));
                 }),
             );
 

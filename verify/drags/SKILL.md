@@ -13,15 +13,15 @@ description: "Model-check Terminal Delight's drags (the left bar's edge, INBOX r
 
 ```bash
 verify/check.sh verify/drags/Drags.tla
-verify/check.sh verify/drags/Drags.tla verify/drags/Drags-proposal.cfg
+verify/check.sh verify/drags/Drags.tla verify/drags/Drags-before.cfg
 ```
 
-The first is the code as it stands (`OneDrag = FALSE`); both rules read `breaks (finding)`. The second is the proposal (`OneDrag = TRUE`, one `drag: Option<Drag>`); both hold. Read a break as a path with the pstack `/statechart` skill.
+The first is the code as it stands (`OneDrag = TRUE`, one `drag: Option<Drag>`): both rules hold and `findings.txt` is empty. The second keeps the code before 2026-11-11 (`OneDrag = FALSE`, a field per drag) and must still read `breaks (finding)` for both. The replay `a_lost_release_never_brings_a_drag_back_to_life` in `app/src/drag.rs` walks the bug path on the real window. Read a break as a path with the pstack `/statechart` skill.
 
-## What it found (2026-11-10)
+## What it found (2026-11-10), and what fixed it (2026-11-11)
 
 - **APressDragsOnlyWhatItPressed and AReleaseEndsTheDrag break, but only after a lost release.** Path: you press on a split (its drag starts) → the release never reaches the window → you press on a gauge slider without moving first. Now both fields are set; the next release takes the first in `on_mouse_up`'s chain and returns, and the other stays set until the pointer next moves with no button held. With every release delivered (drop `TheReleaseIsLost`) both rules hold, so these are findings about an event the window cannot rule out, not about every drag.
-- Not replayed on the real window: gpui's test window can send the two presses with no release between, and that is the replay to write with the fix.
+- **The fix:** `Drag` in `app/src/drag.rs` replaces the seventeen fields with one `drag: Option<Drag>` on `Workspace`. A press sets it, replacing anything a lost release left behind; the release takes it. Each old field is now an accessor of the same name (`drag_split()`, `take_drag_split()`, `set_drag_split(..)`), so every use reads as it did.
 
 ## Coverage
 
@@ -40,8 +40,8 @@ The first is the code as it stands (`OneDrag = FALSE`); both rules read `breaks 
 
 ## It can fail
 
-The proposal was broken on purpose: a press that adds to the drags instead of replacing them (`active \cup {k}` under `OneDrag`) makes `APressDragsOnlyWhatItPressed` read `BREAKS` on `Drags-proposal.cfg`.
+The fix was broken on purpose: a press that adds to the drags instead of replacing them (`active \cup {k}` under `OneDrag`) makes `APressDragsOnlyWhatItPressed` read `BREAKS` on `Drags.cfg`.
 
 ## When you change the code on purpose
 
-The fix is the proposal: one `drag: Option<Drag>` enum in place of the seventeen fields, set by a press (replacing whatever was there) and taken by the release. Then set `OneDrag = TRUE` in `Drags.cfg`, expect `FIXED?` for both rules, empty `findings.txt`, and add the replay: two presses with no release between, then one release, and no drag left.
+A new drag is a new `Drag` variant and a row in `drag.rs`'s accessors, never a new field on `Workspace`: a field outside `drag` is the bug this fixed.
