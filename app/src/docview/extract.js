@@ -30,7 +30,7 @@
      wrong the moment a note is added or deleted, while TD draws its own rule
      from the file (docview/notes_ui.rs). The picture shows the page; the notes
      are drawn over it. */
-  var HIDE = '.notebar, .note-btn, .concur-zone { visibility: hidden !important; }\n' +
+  var HIDE = '.notebar, .note-btn, .concur-zone, nav.sections[data-reader-ui] { visibility: hidden !important; }\n' +
     '.notable.has-note, tr.notable.has-note > td:first-child { box-shadow: none !important; }';
 
   function hideNotesUi() {
@@ -253,6 +253,12 @@
       return {
         height_css: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0),
         notes_file: file,
+        reading_layout: (function () {
+          if (!window.BriefReading || !window.BriefReading.describe) return null;
+          try { var m = JSON.parse(document.getElementById('brief-meta').textContent);
+            return { document: m.id, revision: m.revision, targets: window.BriefReading.describe() };
+          } catch (e) { return null; }
+        })(),
         capability: {
           notes_islands: document.querySelectorAll('[id="report-notes"]').length,
           concurs_island: !!document.getElementById('report-concurs'),

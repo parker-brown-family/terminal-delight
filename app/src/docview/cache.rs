@@ -482,6 +482,7 @@ mod tests {
             geometry: geometry(),
             height_css: 3125.0,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 0,
                 concurs_island: false,

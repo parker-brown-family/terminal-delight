@@ -1262,6 +1262,42 @@ impl TerminalView {
         }
     }
 
+    /// Only the top document counts; a clip or the FOCUS frame covers its source.
+    pub(crate) fn document_exposure(
+        &mut self,
+        active: bool,
+        in_reader: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let chosen = if in_reader {
+            if self.lent_clip.is_some() {
+                None
+            } else {
+                self.lent_view().map(|v| v.entity_id())
+            }
+        } else if self.being_read {
+            None
+        } else if float_shows_on(self.bench.face()) && self.float.is_some() {
+            self.float.as_ref().map(|d| d.view.entity_id())
+        } else if self.bench.face() == crate::workbench::Face::Document {
+            self.doc.as_ref().map(|d| d.view.entity_id())
+        } else {
+            None
+        };
+        if let Some(doc) = &self.doc {
+            doc.view.update(cx, |v, cx| {
+                v.exposure(active && chosen == Some(cx.entity_id()), cx)
+            });
+        }
+        let mut float = self.float.as_ref();
+        while let Some(doc) = float {
+            doc.view.update(cx, |v, cx| {
+                v.exposure(active && chosen == Some(cx.entity_id()), cx)
+            });
+            float = doc.below.as_deref();
+        }
+    }
+
     /// The file this pane's Document face shows, if it has one.
     pub(crate) fn document_path(&self) -> Option<&std::path::Path> {
         self.doc.as_ref().map(|d| d.target.path.as_path())

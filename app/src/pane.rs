@@ -18703,7 +18703,7 @@ mod tests {
         let main = include_str!("main.rs");
         let render = &main[main.find("impl Render for Workspace").expect("render")..];
         assert!(
-            render[..2000].contains("self.mark_shown_panes(cx);"),
+            render[..2000].contains("self.mark_shown_panes(window, cx);"),
             "nothing tells the panes which tab is on screen"
         );
     }
