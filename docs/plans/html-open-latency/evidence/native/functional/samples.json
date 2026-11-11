@@ -1,0 +1,22 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 353.2016701065004,
+    "path": "/tmp/td-html-native-functional-protocol/exercise.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 26.001387,
+      "cache_lookup": 35.454913,
+      "cache_hit": true,
+      "layout": 35.485923,
+      "first_tile": 107.070842,
+      "first_decode": 185.448587,
+      "first_paint": 283.891225,
+      "viewport_paint": 283.901631
+    }
+  }
+]

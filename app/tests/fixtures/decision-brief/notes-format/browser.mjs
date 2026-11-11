@@ -152,9 +152,15 @@ export async function saveIntoFile(page, rev) {
 
 // The map "copy map" builds: the string exportNotes() put into #export-out, as buildMap()
 // returned it. What the reader copies is the same with any CR read back as LF.
-export async function copyMap(page) {
+// The current script copies on one click and shows .notes-toast; a release from before
+// that opens the dialog instead, and fixtures replay those releases too. `oneClick` says
+// which happened, so a test of the current script can insist on it.
+export async function copyMap(page, outcome = {}) {
   await page.click('#btn-export');
   const txt = await page.evaluate(() => document.getElementById('export-out').__fixtureRaw);
-  await page.click('#d-export .note-actions [data-close]');
+  await page.waitForFunction(() => document.getElementById('d-export').open ||
+    !!document.querySelector('.notes-toast.on'), null, { timeout: 5000 });
+  outcome.oneClick = !(await page.evaluate(() => document.getElementById('d-export').open));
+  if (!outcome.oneClick) await page.click('#d-export .note-actions [data-close]');
   return txt;
 }

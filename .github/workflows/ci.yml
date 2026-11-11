@@ -61,6 +61,9 @@ jobs:
           ../scripts/known-hashes.sh --check
           python3 ../scripts/tests/test_uninstall.py -v
 
+      - name: Skill bridge fixtures (isolated homes, no model calls)
+        run: python3 -m unittest discover -s src/skills -p 'test_*.py' -v
+
       # The distro helper lacks descriptor mounts. Use a fixed upstream release
       # with safe setup-path resolution; the runtime also refuses older helpers.
       - name: Install the qualified Restricted helper
@@ -173,6 +176,35 @@ jobs:
         run: |
           sudo apt-get update -qq && sudo apt-get install -y -qq imagemagick
           node scripts/publish-robot-faces.mjs --check
+      # The docs site reads the app's own help sheet and strings. A help row
+      # it cannot read refuses the build, which went unseen until a release
+      # candidate tried it (0.5.3's INBOX, composer and side-panel rows).
+      - name: Docs site builds
+        env:
+          TD_DOCS_OUT: /tmp/td-docs
+        run: node docsite/build.mjs
+
+  models:
+    name: Formal models
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: 21
+      # The TLA+ models under verify/ state the window's promises (what is on
+      # top hears the keys, rest never freezes a turn, a removal never deletes
+      # work...). Each is checked against its findings list, so a change that
+      # breaks a promise, or fixes one without saying so, fails here.
+      - name: Fetch TLC 1.7.4
+        run: |
+          curl --fail --location --retry 3 -o /tmp/tla2tools.jar https://github.com/tlaplus/tlaplus/releases/download/v1.7.4/tla2tools.jar
+          echo '936a262061c914694dfd669a543be24573c45d5aa0ff20a8b96b23d01e050e88  /tmp/tla2tools.jar' | sha256sum --check
+      - name: Check every model
+        env:
+          TLA2TOOLS: /tmp/tla2tools.jar
+        run: verify/check-all.sh
 
   supply-chain:
     name: Supply-chain checks
@@ -319,7 +351,7 @@ jobs:
     name: Publish release (tags only)
     # After every check, on the tagged commit, or not at all. A failed or
     # skipped job above means `needs` is unmet and nothing is published.
-    needs: [rust, js, supply-chain, release-policy, package]
+    needs: [rust, js, models, supply-chain, release-policy, package]
     if: startsWith(github.ref, 'refs/tags/v')
     runs-on: ubuntu-latest
     permissions:
@@ -398,7 +430,7 @@ jobs:
     # always finds the AppImage it describes; one that reads an old build.json
     # beside a new AppImage refuses the download, because the build inside
     # names a different commit (app/src/update.rs, prepare_in).
-    needs: [rust, js, supply-chain, release-policy, package]
+    needs: [rust, js, models, supply-chain, release-policy, package]
     if: github.event_name == 'push' && startsWith(github.ref, 'refs/heads/dev/')
     runs-on: ubuntu-latest
     permissions:

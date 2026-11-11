@@ -1,0 +1,875 @@
+{
+  "schema": "td-host-adversarial-v1",
+  "binary": "/home/parker/.local/lib/terminal-delight/td-018621e7-wave",
+  "binary_sha256": "aaa87fb5a925145b7f5c16a300c9ee8582ef7f2df479933405a4ac1f9f40df1f",
+  "source_revision": "ef6dcde524a13b2e9c2d0b9477d1a93436a4afbd",
+  "source_binary_match": null,
+  "paid_model_calls": 0,
+  "gui_opened": false,
+  "results": [
+    {
+      "id": "scaling-2",
+      "status": "corroborated",
+      "wall_s": 0.027918105999560794,
+      "evidence": {
+        "panes": 2,
+        "rounds": 12,
+        "spawn_wall_s": 0.0072,
+        "traffic_wall_s": 0.0027,
+        "input_bytes": 1968,
+        "echo_samples": 24,
+        "echo_ms_p50": 0.18026099860435352,
+        "echo_ms_p95": 0.22377200002665631,
+        "echo_ms_max": 0.2505209995433688,
+        "host_empty": {
+          "rss_kib": 22892,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 26644,
+          "threads": 12,
+          "cpu_s": 0.01
+        },
+        "host_cpu_delta_s": 0.01,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-5",
+      "status": "corroborated",
+      "wall_s": 0.047199559998261975,
+      "evidence": {
+        "panes": 5,
+        "rounds": 12,
+        "spawn_wall_s": 0.012,
+        "traffic_wall_s": 0.0128,
+        "input_bytes": 4920,
+        "echo_samples": 60,
+        "echo_ms_p50": 0.3925085002265405,
+        "echo_ms_p95": 2.0112919992243405,
+        "echo_ms_max": 3.4746780002024025,
+        "host_empty": {
+          "rss_kib": 22716,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 31924,
+          "threads": 24,
+          "cpu_s": 0.02
+        },
+        "host_cpu_delta_s": 0.02,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-20",
+      "status": "corroborated",
+      "wall_s": 0.15794030300094164,
+      "evidence": {
+        "panes": 20,
+        "rounds": 12,
+        "spawn_wall_s": 0.064,
+        "traffic_wall_s": 0.0367,
+        "input_bytes": 19680,
+        "echo_samples": 240,
+        "echo_ms_p50": 1.219884001329774,
+        "echo_ms_p95": 2.589857998827938,
+        "echo_ms_max": 9.402812000189442,
+        "host_empty": {
+          "rss_kib": 22568,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 44528,
+          "threads": 84,
+          "cpu_s": 0.11
+        },
+        "host_cpu_delta_s": 0.11,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-50",
+      "status": "corroborated",
+      "wall_s": 0.3712659929988149,
+      "evidence": {
+        "panes": 50,
+        "rounds": 12,
+        "spawn_wall_s": 0.181,
+        "traffic_wall_s": 0.091,
+        "input_bytes": 49200,
+        "echo_samples": 600,
+        "echo_ms_p50": 3.143699499560171,
+        "echo_ms_p95": 6.159029999253107,
+        "echo_ms_max": 10.498063998966245,
+        "host_empty": {
+          "rss_kib": 22808,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 55764,
+          "threads": 204,
+          "cpu_s": 0.3
+        },
+        "host_cpu_delta_s": 0.3,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "fragmented-wire",
+      "status": "corroborated",
+      "wall_s": 0.014005567001731833,
+      "evidence": {
+        "cases": [
+          {
+            "payload": "{bad-json}",
+            "reply": {
+              "reply": "error",
+              "msg": "unreadable request: key must be a string at line 1 column 2"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          },
+          {
+            "payload": "{\"verb\":\"not-a-verb\"}",
+            "reply": {
+              "reply": "error",
+              "msg": "unreadable request: unknown variant `not-a-verb`, expected one of `hello`, `list-panes`, `spawn-pane`, `attach-pane`, `resize`, `close-pane`, `grid-check`, `save`, `watch`, `shutdown` at line 1 column 20"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          },
+          {
+            "payload": "{\"verb\":\"hello\",\"proto\":999,\"kind\":\"tool\"}",
+            "reply": {
+              "reply": "error",
+              "msg": "protocol mismatch: this build speaks 1, the other side speaks 999"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          }
+        ],
+        "hello_after_interrupted_request": {
+          "reply": "hello",
+          "proto": 1,
+          "session": "adversarial",
+          "panes": 0,
+          "attended": false,
+          "host": 4026235
+        },
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "concurrent-lifecycle",
+      "status": "corroborated",
+      "wall_s": 0.6515532759985945,
+      "evidence": {
+        "spawn_count": 32,
+        "unique_ids": true,
+        "census_count": 32,
+        "killed_owned_children": 16,
+        "close_replies": [
+          {
+            "reply": "closed",
+            "pane": 1,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026262,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 2,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026278,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 3,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026283,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 4,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026286,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 5,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026290,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 6,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026294,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 7,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026299,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 8,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026302,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 9,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026307,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 12,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026318,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 10,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026310,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 11,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026315,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 13,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026322,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 14,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026327,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 15,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026330,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 16,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026334,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 17,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026338,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 18,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026342,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 19,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026346,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 20,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026351,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 21,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026354,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 22,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026358,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 23,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026361,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 24,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026364,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 25,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026367,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 26,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026370,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 27,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026373,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 28,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026376,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 29,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026379,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 30,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026382,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 31,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026385,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 32,
+            "outcome": {
+              "ok": {
+                "shell_pid": 4026388,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          }
+        ],
+        "census_after_close": [],
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "stalled-clients",
+      "status": "corroborated",
+      "wall_s": 0.2701895499994862,
+      "evidence": {
+        "stalled_connections": 32,
+        "before": {
+          "rss_kib": 22688,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "during": {
+          "rss_kib": 23184,
+          "threads": 36,
+          "cpu_s": 0.01
+        },
+        "after_disconnect": {
+          "rss_kib": 23564,
+          "threads": 4,
+          "cpu_s": 0.01
+        },
+        "host_still_answers": true,
+        "scope": "Bounded 32-client test; no claim that connection count or line size is capped.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "duplicate-host",
+      "status": "corroborated",
+      "wall_s": 0.032495299998117844,
+      "evidence": {
+        "duplicate_exit": 0,
+        "duplicate_log": "terminal-delight serve: session 'adversarial' is already served by process 4026494\n",
+        "original_host_retained": true,
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "zero-geometry",
+      "status": "corroborated",
+      "wall_s": 0.802622101000452,
+      "evidence": {
+        "cases": [
+          {
+            "geom": {
+              "cols": 0,
+              "rows": 24,
+              "cell_width": 8,
+              "cell_height": 16
+            },
+            "reply": {
+              "reply": "spawned",
+              "outcome": {
+                "ok": {
+                  "pane": 1,
+                  "shell_pid": 4026523,
+                  "cwd": "/tmp/td-adversarial-2fzbgrtv",
+                  "resume": null,
+                  "mode": null,
+                  "attached": false,
+                  "ended": false,
+                  "geom": {
+                    "cols": 0,
+                    "rows": 24,
+                    "cell_width": 8,
+                    "cell_height": 16
+                  }
+                }
+              },
+              "started": true
+            },
+            "close": {
+              "reply": "closed",
+              "pane": 1,
+              "outcome": {
+                "ok": {
+                  "shell_pid": 4026523,
+                  "signalled": true,
+                  "cleanup": {
+                    "hangup_sent": true,
+                    "kill_sent": true,
+                    "exit_observed": true,
+                    "observed_jobs_remaining": 0,
+                    "error": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "geom": {
+              "cols": 160,
+              "rows": 0,
+              "cell_width": 8,
+              "cell_height": 16
+            },
+            "reply": {
+              "reply": "spawned",
+              "outcome": {
+                "ok": {
+                  "pane": 2,
+                  "shell_pid": 4026550,
+                  "cwd": "/tmp/td-adversarial-2fzbgrtv",
+                  "resume": null,
+                  "mode": null,
+                  "attached": false,
+                  "ended": false,
+                  "geom": {
+                    "cols": 160,
+                    "rows": 0,
+                    "cell_width": 8,
+                    "cell_height": 16
+                  }
+                }
+              },
+              "started": true
+            },
+            "close": {
+              "reply": "closed",
+              "pane": 2,
+              "outcome": {
+                "ok": {
+                  "shell_pid": 4026550,
+                  "signalled": true,
+                  "cleanup": {
+                    "hangup_sent": true,
+                    "kill_sent": true,
+                    "exit_observed": true,
+                    "observed_jobs_remaining": 0,
+                    "error": null
+                  }
+                }
+              }
+            }
+          },
+          {
+            "geom": {
+              "cols": 160,
+              "rows": 24,
+              "cell_width": 0,
+              "cell_height": 0
+            },
+            "reply": {
+              "reply": "spawned",
+              "outcome": {
+                "ok": {
+                  "pane": 3,
+                  "shell_pid": 4026599,
+                  "cwd": "/tmp/td-adversarial-2fzbgrtv",
+                  "resume": null,
+                  "mode": null,
+                  "attached": false,
+                  "ended": false,
+                  "geom": {
+                    "cols": 160,
+                    "rows": 24,
+                    "cell_width": 0,
+                    "cell_height": 0
+                  }
+                }
+              },
+              "started": true
+            },
+            "close": {
+              "reply": "closed",
+              "pane": 3,
+              "outcome": {
+                "ok": {
+                  "shell_pid": 4026599,
+                  "signalled": true,
+                  "cleanup": {
+                    "hangup_sent": true,
+                    "kill_sent": true,
+                    "exit_observed": true,
+                    "observed_jobs_remaining": 0,
+                    "error": null
+                  }
+                }
+              }
+            }
+          }
+        ],
+        "host_still_answers": true,
+        "scope": "Zero dimensions only; no enormous allocation request.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "interrupted-concurrent-saves",
+      "status": "corroborated",
+      "wall_s": 0.03425285800040001,
+      "evidence": {
+        "interrupted_request_changed_disk": false,
+        "concurrent_saves": 40,
+        "all_acknowledged_written": true,
+        "observer_samples": 29,
+        "observed_generations": [
+          0,
+          2,
+          6,
+          7,
+          8,
+          12,
+          19,
+          23,
+          26,
+          29,
+          34,
+          36,
+          39
+        ],
+        "torn_read_errors": [],
+        "final_generation": 39,
+        "host_corrected_stale_cwd": true,
+        "scope": "Concurrent acknowledged saves and an interrupted request; not power-loss durability.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "resize-unicode",
+      "status": "corroborated",
+      "wall_s": 0.04836744799831649,
+      "evidence": {
+        "resize_and_utf8_rounds": 32,
+        "all_resize_outcomes_ok": true,
+        "last_wide_unicode_marker_in_snapshot": true,
+        "scope": "Progress and snapshot text after bounded geometry changes; no client renderer hash comparison.",
+        "host_log_tail": ""
+      }
+    }
+  ]
+}

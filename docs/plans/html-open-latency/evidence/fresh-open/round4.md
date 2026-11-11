@@ -1,0 +1,5 @@
+**One inferred finding; no confirmed regression.**
+
+- `app/src/docview/snapshot.rs:1093` — **Low severity, INFERRED.** On a short page or a request for a later band, the engine waits for the early screenshot. If that wait reaches its 30-second timeout while Chromium is still capturing, the code ignores the timeout and sends the next screenshot. `app/src/docview/cdp.rs:132–149` removes the local pending reply but does not cancel Chromium’s command. The two captures can therefore overlap, reopening the capture-ordering problem described in the earlier round. I traced the request sequence; I did not reproduce wrong pixels from this timeout case.
+
+I found nothing else real in the final state for context isolation, network blocking, idle close, shutdown, or the fused view path’s cancellation, FileChanged retry, generation, hidden-view, decode, and scroll handling. HEAD removes the ready page, so its worker races no longer apply. I read the four commit messages and reviewed `HEAD~4..HEAD`; `git diff --check` passed. I did not rerun tests in this read-only session.

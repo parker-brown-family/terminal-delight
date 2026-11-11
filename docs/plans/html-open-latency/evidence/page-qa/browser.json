@@ -1,0 +1,118 @@
+{
+  "copyMapResolves": true,
+  "copyMapOrphanNeedsReview": true,
+  "passed": true,
+  "coverage": {
+    "headings": [
+      [
+        "sec-target",
+        "sec-target",
+        true
+      ],
+      [
+        "sec-return",
+        "sec-return",
+        true
+      ],
+      [
+        "sec-evidence",
+        "sec-evidence",
+        true
+      ],
+      [
+        "sec-use",
+        "sec-use",
+        true
+      ]
+    ],
+    "figures": [
+      [
+        "fig-identity",
+        "fig-identity",
+        true
+      ],
+      [
+        "fig-resolution",
+        "fig-resolution",
+        true
+      ],
+      [
+        "fig-evidence",
+        "fig-evidence",
+        true
+      ]
+    ],
+    "duplicates": []
+  },
+  "layout": [
+    {
+      "width": 968,
+      "overflow": false,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "overflow": false,
+      "clipped": []
+    }
+  ],
+  "commentReloadExport": true,
+  "snapshotRevision": true,
+  "evidenceDepthSnapshot": true,
+  "literalScriptComment": true,
+  "rebuildAfterRename": true,
+  "missingTargetVisibleAndExported": true,
+  "isolation": "separate headless Chromium with temporary profile",
+  "additionalPage": {
+    "targets": [
+      {
+        "id": "sec-wait",
+        "target": "sec-wait",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-time",
+        "target": "fig-time",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-cold",
+        "target": "sec-cold",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-prepare",
+        "target": "sec-prepare",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-prepare",
+        "target": "fig-prepare",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-plan",
+        "target": "sec-plan",
+        "button": true,
+        "concur": null
+      }
+    ],
+    "layout": [
+      {
+        "width": 968,
+        "overflow": false,
+        "clipped": []
+      },
+      {
+        "width": 390,
+        "overflow": false,
+        "clipped": []
+      }
+    ]
+  }
+}

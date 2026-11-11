@@ -1295,6 +1295,27 @@ impl MarkdownDoc {
         super::progress::Reading::of(self.top, view_h, self.content_h()?)
     }
 
+    /// The source line a click at window height `y` lands on: the start of
+    /// the top-level block drawn there, or of the last one above it. `None`
+    /// before the first paint and for a document that has not parsed.
+    pub fn source_line_at(&self, y: Pixels) -> Option<usize> {
+        if self.painted.get() != Some(self.generation) {
+            return None;
+        }
+        let Some(Ok(doc)) = &self.doc else {
+            return None;
+        };
+        let mut at = None;
+        for (i, b) in self.tops.blocks.borrow().iter().enumerate() {
+            match b {
+                Some(b) if b.origin.y <= y => at = Some(i),
+                Some(_) => break,
+                None => {}
+            }
+        }
+        doc.meta.get(at?).map(|m| m.line)
+    }
+
     /// The block at the top of the view and how far into it the view is.
     pub fn block_at_top(&self) -> Option<(usize, f32)> {
         if self.painted.get() != Some(self.generation) {

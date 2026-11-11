@@ -1,0 +1,30 @@
+{
+  "session_summary": {
+    "project": "terminal-delight",
+    "session_date": "2026-11-04",
+    "tickets_closed": [],
+    "tickets_opened": [
+      "measure-html-opening-latency-and-design-a-4-10-improvement-mw366hsw: measured renderer latency and prepared combined plan; in review"
+    ],
+    "files_modified": [
+      "docs/plans/html-open-latency/00-status.md",
+      "docs/plans/html-open-latency/plan.md",
+      "docs/plans/html-open-latency/brief.src.html",
+      "docs/plans/html-open-latency/brief.html",
+      "docs/plans/html-open-latency/evidence/"
+    ],
+    "decisions_made": [
+      "Difficulty 6/10, one combined plan approval before production changes. Measure first readable pixels and filled viewport; 4x ordinary-open target and 10x prepared-open stretch.",
+      "Do not enable Vulkan yet: four-file medians improve 1.37\u20133.64x, but first viewport in two fresh browsers regresses to 8.25s and 6.17s.",
+      "Prepare only newest declared artifact as proposed bounded background optimization; native timing and freshness are implementation gates."
+    ],
+    "blockers_escalated": [],
+    "next_agent_must_know": "Plan awaiting Parker at /home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/brief.html. Isolated perf/html-open-latency branch from dev/0.5.1. No production edits/config/restart. Probe actual sources in APES scripts/html-open-profile. Renderer source matches live 556a0d7f. Current first viewport medians 2.13\u20132.66s; Vulkan ordinary 0.60\u20130.83s with severe repeatable cold cost. Native latency/fidelity not yet measured. Re-read current release routing before implementation. lean-ctx shell stalled; native fallback used after terminating read-only wait and mcp-service-check passed.",
+    "contract_compliance": {
+      "dry_plan_used": "yes",
+      "tiered_context_used": "yes",
+      "escalations_filed": "0",
+      "side_effects_checked": "yes"
+    }
+  }
+}

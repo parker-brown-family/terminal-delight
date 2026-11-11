@@ -313,8 +313,33 @@ impl TerminalView {
     /// The chip's name, clicked: the newest handover, over this pane.
     pub(crate) fn open_newest_handover(&mut self, cx: &mut Context<Self>) {
         if let Some(h) = self.handovers.newest().cloned() {
-            self.open_handover(&h, cx);
+            if !self.handover_to_side(&h, cx) {
+                self.open_handover(&h, cx);
+            }
         }
+    }
+
+    /// When Settings sends artifacts to the side panel, a handover the
+    /// panel can draw goes there, beside this conversation. Answers whether
+    /// it went.
+    fn handover_to_side(&mut self, h: &Handover, cx: &mut Context<Self>) -> bool {
+        if crate::docopen::artifact_place() != crate::docopen::ArtifactPlace::Side {
+            return false;
+        }
+        let token = h
+            .path()
+            .map(|p| format!("file://{}", p.display()))
+            .unwrap_or_else(|| h.href.clone());
+        let Some(open) = crate::flyout_view::artifact_target(&token) else {
+            return false;
+        };
+        cx.emit(super::OpenSide {
+            target: open.target,
+            line: open.line,
+        });
+        self.mark_handover_opened(&h.key());
+        cx.notify();
+        true
     }
 
     /// Alt+O with nothing open: the newest handover, over this pane. One TD
@@ -339,6 +364,25 @@ impl TerminalView {
 
     fn ask_handover(&mut self, h: &Handover, cx: &mut Context<Self>) {
         let h = h.clone();
+        if self.handover_to_side(&h, cx) {
+            return;
+        }
+        // A pull request, or a code file the square does not draw, opens in
+        // the right-bar flyout beside this conversation rather than asking
+        // to leave for the browser or an editor.
+        let token = h
+            .path()
+            .map(|p| p.to_string_lossy().into_owned())
+            .unwrap_or_else(|| h.href.clone());
+        if let Some(open) = crate::flyout_view::side_of(&token, None) {
+            cx.emit(super::OpenSide {
+                target: open.target,
+                line: open.line,
+            });
+            self.mark_handover_opened(&h.key());
+            cx.notify();
+            return;
+        }
         let outside = match h.path() {
             Some(path) => path.exists() && crate::docopen::drawable_document(&path).is_none(),
             None => true,

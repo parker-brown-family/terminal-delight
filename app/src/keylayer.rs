@@ -131,21 +131,25 @@ pub enum Layer {
     /// caret you can see. Same terms as [`Layer::Sticky`].
     Rename,
     /// A page or a Markdown file being READ: drawn large in the FOCUS frame,
-    /// where a person opened it to read. It takes every key the window's and
-    /// the pane's chords leave, and [`read_key`] says what each does; the rest
-    /// stop here. The shell underneath gets nothing while it is read: Parker,
-    /// 2026-11-02, *"If we open an artifact, we intend to read it."* A clip
+    /// or in the glow pane, wherever a person opened it to read. It takes
+    /// every key the window's and the pane's chords leave, and [`read_key`]
+    /// says what each does; the rest stop here. The shell underneath gets
+    /// nothing while it is read: Parker, 2026-11-02, *"If we open an artifact,
+    /// we intend to read it."* and, of the glow pane, 2026-11-05, *"we imagine
+    /// the doc glowbox artifact is PRIMARY attention.. however we do not want
+    /// to eat the other keystrokes for general TDS funcaitonlity."* A clip
     /// playing over the page is deaf: the page keeps the keys, because a video
     /// has nothing to note, concur or send.
     ///
     /// Below the sticky note and the rename box, whose carets keep their keys,
     /// and above [`Layer::Float`], whose square is the very document being read.
     Reading,
-    /// A document floating over the terminal face. Escape closes it,
+    /// A document floating over the terminal face that nobody opened to read:
+    /// an agent's own deliverable, a picture, a PDF. Escape closes it,
     /// [`send_chord`] is its ↪ while its bar draws one, and [`glow_chord`]
     /// turns it; that is all it takes: every other key still reaches the
-    /// shell underneath, which is the whole point of reading beside it rather
-    /// than instead of it.
+    /// shell underneath, so a square an agent opens never takes a prompt
+    /// being typed.
     ///
     /// Below [`Layer::Sticky`] and [`Layer::Rename`], so a caret blinking
     /// somewhere else on the pane keeps its own Escape.
@@ -232,9 +236,10 @@ pub struct Up {
     /// face already takes every key the chords leave, and this says whether
     /// the paste chord is one of them ([`note_caret`]).
     pub doc_caret: bool,
-    /// A page or a Markdown file is lent to the FOCUS frame and being read
-    /// there ([`Layer::Reading`]). The pane says `reader: false` while it is,
-    /// so the reader's own Escape and paging do not jump the pane's chords.
+    /// A page or a Markdown file is being read, lent to the FOCUS frame or
+    /// opened in the glow pane ([`Layer::Reading`]). The pane says
+    /// `reader: false` while it is, so the reader's own Escape and paging do
+    /// not jump the pane's chords.
     pub reading: bool,
     /// The terminal is in scroll mode (Alt+[).
     pub scroll: bool,
@@ -321,6 +326,7 @@ const LADDER: [Rung; 16] = [
     (Layer::Window, |k, u| {
         window_chord(k.key, k.alt, k.control)
             || held_tab_chord(k.key, k.alt, k.control, k.shift).is_some()
+            || (u.reading && tab_page_chord(k))
             || (human_turn_chord(k)
                 && u.agent
                 && !u.paint
@@ -372,6 +378,13 @@ pub fn route(k: &Key, up: &Up) -> Layer {
 /// on an agent terminal; shell programs and editing surfaces keep their keys.
 pub fn human_turn_chord(k: &Key) -> bool {
     k.control && !k.alt && !k.shift && !k.platform && !k.function && matches!(k.key, "up" | "down")
+}
+
+/// Ctrl+PgUp/PgDn switch tabs and Ctrl+Shift+PgUp/PgDn move one. The terminal
+/// types them and lets them bubble to the window, and a document being read
+/// types nothing, so it has to hand them on rather than keep them.
+fn tab_page_chord(k: &Key) -> bool {
+    k.control && !k.alt && !k.platform && !k.function && matches!(k.key, "pageup" | "pagedown")
 }
 
 /// The tab hotkeys the window on this thread holds right now: whether
@@ -606,7 +619,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     // tags as a terminal (#892). The paste leaves a note, a sticky or a header
     // name being written to take it, exactly as ctrl+shift+v does below.
     if k.key == "insert" && !k.alt && k.control != k.shift {
-        return k.control || !(note_caret(up) || up.sticky || up.rename);
+        return k.control || !keeps_paste(up);
     }
     if k.alt && !k.control && !k.shift {
         return match k.key {
@@ -619,7 +632,7 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
     }
     if k.control && !k.alt {
         if k.shift {
-            if k.key == "v" && (note_caret(up) || up.sticky || up.rename) {
+            if k.key == "v" && keeps_paste(up) {
                 return false;
             }
             // The panels, the clipboard and closing the tab. Shift is what keeps
@@ -632,6 +645,9 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
                     | "a"
                     | "b"
                     | "n"
+                    | "i"
+                    | "e"
+                    | "r"
                     | "m"
                     | "z"
                     | "u"
@@ -641,6 +657,10 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
                     | "f"
                     | "w"
             );
+        }
+        // ctrl+, opens Settings (`pane::ToggleSettings`).
+        if k.key == "," {
+            return true;
         }
         // ctrl+w puts away the document box on top, one press per box. With no
         // box up it is ^W, werase, again: closing the tab moved to ctrl+shift+w,
@@ -656,6 +676,13 @@ pub fn pane_chord(k: &Key, up: &Up) -> bool {
         return !up.reading && matches!(k.key, "f" | "x");
     }
     false
+}
+
+/// Something other than the shell is what a paste would land in: a box with a
+/// caret takes it, and a document being read swallows it, because the pane's
+/// paste writes to the shell and nothing reaches the shell while it is read.
+fn keeps_paste(up: &Up) -> bool {
+    note_caret(up) || up.sticky || up.rename || up.reading
 }
 
 /// A size step from the keyboard, and what it sizes.
@@ -1371,6 +1398,39 @@ mod tests {
         }
         for k in [alt("a"), alt("s"), ctrl("w"), ctrl_shift("t")] {
             assert_eq!(route(&k, &up), Layer::PaneChord, "{k:?}");
+        }
+    }
+
+    /// The window switches and moves tabs on these. With no document up they
+    /// stay the terminal's to type and bubble, and only a document that would
+    /// otherwise keep them has to hand them on.
+    #[test]
+    fn tab_chords_leave_a_document_being_read_for_the_window() {
+        for k in [
+            ctrl("pageup"),
+            ctrl("pagedown"),
+            ctrl_shift("pageup"),
+            ctrl_shift("pagedown"),
+        ] {
+            assert_eq!(route(&k, &reading()), Layer::Window, "{k:?}");
+            assert_eq!(route(&k, &Up::default()), Layer::Terminal, "{k:?}");
+        }
+        assert_eq!(route(&named("pageup"), &reading()), Layer::Reading);
+    }
+
+    /// The pane's paste writes to the shell, and nothing reaches the shell
+    /// while a document is read. With a note being written the note takes it,
+    /// and that also happens on the Reading rung.
+    #[test]
+    fn a_paste_stops_at_a_document_being_read() {
+        let caret = Up {
+            float_caret: true,
+            ..reading()
+        };
+        for k in [ctrl_shift("v"), shift_insert()] {
+            assert_eq!(route(&k, &reading()), Layer::Reading, "{k:?}");
+            assert_eq!(route(&k, &caret), Layer::Reading, "{k:?}");
+            assert_eq!(route(&k, &Up::default()), Layer::PaneChord, "{k:?}");
         }
     }
 

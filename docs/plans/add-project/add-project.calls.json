@@ -1,0 +1,240 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-add-project-opens-from-the-composer-not-the-spin",
+      "at": "2026-11-09T04:07Z",
+      "title": "Add project opens from the composer, not the spine",
+      "context": null,
+      "chose": "ctrl+o, a plus beside PROJECT, and a first row in its list",
+      "because": "The composer is TD's New thread; the spine's PROJECTS face already calls a group of tabs a project.",
+      "passed_over": [
+        "A second button beside + NEW in the inbox spine"
+      ],
+      "undo": "Move the button; the dialog does not care where it opens from.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-09T04:26Z",
+        "via": "reported",
+        "note": "Parker chose 'Composer only' when asked, 2026-11-08.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      }
+    },
+    {
+      "id": "call-picking-a-new-ssh-host-adds-it-to-machines-toml",
+      "at": "2026-11-09T04:07Z",
+      "title": "Picking a new SSH host adds it to machines.toml",
+      "context": null,
+      "chose": "Append it to machines.toml after one ssh check succeeds",
+      "because": "Their fork keeps the machine it connects; a host forgotten when the dialog closes would have to be picked again every time.",
+      "passed_over": [
+        "Use the host for this one dialog only"
+      ],
+      "undo": "Delete the two lines it appended.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-git-hosts-are-left-out-of-the-machine-list",
+      "at": "2026-11-09T04:07Z",
+      "title": "Git hosts are left out of the machine list",
+      "context": null,
+      "chose": "Skip hosts on a known forge or with User git, and count them",
+      "because": "github-bfs and friends are git remotes in ~/.ssh/config, not machines an agent can run on.",
+      "passed_over": [],
+      "undo": "Drop the filter.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-a-new-host-s-key-is-never-accepted-for-the-perso",
+      "at": "2026-11-09T04:07Z",
+      "title": "A new host's key is never accepted for the person",
+      "context": null,
+      "chose": "BatchMode only; an untrusted key asks them to run ssh once",
+      "because": "Accepting a host key unseen is the one step ssh exists to make a person look at.",
+      "passed_over": [
+        "accept-new, trusting on first use"
+      ],
+      "undo": "Add StrictHostKeyChecking=accept-new to the dialog's ssh options.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-added-folders-are-remembered-in-a-new-projects-t",
+      "at": "2026-11-09T04:07Z",
+      "title": "Added folders are remembered in a new projects.toml",
+      "context": null,
+      "chose": "projects.toml beside machines.toml, only for folders the scan cannot see",
+      "because": "The PROJECT list is a depth-one scan of five roots; it cannot see a deeper folder or another machine.",
+      "passed_over": [
+        "A list inside the session file"
+      ],
+      "undo": "Delete projects.toml; the scan is unchanged.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-clone-and-start-new-land-in-the-folder-being-sho",
+      "at": "2026-11-09T04:07Z",
+      "title": "Clone and start new land in the folder being shown",
+      "context": null,
+      "chose": "Under the folder step's folder, ~/Work at first; owner/repo means GitHub",
+      "because": "One place to choose where things go, and ~/Work is the scan's first root.",
+      "passed_over": [],
+      "undo": "Change the default folder or drop the shorthand.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-09T04:26Z",
+        "via": "reported",
+        "note": "Parker chose 'The folder being shown' when asked, 2026-11-08.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      }
+    },
+    {
+      "id": "call-a-far-project-keeps-its-machine",
+      "at": "2026-11-09T04:07Z",
+      "title": "A far project keeps its machine",
+      "context": null,
+      "chose": "Choosing it sets MACHINE; sending it on another machine is refused",
+      "because": "A folder on farbox does not exist here, and an agent started in a missing folder is a confusing failure.",
+      "passed_over": [],
+      "undo": "Remove the guard.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    },
+    {
+      "id": "call-a-git-url-in-the-sentence-is-offered-for-cloning",
+      "at": "2026-11-09T04:07Z",
+      "title": "A git URL in the sentence is offered for cloning",
+      "context": null,
+      "chose": "The clone field starts with the first git URL in the sentence",
+      "because": "Parker's screenshot: the repository was in the sentence and no project could hold it.",
+      "passed_over": [],
+      "undo": "Start the field empty.",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null
+    }
+  ]
+}

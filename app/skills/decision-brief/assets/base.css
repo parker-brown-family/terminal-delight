@@ -131,6 +131,15 @@ h1 {
 }
 h1 .n { font: 700 .82em/1 var(--mono); letter-spacing: -.02em; color: var(--dim); margin-right: .3em; }
 h1 .hi { color: var(--acc); }
+/* The closed strip above a next-round brief's title: what came of the last round, one press away. */
+.last-time-strip { margin: 0 0 26px; }
+.last-time { display: flex; align-items: baseline; gap: 10px; width: 100%; padding: 10px 46px 10px 14px; text-align: left;
+  font: 500 13px/1.45 var(--mono); color: var(--fg); cursor: pointer;
+  background: color-mix(in srgb, var(--fgb) 7%, transparent); border: 1px solid var(--line); border-radius: 12px; }
+.last-time::before { content: "▸"; color: var(--acc); }
+.last-time b { color: var(--fgb); letter-spacing: .08em; text-transform: uppercase; font-size: 11.5px; white-space: nowrap; }
+.last-time:hover { background: color-mix(in srgb, var(--fgb) 12%, transparent); }
+
 .lede {
   max-width: 68ch; margin: 0 0 22px; color: var(--fg);
   font-size: clamp(17px, 1.5vw, 19.5px); line-height: 1.6;

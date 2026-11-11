@@ -92,8 +92,12 @@ try {
   const coverage = await evaluate(`({
     headings:[...document.querySelectorAll('h2')].map(e=>[e.id,e.dataset.nid,!!e.querySelector(':scope > .note-btn')]),
     figures:[...document.querySelectorAll('figure')].map(e=>[e.id,e.dataset.nid,!!e.querySelector(':scope > .note-btn')]),
+    opening:!!document.querySelector('#top > .note-btn'),
+    openingTitle:document.getElementById('top')?.dataset.ntitle,
     duplicates:[...document.querySelectorAll('[id]')].map(e=>e.id).filter((id,i,a)=>a.indexOf(id)!==i)
   })`);
+  assert.equal(coverage.opening, true, 'the title and first line take a note');
+  assert.match(coverage.openingTitle, /^A Comment's Return You leave a comment/);
   assert.equal(coverage.headings.length, 4);
   assert.equal(coverage.figures.length, 3);
   for (const [id, target, button] of [...coverage.headings, ...coverage.figures]) {
@@ -177,6 +181,9 @@ try {
     const targets = await evaluate("[...document.querySelectorAll('h2,figure,.grill .ask,.grill-q,.grill .q:not(.ask .q)')].map(e=>({id:e.id,target:e.dataset.nid,button:!!e.querySelector(':scope > .note-btn'),concur:e.matches('.ask,.grill-q,.grill .q')?e.classList.contains('concurrable'):null}))");
     assert.ok(targets.length > 0);
     for (const t of targets) { assert.equal(t.id, t.target); assert.equal(t.button, true); if (t.concur !== null) assert.equal(t.concur, true, t.id + ' takes no CONCUR'); }
+    assert.equal(await evaluate("!!document.querySelector('h1.notable, .opening.notable, .lede.notable')"), true, 'the title and first line take a note');
+    const sheet = await evaluate(`(()=>{const o=document.querySelector('[data-dlg]');if(!o)return null;o.click();const d=document.getElementById(o.dataset.dlg);const opened=d.open;d.querySelector('[data-close]').click();return [opened,d.open];})()`);
+    if (sheet) assert.deepEqual(sheet, [true, false], 'a dialog opens from its button and closes again');
     const extraLayout = [];
     for (const width of [968, 390]) {
       await call('Emulation.setDeviceMetricsOverride', { width, height: 1000, deviceScaleFactor: 1, mobile: false });

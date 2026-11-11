@@ -491,6 +491,9 @@ pub enum ClickIntent {
     /// Ctrl+Alt on a document: open it in a new pane to the right of this
     /// one, keeping focus where it was.
     OpenBeside,
+    /// Alt on a code file or a GitHub pull request link: show it in the
+    /// right-bar flyout, beside the conversation (`flyout_view.rs`).
+    OpenSide,
     /// Copy the command line the Alt chip is framing.
     CopyChip,
     /// Show the file in the file manager with the item selected.
@@ -547,6 +550,7 @@ pub fn loopback_target(link: &str, target: &str) -> Option<String> {
 /// |---------------|----------------------------|-----------------|
 /// | ctrl+alt      | a document                 | OpenBeside      |
 /// | alt           | a document                 | OpenHere        |
+/// | alt           | a code file, a PR link     | OpenSide        |
 /// | alt           | an armed copy chip         | CopyChip        |
 /// | super+ctrl    | a file on this disk        | Reveal          |
 /// | shift         | a file on this disk        | Reveal          |
@@ -561,6 +565,7 @@ pub fn loopback_target(link: &str, target: &str) -> Option<String> {
 pub fn click_intent(
     m: Mods,
     on_document: bool,
+    on_side: bool,
     on_link: bool,
     revealable: bool,
     chip_armed: bool,
@@ -571,6 +576,11 @@ pub fn click_intent(
         } else {
             ClickIntent::OpenHere
         };
+    }
+    // Ahead of the chip for the reason a document is: the token under the
+    // pointer says which file, and a command line around it does not.
+    if m.alt && on_side && !m.platform && !m.control {
+        return ClickIntent::OpenSide;
     }
     if m.alt && chip_armed {
         return ClickIntent::CopyChip;
@@ -592,6 +602,8 @@ pub fn click_intent(
 pub enum LinkItem {
     OpenHere,
     OpenBeside,
+    /// In the right-bar flyout: a code file or a pull request.
+    OpenSide,
     OpenWithDesktop,
     Reveal,
     CopyLink,
@@ -603,11 +615,14 @@ pub enum LinkItem {
 /// opens with the desktop, a file on this disk reveals, and every link can be
 /// copied. Copy link is what Alt+click used to give on a command line that
 /// was mostly a path; now that Alt+click opens the path, the copy lives here.
-pub fn link_menu(is_document: bool, revealable: bool) -> Vec<LinkItem> {
-    let mut items = Vec::with_capacity(5);
+pub fn link_menu(is_document: bool, side: bool, revealable: bool) -> Vec<LinkItem> {
+    let mut items = Vec::with_capacity(6);
     if is_document {
         items.push(LinkItem::OpenHere);
         items.push(LinkItem::OpenBeside);
+    }
+    if side && !is_document {
+        items.push(LinkItem::OpenSide);
     }
     items.push(LinkItem::OpenWithDesktop);
     if revealable {
@@ -666,6 +681,23 @@ pub fn float_home(screen_w: f32, screen_h: f32, line_top: f32, line_bottom: f32)
         screen_w,
         screen_h,
     )
+}
+
+/// What a document read in the glow pane leaves clear of the pane's left and
+/// right edges, and of its top and bottom. Parker, 2026-11-05: *"centered at 5%
+/// top and bottom padded and 10% left right padded againts the active pane"*.
+const GLOW_SIDE: f32 = 0.10;
+const GLOW_END: f32 = 0.05;
+
+/// Where a document a person opens in the glow pane sits: centred on the pane,
+/// whichever line it was opened from.
+pub fn glow_home(screen_w: f32, screen_h: f32) -> FloatRect {
+    FloatRect {
+        x: screen_w * GLOW_SIDE,
+        y: screen_h * GLOW_END,
+        w: screen_w * (1.0 - 2.0 * GLOW_SIDE),
+        h: screen_h * (1.0 - 2.0 * GLOW_END),
+    }
 }
 
 /// The square's strip: its file's name and its controls, across the top.
@@ -987,6 +1019,39 @@ pub fn send_label(agents_in_tab: usize, name: &str) -> String {
         let cut: String = name.chars().take(MAX - 1).collect();
         format!("{}…", cut.trim_end())
     }
+}
+
+/// Where a person's click opens an artifact an agent handed over: the
+/// floating square over the pane, as it always has, or a tab in the
+/// right-hand side panel of the tab it is in. One setting for every door a
+/// person opens one by (the attention rail's row and Enter, the artifacts
+/// list, a pane's own handover chip and Alt+O), read here so a pane needs no
+/// line back to the window. An agent's own `open_document` keeps the
+/// placement it names. Parker, 2026-11-10: *"New setting for where artifacts
+/// open: Right flyout now an option"*.
+#[derive(Clone, Copy, PartialEq, Eq, Debug, Default, serde::Serialize, serde::Deserialize)]
+#[serde(rename_all = "kebab-case")]
+pub enum ArtifactPlace {
+    #[default]
+    Square,
+    Side,
+}
+
+// Per thread, because every door that reads it runs on the window's own
+// thread, and so that one test's choice cannot leak into another running
+// beside it.
+thread_local! {
+    static ARTIFACT_PLACE: std::cell::Cell<ArtifactPlace> =
+        const { std::cell::Cell::new(ArtifactPlace::Square) };
+}
+
+/// The place in force on the window's thread.
+pub fn artifact_place() -> ArtifactPlace {
+    ARTIFACT_PLACE.with(|p| p.get())
+}
+
+pub fn set_artifact_place(p: ArtifactPlace) {
+    ARTIFACT_PLACE.with(|c| c.set(p));
 }
 
 #[cfg(test)]
@@ -1387,6 +1452,22 @@ mod tests {
     }
 
     #[test]
+    fn the_glow_pane_sits_centred_inside_the_pane() {
+        let r = glow_home(1000.0, 800.0);
+        assert_eq!(
+            r,
+            FloatRect {
+                x: 100.0,
+                y: 40.0,
+                w: 800.0,
+                h: 720.0
+            }
+        );
+        assert!((r.x + r.w - 900.0).abs() < 1e-3, "10% clear on the right");
+        assert!((r.y + r.h - 760.0).abs() < 1e-3, "5% clear at the bottom");
+    }
+
+    #[test]
     fn a_float_opens_below_its_line_and_above_it_near_the_bottom() {
         let (w, h) = (1000.0, 800.0);
         // Line near the top: the square starts just under it.
@@ -1548,7 +1629,11 @@ mod tests {
             ("shift, nothing", shift, false, false, false, false, Pass),
         ];
         for (name, mods, doc, link, reveal, chip, want) in rows {
-            assert_eq!(click_intent(mods, doc, link, reveal, chip), want, "{name}");
+            assert_eq!(
+                click_intent(mods, doc, false, link, reveal, chip),
+                want,
+                "{name}"
+            );
         }
     }
 
@@ -1558,7 +1643,7 @@ mod tests {
     #[test]
     fn the_menu_on_a_document_path_offers_open_here_open_beside_and_copy_link() {
         assert_eq!(
-            link_menu(true, true),
+            link_menu(true, false, true),
             vec![
                 LinkItem::OpenHere,
                 LinkItem::OpenBeside,
@@ -1569,7 +1654,7 @@ mod tests {
         );
         // A file TD cannot draw keeps everything but Open here.
         assert_eq!(
-            link_menu(false, true),
+            link_menu(false, false, true),
             vec![
                 LinkItem::OpenWithDesktop,
                 LinkItem::Reveal,
@@ -1578,10 +1663,69 @@ mod tests {
         );
     }
 
+    /// Alt on a code file or a pull request link opens it in the flyout:
+    /// ahead of the command line's copy, behind a document's own square, and
+    /// never with Ctrl or Super held, whose clicks already mean something.
+    #[test]
+    fn alt_on_a_code_file_or_a_pull_request_opens_the_flyout() {
+        let alt = Mods {
+            alt: true,
+            ..Mods::default()
+        };
+        let ctrl_alt = Mods {
+            control: true,
+            ..alt
+        };
+        let super_alt = Mods {
+            platform: true,
+            ..alt
+        };
+        assert_eq!(
+            click_intent(alt, false, true, true, true, false),
+            ClickIntent::OpenSide
+        );
+        assert_eq!(
+            click_intent(alt, false, true, false, false, true),
+            ClickIntent::OpenSide,
+            "a file on a command line opens; the rest of the line still copies"
+        );
+        assert_eq!(
+            click_intent(alt, true, true, true, true, false),
+            ClickIntent::OpenHere,
+            "a document keeps its square"
+        );
+        assert_eq!(
+            click_intent(ctrl_alt, false, true, true, true, true),
+            ClickIntent::CopyChip
+        );
+        assert_ne!(
+            click_intent(super_alt, false, true, true, true, false),
+            ClickIntent::OpenSide
+        );
+        assert_eq!(
+            click_intent(Mods::default(), false, true, true, true, false),
+            ClickIntent::Pass
+        );
+    }
+
+    #[test]
+    fn the_menu_offers_the_flyout_for_a_code_file_but_not_for_a_document() {
+        assert_eq!(
+            link_menu(false, true, true),
+            vec![
+                LinkItem::OpenSide,
+                LinkItem::OpenWithDesktop,
+                LinkItem::Reveal,
+                LinkItem::CopyLink
+            ]
+        );
+        assert!(!link_menu(true, true, true).contains(&LinkItem::OpenSide));
+    }
+
     #[test]
     fn the_menu_on_a_web_link_offers_neither_open_here_nor_reveal() {
         assert_eq!(
-            link_menu(false, false),
+            link_menu(false, false, false),
             vec![LinkItem::OpenWithDesktop, LinkItem::CopyLink]
         );
     }

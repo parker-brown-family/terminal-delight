@@ -2093,6 +2093,21 @@ impl Skin {
         }
     }
 
+    /// A chip that is a control somebody presses, rather than a label that is
+    /// not in effect. At rest [`Skin::chip`] leaves every skin but the glow and
+    /// bar ones in `ink_off`, which is Faint, and the clean design's own palette
+    /// draws Faint so near its ground that the composer's chips all but
+    /// vanished. This one rests at the body's dim weight, as the tabs do; a
+    /// paper skin keeps its own control.
+    pub fn control_chip(&self, active: bool) -> Div {
+        let chip = self.chip(active);
+        if active || self.is_paper() {
+            chip
+        } else {
+            chip.text_color(self.ink.ink_dim)
+        }
+    }
+
     /// A two-state slider: one bordered track, and the half you are on filled.
     ///
     /// TERM ⇄ BENCH was two chips with two pixels between them. Under the ring
@@ -4218,6 +4233,37 @@ mod tests {
                 );
             }
         }
+    }
+
+    /// A resting control chip reads at the body's dim weight in every skin that
+    /// is not paper, and clears the tabs' floor on the clean design's own
+    /// palette, where the `ink_off` it replaced does not.
+    #[test]
+    fn a_resting_control_chip_is_a_word_somebody_reads() {
+        let clean = theme::parse(theme::builtin_toml("clean").expect("clean ships"))
+            .expect("the clean theme parses");
+        for (id, src) in BUILTIN_SKINS {
+            let sk = parse(src).unwrap().bake(&clean, 1.0);
+            let lit = sk.chip(true).style().text.color;
+            assert_eq!(sk.control_chip(true).style().text.color, lit, "{id}: lit");
+            if sk.is_paper() {
+                continue;
+            }
+            assert_eq!(
+                sk.control_chip(false).style().text.color,
+                Some(sk.ink.ink_dim),
+                "{id}: at rest"
+            );
+        }
+        let sk = parse(DEFAULT_SKIN_TOML).unwrap().bake(&clean, 1.0);
+        let face = over(sk.ink.face_rest, sk.ink.panel);
+        let dim = contrast(over(sk.ink.ink_dim, face), face);
+        let off = contrast(over(sk.ink.ink_off, face), face);
+        assert!(dim >= 3.0, "the dim weight is {dim:.2}:1");
+        assert!(
+            off < 3.0,
+            "ink_off was {off:.2}:1, so the check measures something"
+        );
     }
 
     /// The small print on a card can be READ, on every palette we ship.

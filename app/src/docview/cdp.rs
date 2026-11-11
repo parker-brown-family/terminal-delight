@@ -86,6 +86,7 @@ pub struct Cdp {
     out: Mutex<Box<dyn Write + Send>>,
     waiting: Mutex<HashMap<u64, mpsc::Sender<Result<Value, CdpError>>>>,
     expects: Mutex<Vec<Waiter>>,
+    resources: Mutex<HashMap<SessionId, Option<Vec<String>>>>,
     next: AtomicU64,
     /// Set by the reader when the pipe ends, under the `waiting` lock, so a
     /// call either sees it or is drained by it — never neither.
@@ -116,6 +117,35 @@ impl Drop for Expect {
     fn drop(&mut self) {
         if let Some(cdp) = self.cdp.upgrade() {
             lock(&cdp.expects).retain(|w| w.id != self.id);
+        }
+    }
+}
+
+/// A command already sent, whose reply has not been collected yet.
+pub struct Pending {
+    rx: mpsc::Receiver<Result<Value, CdpError>>,
+    id: u64,
+    cdp: Weak<Cdp>,
+}
+
+impl Pending {
+    /// The reply, once it arrives.
+    pub fn wait(self, within: Duration) -> Result<Value, CdpError> {
+        match self.rx.recv_timeout(within) {
+            Ok(answer) => answer,
+            Err(mpsc::RecvTimeoutError::Timeout) => Err(CdpError::Timeout),
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(CdpError::Closed),
+        }
+    }
+}
+
+impl Drop for Pending {
+    /// A reply nobody will collect must not stay registered: a screenshot the
+    /// page no longer wants would otherwise hold its slot until the browser
+    /// closes.
+    fn drop(&mut self) {
+        if let Some(cdp) = self.cdp.upgrade() {
+            lock(&cdp.waiting).remove(&self.id);
         }
     }
 }
@@ -223,6 +253,7 @@ impl Cdp {
             out: Mutex::new(write),
             waiting: Mutex::new(HashMap::new()),
             expects: Mutex::new(Vec::new()),
+            resources: Mutex::new(HashMap::new()),
             next: AtomicU64::new(1),
             closed: AtomicBool::new(false),
         });
@@ -243,6 +274,18 @@ impl Cdp {
         self.closed.load(Ordering::SeqCst)
     }
 
+    pub fn watch_resources(&self, session: &SessionId) {
+        lock(&self.resources).insert(session.clone(), Some(Vec::new()));
+    }
+
+    pub fn resources(&self, session: &SessionId) -> Option<Vec<String>> {
+        lock(&self.resources).get(session).cloned().flatten()
+    }
+
+    pub fn forget_resources(&self, session: &SessionId) {
+        lock(&self.resources).remove(session);
+    }
+
     /// Send `method` and wait for its reply.
     pub fn call(
         &self,
@@ -251,6 +294,42 @@ impl Cdp {
         params: Value,
         within: Duration,
     ) -> Result<Value, CdpError> {
+        let (id, rx) = self.begin(session, method, params)?;
+        match rx.recv_timeout(within) {
+            Ok(answer) => answer,
+            Err(mpsc::RecvTimeoutError::Timeout) => {
+                lock(&self.waiting).remove(&id);
+                Err(CdpError::Timeout)
+            }
+            Err(mpsc::RecvTimeoutError::Disconnected) => Err(CdpError::Closed),
+        }
+    }
+
+    /// Send `method` now and collect its reply later. The browser answers
+    /// commands it can run side by side as each finishes, so a batch of
+    /// set-up calls costs one wait instead of one per call, and a screenshot
+    /// can be on its way while the page is still being read.
+    pub fn send_call(
+        self: &Arc<Self>,
+        session: Option<&SessionId>,
+        method: &str,
+        params: Value,
+    ) -> Result<Pending, CdpError> {
+        let (id, rx) = self.begin(session, method, params)?;
+        Ok(Pending {
+            rx,
+            id,
+            cdp: Arc::downgrade(self),
+        })
+    }
+
+    /// Register for `id`'s reply and send the command.
+    fn begin(
+        &self,
+        session: Option<&SessionId>,
+        method: &str,
+        params: Value,
+    ) -> Result<(u64, mpsc::Receiver<Result<Value, CdpError>>), CdpError> {
         let id = self.next.fetch_add(1, Ordering::SeqCst);
         let (tx, rx) = mpsc::channel();
         {
@@ -268,14 +347,7 @@ impl Cdp {
             lock(&self.waiting).remove(&id);
             return Err(e);
         }
-        match rx.recv_timeout(within) {
-            Ok(answer) => answer,
-            Err(mpsc::RecvTimeoutError::Timeout) => {
-                lock(&self.waiting).remove(&id);
-                Err(CdpError::Timeout)
-            }
-            Err(mpsc::RecvTimeoutError::Disconnected) => Err(CdpError::Closed),
-        }
+        Ok((id, rx))
     }
 
     /// Register for an event before sending the command that causes it: the
@@ -335,6 +407,7 @@ impl Cdp {
         }
         // Dropping the senders wakes every Expect with Closed.
         lock(&self.expects).clear();
+        lock(&self.resources).clear();
     }
 
     fn dispatch(&self, raw: &[u8]) {
@@ -366,6 +439,24 @@ impl Cdp {
             .get("sessionId")
             .and_then(Value::as_str)
             .map(|s| SessionId(s.to_string()));
+        if method == "Network.requestWillBeSent" {
+            if let (Some(session), Some(url)) = (
+                &session,
+                msg.pointer("/params/request/url").and_then(Value::as_str),
+            ) {
+                if !url.starts_with("data:") {
+                    if let Some(record) = lock(&self.resources).get_mut(session) {
+                        if let Some(urls) = record {
+                            if urls.len() >= 512 || url.len() > 8192 {
+                                *record = None;
+                            } else if !urls.iter().any(|u| u == url) {
+                                urls.push(url.to_owned());
+                            }
+                        }
+                    }
+                }
+            }
+        }
         if method == "Page.javascriptDialogOpening" {
             // An unanswered alert/confirm/prompt blocks the page's main thread,
             // and every later call on that page would time out behind it.
@@ -492,6 +583,43 @@ mod tests {
     }
 
     const T: Duration = Duration::from_secs(5);
+
+    /// Three commands leave before any reply comes back, and each reply finds
+    /// the one that asked for it whatever order they return in. A reply to a
+    /// command nobody collects any more is dropped, and leaves nothing behind.
+    #[test]
+    fn a_batch_goes_out_at_once_and_each_reply_finds_its_own_command() {
+        let (cdp, mut fake) = Fake::pair();
+        let a = cdp.send_call(None, "A.one", json!({})).unwrap();
+        let b = cdp.send_call(None, "B.two", json!({})).unwrap();
+        let c = cdp.send_call(None, "C.three", json!({})).unwrap();
+        let sent: Vec<Value> = (0..3).map(|_| fake.read()).collect();
+        assert_eq!(
+            sent.iter().map(|m| m["method"].clone()).collect::<Vec<_>>(),
+            vec![json!("A.one"), json!("B.two"), json!("C.three")],
+            "all three were written before any was answered"
+        );
+        for (m, n) in [(&sent[2], 3), (&sent[0], 1), (&sent[1], 2)] {
+            fake.write(json!({ "id": m["id"], "result": { "n": n } }));
+        }
+        assert_eq!(a.wait(T).unwrap()["n"], 1);
+        assert_eq!(c.wait(T).unwrap()["n"], 3);
+        assert_eq!(b.wait(T).unwrap()["n"], 2);
+
+        let dropped = cdp.send_call(None, "D.four", json!({})).unwrap();
+        let d = fake.read();
+        drop(dropped);
+        assert!(
+            lock(&cdp.waiting).is_empty(),
+            "an uncollected reply keeps no slot"
+        );
+        fake.write(json!({ "id": d["id"], "result": {} }));
+        // The late reply is discarded and the next call still works.
+        let e = cdp.send_call(None, "E.five", json!({})).unwrap();
+        let em = fake.read();
+        fake.write(json!({ "id": em["id"], "result": { "ok": true } }));
+        assert_eq!(e.wait(T).unwrap()["ok"], true);
+    }
 
     #[test]
     fn a_reply_reaches_the_call_that_asked_even_when_events_arrive_first() {

@@ -1,0 +1,22 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 339.81190202757716,
+    "path": "/home/parker/Work/td-html-open-latency/docs/plans/html-open-latency/resources.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 32.012395,
+      "cache_lookup": 115.49374900000001,
+      "cache_hit": true,
+      "layout": 115.499965,
+      "first_tile": 116.423135,
+      "first_decode": 207.585005,
+      "first_paint": 317.47834,
+      "viewport_paint": 317.484137
+    }
+  }
+]

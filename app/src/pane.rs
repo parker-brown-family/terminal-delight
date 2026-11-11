@@ -506,6 +506,14 @@ pub(crate) struct FloatingDoc {
     /// came up in the FOCUS frame, and it goes when the frame does. A square
     /// an agent opened beside itself is not, and stays small.
     to_read: bool,
+    /// A person is reading this in the glow pane rather than the FOCUS frame
+    /// ([`TerminalView::set_float_to_read`]): it takes the keys the frame
+    /// would ([`crate::keylayer::Layer::Reading`]).
+    in_glow: bool,
+    /// Still where the glow pane put it, so it keeps its place as the pane
+    /// changes size ([`crate::docopen::glow_home`]). Moving or resizing it by
+    /// hand ends that, and it stays where it was put.
+    seated: bool,
 }
 
 impl FloatingDoc {
@@ -530,6 +538,8 @@ impl FloatingDoc {
             _finished: finished,
             below: None,
             to_read: false,
+            in_glow: false,
+            seated: false,
         }
     }
 
@@ -540,6 +550,8 @@ impl FloatingDoc {
             view: self.view.clone(),
             rect: self.rect,
             note: self.note,
+            in_glow: self.in_glow,
+            seated: self.seated,
             below: self.below.as_ref().map(|b| Box::new(b.carry())),
         }
     }
@@ -1600,6 +1612,20 @@ pub(crate) fn open_with_system(target: &str) {
         spawn_detached("uwsm-app", &["--", "xdg-open", target]);
     } else {
         spawn_detached("xdg-open", &[target]);
+    }
+}
+
+/// Start a desktop program of its own — gliff showing a far machine's screen
+/// is the first — detached, and on a uwsm session in its own scope, for the
+/// reason [`open_with_system`] gives: the window it opens is the desktop's,
+/// and closing this terminal must not be able to take it along.
+pub(crate) fn launch_gui(program: &str, args: &[&str]) {
+    if session_uses_uwsm() {
+        let mut all = vec!["--", program];
+        all.extend_from_slice(args);
+        spawn_detached("uwsm-app", &all);
+    } else {
+        spawn_detached(program, args);
     }
 }
 
@@ -2738,7 +2764,7 @@ fn graded(c: Hsla, g: &crate::theme::Grade, ch: Channel) -> Hsla {
 /// It is also what makes "spent once" true by construction rather than by
 /// convention: the returned grade answers `true` here, so a second pass is a
 /// clone.
-fn graded_palette(th: &Theme) -> Theme {
+pub(crate) fn graded_palette(th: &Theme) -> Theme {
     if th.grade.colour_is_neutral() {
         return th.clone();
     }
@@ -2944,6 +2970,8 @@ pub(crate) struct FloatCarry {
     view: gpui::Entity<crate::docview::DocumentView>,
     rect: crate::docopen::FloatRect,
     note: Option<crate::docopen::FloatNote>,
+    in_glow: bool,
+    seated: bool,
     /// The square a clip covers, carried with it.
     below: Option<Box<FloatCarry>>,
 }
@@ -3034,6 +3062,8 @@ pub struct TerminalView {
     /// The last status-line parse and the live-screen copy it was parsed from.
     /// See [`Self::agent_status`].
     status_memo: std::cell::RefCell<Option<StatusMemo>>,
+    skills_memo: crate::skills::Memo,
+    skills_identity: Option<(String, u64)>,
     #[cfg(test)]
     status_parses: std::cell::Cell<usize>,
     styled_memo: std::cell::RefCell<Option<styling::Memo>>,
@@ -3708,6 +3738,31 @@ impl gpui::EventEmitter<ToggleLeftBar> for TerminalView {}
 /// Ctrl+Shift+N — open or close the attention rail's queue.
 pub struct ToggleRail;
 impl gpui::EventEmitter<ToggleRail> for TerminalView {}
+
+/// Ctrl+Shift+I — turn the left spine between PROJECTS and INBOX.
+pub struct ToggleInbox;
+impl gpui::EventEmitter<ToggleInbox> for TerminalView {}
+
+/// Ctrl+Shift+E — open the composer: start an agent from a sentence.
+pub struct OpenComposer;
+impl gpui::EventEmitter<OpenComposer> for TerminalView {}
+
+/// Ctrl+, — open or close Settings (`settings_view.rs`).
+pub struct ToggleSettings;
+impl gpui::EventEmitter<ToggleSettings> for TerminalView {}
+
+/// Ctrl+Shift+R — open or close the right-bar flyout (`flyout_view.rs`).
+pub struct ToggleFlyout;
+impl gpui::EventEmitter<ToggleFlyout> for TerminalView {}
+
+/// Alt+click on a code file or a GitHub pull request link: show it in the
+/// right-bar flyout, beside this pane's conversation, at the line a
+/// `path:line` named. The workspace owns the flyout, so the pane asks.
+pub struct OpenSide {
+    pub target: crate::flyout::Target,
+    pub line: Option<u32>,
+}
+impl gpui::EventEmitter<OpenSide> for TerminalView {}
 
 /// Ctrl+Shift+Z — bring back the most recently closed thing.
 ///
@@ -4537,18 +4592,30 @@ impl TerminalView {
         want
     }
 
-    /// The page or Markdown file being READ in the FOCUS frame, while one is:
-    /// the document that takes every key ([`crate::keylayer::Layer::Reading`]).
-    /// A picture or a PDF lent to the reader is only being looked at.
+    /// The page or Markdown file being READ, in the FOCUS frame or the glow
+    /// pane, while one is: the document that takes every key
+    /// ([`crate::keylayer::Layer::Reading`]). A picture or a PDF lent to the
+    /// reader is only being looked at. So is a square an agent opened, until
+    /// a person opens it to read.
     pub(crate) fn reading_view(
         &self,
         cx: &App,
     ) -> Option<gpui::Entity<crate::docview::DocumentView>> {
-        if !self.being_read {
+        if self.being_read {
+            return self
+                .lent_view()
+                .filter(|v| v.read(cx).target().kind.reads());
+        }
+        if !float_shows_on(self.bench.face()) {
             return None;
         }
-        self.lent_view()
-            .filter(|v| v.read(cx).target().kind.reads())
+        // A clip over a page leaves the page the keys, as it does in the frame.
+        let top = self.float.as_ref()?;
+        let doc = match top.below.as_deref() {
+            Some(page) if top.view.read(cx).target().kind.plays() => page,
+            _ => top,
+        };
+        doc.in_glow.then(|| doc.view.clone())
     }
 
     /// The document [`crate::docopen::read_from`] names for this pane now,
@@ -5187,8 +5254,14 @@ impl TerminalView {
         };
         let cwd = restore.cwd.clone().map(std::path::PathBuf::from);
         let (cell_w, cell_h) = BORN_CELL_PX;
-        let session = term::spawn_in(grid, cell_w, cell_h, cwd, restore.program.as_ref())
-            .expect("spawn shell");
+        let (env, identity) = if restore.program.is_none() {
+            crate::skills::local_environment()
+        } else {
+            (vec![], None)
+        };
+        let session =
+            term::spawn_in_with_env(grid, cell_w, cell_h, cwd, restore.program.as_ref(), env)
+                .expect("spawn shell");
         if let Some(cmd) = restore
             .resume
             .as_deref()
@@ -5196,7 +5269,9 @@ impl TerminalView {
         {
             session.notifier.notify(format!("{cmd}\n").into_bytes());
         }
-        Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx)
+        let mut pane = Self::around(session, None, None, &restore, grid, BORN_CELL_PX, cx);
+        pane.skills_identity = identity;
+        pane
     }
 
     /// A pane showing a terminal this window does not own.
@@ -5384,6 +5459,19 @@ impl TerminalView {
                         // the live status line every tick (independent of the bell's
                         // scroll-settle gate below, which would otherwise skip it).
                         view.accrue_tokens();
+                        if view.hosts_agent() {
+                            let session = match &view.skills_identity {
+                                Some((session, _)) => Some(session.as_str()),
+                                None => crate::surfacefeed::session(),
+                            };
+                            let pane = view.skills_identity.as_ref().map(|v| v.1).or(view.pane_id);
+                            if view
+                                .skills_memo
+                                .refresh(session, pane, view.session.shell_pid)
+                            {
+                                cx.notify();
+                            }
+                        }
                         // A dial press waiting on the harness's own "are you
                         // sure" — answered here, at the clock's own rate,
                         // because the person's composer is held until it is.
@@ -5682,6 +5770,8 @@ impl TerminalView {
             offscreen_flushed: Instant::now(),
             live_rows_memo: std::cell::RefCell::new(None),
             status_memo: std::cell::RefCell::new(None),
+            skills_memo: crate::skills::Memo::default(),
+            skills_identity: None,
             #[cfg(test)]
             status_parses: std::cell::Cell::new(0),
             styled_memo: std::cell::RefCell::new(None),
@@ -6027,6 +6117,53 @@ impl TerminalView {
     /// last-drawn focus goes stale; it is not being looked at.
     pub fn focused_last_frame(&self) -> bool {
         self.was_focused && self.shown.load(std::sync::atomic::Ordering::Relaxed)
+    }
+
+    fn skills_chip(
+        &self,
+        th: &Theme,
+        sk: &crate::skin::Skin,
+        scale: f32,
+        cx: &mut Context<Self>,
+    ) -> Option<gpui::AnyElement> {
+        if !self.hosts_agent() {
+            return None;
+        }
+        let ui = crate::lang::current().strings().ui;
+        let info = &self.skills_memo.info;
+        let glyph = match info.status {
+            crate::skills::Status::Attached => "✓",
+            crate::skills::Status::Partial => "~",
+            crate::skills::Status::NotAttached => "×",
+            crate::skills::Status::Unknown => "?",
+        };
+        Some(
+            sk.chip(false)
+                .id("pane-skills")
+                .debug_selector(|| "pane-skills".into())
+                .text_size(sk.text_px(9. * scale))
+                .text_color(if info.status == crate::skills::Status::Unknown {
+                    th.text.alpha(0.65)
+                } else {
+                    th.accent
+                })
+                .cursor_pointer()
+                .whitespace_nowrap()
+                .child(format!(
+                    "{} {glyph}{}",
+                    ui.skill_hdr,
+                    if info.pending_restart { " *" } else { "" }
+                ))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|view, event: &MouseDownEvent, _window, cx| {
+                        cx.stop_propagation();
+                        view.hdr_overflow = Some(event.position);
+                        cx.notify();
+                    }),
+                )
+                .into_any_element(),
+        )
     }
 
     /// The RESTING or ASLEEP chip for the header, or nothing while awake.
@@ -6870,6 +7007,28 @@ impl TerminalView {
             .map(|c| c.link)
     }
 
+    /// What an Alt+click at `pos` shows in the right-bar flyout: a GitHub
+    /// pull request by its address, or a code file on this disk, at the line
+    /// a `path:line` names. The resolved link is asked first; then the bare
+    /// token, because `src/main.rs:120` is not a link to [`link_of_token`]
+    /// (a colon there reads as a host and port) but is exactly what a
+    /// compiler or an agent prints.
+    fn side_target_under(&self, pos: gpui::Point<Pixels>) -> Option<crate::flyout_view::SideOpen> {
+        let cwd = self.runtime().cwd;
+        if let Some(l) = self.link_under(pos) {
+            if let Some(open) = crate::flyout_view::side_of(&l, cwd.as_deref()) {
+                return Some(open);
+            }
+        }
+        let (vrow, vcol, _) = self.viewport_cell(pos);
+        let vrow = self.paint_row_to_grid_row(vrow);
+        let (grid, _) = self.grid_snapshot();
+        let row = grid.get(vrow)?;
+        let (start, end) = token_span(row, vcol)?;
+        let token = trim_link_delims(&row[start..end].iter().collect::<String>());
+        crate::flyout_view::side_of(&token, cwd.as_deref())
+    }
+
     /// Every reading of the link under the pointer, the most-joined first.
     ///
     /// A cell carrying an OSC 8 link to a file on this machine is read as that
@@ -7165,7 +7324,9 @@ impl TerminalView {
     /// The LAUNCH AGENT panel's other landing: instead of opening a tab
     /// somewhere else, the recipe goes into the prompt the button was pressed
     /// in front of. Deliberately narrow — it takes a whole line rather than
-    /// keystrokes, it is reached only from `Workspace::launch_agent`, and what
+    /// keystrokes, it is reached from `Workspace::launch_agent` or the freshly
+    /// created plain-shell skills initializer. The latter never targets an
+    /// adopted pane or a resume recipe. For a launch, what
     /// makes the line safe to run (the terminal is at a prompt; the prompt is
     /// cleared first) is decided in [`crate::launcher`] where it can be
     /// asserted without a window.
@@ -7381,6 +7542,11 @@ impl TerminalView {
     /// blind press a coin flip over thirty seconds of typing, so taking a note
     /// down is always an explicit second gesture.
     pub fn sticky_open(&mut self, cx: &mut Context<Self>) {
+        // One caret: a name being written is committed first, as a click out
+        // of the rename box commits it (see `rename_open`).
+        if self.renaming.is_some() {
+            self.commit_rename(cx);
+        }
         match self.note.as_mut() {
             Some(note) => note.reopen(),
             None => {
@@ -7537,6 +7703,20 @@ impl TerminalView {
     /// whether the tab carries a pin badge, so it stays a field read.
     pub fn note_pinned(&self) -> bool {
         self.note.as_ref().is_some_and(|n| n.pinned)
+    }
+
+    /// Open the header's rename box, seeded with the pane's name. The header's
+    /// double-click and right-click both come here. A pane holds one caret,
+    /// the one opened last: a note being written is posted first, as a click
+    /// away from it posts it, or the routing ladder (where Sticky sits above
+    /// Rename) would send the letters meant for the name into the note
+    /// (verify/keys-in-a-pane, `OneCaret`).
+    pub fn rename_open(&mut self, cx: &mut Context<Self>) {
+        if self.sticky_composing() {
+            self.sticky_commit(cx);
+        }
+        self.renaming = Some(self.name.clone().unwrap_or_default());
+        cx.notify();
     }
 
     pub fn sticky_composing(&self) -> bool {
@@ -8037,6 +8217,13 @@ impl TerminalView {
             }
             return Handled::Consumed;
         }
+        // Ctrl+, opens Settings, as it does in T3 Code and most apps. A
+        // terminal has nothing for the chord: Ctrl with a comma sends a bare
+        // comma, or nothing at all.
+        if k.control && !k.shift && k.key == "," {
+            cx.emit(ToggleSettings);
+            return Handled::Consumed;
+        }
         // Ctrl+Insert is the copy Ctrl+Shift+C is, and Shift+Insert the paste
         // Ctrl+Shift+V is (see `keylayer::pane_chord`).
         if k.key == "insert" {
@@ -8081,6 +8268,13 @@ impl TerminalView {
                 "b" => cx.emit(ToggleLeftBar),
                 // N for "needs me": the attention rail's queue.
                 "n" => cx.emit(ToggleRail),
+                // I for inbox: the left spine's other face.
+                "i" => cx.emit(ToggleInbox),
+                // E for entry: the composer that starts an agent from a
+                // sentence.
+                "e" => cx.emit(OpenComposer),
+                // R for the right bar: diffs, files and pull requests.
+                "r" => cx.emit(ToggleFlyout),
                 // M for made: what this pane's agent handed over, as a page
                 // over the pane. The pane's own, so it is acted on here rather
                 // than sent up to the workspace.
@@ -8440,6 +8634,17 @@ impl TerminalView {
         };
         if self.being_read {
             return Handled::Declined;
+        }
+        // Read in the glow pane, the document is what these size, as they do
+        // in the frame.
+        if let Some(view) = self.reading_view(cx) {
+            let step = if notches > 0.0 {
+                crate::docview::ZoomStep::In
+            } else {
+                crate::docview::ZoomStep::Out
+            };
+            view.update(cx, |v, cx| v.zoom(step, cx));
+            return Handled::Consumed;
         }
         match self.bench.face() {
             crate::workbench::Face::Terminal => {
@@ -9707,6 +9912,13 @@ impl TerminalView {
             let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
                 .then(|| link.as_deref().and_then(|l| self.document_of(l)))
                 .flatten();
+            // A code file or a pull request link, for the right-bar flyout:
+            // asked only with Alt held and only where no document answered.
+            let side = (mods.alt
+                && doc.is_none()
+                && self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| self.side_target_under(ev.position))
+                .flatten();
             // The chip a copy would take, asked without the document: it is
             // armed for a copy exactly when the line is a command line.
             let copy = mods
@@ -9717,6 +9929,7 @@ impl TerminalView {
             let intent = crate::docopen::click_intent(
                 mods,
                 doc.is_some(),
+                side.is_some(),
                 link.is_some(),
                 revealable.is_some(),
                 copy.is_some(),
@@ -9796,6 +10009,15 @@ impl TerminalView {
                     }
                     Some(Took::Stop)
                 }
+                // Beside the conversation, in the flyout; the keyboard stays
+                // in this pane, which is where the person was typing.
+                ClickIntent::OpenSide => side.map(|open| {
+                    cx.emit(OpenSide {
+                        target: open.target,
+                        line: open.line,
+                    });
+                    Took::Stop
+                }),
                 ClickIntent::CopyChip => copy.map(|hint| {
                     self.copy_chip(hint, cx);
                     Took::Stop
@@ -10994,7 +11216,7 @@ fn grid_face(th: &Theme, weight: FontWeight) -> Font {
 /// The live grid's font: per-glyph fallback so CJK / Devanagari content renders
 /// real glyphs instead of tofu boxes, once a row has needed it (see
 /// [`FallbackLatch`]); it only fires for glyphs the primary mono font is missing.
-fn grid_font(th: &Theme, weight: FontWeight) -> Font {
+pub(crate) fn grid_font(th: &Theme, weight: FontWeight) -> Font {
     let mut f = grid_face(th, weight);
     f.fallbacks = GRID_FALLBACKS.chain();
     f
@@ -11319,6 +11541,7 @@ impl TerminalView {
         if self.bench.face() != face {
             self.grid_paint.update(cx, |v, _| v.clear_afterglow());
             self.bench.set_face(face);
+            self.document_visibility(self.shown.load(std::sync::atomic::Ordering::Relaxed), cx);
             // A pane whose face changed has changed what its keystrokes mean,
             // so the header's own count and the tab badge both want redrawing.
             cx.notify();
@@ -11331,6 +11554,7 @@ impl TerminalView {
     pub fn toggle_face(&mut self, cx: &mut Context<Self>) {
         self.grid_paint.update(cx, |v, _| v.clear_afterglow());
         self.bench.toggle_face(self.doc.is_some());
+        self.document_visibility(self.shown.load(std::sync::atomic::Ordering::Relaxed), cx);
         cx.notify();
     }
 
@@ -11428,6 +11652,10 @@ impl Render for TerminalView {
         // right-click context menu (Copy / Paste / Open link), anchored at the cursor
         let ctx_menu_el = self.ctx_menu.map(|pos| {
             let link = self.link_under(pos);
+            // A code file or a pull request link offers the flyout too.
+            let side = (self.bench.face() == crate::workbench::Face::Terminal)
+                .then(|| self.side_target_under(pos))
+                .flatten();
             // The bench's selection counts too, and on the bench face it is
             // usually the only one — the grid behind it is not what a person
             // dragged over. Both are checked so the row is live in either
@@ -11485,6 +11713,23 @@ impl Render for TerminalView {
                 .font_family(ff)
                 .shadow_md()
                 .map(|d| menu_skin.finish(d));
+            if let (None, Some(open)) = (&link, side.clone()) {
+                // A `path:line` the link reader does not take still opens in
+                // the flyout, and that is the only row it has.
+                menu = menu.child(link_row(s.flyout.menu_open, "alt+click").on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |v, _, _, cx| {
+                        cx.emit(OpenSide {
+                            target: open.target.clone(),
+                            line: open.line,
+                        });
+                        v.ctx_menu = None;
+                        cx.stop_propagation();
+                        cx.notify();
+                    }),
+                ));
+                menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
+            }
             if let Some(l) = link {
                 // The rows come from `docopen::link_menu`, so a row is offered
                 // only where it does something: Open here on a document TD can
@@ -11497,8 +11742,27 @@ impl Render for TerminalView {
                     .then(|| self.document_of(&l))
                     .flatten();
                 let (row_at, _, _) = self.viewport_cell(pos);
-                for entry in crate::docopen::link_menu(doc.is_some(), item.is_some()) {
+                for entry in
+                    crate::docopen::link_menu(doc.is_some(), side.is_some(), item.is_some())
+                {
                     let el = match entry {
+                        crate::docopen::LinkItem::OpenSide => {
+                            let open = side.clone();
+                            link_row(s.flyout.menu_open, "alt+click").on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |v, _, _, cx| {
+                                    if let Some(open) = open.clone() {
+                                        cx.emit(OpenSide {
+                                            target: open.target,
+                                            line: open.line,
+                                        });
+                                    }
+                                    v.ctx_menu = None;
+                                    cx.stop_propagation();
+                                    cx.notify();
+                                }),
+                            )
+                        }
                         crate::docopen::LinkItem::OpenHere => {
                             let doc = doc.clone();
                             link_row(s.m_open_here, "alt+click").on_mouse_down(
@@ -12263,6 +12527,54 @@ impl Render for TerminalView {
                         .child(sk.control_text(&status)),
                 );
             }
+            if self.hosts_agent() {
+                let ui = crate::lang::current().strings().ui;
+                let info = &self.skills_memo.info;
+                let mut details = div()
+                    .max_w(px(340.))
+                    .px_3()
+                    .py_2()
+                    .flex()
+                    .flex_col()
+                    .gap_1()
+                    .child(format!("{} · {}", ui.skill_hdr, info.status.label(ui)))
+                    .child(
+                        div()
+                            .text_size(sk.text_px(10.))
+                            .text_color(txt.alpha(0.7))
+                            .child(ui.skill_details),
+                    );
+                if info.pending_restart {
+                    details = details.child(ui.skill_restart);
+                }
+                if let Some(receipt) = &info.receipt {
+                    if let Some(method) = &receipt.method {
+                        details = details.child(method.clone());
+                    }
+                    if let Some(available) = &receipt.available {
+                        for source in available {
+                            details = details.child(format!(
+                                "✓ {} · {}",
+                                source.name,
+                                source.revision.chars().take(16).collect::<String>()
+                            ));
+                        }
+                    }
+                    for missing in &receipt.missing {
+                        details = details.child(format!("× {}: {}", missing.name, missing.reason));
+                    }
+                    if let Some(reason) = &receipt.reason {
+                        details = details.child(reason.clone());
+                    }
+                } else {
+                    details = details.child(if info.bridge_ready == Some(false) {
+                        ui.skill_no_bridge
+                    } else {
+                        ui.skill_waiting
+                    });
+                }
+                menu = menu.child(details);
+            }
             // 👤 ▲▼ message-nav keeps its live steppers inline so you can step
             // repeatedly; this row does not dismiss the menu.
             if SHOW_HUMAN_NAV_GLYPH && !show_human && self.mode.is_agent() {
@@ -12853,7 +13165,7 @@ impl Render for TerminalView {
                             cx.stop_propagation();
                             if ev.click_count >= 2 {
                                 // double-click to rename (the file-manager gesture)
-                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                view.rename_open(cx);
                                 window.focus(&view.focus_handle, cx);
                                 cx.notify();
                             } else {
@@ -12868,7 +13180,7 @@ impl Render for TerminalView {
                             if minimal_header {
                                 view.hdr_overflow = Some(ev.position);
                             } else {
-                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                view.rename_open(cx);
                                 window.focus(&view.focus_handle, cx);
                             }
                             cx.notify();
@@ -12905,6 +13217,7 @@ impl Render for TerminalView {
                                 ),
                         )
                     })
+                    .children(self.skills_chip(&th, &sk, scale, cx))
                     .when(ui_face, |d| d.child(face_toggle))
                     .when(ui_agent, |d| {
                         d.child(
@@ -18108,7 +18421,8 @@ mod tests {
     #[test]
     fn the_link_menu_rows_come_from_the_table() {
         let code = live_code();
-        assert!(code.contains("crate::docopen::link_menu(doc.is_some(), item.is_some())"));
+        assert!(code
+            .contains("crate::docopen::link_menu(doc.is_some(), side.is_some(), item.is_some())"));
         for row in [
             "s.m_open_here",
             "s.m_open_beside",
@@ -18408,7 +18722,7 @@ mod tests {
         let main = include_str!("main.rs");
         let render = &main[main.find("impl Render for Workspace").expect("render")..];
         assert!(
-            render[..2000].contains("self.mark_shown_panes(cx);"),
+            render[..2000].contains("self.mark_shown_panes(window, cx);"),
             "nothing tells the panes which tab is on screen"
         );
     }

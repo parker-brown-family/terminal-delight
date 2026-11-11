@@ -100,7 +100,9 @@ pub mod page;
 pub mod pdf;
 pub mod poppler;
 pub mod pref;
+pub mod prepare;
 pub mod progress;
+pub mod reading;
 pub mod snapshot;
 pub mod video;
 
@@ -225,6 +227,8 @@ pub struct DocumentView {
     /// notch in many small pieces, and each step re-lays a page out.
     zoom_notches: f32,
     _watch: Task<()>,
+    exposure_active: Option<bool>,
+    _exposure: Option<Task<()>>,
 }
 
 /// A view's measured size, in logical pixels, and the scale factor it was
@@ -823,6 +827,8 @@ impl DocumentView {
             own_write: None,
             zoom_notches: 0.0,
             _watch: Task::ready(()),
+            exposure_active: None,
+            _exposure: None,
         };
         if watch {
             view._watch = view.watch(cx);
@@ -1069,7 +1075,11 @@ impl DocumentView {
     /// answers whether it kept itself open, once, because closing would lose
     /// notes not yet saved into the file. Only a brief carries notes.
     pub fn guard_close(&mut self, cx: &mut Context<Self>) -> bool {
-        self.backend.guard_close(cx)
+        let guarded = self.backend.guard_close(cx);
+        if !guarded {
+            self.backend.exposure(false, cx);
+        }
+        guarded
     }
 
     /// A square lent to the FOCUS reader is not closed by Escape — the reader
@@ -1111,6 +1121,15 @@ impl DocumentView {
         self.backend
             .downcast_mut::<markdown::MarkdownDoc>()?
             .block_at_top()
+    }
+
+    /// The source line of the Markdown block under a window point, for an
+    /// editor that opens the source where the page was clicked: `None` for
+    /// any other document, and before a layout.
+    pub(crate) fn source_line_at(&mut self, at: Point<Pixels>) -> Option<usize> {
+        self.backend
+            .downcast_mut::<markdown::MarkdownDoc>()?
+            .source_line_at(at.y)
     }
 
     /// Which seat the view is in, and the palette it was last handed, for a
@@ -1255,6 +1274,21 @@ impl DocumentView {
         self.backend.hold();
     }
 
+    pub fn visible(&mut self, shown: bool, cx: &mut Context<Self>) {
+        self.backend.visible(shown || self.lent.is_some(), cx);
+    }
+
+    /// Whether this view was last told it is being read; `None` if never.
+    #[cfg(test)]
+    pub(crate) fn exposure_on(&self) -> Option<bool> {
+        self.exposure_active
+    }
+
+    pub(crate) fn exposure(&mut self, active: bool, cx: &mut Context<Self>) {
+        self.exposure_active = Some(active);
+        self.backend.exposure(active, cx);
+    }
+
     /// Show what a fragment names as soon as the document has been laid out:
     /// a link that named a heading in another file, or an element of a
     /// brief, opens that file there.
@@ -1318,6 +1352,28 @@ impl DocumentView {
 
 impl Render for DocumentView {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.target.kind == DocKind::Html && self._exposure.is_none() {
+            self._exposure = Some(cx.spawn_in(window, async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this
+                    .update_in(cx, |view: &mut DocumentView, window, cx| {
+                        if let Some(active) = view.exposure_active {
+                            view.backend
+                                .exposure(active && window.is_window_active(), cx);
+                        }
+                    })
+                    .is_err()
+                {
+                    break;
+                }
+            }));
+        }
+        // Settle transitions when their changed pixels are about to be drawn,
+        // including scroll and a note dialog, without waiting for the heartbeat.
+        if let Some(active) = self.exposure_active {
+            self.backend
+                .exposure(active && window.is_window_active(), cx);
+        }
         #[cfg(test)]
         {
             self.render_count += 1;
@@ -1374,9 +1430,19 @@ impl Render for DocumentView {
         // Last, so gpui has prepainted everything above it, every link's text
         // included, by the time it records where the view was drawn.
         let painted_at = self.painted_at.clone();
+        let painted = cx.entity().downgrade();
+        let timed = std::env::var_os("TD_DOCDEBUG").is_some();
         let drawn = canvas(
             move |bounds, _, _| painted_at.set(Some(bounds.origin)),
-            |_, _, _, _| {},
+            move |_, _, _, cx| {
+                if !timed {
+                    return;
+                }
+                let painted = painted.clone();
+                cx.defer(move |cx| {
+                    let _ = painted.update(cx, |v, _| v.backend.painted());
+                });
+            },
         )
         .absolute()
         .inset_0();
@@ -1483,10 +1549,18 @@ mod tests {
             ("docview/cache.rs", strip(include_str!("docview/cache.rs"))),
             ("docview/pref.rs", strip(include_str!("docview/pref.rs"))),
             (
+                "docview/prepare.rs",
+                strip(include_str!("docview/prepare.rs")),
+            ),
+            (
                 "docview/progress.rs",
                 strip(include_str!("docview/progress.rs")),
             ),
             ("docview/notes.rs", strip(include_str!("docview/notes.rs"))),
+            (
+                "docview/reading.rs",
+                strip(include_str!("docview/reading.rs")),
+            ),
             (
                 "docview/md_notes.rs",
                 strip(include_str!("docview/md_notes.rs")),

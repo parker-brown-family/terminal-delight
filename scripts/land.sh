@@ -63,6 +63,16 @@ echo "== building"
 B="$TGT/release/terminal-delight"
 [ -x "$B" ] || { echo "no binary at $B"; exit 1; }
 "$B" --version >/dev/null 2>&1 || { echo "the binary does not run"; exit 1; }
+# Check what was compiled, not the directory or filename it was copied into.
+# Test builds can overwrite a target, and profile overrides also affect release.
+python3 - "$B" "$(git rev-parse HEAD)" <<'PYBUILD' || exit 1
+import json, subprocess, sys
+info = json.loads(subprocess.check_output([sys.argv[1], "--build-info"]))
+if info.get("sha") != sys.argv[2] or info.get("dirty") is not False:
+    raise SystemExit("refusing installation: the executable is not this clean commit")
+if info.get("opt_level") not in ("2", "3"):
+    raise SystemExit("refusing installation: application optimization must be verified at level 2 or 3")
+PYBUILD
 
 install -m 755 "$B" "$LIB/td-$SHA-$LABEL"
 ln -sfn "$LIB/td-$SHA-$LABEL" "$BIN"

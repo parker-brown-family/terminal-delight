@@ -134,8 +134,14 @@ pub struct Project {
     /// What the row says — the directory's own name.
     pub name: String,
     /// A git repository, as opposed to a directory that merely exists. Shown,
-    /// not filtered on: plenty of real work happens outside a repo.
+    /// not filtered on: plenty of real work happens outside a repo. For a
+    /// folder on a far machine it is what was seen when it was added, and
+    /// false when nobody saw.
     pub repo: bool,
+    /// The `machines.toml` machine it is on, for a project added from the
+    /// composer on a far machine (`addproject.rs`); `None` is this machine,
+    /// which is every project the scan finds.
+    pub machine: Option<String>,
 }
 
 /// Where to look for projects, in order.
@@ -190,6 +196,7 @@ pub fn scan(roots: &[PathBuf], limit: usize) -> Vec<Project> {
                     repo: path.join(".git").exists(),
                     name: name.to_string(),
                     path,
+                    machine: None,
                 },
             ));
         }
@@ -450,13 +457,18 @@ impl Recipe {
     }
 
     /// Prepare the actual kit and packet before starting any supported agent.
-    pub fn prepare_briefing(&self, dir: &Path, kit_root: &Path) -> Result<PathBuf, String> {
+    pub fn prepare_briefing(&self, dir: &Path, kit_root: Option<&Path>) -> Result<PathBuf, String> {
         // These errors are only ever drawn in the launcher, so they are said
         // in the reader's language; the OS error inside stays as the OS gave it.
         let p = crate::lang::current().strings().parts;
-        let skill = crate::briefkit::write(kit_root)
+        let skill = kit_root
+            // Native adapters resolve personal exclusions before offering skills.
+            // A seed pointer here would bypass that decision.
+            .filter(|_| self.harness == Harness::Local)
+            .map(crate::briefkit::write)
+            .transpose()
             .map_err(|e| crate::lang::fill(p.launcher_err_kit, &[("e", &e.to_string())]))?;
-        let text = session_briefing(dir, Some(&skill));
+        let text = session_briefing(dir, skill.as_deref());
         write_briefing(dir, &text)
             .map_err(|e| crate::lang::fill(p.launcher_err_briefing, &[("e", &e.to_string())]))
     }
@@ -468,7 +480,8 @@ impl Recipe {
         adapter: Option<&LocalAdapter>,
     ) -> Result<String, String> {
         if self.harness != Harness::Local {
-            let line = self.command_line(briefing);
+            let line =
+                crate::skills::launch_line(self.command_line(briefing), self.harness.binary());
             let line = match briefing {
                 Some(_) => format!("{BRIEFED_ENV}=1 {line}"),
                 None => line,
@@ -665,7 +678,7 @@ impl LocalAdapter {
 }
 
 /// Single-quote a value for a POSIX shell, the only way that is always right.
-fn shell_quote(raw: &str) -> String {
+pub(crate) fn shell_quote(raw: &str) -> String {
     format!("'{}'", raw.replace('\'', r"'\''"))
 }
 
@@ -763,10 +776,7 @@ mod tests {
         for harness in [Harness::Claude, Harness::Codex] {
             let r = recipe(harness, "high");
             let line = r.command_line_with_adapter(Some(briefing), None).unwrap();
-            assert!(
-                line.contains(&format!("{BRIEFED_ENV}=1 {}", harness.binary())),
-                "{line}"
-            );
+            assert!(line.contains(&format!("{BRIEFED_ENV}=1 ")), "{line}");
             let bare = r.command_line_with_adapter(None, None).unwrap();
             assert!(!bare.contains(BRIEFED_ENV), "{bare}");
         }
@@ -940,24 +950,32 @@ mod tests {
     }
 
     #[test]
-    fn brief_launch_prepares_the_same_complete_kit_for_all_harnesses() {
+    fn native_launches_leave_skills_to_the_adapter_and_local_launches_prepare_the_kit() {
         let dir = std::env::temp_dir().join(format!("td-shared-kit-{}", std::process::id()));
         let kit = dir.join("kit");
         for h in Harness::ALL {
             let path = recipe(h, "medium")
-                .prepare_briefing(&dir.join(h.label()), &kit)
+                .prepare_briefing(&dir.join(h.label()), Some(&kit))
                 .unwrap();
             let text = std::fs::read_to_string(path).unwrap();
-            assert!(text.contains("BRIEFS AND JUDGEMENT CALLS"));
-            assert!(text.contains(&kit.join("briefing/SKILL.md").display().to_string()));
-            assert!(kit.join("briefing/scripts/brief.py").is_file());
-            assert!(kit.join("decision-brief/assets/notes.js").is_file());
-            assert!(kit.join("fancy-pants-brief/assets/sections.js").is_file());
+            assert_eq!(
+                text.contains("BRIEFS AND JUDGEMENT CALLS"),
+                h == Harness::Local
+            );
+            assert_eq!(
+                text.contains(&kit.join("briefing/SKILL.md").display().to_string()),
+                h == Harness::Local
+            );
+            if h == Harness::Local {
+                assert!(kit.join("briefing/scripts/brief.py").is_file());
+                assert!(kit.join("decision-brief/assets/notes.js").is_file());
+                assert!(kit.join("fancy-pants-brief/assets/sections.js").is_file());
+            }
         }
         let blocked = dir.join("blocked");
         std::fs::write(&blocked, "a file, not a directory").unwrap();
-        assert!(recipe(Harness::Codex, "medium")
-            .prepare_briefing(&dir, &blocked)
+        assert!(recipe(Harness::Local, "medium")
+            .prepare_briefing(&dir, Some(&blocked))
             .is_err());
         let invalid = dir.join("invalid.toml");
         std::fs::write(&invalid, "command = [42]").unwrap();
@@ -1274,21 +1292,25 @@ mod tests {
                 path: "/w/zzz-terminal".into(),
                 name: "zzz-terminal".into(),
                 repo: false,
+                machine: None,
             },
             Project {
                 path: "/w/terminal-delight".into(),
                 name: "terminal-delight".into(),
                 repo: true,
+                machine: None,
             },
             Project {
                 path: "/w/term-notes".into(),
                 name: "term-notes".into(),
                 repo: false,
+                machine: None,
             },
             Project {
                 path: "/w/unrelated".into(),
                 name: "unrelated".into(),
                 repo: true,
+                machine: None,
             },
         ];
         let order = filter(&projects, "term");
@@ -1309,6 +1331,7 @@ mod tests {
             path: "/home/parker/INTELLIMASS/scout".into(),
             name: "scout".into(),
             repo: true,
+            machine: None,
         }];
         assert_eq!(filter(&projects, "intellimass").len(), 1);
         assert_eq!(filter(&projects, "nothing-like-it").len(), 0);

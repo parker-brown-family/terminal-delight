@@ -1,0 +1,19 @@
+# verify/ — checks that every order of events keeps a promise
+
+Tests check the cases someone thought to write. These check every order of steps in a small model of the code, or every way a person opens a surface on the real window, and each one says in one sentence what it promises and what breaks for a person if it does not.
+
+| Folder | Promise | Tool | Today |
+|---|---|---|---|
+| [`keyboard/`](keyboard/SKILL.md) | typing into a surface never reaches the shell behind it | the real window (`app/src/verify_keyboard.rs`) | holds (the language picker leaked; fixed) |
+| [`rest-sleep/`](rest-sleep/SKILL.md) | rest never freezes a turn; sleep never loses pending work | TLA+ and the policy's tests (`agentrest.rs`) | 0 findings (a waiting `/loop` rested and slept, issue 1176; a timer in the look's gap; both fixed) |
+| [`worktree-cleanup/`](worktree-cleanup/SKILL.md) | removal never deletes work or a tree under a process | TLA+ and a real repository (`wtclean.rs` tests) | 0 findings (a process could walk in between the re-read and git's delete; fixed by the quarantine) |
+| [`overlay-stack/`](overlay-stack/SKILL.md) | what is on top gets your keys and your Esc | TLA+ and replays (`app/src/verify_overlay.rs`) | 0 findings (the composer and a pane's design menu opened under the book; fixed, 3 replays) |
+| [`composer/`](composer/SKILL.md) | PROJECT's list shows what its field says, and the add-a-project dialog is the only face while it is up | TLA+ and a window replay (`addproject_view/tests.rs`) | 0 findings (a list left narrowed under an empty field; fixed) |
+| [`side-panel-reading/`](side-panel-reading/SKILL.md) | a side-panel tab's red note is about its latest read, and trouble never blanks what you were reading | TLA+ and the real window (`flyout_view.rs` tests) | 0 findings (a stale red note; fixed) |
+| [`drags/`](drags/SKILL.md) | a press drags only what it pressed, and a release ends every drag | TLA+ and a window replay (`app/src/drag.rs`) | 0 findings (a lost release brought a drag back to life; fixed by one `Drag`) |
+| [`keys-in-a-pane/`](keys-in-a-pane/SKILL.md) | a pane shows one caret, and a letter goes to the one opened last | TLA+ and a pane replay (`pane/behaviour.rs`) | 0 findings (a name typed into a sticky note; fixed) |
+| [`flows/`](flows/README.md) | the INBOX, the Settings book, launching an agent, prompting across the Floor, and an agent opening its document, as user flows | TLA+, with charts | hold |
+
+`verify/check-all.sh` checks every model and every config (CI's **Formal models** job runs it on every push, and publishing a release needs it green). `verify/check.sh SPEC.tla [CONFIG.cfg]` checks one model, each rule on its own, against the folder's `findings.txt`. `verify/mutate.sh` proves a rule can fail. Each folder's `view.ts` is the reader's words for the pstack `/statechart` skill, which draws the model and gives each break as a path. `scripts/link-verify-skills.sh` links each `SKILL.md` where Claude Code finds project skills.
+
+The models were designed with pstack's `create-formal-verification-skill` and `statechart` skills (Lauren Tan, MIT, github.com/cursor/plugins/tree/main/pstack); no file of theirs is copied here.

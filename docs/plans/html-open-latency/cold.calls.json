@@ -1,0 +1,85 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-keep-the-renderer-memory-unchanged",
+      "at": "2026-11-05T22:24Z",
+      "title": "Keep the renderer memory unchanged",
+      "context": null,
+      "chose": "Ship optimized code and remove first-image UI waits",
+      "because": "GPU startup regressed and the spare-page prototype added memory; the installed application code was unoptimized.",
+      "passed_over": [
+        "GPU acceleration and a retained blank browser page"
+      ],
+      "undo": "Revert the first-image scheduling change",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "../../../../measurements/release-built-settled/samples.json",
+          "sha256": "sha256:e9dfa17b0537435e04958980d9f42064c804d4b45283948c705ef8a3ac03f9fb",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "superseded",
+      "verdict": {
+        "at": "2026-11-05T22:34Z",
+        "via": "reported",
+        "note": "The native fresh-path comparison did not establish a scheduling improvement; retain the existing renderer.",
+        "follow_up": null,
+        "superseded_by": "call-install-a-verified-optimized-build",
+        "seen": [
+          "sha256:e9dfa17b0537435e04958980d9f42064c804d4b45283948c705ef8a3ac03f9fb"
+        ]
+      },
+      "see": "sec-result"
+    },
+    {
+      "id": "call-install-a-verified-optimized-build",
+      "at": "2026-11-05T22:34Z",
+      "title": "Install a verified optimized build",
+      "context": null,
+      "chose": "Correct the installed build and retain the current renderer",
+      "because": "The live executable is unoptimized. Renderer experiments have not established the requested fresh-open gain at an acceptable resource cost.",
+      "passed_over": [
+        "GPU, spare page, and first-image scheduling prototypes"
+      ],
+      "undo": "Return the launcher to its saved executable",
+      "door": "two-way",
+      "evidence": [
+        {
+          "href": "../../../../measurements/td-4a0a0054-compact-agents-evidence.json",
+          "sha256": "sha256:f8e2e9590d7743b91a8a3d5631fe44fb5996d0952cefe94e1106b76e8308e3d3",
+          "kind": "file"
+        }
+      ],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "low",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "sec-result"
+    }
+  ]
+}

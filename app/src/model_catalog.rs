@@ -328,6 +328,39 @@ pub fn snapshot(harness: Harness, cwd: &Path, shell_pid: Option<u32>) -> Snapsho
     entry.snapshot.clone()
 }
 
+/// A ready catalog for `harness` in `cwd`, as if the harness had answered.
+/// A test of what the composer does with five models must not depend on
+/// which agents are installed on the machine running it; give it a `cwd` no
+/// other test asks about, so no discovery in flight can overwrite it.
+#[cfg(test)]
+pub fn seed(harness: Harness, cwd: &Path, models: Vec<Model>) {
+    let scope = Scope {
+        harness,
+        cwd: cwd.to_path_buf(),
+        shell_pid: None,
+        codex_home: std::env::var_os("CODEX_HOME"),
+        claude_home: std::env::var_os("CLAUDE_CONFIG_DIR"),
+        path: std::env::var_os("PATH"),
+    };
+    cache()
+        .lock()
+        .unwrap_or_else(|error| error.into_inner())
+        .insert(
+            scope,
+            Entry {
+                snapshot: Snapshot {
+                    models: std::iter::once(Model::agent_default())
+                        .chain(models)
+                        .collect(),
+                    status: Status::Ready,
+                    ready: true,
+                },
+                requested: Instant::now(),
+                loading: false,
+            },
+        );
+}
+
 pub fn retry(harness: Harness, cwd: &Path, shell_pid: Option<u32>) {
     let mut entries = cache().lock().unwrap_or_else(|error| error.into_inner());
     for (scope, entry) in entries.iter_mut() {

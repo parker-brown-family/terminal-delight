@@ -14,12 +14,18 @@ use serde::{Deserialize, Serialize};
 
 mod chrome;
 mod coord;
+mod entry;
+mod flyout;
 mod help;
 mod parts;
+mod settings;
 pub use chrome::Chrome;
 pub use coord::Coord;
+pub use entry::Entry;
+pub use flyout::Flyout;
 pub use help::Help;
 pub use parts::Parts;
+pub use settings::Settings;
 
 /// A UI language. Serialised lowercase into `state.toml` (`lang = "zh"`); an
 /// unknown value falls back to English so old/foreign files always load.
@@ -458,6 +464,15 @@ pub struct Strings {
     pub parts: &'static Parts,
     /// The help sheet's filter, new shortcut rows and FEATURES tour.
     pub hs: &'static Help,
+    /// The entry point: the left spine's INBOX face and the composer that
+    /// starts an agent from a sentence.
+    pub entry: &'static Entry,
+    /// The right-bar flyout: the chip beside the attention pill and the
+    /// panel of changes, files and pull requests it opens.
+    pub flyout: &'static Flyout,
+    /// Settings: the book that holds every setting, laid out as T3 Code
+    /// lays out its own.
+    pub settings: &'static Settings,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -815,6 +830,9 @@ pub const EN: Strings = Strings {
     ui: &chrome::EN,
     parts: &parts::EN,
     hs: &help::EN,
+    entry: &entry::EN,
+    flyout: &flyout::EN,
+    settings: &settings::EN,
 };
 
 /// Español.
@@ -1092,6 +1110,9 @@ pub const ES: Strings = Strings {
     ui: &chrome::ES,
     parts: &parts::ES,
     hs: &help::ES,
+    entry: &entry::ES,
+    flyout: &flyout::ES,
+    settings: &settings::ES,
 };
 
 /// Deutsch.
@@ -1369,6 +1390,9 @@ pub const DE: Strings = Strings {
     ui: &chrome::DE,
     parts: &parts::DE,
     hs: &help::DE,
+    entry: &entry::DE,
+    flyout: &flyout::DE,
+    settings: &settings::DE,
 };
 
 /// 中文 (简体).
@@ -1646,6 +1670,9 @@ pub const ZH: Strings = Strings {
     ui: &chrome::ZH,
     parts: &parts::ZH,
     hs: &help::ZH,
+    entry: &entry::ZH,
+    flyout: &flyout::ZH,
+    settings: &settings::ZH,
 };
 
 /// Français.
@@ -1923,6 +1950,9 @@ pub const FR: Strings = Strings {
     ui: &chrome::FR,
     parts: &parts::FR,
     hs: &help::FR,
+    entry: &entry::FR,
+    flyout: &flyout::FR,
+    settings: &settings::FR,
 };
 
 /// Русский.
@@ -2200,6 +2230,9 @@ pub const RU: Strings = Strings {
     ui: &chrome::RU,
     parts: &parts::RU,
     hs: &help::RU,
+    entry: &entry::RU,
+    flyout: &flyout::RU,
+    settings: &settings::RU,
 };
 
 /// 日本語.
@@ -2477,6 +2510,9 @@ pub const JA: Strings = Strings {
     ui: &chrome::JA,
     parts: &parts::JA,
     hs: &help::JA,
+    entry: &entry::JA,
+    flyout: &flyout::JA,
+    settings: &settings::JA,
 };
 
 /// 한국어.
@@ -2754,6 +2790,9 @@ pub const KO: Strings = Strings {
     ui: &chrome::KO,
     parts: &parts::KO,
     hs: &help::KO,
+    entry: &entry::KO,
+    flyout: &flyout::KO,
+    settings: &settings::KO,
 };
 
 /// हिन्दी.
@@ -3032,6 +3071,9 @@ pub const HI: Strings = Strings {
     ui: &chrome::HI,
     parts: &parts::HI,
     hs: &help::HI,
+    entry: &entry::HI,
+    flyout: &flyout::HI,
+    settings: &settings::HI,
 };
 
 #[cfg(test)]
@@ -3210,9 +3252,8 @@ mod tests {
         // German says UPDATES too, and French spells STABLE the same way.
         "chrome.cfg_updates",
         "chrome.upd_stable",
-        // Names, not words: Parker's CONFIG menu and UI CONFIG section, and the
-        // face chips, which read TERM | BENCH in every language.
-        "chrome.cfg_config",
+        // Names, not words: the UI CONFIG section, and the face chips, which
+        // read TERM | BENCH in every language.
         "chrome.cfg_ui",
         // French shares "Agents" with English, and Spanish and French the
         // abbreviation "min".
@@ -3331,6 +3372,25 @@ mod tests {
         "parts.transcript_image",
         "parts.video_error_code",
         "parts.vitals_bar_fatigue",
+        // A file's name and a placeholder; only the colon could change.
+        "entry.composer_machines_error",
+        // A file name and the reader's own message: the same words everywhere.
+        "entry.add_ssh_error",
+        "entry.add_projects_error",
+        // French writes it the same way, and means the same thing.
+        "flyout.pr_description",
+        // French says "Page" for a page.
+        "flyout.face_page",
+        // French and German say Agents and Code; Spanish says General; French
+        // says Notifications and Machines. The same words, the same meaning.
+        "settings.h_agents",
+        "settings.h_code",
+        "settings.p_general",
+        "settings.p_notifications",
+        "settings.s_machines",
+        "settings.s_interface", // fr: interface is the standard French word for a user interface.
+        // A product surface's name, kept as the window draws it.
+        "settings.r_floor",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -3376,6 +3436,9 @@ mod tests {
             ("chrome", include_str!("lang/chrome.rs")),
             ("parts", include_str!("lang/parts.rs")),
             ("help", include_str!("lang/help.rs")),
+            ("entry", include_str!("lang/entry.rs")),
+            ("flyout", include_str!("lang/flyout.rs")),
+            ("settings", include_str!("lang/settings.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {

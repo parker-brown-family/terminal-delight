@@ -228,6 +228,14 @@ async function appKeys() {
   const partsBlock = parts.match(/pub const EN: Parts = Parts \{([\s\S]*?)\n\};/);
   if (!partsBlock) { fail(where, 'app/src/lang/parts.rs has no EN strings block'); return []; }
   for (const m of partsBlock[1].matchAll(/^\s+(\w+): "((?:[^"\\]|\\.)*)",/gm)) en[`parts.${m[1]}`] = unescape(m[2]);
+  /* the composer's and the side panel's strings (`s.entry.*`, `s.flyout.*`),
+     which the INBOX, composer and side-panel help rows use since 0.5.3 */
+  for (const [file, type, prefix] of [['entry.rs', 'Entry', 'entry'], ['flyout.rs', 'Flyout', 'flyout']]) {
+    const src = await readFile(join(ROOT, 'app', 'src', 'lang', file), 'utf8');
+    const blk = src.match(new RegExp(`pub const EN: ${type} = ${type} \\{([\\s\\S]*?)\\n\\};`));
+    if (!blk) { fail(where, `app/src/lang/${file} has no EN block`); return []; }
+    for (const m of blk[1].matchAll(/^\s+(\w+):\s*"((?:[^"\\]|\\.)*)",/gm)) en[`${prefix}.${m[1]}`] = unescape(m[2]);
+  }
   const sheet = await readFile(join(ROOT, 'app', 'src', 'helpsheet.rs'), 'utf8');
   const start = sheet.indexOf('pub fn shortcuts('), end = sheet.indexOf('pub fn features(', start);
   if (start < 0 || end < 0) { fail(where, 'app/src/helpsheet.rs has no shortcuts() before features(); update appKeys()'); return []; }
@@ -249,12 +257,12 @@ async function appKeys() {
     if (cur.trim()) out.push(cur.trim());
     return { out, close: i };
   };
-  const ref = (e) => { const m = e.match(/^([sh])\.((?:ui\.|parts\.)?\w+)$/); return m && string(m[1] === 'h' ? `h.${m[2]}` : m[2]); };
+  const ref = (e) => { const m = e.match(/^([sh])\.((?:ui\.|parts\.|entry\.|flyout\.)?\w+)$/); return m && string(m[1] === 'h' ? `h.${m[2]}` : m[2]); };
   const label = (expr) => {
     let m;
     if ((m = expr.match(/^"((?:[^"\\]|\\.)*)"$/))) return unescape(m[1]);
     const r = ref(expr); if (r != null) return r;
-    if ((m = expr.match(/^format!\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*([sh]\.(?:ui\.)?\w+)\s*,?\s*\)$/))) return unescape(m[1]).replace('{}', ref(m[2]));
+    if ((m = expr.match(/^format!\(\s*"((?:[^"\\]|\\.)*)"\s*,\s*([sh]\.(?:ui\.|parts\.|entry\.|flyout\.)?\w+)\s*,?\s*\)$/))) return unescape(m[1]).replace('{}', ref(m[2]));
     fail(where, `a help row it cannot read: ${expr}`); return expr;
   };
   const sections = [];

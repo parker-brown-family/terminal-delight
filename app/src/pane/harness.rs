@@ -521,9 +521,8 @@ impl Pane {
     /// Where the floating square is drawn, in window pixels, if one is up.
     pub(super) fn float_rect(&mut self) -> Option<Rect> {
         self.read(|v| {
-            let (sx, sy, sw, sh) = v.tube_rect()?;
-            let float = v.float.as_ref()?;
-            let r = crate::docopen::clamp_float(float.rect, sw, sh);
+            let (sx, sy, _, _) = v.tube_rect()?;
+            let r = v.square_rect(v.float.as_ref()?);
             Some((sx + r.x, sy + r.y, r.w, r.h))
         })
     }
@@ -927,6 +926,7 @@ impl PageEngine for FakeBriefEngine {
             geometry: req.geometry,
             height_css: 2400.0,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 1,
                 concurs_island: false,
@@ -977,6 +977,7 @@ impl PageEngine for FakeFilmEngine {
             geometry: req.geometry,
             height_css: 2400.0,
             notes_file: None,
+            reading_layout: None,
             capability: NotesCapability {
                 notes_islands: 0,
                 concurs_island: false,

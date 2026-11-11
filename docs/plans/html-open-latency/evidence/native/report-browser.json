@@ -1,0 +1,150 @@
+{
+  "copyMapResolves": true,
+  "copyMapOrphanNeedsReview": true,
+  "passed": true,
+  "coverage": {
+    "headings": [
+      [
+        "sec-target",
+        "sec-target",
+        true
+      ],
+      [
+        "sec-return",
+        "sec-return",
+        true
+      ],
+      [
+        "sec-evidence",
+        "sec-evidence",
+        true
+      ],
+      [
+        "sec-use",
+        "sec-use",
+        true
+      ]
+    ],
+    "figures": [
+      [
+        "fig-identity",
+        "fig-identity",
+        true
+      ],
+      [
+        "fig-resolution",
+        "fig-resolution",
+        true
+      ],
+      [
+        "fig-evidence",
+        "fig-evidence",
+        true
+      ]
+    ],
+    "opening": true,
+    "openingTitle": "A Comment's Return You leave a comment on an explanation, then the ag…",
+    "duplicates": []
+  },
+  "layout": [
+    {
+      "width": 968,
+      "overflow": false,
+      "clipped": []
+    },
+    {
+      "width": 390,
+      "overflow": false,
+      "clipped": []
+    }
+  ],
+  "commentReloadExport": true,
+  "snapshotRevision": true,
+  "evidenceDepthSnapshot": true,
+  "literalScriptComment": true,
+  "rebuildAfterRename": true,
+  "missingTargetVisibleAndExported": true,
+  "isolation": "separate headless Chromium with temporary profile",
+  "additionalPage": {
+    "targets": [
+      {
+        "id": "sec-speed",
+        "target": "sec-speed",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-speed",
+        "target": "fig-speed",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-work",
+        "target": "sec-work",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-work",
+        "target": "fig-work",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-cost",
+        "target": "sec-cost",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-cost",
+        "target": "fig-cost",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-proof",
+        "target": "sec-proof",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "fig-native",
+        "target": "fig-native",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "sec-calls",
+        "target": "sec-calls",
+        "button": true,
+        "concur": null
+      },
+      {
+        "id": "call-preparation-stays-bounded",
+        "target": "call-preparation-stays-bounded",
+        "button": true,
+        "concur": true
+      },
+      {
+        "id": "fig-call-preparation-stays-bounded-1",
+        "target": "fig-call-preparation-stays-bounded-1",
+        "button": true,
+        "concur": null
+      }
+    ],
+    "layout": [
+      {
+        "width": 968,
+        "overflow": false,
+        "clipped": []
+      },
+      {
+        "width": 390,
+        "overflow": false,
+        "clipped": []
+      }
+    ]
+  }
+}

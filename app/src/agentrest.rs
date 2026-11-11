@@ -16,7 +16,9 @@
 //!   Claude, `resume <id>` for Codex (1.4 s to a prompt for a 20 MB Claude
 //!   conversation). It loses what lives only in the process — background
 //!   shells, session grants, a self-paced loop — so it refuses wherever one of
-//!   those might exist. A Codex sleeps only when it runs its own server: one
+//!   those might exist. A self-paced loop says `idle` while it waits for its
+//!   own wakeup, so a Claude with a `ScheduleWakeup` still to come does not
+//!   rest at all ([`wakeup_pending`]): freezing it would stop its timer. A Codex sleeps only when it runs its own server: one
 //!   attached to a shared Codex service would free almost nothing.
 //!
 //! This module is the part with no I/O: the thresholds, the reasons to refuse,
@@ -97,6 +99,96 @@ impl SelfReport {
     }
 }
 
+/// Whether a Claude says the same about itself after the freeze as it did at
+/// the look: the same status since the same moment. A frozen process can
+/// write nothing more, so the second reading is final; anything that moved
+/// in between (a timer firing, a turn starting) shows here, and the freeze is
+/// undone. With no reading at either end (a Codex) there is nothing to
+/// compare; a reading that was there and is not any more is not the same.
+pub fn said_the_same(look: Option<&SelfReport>, frozen: Option<&SelfReport>) -> bool {
+    match (look, frozen) {
+        (None, None) => true,
+        (Some(a), Some(b)) => a.status == b.status && a.since_ms == b.since_ms,
+        _ => false,
+    }
+}
+
+/// How long past its due time a scheduled wakeup still counts as pending. The
+/// timer fires on time and the turn it starts says `busy` within moments, so
+/// this only has to outlast that, with room for a late or slow tick.
+pub const WAKEUP_GRACE: Duration = Duration::from_secs(120);
+
+/// The longest wait `ScheduleWakeup` takes (its runtime clamps to 60–3600 s);
+/// a call whose delay cannot be read is taken to wait this long.
+const WAKEUP_LONGEST: u64 = 3600;
+
+/// How much of the end of a conversation file is read for its last wakeup.
+/// `ScheduleWakeup` is the last call of the turn that makes it, so the call
+/// sits within the last few kilobytes of the file.
+pub const WAKEUP_TAIL: u64 = 256 * 1024;
+
+/// Whether a Claude has a self-paced wakeup still to come, from the end of its
+/// conversation file (`tail`, whole JSON lines) at `now_ms`.
+///
+/// The last `ScheduleWakeup` it called is pending until its `delaySeconds`
+/// after the call, plus [`WAKEUP_GRACE`]: unless it asked to stop the loop
+/// (`stop: true`), or the call came back an error. A later call replaces an
+/// earlier one, as the runtime's own does. The wakeup lives only in the
+/// process, so rest would stop its timer and sleep would lose it (issue 1176).
+pub fn wakeup_pending(tail: &str, now_ms: u64) -> bool {
+    // (the call's id, when it is due, in Unix milliseconds)
+    let mut last: Option<(String, u64)> = None;
+    for line in tail.lines() {
+        let call = line.contains("\"ScheduleWakeup\"");
+        let error = line.contains("\"is_error\":true");
+        if !call && !error {
+            continue;
+        }
+        let Ok(v) = serde_json::from_str::<serde_json::Value>(line) else {
+            continue;
+        };
+        let Some(content) = v.pointer("/message/content").and_then(|c| c.as_array()) else {
+            continue;
+        };
+        for c in content {
+            let kind = c.get("type").and_then(|t| t.as_str());
+            if kind == Some("tool_use")
+                && c.get("name").and_then(|n| n.as_str()) == Some("ScheduleWakeup")
+            {
+                let input = c.get("input");
+                if input.and_then(|i| i.get("stop")).and_then(|s| s.as_bool()) == Some(true) {
+                    last = None;
+                    continue;
+                }
+                let delay = input
+                    .and_then(|i| i.get("delaySeconds"))
+                    .and_then(|d| d.as_f64())
+                    .map_or(WAKEUP_LONGEST, |d| {
+                        (d.max(0.) as u64).clamp(60, WAKEUP_LONGEST)
+                    });
+                let at = v
+                    .get("timestamp")
+                    .and_then(|t| t.as_str())
+                    .and_then(crate::flyout::rfc3339_ms)
+                    .and_then(|ms| u64::try_from(ms).ok());
+                // A call with no readable time is taken to have been made now.
+                let at = at.unwrap_or(now_ms);
+                let id = c.get("id").and_then(|i| i.as_str()).unwrap_or_default();
+                last = Some((id.to_owned(), at + delay * 1000));
+            } else if kind == Some("tool_result")
+                && c.get("is_error").and_then(|e| e.as_bool()) == Some(true)
+                && last.as_ref().is_some_and(|(id, _)| {
+                    c.get("tool_use_id").and_then(|t| t.as_str()) == Some(id.as_str())
+                })
+            {
+                last = None;
+            }
+        }
+    }
+    let grace = WAKEUP_GRACE.as_millis() as u64;
+    last.is_some_and(|(_, due)| now_ms < due + grace)
+}
+
 /// A process in a pane's group that is not the agent, one of its helpers, or
 /// the pane's shell — the thing rest would freeze along with the agent.
 #[derive(Debug, Clone, PartialEq, Eq)]
@@ -171,6 +263,19 @@ fn kind(procs: &[Proc], shell: i32, agent: i32, p: &Proc) -> Kind {
     if p.listens {
         return Kind::Foreign(Foreign::Listener { pid, name });
     }
+    // A process on the path from the shell to the agent launched the agent
+    // and waits on it (TD's skills bridge, a node wrapper): it is part of the
+    // agent's own launch, not a job beside it. Counted as a shell job, it
+    // kept every bridged Codex awake (Greptile on PR 1438).
+    let mut up = parent(agent);
+    for _ in 0..64 {
+        match up {
+            Some(pp) if pp == p.pid => return Kind::Itself,
+            Some(pp) if pp == shell => break,
+            Some(pp) => up = parent(pp),
+            None => break,
+        }
+    }
     // Walk up to the agent, the shell, or the edge of the group.
     let mut cur = p.pid;
     let mut under_agent = false;
@@ -234,6 +339,9 @@ pub struct Look {
     pub since_output: Option<Duration>,
     /// Claude: how long it has reported itself idle (see [`SelfReport::idle_for`]).
     pub said_idle_for: Option<Duration>,
+    /// Claude: whether a wakeup it scheduled for itself is still to come (see
+    /// [`wakeup_pending`]); `None` when its conversation could not be read.
+    pub wakeup_pending: Option<bool>,
     /// Whether the screen shows the agent at its prompt: `Some(false)` when it
     /// shows it working, asking or failing; `None` when the screen could not be
     /// read. Codex rests on this alone; for Claude it can only refuse.
@@ -259,6 +367,13 @@ pub enum Refusal {
     Printing,
     /// The agent says it is not idle (its own word), or has said so too briefly.
     AgentBusy(Option<String>),
+    /// A Claude is waiting for a wakeup it scheduled for itself (a `/loop`).
+    /// Its idle is the wait: a frozen process cannot fire the timer, and an
+    /// ended one loses it, since it lives only in the process (issue 1176).
+    WakeupPending,
+    /// Frozen, then found to have moved since the look (its own word changed),
+    /// so it was thawed straight away.
+    MovedSinceTheLook,
     /// The screen does not show the agent at its prompt.
     NotAtPrompt,
     Running(Foreign),
@@ -304,6 +419,8 @@ impl Refusal {
             Refusal::KeptAwake => RefusalClass::KeptAwake,
             Refusal::Printing
             | Refusal::AgentBusy(_)
+            | Refusal::WakeupPending
+            | Refusal::MovedSinceTheLook
             | Refusal::NotAtPrompt
             | Refusal::UsingCpu => RefusalClass::Busy,
             Refusal::Running(_) => RefusalClass::Running,
@@ -350,6 +467,12 @@ pub fn may_rest(look: &Look, t: &Thresholds) -> Result<(), Refusal> {
             match look.said_idle_for {
                 Some(d) if d >= t.rest_after => {}
                 _ => return Err(Refusal::AgentBusy(None)),
+            }
+            // It says idle while it waits for its own timer: that wait is work.
+            match look.wakeup_pending {
+                Some(false) => {}
+                Some(true) => return Err(Refusal::WakeupPending),
+                None => return Err(Refusal::Unknown("scheduled wakeup")),
             }
         }
         Agent::Codex => match look.screen_at_prompt {
@@ -1351,6 +1474,7 @@ mod tests {
             since_touch: long,
             since_output: long,
             said_idle_for: long,
+            wakeup_pending: Some(false),
             foreign: Some(Vec::new()),
             cpu_share: Some(0.008),
             ..Look::default()
@@ -1360,6 +1484,111 @@ mod tests {
     #[test]
     fn an_idle_claude_untouched_and_quiet_may_rest() {
         assert_eq!(may_rest(&idle_claude(), &Thresholds::default()), Ok(()));
+    }
+
+    /// Two lines of a conversation file as Claude Code 2.1 writes them: the
+    /// call, and its result.
+    fn wakeup_lines(at: &str, input: &str, error: bool) -> String {
+        format!(
+            "{{\"type\":\"assistant\",\"timestamp\":\"{at}\",\"message\":{{\"content\":[\
+             {{\"type\":\"tool_use\",\"id\":\"toolu_1\",\"name\":\"ScheduleWakeup\",\"input\":{input}}}]}}}}\n\
+             {{\"type\":\"user\",\"timestamp\":\"{at}\",\"message\":{{\"content\":[\
+             {{\"type\":\"tool_result\",\"tool_use_id\":\"toolu_1\",\"is_error\":{error},\"content\":\"ok\"}}]}}}}\n"
+        )
+    }
+
+    /// Issue 1176: a `/loop` says `idle` while it waits for its own timer. The
+    /// wait is pending from the call until its delay is up (and a grace for
+    /// the turn to start), and not after; a stop, or a call that failed, ends
+    /// it; a later call replaces an earlier one.
+    #[test]
+    fn a_scheduled_wakeup_is_pending_until_its_time_and_only_then() {
+        let at = "2026-11-03T07:11:26.949Z";
+        let call = crate::flyout::rfc3339_ms(at).unwrap() as u64;
+        let tail = wakeup_lines(at, r#"{"delaySeconds":1200,"reason":"poll CI"}"#, false);
+        assert!(wakeup_pending(&tail, call + 1_000));
+        assert!(
+            wakeup_pending(&tail, call + 1_199_000),
+            "just before it fires"
+        );
+        assert!(
+            wakeup_pending(&tail, call + 1_200_000 + 60_000),
+            "fired a moment ago: the turn may not have said busy yet"
+        );
+        assert!(
+            !wakeup_pending(&tail, call + 1_200_000 + 121_000),
+            "long fired"
+        );
+        assert!(!wakeup_pending("", call), "no call, nothing pending");
+
+        let stop = tail.clone() + &wakeup_lines(at, r#"{"stop":true}"#, false);
+        assert!(!wakeup_pending(&stop, call + 1_000), "the loop was stopped");
+        let failed = wakeup_lines(at, r#"{"delaySeconds":1200}"#, true);
+        assert!(!wakeup_pending(&failed, call + 1_000), "the call failed");
+        let later = "2026-11-03T08:00:00Z";
+        let replaced = tail + &wakeup_lines(later, r#"{"delaySeconds":60}"#, false);
+        let second = crate::flyout::rfc3339_ms(later).unwrap() as u64;
+        assert!(
+            !wakeup_pending(&replaced, second + 60_000 + 121_000),
+            "the later call decides, not the first one's longer delay"
+        );
+        // A delay it cannot read is taken as the longest the runtime allows.
+        let unread = wakeup_lines(at, r#"{"reason":"?"}"#, false);
+        assert!(wakeup_pending(&unread, call + 3_599_000));
+    }
+
+    /// What a Claude said at the look must still be what it says once frozen,
+    /// or the freeze is undone: a timer that fired in between shows here.
+    #[test]
+    fn a_freeze_stands_only_if_the_agent_says_what_it_said_at_the_look() {
+        let idle = SelfReport {
+            status: Some("idle".into()),
+            since_ms: Some(1_000),
+            session_id: Some(SID.into()),
+        };
+        assert!(said_the_same(Some(&idle), Some(&idle.clone())));
+        let busy = SelfReport {
+            status: Some("busy".into()),
+            since_ms: Some(2_000),
+            ..idle.clone()
+        };
+        assert!(!said_the_same(Some(&idle), Some(&busy)), "its timer fired");
+        let again = SelfReport {
+            since_ms: Some(3_000),
+            ..idle.clone()
+        };
+        assert!(
+            !said_the_same(Some(&idle), Some(&again)),
+            "idle again, but a turn came and went in between"
+        );
+        assert!(!said_the_same(Some(&idle), None), "unreadable now");
+        assert!(said_the_same(None, None), "a Codex: nothing to compare");
+    }
+
+    /// A Claude waiting on its own wakeup neither rests nor sleeps, and one
+    /// whose conversation could not be read is not taken to have none.
+    #[test]
+    fn a_claude_waiting_for_its_own_wakeup_neither_rests_nor_sleeps() {
+        let t = Thresholds::default();
+        let waiting = Look {
+            wakeup_pending: Some(true),
+            ..idle_claude()
+        };
+        assert_eq!(may_rest(&waiting, &t), Err(Refusal::WakeupPending));
+        let wake: Result<Vec<String>, String> = Ok(s(&["claude"]));
+        assert_eq!(
+            may_sleep(&waiting, Duration::MAX, &t, &wake),
+            Err(Refusal::WakeupPending)
+        );
+        let unread = Look {
+            wakeup_pending: None,
+            ..idle_claude()
+        };
+        assert_eq!(
+            may_rest(&unread, &t),
+            Err(Refusal::Unknown("scheduled wakeup"))
+        );
+        assert_eq!(Refusal::WakeupPending.class(), Some(RefusalClass::Busy));
     }
 
     #[test]
@@ -1472,6 +1701,47 @@ mod tests {
         assert_eq!(r.session_id.as_deref(), Some(SID));
         assert_eq!(r.since_ms, Some(1_792_480_845_491));
         assert_eq!(parse_self_report(&text, 4), None);
+    }
+
+    /// TD's skills bridge starts Codex and waits on it, so it sits between
+    /// the pane's shell and the agent. It is the agent's own launch, not a
+    /// job of the shell, and a bridged Codex may rest; a real shell job
+    /// beside it still refuses.
+    #[test]
+    fn the_bridge_that_launched_the_agent_is_part_of_it_not_a_job() {
+        let p = |pid, ppid, argv: &[&str]| Proc {
+            pid,
+            ppid,
+            argv: s(argv),
+            listens: false,
+            session: Some(1),
+        };
+        let procs = vec![
+            p(1, 0, &["bash"]),
+            p(
+                2,
+                1,
+                &[
+                    "python3",
+                    "/home/p/.local/share/terminal-delight/skills/bridge.py",
+                    "codex",
+                ],
+            ),
+            p(3, 2, &["/usr/bin/codex"]),
+            p(4, 3, &["/usr/bin/codex", "app-server"]),
+        ];
+        assert!(
+            foreign(&procs, 1, 3).is_empty(),
+            "{:?}",
+            foreign(&procs, 1, 3)
+        );
+        let mut with_job = procs.clone();
+        with_job.push(p(5, 1, &["sleep", "600"]));
+        assert_eq!(
+            foreign(&with_job, 1, 3).len(),
+            1,
+            "a shell job beside the bridge still counts"
+        );
     }
 
     #[test]

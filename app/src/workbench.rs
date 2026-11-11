@@ -2669,6 +2669,87 @@ pub fn ext_of_image_format(format: gpui::ImageFormat) -> &'static str {
     }
 }
 
+/// Which image type the compositor's clipboard is offering, if any.
+///
+/// The type LIST, asked once, rather than attempting a read and reading the
+/// failure — a compositor with nothing on the clipboard and one holding a
+/// picture fail an image read identically, and the difference decides which
+/// of two quite different pastes happens.
+pub fn clipboard_image_mime() -> Option<&'static str> {
+    use std::process::Command;
+    // A test's clipboard is gpui's; wl-paste would answer for the person's.
+    if cfg!(test) {
+        return None;
+    }
+    std::env::var_os("WAYLAND_DISPLAY")?;
+    let listed = Command::new("wl-paste").arg("--list-types").output().ok()?;
+    if !listed.status.success() {
+        return None;
+    }
+    let types: Vec<String> = String::from_utf8_lossy(&listed.stdout)
+        .lines()
+        .map(|l| l.trim().to_string())
+        .filter(|l| !l.is_empty())
+        .collect();
+    best_image_mime(&types)
+}
+
+/// The compositor clipboard's image, as bytes and the extension to save them
+/// under.
+///
+/// Two subprocesses and only on a paste, which is cheap enough to pay for the
+/// one thing it buys: the ability to paste a screenshot to an agent. [`None`]
+/// whenever this is not a Wayland session, `wl-paste` is not installed, or
+/// nothing on offer is an image — all three are ordinary, and the caller
+/// simply pastes text instead.
+pub fn clipboard_image() -> Option<(Vec<u8>, &'static str)> {
+    use std::process::Command;
+    let mime = clipboard_image_mime()?;
+    let ext = ext_of_image_mime(mime)?;
+    let got = Command::new("wl-paste")
+        .args(["--no-newline", "--type", mime])
+        .output()
+        .ok()?;
+    if !got.status.success() || got.stdout.is_empty() {
+        return None;
+    }
+    Some((got.stdout, ext))
+}
+
+/// Write a pasted image into `dir` and return its path.
+///
+/// Named `pasted-<n>.<ext>`, counting up, deduplicated by content.
+///
+/// The first version named the file by its content hash, which was tidy and
+/// produced `15868dd2f4a1c093.png` — and an agent that then declared it put
+/// "Bench Paste 15868dd2" on the bench as a TITLE. A filename is not private:
+/// it travels into deliverable lines, into rails, into whatever a person reads
+/// next, so it has to be a name rather than a checksum.
+///
+/// Dedupe survives, because it was worth having: the hash moves to a sidecar,
+/// so the same screenshot pasted twice still resolves to one file, and the
+/// file is still called something a person can say out loud.
+pub fn write_paste(dir: &std::path::Path, bytes: &[u8], ext: &str) -> Option<String> {
+    use std::hash::{Hash, Hasher};
+    std::fs::create_dir_all(dir).ok()?;
+    let mut h = std::collections::hash_map::DefaultHasher::new();
+    bytes.hash(&mut h);
+    let stamp = dir.join(format!(".{:016x}", h.finish()));
+    if let Ok(known) = std::fs::read_to_string(&stamp) {
+        let path = dir.join(known.trim());
+        if path.exists() {
+            return Some(path.display().to_string());
+        }
+    }
+    let n = (1..)
+        .find(|n| !dir.join(format!("pasted-{n}.{ext}")).exists())
+        .unwrap_or(1);
+    let name = format!("pasted-{n}.{ext}");
+    std::fs::write(dir.join(&name), bytes).ok()?;
+    let _ = std::fs::write(&stamp, &name);
+    Some(dir.join(&name).display().to_string())
+}
+
 /// The text a set of dropped — or pasted — file paths becomes.
 ///
 /// A path is typed rather than the file being read, on the same terms as the

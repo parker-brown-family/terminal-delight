@@ -1,0 +1,79 @@
+{
+  "format": 1,
+  "sessions": [
+    {
+      "session": "browser-fixture",
+      "document": "contract-fixture",
+      "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "host": "browser",
+      "method": 1,
+      "targets": [
+        {
+          "anchor": "section-one",
+          "title": "A measured section",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 1250
+        },
+        {
+          "anchor": "entry-one",
+          "title": "Monitored but unseen",
+          "kind": "entry",
+          "parent": "section-one",
+          "visible_ms": 0
+        },
+        {
+          "anchor": "figure-one",
+          "title": "Unavailable geometry",
+          "kind": "figure",
+          "parent": "section-one",
+          "visible_ms": null
+        }
+      ],
+      "gaps": [
+        {
+          "sequence": 1,
+          "reason": "clock_gap",
+          "elapsed_ms": 60000
+        }
+      ]
+    },
+    {
+      "session": "native-fixture",
+      "document": "contract-fixture",
+      "revision": "sha256:aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "host": "terminal-delight",
+      "method": 1,
+      "targets": [
+        {
+          "anchor": "section-one",
+          "title": "A measured section",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 1250
+        },
+        {
+          "anchor": "entry-one",
+          "title": "Monitored but unseen",
+          "kind": "entry",
+          "parent": "section-one",
+          "visible_ms": 0
+        },
+        {
+          "anchor": "figure-one",
+          "title": "Unavailable geometry",
+          "kind": "figure",
+          "parent": "section-one",
+          "visible_ms": null
+        }
+      ],
+      "gaps": [
+        {
+          "sequence": 1,
+          "reason": "clock_gap",
+          "elapsed_ms": 60000
+        }
+      ]
+    }
+  ]
+}

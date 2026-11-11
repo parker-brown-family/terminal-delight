@@ -28,6 +28,8 @@
 //! TODO(os-chrome): client-side window decorations (WindowDecorations::Client).
 
 mod access;
+mod addproject;
+mod addproject_view;
 mod admin_view;
 mod agentcfg;
 mod agentrest;
@@ -59,10 +61,16 @@ mod dirlogo;
 mod doc;
 mod docopen;
 mod docview;
+mod drag;
 mod emphasis;
 mod engstate;
+mod entry;
+use drag::Drag;
+mod entry_view;
 mod fav;
 mod feedback;
+mod flyout;
+mod flyout_view;
 mod glyph;
 mod gridwire;
 mod handover;
@@ -72,6 +80,8 @@ mod host;
 mod hostctl;
 mod hostproto;
 mod hud;
+mod inbox;
+mod inbox_view;
 mod instance;
 mod keylayer;
 mod lang;
@@ -99,15 +109,26 @@ mod prompt;
 mod ptyscan;
 mod readrows;
 mod recover;
+mod relate_view;
 mod restricted;
 mod screenread;
 mod session;
+mod settings;
+mod settings_preview;
+mod settings_view;
+mod skills;
 mod skin;
+mod textedit;
 mod threshing_floor_view;
 mod uninstall;
 mod update;
 mod update_view;
+#[cfg(test)]
+mod verify_keyboard;
+#[cfg(test)]
+mod verify_overlay;
 mod wirecheck;
+mod wtclean;
 use skin::parts::{
     color_mode_btn, note_paper_btn, slider_switch, theme_icon_btn, theme_icon_btn_wide,
 };
@@ -147,9 +168,9 @@ use gpui::{
 use gpui_platform::application;
 use pane::{
     AgentDone, AgentWorkingChanged, CloseFocusRead, ClosePane, DragPaneStart, FocusReadNav,
-    OpenAgentPanel, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp, OpenLogoPicker,
-    OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav, ReopenClosed,
-    RequestCloseTab, TerminalView, ToggleLeftBar, ToggleRail,
+    OpenAgentPanel, OpenComposer, OpenDisplayMenu, OpenFind, OpenFocusRead, OpenHelp,
+    OpenLogoPicker, OpenThemeMenu, OpenUsagePanel, PaintApplied, PaneRenamed, ReadNav,
+    ReopenClosed, RequestCloseTab, TerminalView, ToggleInbox, ToggleLeftBar, ToggleRail,
 };
 use serde::{Deserialize, Serialize};
 use theme::{PaneTheme, ThemeChoice};
@@ -370,7 +391,7 @@ enum RailAction {
 /// fails. A row may say the surface is deliberately flat — some things should be
 /// — but it has to say WHY, in the row, where the next person will read it.
 #[cfg(test)]
-const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
+const OVERLAYS_OVER_PANES: [(&str, Warped); 9] = [
     (
         "render_rail",
         Warped::FlatByDesign {
@@ -418,6 +439,26 @@ const OVERLAYS_OVER_PANES: [(&str, Warped); 7] = [
         },
     ),
     ("pane ghost", Warped::Tube("register_overlay_tube")),
+    (
+        "composer page",
+        Warped::FlatByDesign {
+            flag: "composer",
+            why: "a page of text and chips over every pane of the active tab: \
+                  under a tube its caret and chips would bow away from where \
+                  they are clicked. Bought flat by `composer` in the \
+                  suppression list, like the launcher panel it sits beside.",
+        },
+    ),
+    (
+        "relate dialog",
+        Warped::FlatByDesign {
+            flag: "relate",
+            why: "a dialog of verb rows and buttons over every pane of the \
+                  active tab, laid out like the composer page and flattened by \
+                  `relate` in the suppression list for the same reason: under a \
+                  tube its rows would bow away from where they are clicked.",
+        },
+    ),
     (
         "sticky note",
         Warped::Predistorted("drawn through the pane's own map; hit-tested flat"),
@@ -1992,6 +2033,9 @@ struct Tab {
     /// chord is then the program's. Persisted with the tab, so it survives a
     /// restart and a reattach. See [`keylayer::TabChord::Pinned`].
     hotkey: Option<char>,
+    /// This task's tabs in the right-bar flyout: the diffs, files and pull
+    /// requests opened beside its conversation (`flyout_view.rs`). Persisted.
+    side: flyout::Side,
 }
 
 impl Tab {
@@ -1999,6 +2043,7 @@ impl Tab {
         Self {
             level: None,
             hotkey: None,
+            side: flyout::Side::default(),
             root,
             name,
             focused: None,
@@ -2021,6 +2066,7 @@ impl Tab {
     /// come and go.
     fn identity(&self) -> TabIdentity {
         TabIdentity {
+            side: self.side.clone(),
             name: self.name.clone(),
             color: self.color,
             text_color: self.text_color,
@@ -2049,6 +2095,8 @@ struct TabIdentity {
     level: Option<attention::Priority>,
     /// Nor has a task whose pane closed stopped being where its hotkey goes.
     hotkey: Option<char>,
+    /// Nor has it lost the diffs and pull requests opened beside it.
+    side: flyout::Side,
 }
 
 impl TabIdentity {
@@ -2058,6 +2106,7 @@ impl TabIdentity {
         Tab {
             level: self.level,
             hotkey: self.hotkey,
+            side: self.side,
             root,
             name: self.name,
             // re-read from the live focus each render; the pane this pointed at
@@ -2144,6 +2193,19 @@ impl EditBuffer {
         }
     }
 
+    /// Seed with the caret after the last character and nothing selected: a
+    /// field still being typed into, such as a path walked folder by folder,
+    /// where the next key adds to what is there rather than replacing it.
+    pub(crate) fn at_end(s: &str) -> Self {
+        let chars: Vec<char> = s.chars().collect();
+        let len = chars.len();
+        Self {
+            chars,
+            cursor: len,
+            anchor: len,
+        }
+    }
+
     pub(crate) fn text(&self) -> String {
         self.chars.iter().collect()
     }
@@ -2206,6 +2268,24 @@ impl EditBuffer {
             self.cursor += 1;
         }
         self.anchor = self.cursor;
+    }
+
+    /// Backspace over a whole run: when nothing is selected and the text
+    /// just before the caret is `run`, delete it in one press. Answers
+    /// whether it did. A folded paste's token goes this way, all at once.
+    pub(crate) fn delete_back_run(&mut self, run: &str) -> bool {
+        let run: Vec<char> = run.chars().collect();
+        if self.has_sel() || run.is_empty() || run.len() > self.cursor {
+            return false;
+        }
+        let from = self.cursor - run.len();
+        if self.chars[from..self.cursor] != run[..] {
+            return false;
+        }
+        self.chars.drain(from..self.cursor);
+        self.cursor = from;
+        self.anchor = from;
+        true
     }
 
     /// [`Self::insert`] for a paste: the selection goes, then as much of `s`
@@ -2892,6 +2972,10 @@ struct StateFile {
     /// the presentation that costs the terminals nothing.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     rail_pinned: Option<bool>,
+    /// The right-bar flyout: open or not, and its width once dragged. Absent
+    /// = never opened, which reads as closed at the default width.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    flyout: Option<flyout::SavedFlyout>,
     /// Whether the bottom slot's allowance rows read as what is left rather
     /// than what is spent. A display flip computed at paint — the record's own
     /// `percent` is always the fraction *spent*, so no config change can ever
@@ -2950,6 +3034,10 @@ struct StateFile {
     /// Unset means no choice yet: person-opened briefs use the fullscreen reader.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     doc_glow_pane: Option<bool>,
+    /// Where a person's click opens an artifact. Unset is nobody's choice
+    /// yet, which opens the floating square everyone had before.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    artifact_place: Option<docopen::ArtifactPlace>,
     /// Global "anchor terminal content to TOP" preference. Absent on old files →
     /// `false` (the classic bottom-anchored prompt). When `true`, every pane skips
     /// the bottom pad so the prompt/typing area sits near the TOP of the pane.
@@ -3023,6 +3111,7 @@ impl Default for StateFile {
             // Nobody has chosen, which is not the same as choosing the overlay
             // — it simply resolves to it at load. See the field.
             rail_pinned: None,
+            flyout: None,
             win: None,
             scale: None,
             theme: None,
@@ -3059,6 +3148,7 @@ impl Default for StateFile {
             // what everyone had before the preference existed.
             focus_inherit: true,
             doc_glow_pane: None,
+            artifact_place: None,
             anchor_top: false,
             agent_tint: false,
             card_art: None,
@@ -3094,6 +3184,10 @@ struct SavedTab {
     /// The letter `alt+shift+<it>` jumps here by; absent = no pin.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     hotkey: Option<char>,
+    /// The task's right-bar flyout tabs; absent = none, as on every file
+    /// written before the flyout.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    side: Option<flyout::SavedSide>,
     node: SavedNode,
 }
 
@@ -3690,6 +3784,10 @@ type BarBoxes = Arc<Mutex<Vec<(tree::RowId, Bounds<Pixels>)>>>;
 /// Scanned newest-last so the innermost row wins where boxes overlap. A free
 /// function rather than a method because the boxes are the entire input: the
 /// geometry can then be tested without standing up a window.
+/// The part of a tab's row, top to bottom, where a carried tab relates rather
+/// than reorders (`Workspace::bar_relate_drop`).
+const RELATE_BAND: std::ops::Range<f32> = 0.3..0.7;
+
 fn bar_drop_at(rows: &[(tree::RowId, Bounds<Pixels>)], pos: Point<Pixels>) -> Option<tree::Drop> {
     let Some((id, bounds)) = rows.iter().rev().find(|(_, b)| b.contains(&pos)) else {
         return under_the_tree(rows, pos);
@@ -3954,6 +4052,11 @@ struct AgentLauncher {
     from: Option<gpui::EntityId>,
     error: Option<String>,
     local_adapter: Result<launcher::LocalAdapter, String>,
+}
+
+#[derive(Default)]
+struct SkillsForm {
+    source: EditBuffer,
 }
 
 impl AgentLauncher {
@@ -4706,6 +4809,38 @@ struct Workspace {
     logo_picker: Option<LogoPicker>,
     /// The LAUNCH AGENT panel, if it is up.
     agent_launcher: Option<AgentLauncher>,
+    /// The composer over the main area: a sentence first, then where it runs
+    /// and with what (`entry_view.rs`). Owns the keyboard while up.
+    composer: Option<entry_view::Composer>,
+    /// What was typed into the composer when it was last put away, kept for
+    /// the next time it opens.
+    /// With the long pastes its tokens stand for.
+    composer_stash: Option<entry_view::Draft>,
+    /// The relate dialog: a pane or tab dropped on another tab, asking how the
+    /// two agents work together (`relate_view.rs`).
+    relate: Option<relate_view::Relate>,
+    /// The right-bar flyout: diffs, files and pull requests beside the panes.
+    flyout: flyout_view::Flyout,
+    /// What a person has said about the inbox — snoozes, done marks, which
+    /// shelves are open, which face the spine shows — and the file it is kept
+    /// in (`inbox.rs`). Borrowed mutably from `&self` paths, once a frame,
+    /// the way the rail's memo is.
+    inbox_store: std::cell::RefCell<inbox::Store>,
+    /// What this window has watched each pane do, on its own clock.
+    inbox_tracker: std::cell::RefCell<inbox::Tracker>,
+    /// One frame's inbox, shared by the toggle's count, the list and a click.
+    inbox_memo: std::cell::RefCell<Option<inbox_view::InboxMemo>>,
+    /// The row whose snooze choices are open under it.
+    inbox_snoozing: Option<inbox::Key>,
+    /// The inbox row the keyboard is on (Ctrl+Alt+↑↓ with the INBOX face up).
+    inbox_cursor: Option<inbox::Key>,
+    /// The inbox row under the pointer, which alone shows its verbs.
+    inbox_hover: Option<inbox::Key>,
+    /// When the inbox next moves on its own (a snooze running out, a WORKING
+    /// seat's grace ending), as booked; and the booking's epoch, so a later
+    /// booking supersedes an earlier one.
+    inbox_clock: Option<std::time::SystemTime>,
+    inbox_clock_epoch: u64,
     /// Bumped on every picker open. The async tier-3 sweep captures the value
     /// and drops its result unless it still matches — otherwise a slow sweep
     /// belonging to a CLOSED (or re-opened, different-pane) picker lands in
@@ -4777,8 +4912,8 @@ struct Workspace {
     /// to move the agent in or build a relationship (with the org, or a member).
     /// `Some` means the drop popup is open.
     floor_drop: Option<threshing_floor_view::DropChoice>,
-    /// Transient membership gesture; GPUI remains the authority on its lifetime.
-    floor_drag: Option<Entity<TerminalView>>,
+    /// The one drag the pointer is making (see [`Drag`]).
+    drag: Option<Drag>,
     floor_tether: Option<Point<Pixels>>,
     floor_view: threshing_floor_view::FloorViewport,
     floor_context: Option<(Entity<TerminalView>, Point<Pixels>)>,
@@ -4951,8 +5086,20 @@ struct Workspace {
     agents_prefs: agentcfg::Prefs,
     /// Whether the CONFIG › Agents page is open.
     agents_menu: bool,
-    /// Which agents-page slider is being dragged, if any: 0 rest, 1 sleep.
-    agents_drag: Option<u8>,
+    /// Settings, the book that holds every setting, while it is open
+    /// (`settings_view.rs`), and the page it was last on.
+    settings: Option<settings::Book>,
+    settings_last: Option<settings::Page>,
+    /// The Worktrees page's cleanup switches (`worktrees.toml`) and its
+    /// review of what they would remove.
+    wt_prefs: wtclean::Prefs,
+    wt_review: settings_view::WtReview,
+    skills_prefs: skills::Prefs,
+    skills_error: Option<String>,
+    skills_form: Option<SkillsForm>,
+    skills_scroll: ScrollHandle,
+    skills_importing: bool,
+    skills_import_generation: u64,
     /// Where the two sliders' tracks were drawn, for mapping a pointer.
     agents_tracks: [std::sync::Arc<std::sync::Mutex<Option<Bounds<Pixels>>>>; 2],
     /// What the last rest-and-sleep tick did, for the Agents page's readout.
@@ -5041,21 +5188,12 @@ struct Workspace {
     /// Agent-wall program/mode filter, generated from the live pane modes.
     /// Combines with group and state filters.
     mcp_program_filter: Option<String>,
-    /// The OSD slider being dragged, if any (which channel).
-    slider_drag: Option<theme::GradeKey>,
     /// Live per-slider track rects for ratio math during a drag.
     slider_bounds: Arc<Mutex<std::collections::HashMap<theme::GradeKey, Bounds<Pixels>>>>,
-    /// Which wheel marker (seed / text / complement) is being dragged, if any.
-    /// The three markers live on the wheel; you grab one and drag it around.
-    wheel_drag: Option<WheelTarget>,
     /// The marker the lightness slider edits — the one most recently grabbed.
     wheel_active: WheelTarget,
-    /// True while the lightness slider (white↔black) is being dragged.
-    light_drag: bool,
     /// Live lightness-slider rect, for ratio math during a drag.
     light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// Which tracking-band slider (0=intensity,1=speed,2=size) is being dragged.
-    track_drag: Option<usize>,
     /// Live tracking-slider rects, for ratio math during a drag.
     track_bounds: [Arc<Mutex<Option<Bounds<Pixels>>>>; 5],
     /// Live colour-wheel rect, for polar hit-testing during a drag.
@@ -5064,13 +5202,9 @@ struct Workspace {
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     jiggle: FrameJiggle,
     last_action: Instant,
-    /// split-id being dragged, if any
-    drag_split: Option<u64>,
     split_bounds: Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
     /// Last seen window bounds (x, y, w, h), refreshed each render for save().
     last_win: Option<(f32, f32, f32, f32)>,
-    /// A sub-tab being dragged by its header, if any.
-    drag_pane: Option<PaneDrag>,
     /// The resolved drop landing under the cursor while dragging (for overlay).
     drop_target: Option<DropTarget>,
     /// Live per-pane content rects (entity → box) for drop hit-testing.
@@ -5086,10 +5220,6 @@ struct Workspace {
     render_band: Option<(f32, f32)>,
     /// Live per-tab button rects (index → box) for "drop onto a main tab".
     tab_bounds: Arc<Mutex<std::collections::HashMap<usize, Bounds<Pixels>>>>,
-    /// An outer tab being dragged along the strip to reorder it, if any.
-    tab_drag: Option<TabDrag>,
-    /// A whole group being dragged by its handle to reorder it, if any.
-    group_drag: Option<GroupDrag>,
     /// The insertion slot (0..=len) a tab-reorder release would land in.
     tab_drop: Option<usize>,
     /// `true` when the resolved tab-drop slot is a fresh row below the last row
@@ -5177,11 +5307,10 @@ struct Workspace {
     /// buffer. Tasks are renamed with the strip's own editor (`renaming`), so
     /// this only ever holds a project or an initiative.
     bar_rename: Option<(BarBranch, EditBuffer)>,
-    /// A left-bar row being dragged onto a branch, if any — how a task is filed
-    /// into a project without a menu.
-    bar_drag: Option<BarDrag>,
     /// Live per-row boxes for drop hit-testing while a bar drag is in flight.
     bar_bounds: BarBoxes,
+    /// Where each INBOX row was drawn last frame, by the pane it stands for.
+    inbox_bounds: inbox_view::InboxBoxes,
     /// Where the bay was drawn this frame, for the same hit-testing. Separate
     /// from `bar_bounds` because the bay is not a tree row and must never be
     /// reachable by the code that walks rows looking for a place to file into.
@@ -5209,12 +5338,8 @@ struct Workspace {
     tab_scope: TabScope,
     /// Which pip (Fill / Text) the tab pane's wheel + lightness slider drive.
     tab_pip: TabPip,
-    /// The tab-pane wheel pip being dragged, if any.
-    tab_wheel_drag: Option<TabPip>,
     /// Live tab-pane wheel rect, for polar hit-testing during a drag.
     tab_wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// True while the tab-pane lightness slider is being dragged.
-    tab_light_drag: bool,
     /// Live tab-pane lightness-slider rect, for ratio math during a drag.
     tab_light_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// The pane currently mirrored in the FOCUS reading modal, if any. Weak so a
@@ -5226,13 +5351,9 @@ struct Workspace {
     /// [`reader_scale`]). Non-destructive — it scales only the reader, never the
     /// real terminal's grid. Reset to 1.0 whenever the modal (re)opens on a pane.
     focus_zoom: f32,
-    /// True while the FOCUS text-size slider thumb is being dragged.
-    focus_zoom_drag: bool,
     /// On-screen box of the FOCUS slider track (captured each frame), so a drag
     /// anywhere in the window maps the cursor-x back to a 0..1 track fraction.
     focus_zoom_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    /// True while the dashboard card-size slider is being dragged.
-    card_scale_drag: bool,
     /// Live card-slider track rect, for ratio math during a drag.
     card_scale_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     /// Vertical pan offset (px) of the zoomed mirror inside the FOCUS panel. When
@@ -5356,8 +5477,6 @@ struct Workspace {
     /// `(anchor, head)`. Stored in SOURCE coordinates so it survives a zoom/wrap
     /// reflow. `None` = nothing selected.
     focus_sel: Option<((usize, usize), (usize, usize))>,
-    /// True while a left-drag is actively extending the reader selection.
-    focus_sel_drag: bool,
     /// A press in the reader went to the document the pane lent it, and so
     /// do the moves until the button comes up: a picture being panned, a
     /// video's track being scrubbed.
@@ -5383,6 +5502,9 @@ struct Workspace {
     focus_inherit_theme: bool,
     /// Window-wide document presentation, selected in FLOATING DOCUMENT gauges.
     doc_glow_pane: Option<bool>,
+    /// Where a person's click opens an artifact; `docopen::artifact_place`
+    /// holds the same for the panes. Settings › Threads.
+    artifact_place: Option<docopen::ArtifactPlace>,
     /// Global, persisted: when on, terminal content anchors to the TOP of each
     /// pane (the prompt/typing area sits near the top) instead of hugging the
     /// bottom. Published into [`pane::set_anchor_top`] each render frame so the
@@ -5469,6 +5591,12 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     let pane = &pane;
     cx.observe(pane, |_, _, cx| cx.notify()).detach();
     cx.subscribe(pane, |ws, pane, ev: &OpenThemeMenu, cx| {
+        // A pane's design menu is drawn under the Settings book, so the
+        // book is put away first rather than left over the menu it raised
+        // (verify/overlay-stack, RaisedIsOnTop).
+        if ws.settings.is_some() {
+            ws.close_settings(cx);
+        }
         ws.theme_menu = Some(MenuScope::Pane(pane));
         ws.menu_at = Some(ev.at);
         cx.notify();
@@ -5523,6 +5651,13 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
                 if ws.focus_read.as_ref().and_then(|p| p.upgrade()).as_ref() == Some(pane) {
                     ws.close_focus_read(cx);
                 }
+                // The keys follow the document, however it was opened: the
+                // rail can open one on a pane that is not the focused one.
+                // Deferred, as `open_focus_read` defers it.
+                let pane = pane.clone();
+                cx.defer_in(window, move |_ws, window, cx| {
+                    window.focus(&pane.focus_handle(cx), cx);
+                });
             } else {
                 ws.open_focus_read(pane.clone(), window, cx);
             }
@@ -5572,6 +5707,42 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         cx.notify();
     })
     .detach();
+    // ctrl+shift+I in any pane → the left spine turns between its faces.
+    cx.subscribe(pane, |ws, _pane, _ev: &ToggleInbox, cx| {
+        let showing = ws.spine_inbox();
+        ws.set_spine_inbox(!showing, cx);
+    })
+    .detach();
+    // ctrl+, in any pane → open or close Settings.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, _pane, _ev: &pane::ToggleSettings, _window, cx| {
+            ws.toggle_settings(cx);
+        },
+    )
+    .detach();
+    // ctrl+shift+R in any pane → open or close the right-bar flyout.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, _pane, _ev: &pane::ToggleFlyout, window, cx| {
+            ws.flyout_toggle(window, cx);
+        },
+    )
+    .detach();
+    // Alt+click on a code file or a pull request link → shown in the flyout,
+    // in the task the pane belongs to, with the keyboard left in the pane.
+    cx.subscribe_in(pane, window, |ws, pane, ev: &pane::OpenSide, window, cx| {
+        let task = ws.tab_with_leaf(pane.entity_id()).unwrap_or(ws.active);
+        ws.flyout_show(task, ev.target.clone(), ev.line, false, window, cx);
+    })
+    .detach();
+    // ctrl+shift+E in any pane → the composer, over the main area.
+    cx.subscribe_in(pane, window, |ws, _pane, _ev: &OpenComposer, window, cx| {
+        ws.open_composer(window, cx);
+    })
+    .detach();
     // ctrl+shift+N in any pane → open or close the attention queue.
     cx.subscribe(pane, |ws, _pane, _ev: &ToggleRail, cx| {
         if ws.rail_on {
@@ -5599,14 +5770,14 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     // grab the header → begin a sub-tab drag (the workspace drives it from here)
     cx.subscribe(pane, |ws, pane, ev: &DragPaneStart, cx| {
         let start = ev.at;
-        ws.drag_pane = Some(PaneDrag {
+        ws.set_drag_pane(Some(PaneDrag {
             id: pane.entity_id(),
             start,
             at: start,
             engaged: false,
             left_window: false,
             over_bay: false,
-        });
+        }));
         ws.drop_target = None;
         cx.notify();
     })
@@ -6619,6 +6790,7 @@ impl Workspace {
         };
         let ask_seq = prompts.latest_receipt_id();
         let mut ws = Self {
+            drag: None,
             tabs: vec![],
             active: 0,
             focus_handle: cx.focus_handle(),
@@ -6627,6 +6799,18 @@ impl Workspace {
             lang_picker: None,
             logo_picker: None,
             agent_launcher: None,
+            composer: None,
+            composer_stash: None,
+            relate: None,
+            flyout: flyout_view::Flyout::restore(saved.flyout.as_ref()),
+            inbox_store: std::cell::RefCell::new(Self::inbox_load()),
+            inbox_tracker: std::cell::RefCell::new(inbox::Tracker::default()),
+            inbox_memo: std::cell::RefCell::new(None),
+            inbox_snoozing: None,
+            inbox_cursor: None,
+            inbox_hover: None,
+            inbox_clock: None,
+            inbox_clock_epoch: 0,
             logo_scan_epoch: 0,
             dir_logos: dirlogo::load(),
             tool_probe: std::collections::HashMap::new(),
@@ -6654,7 +6838,6 @@ impl Workspace {
             floor_settings: false,
             floor_map: None,
             floor_drop: None,
-            floor_drag: None,
             floor_tether: None,
             floor_view: Default::default(),
             floor_context: None,
@@ -6725,7 +6908,16 @@ impl Workspace {
             launch_defaults: launchpref::load(),
             agents_prefs: agentcfg::load(),
             agents_menu: false,
-            agents_drag: None,
+            settings: None,
+            settings_last: None,
+            wt_prefs: wtclean::load(&instance::config_dir()),
+            wt_review: Default::default(),
+            skills_prefs: skills::load().unwrap_or_default(),
+            skills_error: None,
+            skills_form: None,
+            skills_scroll: ScrollHandle::new(),
+            skills_importing: false,
+            skills_import_generation: 0,
             agents_tracks: Default::default(),
             rest_census: RestCensus::default(),
             rest_store_saved: Default::default(),
@@ -6773,29 +6965,21 @@ impl Workspace {
             mcp_filter: McpFilter::All,
             mcp_state_filter: None,
             mcp_program_filter: None,
-            slider_drag: None,
             slider_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            wheel_drag: None,
             wheel_active: WheelTarget::Seed,
-            light_drag: false,
             light_bounds: Arc::new(Mutex::new(None)),
-            track_drag: None,
             track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
             scrub_bounds: Arc::new(Mutex::new(None)),
             jiggle: FrameJiggle::new(),
             last_action: Instant::now() - Duration::from_secs(1),
-            drag_split: None,
             split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             last_win: None,
-            drag_pane: None,
             drop_target: None,
             pane_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             render_band: None,
             tab_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
-            tab_drag: None,
-            group_drag: None,
             tab_drop: None,
             tab_drop_newrow: false,
             groups: Vec::new(),
@@ -6825,8 +7009,8 @@ impl Workspace {
             bar_carry: None,
             bar_scroll: ScrollHandle::new(),
             bar_rename: None,
-            bar_drag: None,
             bar_bounds: Arc::new(Mutex::new(Vec::new())),
+            inbox_bounds: Arc::new(Mutex::new(Vec::new())),
             bay_bounds: Arc::new(Mutex::new(None)),
             tab_menu: None,
             tab_digits: saved.tab_digits,
@@ -6837,15 +7021,11 @@ impl Workspace {
             group_menu_at: None,
             tab_scope: TabScope::ThisTab,
             tab_pip: TabPip::Fill,
-            tab_wheel_drag: None,
             tab_wheel_bounds: Arc::new(Mutex::new(None)),
-            tab_light_drag: false,
             tab_light_bounds: Arc::new(Mutex::new(None)),
             focus_read: None,
             focus_zoom: 1.0,
-            focus_zoom_drag: false,
             focus_zoom_bounds: Arc::new(Mutex::new(None)),
-            card_scale_drag: false,
             card_scale_bounds: Arc::new(Mutex::new(None)),
             focus_scroll_y: 0.0,
             focus_at_bottom: true,
@@ -6881,7 +7061,6 @@ impl Workspace {
             focus_body_bounds: Arc::new(Mutex::new(None)),
             focus_map: Arc::new(Mutex::new(None)),
             focus_sel: None,
-            focus_sel_drag: false,
             focus_doc_holding: false,
             focus_read_seen: false,
             focus_clip_bounds: Arc::new(Mutex::new(None)),
@@ -6891,6 +7070,10 @@ impl Workspace {
             focus_turn_nav: transcript::TurnNav::default(),
             focus_inherit_theme: saved.focus_inherit,
             doc_glow_pane: saved.doc_glow_pane,
+            artifact_place: {
+                docopen::set_artifact_place(saved.artifact_place.unwrap_or_default());
+                saved.artifact_place
+            },
             anchor_top: saved.anchor_top,
             agent_tint: saved.agent_tint,
             lang: saved.lang,
@@ -6975,6 +7158,7 @@ impl Workspace {
                 tab.project = t.project.filter(|p| live_projects.contains(p));
                 tab.level = t.level.map(attention::Priority::from);
                 tab.hotkey = t.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
+                tab.side = flyout::Side::restore(t.side.as_ref());
                 ws.tabs.push(tab);
             }
             ws.prune_groups();
@@ -7032,6 +7216,18 @@ impl Workspace {
                     ws.notif = notifpref::load();
                     ws.refresh_dir_logos(cx)
                 })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+        // The right-bar flyout's poll: the tab on screen is read again when
+        // it is due, and nothing is read while the flyout is shut.
+        cx.spawn(async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(1)).await;
+            if this
+                .update(cx, |ws: &mut Workspace, cx| ws.flyout_kick(false, cx))
                 .is_err()
             {
                 break;
@@ -7208,7 +7404,7 @@ impl Workspace {
                 .await;
             if this
                 .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.prompt_tick(window, cx)
+                    ws.prompt_tick(window, cx);
                 })
                 .is_err()
             {
@@ -7551,6 +7747,7 @@ impl Workspace {
             built.project = tab.project.filter(|p| live_projects.contains(p));
             built.level = tab.level.map(attention::Priority::from);
             built.hotkey = tab.hotkey.filter(|c| !keylayer::pin_is_taken(*c));
+            built.side = flyout::Side::restore(tab.side.as_ref());
             self.tabs.push(built);
         }
 
@@ -8189,6 +8386,10 @@ impl Workspace {
         let Some(file) = asleep.wake_file.to_str() else {
             return;
         };
+        // A script an older build wrote may name what has gone since.
+        if let Some(repaired) = agentrest_io::heal_wake_script(&asleep.wake_file) {
+            eprintln!("terminal-delight: {repaired}");
+        }
         let restore = session::PaneRestore {
             cwd,
             resume: Some(format!("bash {}", agentrest::shell_quote(file))),
@@ -8762,6 +8963,7 @@ impl Workspace {
                     project: t.project.filter(|_| t.group.is_none()),
                     level: t.level.map(SavedLevel::from),
                     hotkey: t.hotkey,
+                    side: t.side.saved(),
                     node: t.root.to_saved(cx),
                 })
                 .collect(),
@@ -8794,6 +8996,7 @@ impl Workspace {
             ui: Some(uiconfig::choice(cx)),
             looks: self.looks.clone(),
             rail_pinned: Some(self.rail_pinned),
+            flyout: self.flyout.saved(),
             left_bar_w: Some(self.left_bar_w),
             slot_remaining: Some(self.slot_remaining),
             // Not written. A narrowing is a gesture, not a preference: nothing
@@ -8808,6 +9011,7 @@ impl Workspace {
             ask_press_tokens: self.ask_press_tokens,
             focus_inherit: self.focus_inherit_theme,
             doc_glow_pane: self.doc_glow_pane,
+            artifact_place: self.artifact_place,
             anchor_top: self.anchor_top,
             agent_tint: self.agent_tint,
             card_art: self.card_art,
@@ -12479,37 +12683,7 @@ impl Workspace {
         let said = match self.notes_send_target(from.entity_id(), ev.seat, cx) {
             None => Said::Refused(Words::said(|l| l.strings().ui.doc_no_agent_beside.into())),
             Some((target, who)) => match target.update(cx, |v, cx| v.send_notes(&ev.map, cx)) {
-                Ok(landed) => {
-                    // `who` is compared in English — "agent" is the word
-                    // `send_label` answers with when nothing names the pane —
-                    // and only the sentence drawn from it is translated. One
-                    // whole phrase per case, because "whose" and "which place"
-                    // agree with each other differently in every language.
-                    // Said in the reader's language for the bar and in
-                    // English for the notes report.
-                    let named = who != "agent";
-                    let unsaved_n = ev.unsaved;
-                    let pictures_n = ev.pictures;
-                    Said::Done(Words::said(|l| {
-                        let ui = l.strings().ui;
-                        let (place, chars) = match landed {
-                            pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
-                            pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
-                            pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
-                            pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
-                        };
-                        let prompt = lang::fill(place, &[("who", &who)]);
-                        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
-                        lang::fill(
-                            ui.doc_landed_in,
-                            &[
-                                ("place", &prompt),
-                                ("chars", &chars.to_string()),
-                                ("unsaved", &unsaved),
-                            ],
-                        )
-                    }))
-                }
+                Ok(landed) => notes_landed_said(landed, &who, ev.unsaved, ev.pictures),
                 Err(why) => Said::Refused(why),
             },
         };
@@ -12612,18 +12786,70 @@ impl Workspace {
             ));
             return;
         }
+        let doc = match request.target {
+            mcp::Opening::Side(target) => {
+                let said = self.mcp_open_side(leaf.entity_id(), target, cx);
+                let _ = reply.send(said);
+                return;
+            }
+            mcp::Opening::Doc(doc) => doc,
+        };
         match request.placement {
             mcp::Placement::Beside => leaf.update(cx, |v, cx| {
-                v.request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)
+                v.request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)
             }),
-            mcp::Placement::Here => {
-                let said = leaf.update(cx, |v, cx| v.open_here(request.target, cx));
+            mcp::Placement::Here | mcp::Placement::Side => {
+                let said = leaf.update(cx, |v, cx| v.open_here(doc, cx));
                 if said.starts_with("held ") {
                     self.art_held(cx);
                 }
                 let _ = reply.send(said);
             }
         }
+    }
+
+    /// `open_document` with placement "side": what the agent made becomes a
+    /// tab in the side panel of the tab its own pane is in, and the keyboard
+    /// stays where it is. On screen and not being read, the panel opens on
+    /// it. While the person reads another tab of that panel, or its `+` page,
+    /// it goes in beside and the answer is "held" — the same courtesy as the
+    /// square, which an agent never replaces. In a tab that is not on screen
+    /// it waits in that tab's panel, and the panel's open state, which is the
+    /// window's, is left alone.
+    fn mcp_open_side(
+        &mut self,
+        pane: EntityId,
+        target: flyout::Target,
+        cx: &mut Context<Self>,
+    ) -> String {
+        let Some(task) = self.tab_with_leaf(pane) else {
+            return "err your pane is not in a tab of this window".into();
+        };
+        let name = target.short_name();
+        if task != self.active {
+            self.tabs[task].side.open(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "ok side — {name} waits in your tab's side panel; your tab is not on screen"
+            );
+        }
+        let reading = self.flyout.open
+            && (self.flyout.adding
+                || self.tabs[task]
+                    .side
+                    .current()
+                    .is_some_and(|t| !t.same_tab(&target)));
+        if reading {
+            self.tabs[task].side.add(target);
+            self.save(cx);
+            cx.notify();
+            return format!(
+                "held side — {name} is a tab in your side panel, beside what the person is reading"
+            );
+        }
+        self.flyout_put(task, target, None, cx);
+        format!("ok side — {name} is open in the side panel beside your pane")
     }
 
     /// `ctl doc beside <path>`: what Ctrl+Alt+click on that path does, on the
@@ -13414,7 +13640,7 @@ impl Workspace {
     /// Open a left-bar context menu at `at`.
     fn open_bar_menu(&mut self, which: BarMenu, at: Point<Pixels>, cx: &mut Context<Self>) {
         self.bar_menu = Some((which, at));
-        self.bar_drag = None;
+        self.take_bar_drag();
         cx.notify();
     }
 
@@ -14229,8 +14455,8 @@ impl Workspace {
         // pane off its own header — and the doors answer to both. A door that
         // opens for one of the two gestures teaches that the other one cannot be
         // dropped there, which is the opposite of what is true.
-        let bar = self.bar_drag.as_ref().filter(|d| d.engaged);
-        let pane = self.drag_pane.as_ref().filter(|d| d.engaged);
+        let bar = self.bar_drag().filter(|d| d.engaged);
+        let pane = self.drag_pane().filter(|d| d.engaged);
         let over = bar.is_some_and(|d| d.over_bay) || pane.is_some_and(|d| d.over_bay);
         match (over, bar.is_some() || pane.is_some()) {
             (true, _) => 1.0,
@@ -15319,6 +15545,38 @@ impl Workspace {
         bar_drop_at(&rows, pos)
     }
 
+    /// A tab carried over the MIDDLE of another tab's row, when both have an
+    /// agent: a release there opens the relate dialog rather than filing.
+    ///
+    /// The middle band only, so the top and bottom of every row still place
+    /// the tab above or below it as before; and only between agents, so a
+    /// shell tab's row is reordered across its whole height exactly as it was.
+    fn bar_relate_drop(
+        &self,
+        what: BarDragged,
+        pos: Point<Pixels>,
+        cx: &App,
+    ) -> Option<tree::Drop> {
+        let BarDragged::Task(i) = what else {
+            return None;
+        };
+        let j = {
+            let rows = self.bar_bounds.lock().unwrap();
+            let (id, b) = rows.iter().rev().find(|(_, b)| b.contains(&pos))?;
+            let tree::RowId::Task(j) = *id else {
+                return None;
+            };
+            let frac =
+                (f32::from(pos.y) - f32::from(b.origin.y)) / f32::from(b.size.height).max(1.0);
+            (RELATE_BAND.contains(&frac) && j != i).then_some(j)?
+        };
+        let actor = self.tab_agents(i, cx).into_iter().next()?;
+        self.tab_agents(j, cx)
+            .iter()
+            .any(|t| *t != actor)
+            .then_some(tree::Drop::Into(tree::RowId::Task(j)))
+    }
+
     /// Write a task's branch from a resolved [`tree::Place`] — the two fields
     /// that say where it hangs, set together so they cannot disagree.
     fn place_task(&mut self, i: usize, place: tree::Place) {
@@ -15884,7 +16142,7 @@ impl Workspace {
         self.focus_at_bottom = true;
         self.focus_layout = None;
         self.focus_sel = None;
-        self.focus_sel_drag = false;
+        self.take_focus_sel_drag();
         self.focus_doc_holding = false;
         // Another pane's conversation is not this one's; the render starts
         // reading this pane's, if it has one bound.
@@ -15915,7 +16173,7 @@ impl Workspace {
         }
         self.focus_read_seen = false;
         self.focus_sel = None;
-        self.focus_sel_drag = false;
+        self.take_focus_sel_drag();
         *self.focus_map.lock().unwrap() = None;
         // free the (potentially 10k-row) memoised layout with the modal
         self.focus_layout = None;
@@ -16537,7 +16795,9 @@ impl Workspace {
                 let open = workspace
                     .update(cx, |workspace, cx| {
                         cx.notify();
-                        workspace.agent_launcher.is_some() || workspace.launch_defaults_open
+                        workspace.agent_launcher.is_some()
+                            || workspace.launch_defaults_open
+                            || workspace.composer.is_some()
                     })
                     .unwrap_or(false);
                 if !open {
@@ -16604,8 +16864,8 @@ impl Workspace {
         let launch = (|| {
             let dir =
                 surfacefeed::session_dir().ok_or("TD could not find its session directory")?;
-            let kit = briefkit::default_root().ok_or("TD could not find its data directory")?;
-            let briefing = recipe.prepare_briefing(&dir, &kit)?;
+            let kit = skills::briefing_root();
+            let briefing = recipe.prepare_briefing(&dir, kit.as_deref())?;
             let adapter = if lp.harness == launcher::Harness::Local {
                 Some(lp.local_adapter.as_ref().map_err(|e| e.clone())?)
             } else {
@@ -17872,7 +18132,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -17883,7 +18143,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18149,7 +18411,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18160,7 +18422,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18333,7 +18597,7 @@ impl Workspace {
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
@@ -18344,7 +18608,9 @@ impl Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -18364,7 +18630,7 @@ impl Workspace {
     fn agents_slider(
         &self,
         which: u8,
-        label: &str,
+        label: Option<&str>,
         th: &theme::Theme,
         sk: &skin::Skin,
         cx: &mut Context<Self>,
@@ -18392,7 +18658,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.agents_drag = Some(which);
+                    ws.drag = Some(Drag::Agents(which));
                     if let Some(pos) = ws.agents_track_pos(which, ev.position.x) {
                         let (scale, detents) = Self::agents_scale(which);
                         let landed = agentrest::click(detents, scale.minutes_at(pos));
@@ -18434,6 +18700,11 @@ impl Workspace {
                         ))),
                 )
             });
+        // With no label it is the track alone, for a Settings row that
+        // carries the name and the value in its own type.
+        let Some(label) = label else {
+            return div().flex().flex_col().gap_0p5().child(track).child(ticks);
+        };
         div()
             .flex()
             .flex_row()
@@ -18459,8 +18730,326 @@ impl Workspace {
     fn open_agents(&mut self, cx: &mut Context<Self>) {
         self.more_menu = false;
         self.agents_prefs = agentcfg::load();
+        match skills::load() {
+            Ok(prefs) => {
+                if !prefs.active() {
+                    self.cancel_skill_import();
+                }
+                self.skills_prefs = prefs;
+                self.skills_error = None;
+            }
+            Err(error) => self.skills_error = Some(error),
+        }
         self.agents_menu = true;
         cx.notify();
+    }
+
+    fn change_skill(&mut self, which: usize, remove: bool, cx: &mut Context<Self>) {
+        let result = (|| -> Result<skills::Prefs, String> {
+            let mut prefs = skills::load()?;
+            match which {
+                0 => prefs.active = Some(!prefs.active()),
+                1 => prefs.briefing = Some(!prefs.briefing()),
+                2 => prefs.factory = Some(!prefs.factory()),
+                n => {
+                    if remove {
+                        if n - 3 < prefs.sources.len() {
+                            prefs.sources.remove(n - 3);
+                        }
+                    } else if let Some(source) = prefs.sources.get_mut(n - 3) {
+                        source.enabled = Some(source.enabled == Some(false));
+                    }
+                }
+            }
+            skills::save(&prefs)?;
+            Ok(prefs)
+        })();
+        match result {
+            Ok(prefs) => {
+                self.skills_prefs = prefs;
+                self.skills_error = None;
+            }
+            Err(error) => self.skills_error = Some(error),
+        }
+        cx.notify();
+    }
+
+    fn import_skills(&mut self, cx: &mut Context<Self>) {
+        if self.skills_importing {
+            return;
+        }
+        let Some(form) = self.skills_form.as_ref() else {
+            return;
+        };
+        let source = form.source.text();
+        self.skills_importing = true;
+        self.skills_import_generation = self.skills_import_generation.wrapping_add(1);
+        let generation = self.skills_import_generation;
+        self.skills_error = None;
+        cx.notify();
+        cx.spawn(async move |this, cx| {
+            let result = cx
+                .background_executor()
+                .spawn(async move { skills::import(&source, "", "HEAD") })
+                .await;
+            let _ = this.update(cx, |ws, cx| {
+                if ws.skills_import_generation != generation {
+                    return;
+                }
+                ws.skills_importing = false;
+                let result = result.and_then(|sources| {
+                    let mut prefs = skills::load()?;
+                    prefs.import_sources(sources);
+                    skills::save(&prefs)?;
+                    Ok(prefs)
+                });
+                match result {
+                    Ok(prefs) => {
+                        ws.skills_prefs = prefs;
+                        ws.skills_form = None;
+                    }
+                    Err(error) => ws.skills_error = Some(error),
+                }
+                cx.notify();
+            });
+        })
+        .detach();
+    }
+
+    fn cancel_skill_import(&mut self) {
+        self.skills_import_generation = self.skills_import_generation.wrapping_add(1);
+        self.skills_importing = false;
+        self.skills_form = None;
+    }
+
+    fn close_skill_form(&mut self) -> bool {
+        if self.skills_form.is_some() {
+            self.cancel_skill_import();
+            true
+        } else {
+            false
+        }
+    }
+
+    fn render_skills_section(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let ui = self.lang.strings().ui;
+        let prefs = &self.skills_prefs;
+        let mut rows = vec![
+            (
+                "Briefing".to_string(),
+                ui.skill_briefing.to_string(),
+                prefs.briefing(),
+                Some(skills::BUNDLED_SOURCE.to_string()),
+            ),
+            (
+                "Software Factory".into(),
+                ui.skill_factory.into(),
+                prefs.factory(),
+                Some(skills::BUNDLED_SOURCE.to_string()),
+            ),
+        ];
+        rows.extend(prefs.sources.iter().map(|source| {
+            (
+                source.name.clone(),
+                source.description.clone(),
+                source.enabled != Some(false),
+                source.target(),
+            )
+        }));
+        let mut list = div()
+            .id("skills-list")
+            .debug_selector(|| "skills-list".into())
+            .track_scroll(&self.skills_scroll)
+            .flex_1()
+            .min_h(px(0.))
+            .overflow_x_hidden()
+            .overflow_y_scroll()
+            .flex()
+            .flex_col()
+            .gap_2();
+        for (index, (name, description, on, target)) in rows.into_iter().enumerate() {
+            let which = index + 1;
+            let label = div()
+                .id(SharedString::from(format!("skill-source-{which}")))
+                .debug_selector(move || format!("skill-source-{which}"))
+                .flex_1()
+                .min_w(px(0.))
+                .flex()
+                .flex_col()
+                .child(div().text_color(th.accent).child(name))
+                .child(
+                    div()
+                        .text_size(sk.text_px(8.5))
+                        .text_color(th.text.alpha(0.65))
+                        .child(description),
+                )
+                .when_some(target, |d, target| {
+                    d.cursor_pointer()
+                        .hover(|d| d.text_color(th.complement))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |_, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                cx.open_url(&target);
+                            }),
+                        )
+                });
+            let mut row = div()
+                .flex()
+                .items_center()
+                .gap_2()
+                .px_2()
+                .py_2()
+                .flex_shrink_0()
+                .rounded(sk.radius())
+                .border(sk.box_border(1.))
+                .border_color(th.text.alpha(0.16))
+                .child(label)
+                .child(
+                    div()
+                        .id(SharedString::from(format!("skill-toggle-{which}")))
+                        .debug_selector(move || format!("skill-toggle-{which}"))
+                        .cursor_pointer()
+                        .p_1()
+                        .child(slider_switch(on, th, sk))
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                ws.change_skill(which, false, cx);
+                            }),
+                        ),
+                );
+            if which >= 3 {
+                row = row.child(
+                    sk.chip(false)
+                        .cursor_pointer()
+                        .child(ui.skill_remove)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(move |ws, _: &MouseDownEvent, _, cx| {
+                                cx.stop_propagation();
+                                ws.change_skill(which, true, cx);
+                            }),
+                        ),
+                );
+            }
+            list = list.child(row);
+        }
+        let mut section = div()
+            .flex()
+            .flex_col()
+            .gap_2()
+            .h_full()
+            .min_h(px(0.))
+            .child(
+                div()
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .child(
+                        div()
+                            .text_color(th.complement)
+                            .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                            .child(ui.skill_hdr),
+                    )
+                    .child(format!("{}", 2 + prefs.sources.len())),
+            )
+            .child(list);
+        if let Some(form) = &self.skills_form {
+            let input =
+                render_edit_buffer(&form.source, 1., th.text, th.accent, th.accent.alpha(0.3))
+                    .when(form.source.text().is_empty(), |d| {
+                        d.child(div().text_color(th.text.alpha(0.4)).child(ui.skill_source))
+                    });
+            section = section
+                .child(
+                    div()
+                        .id("skill-field-0")
+                        .debug_selector(|| "skill-field-0".into())
+                        .flex_shrink_0()
+                        .px_2()
+                        .py_2()
+                        .rounded(sk.radius())
+                        .border(sk.box_border(1.))
+                        .border_color(th.accent)
+                        .overflow_x_hidden()
+                        .child(input)
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                window.focus(&ws.focus_handle, cx);
+                            }),
+                        ),
+                )
+                .child(
+                    div()
+                        .text_size(sk.text_px(8.))
+                        .text_color(th.text.alpha(0.6))
+                        .child(ui.skill_source_hint),
+                )
+                .child(
+                    div()
+                        .flex()
+                        .gap_2()
+                        .child(
+                            sk.chip(self.skills_importing)
+                                .cursor_pointer()
+                                .child(if self.skills_importing {
+                                    ui.skill_importing
+                                } else {
+                                    ui.skill_import
+                                })
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        ws.import_skills(cx);
+                                    }),
+                                ),
+                        )
+                        .child(
+                            sk.chip(false)
+                                .cursor_pointer()
+                                .child(ui.skill_cancel)
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                                        cx.stop_propagation();
+                                        ws.cancel_skill_import();
+                                        cx.notify();
+                                    }),
+                                ),
+                        ),
+                );
+        } else {
+            section = section.child(
+                sk.chip(false)
+                    .id("skill-add")
+                    .debug_selector(|| "skill-add".into())
+                    .cursor_pointer()
+                    .child(ui.skill_add)
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                            cx.stop_propagation();
+                            ws.skills_form = Some(SkillsForm::default());
+                            window.focus(&ws.focus_handle, cx);
+                            cx.notify();
+                        }),
+                    ),
+            );
+        }
+        if let Some(error) = &self.skills_error {
+            section = section.child(div().text_color(th.complement).child(error.clone()));
+        }
+        section
     }
 
     /// CONFIG › Agents: every agent setting in one place. The new ones — rest,
@@ -18577,19 +19166,32 @@ impl Workspace {
             .join(" \u{b7} ");
         let [m0, m1, m2, m3, m4] = self.mcp_switch_buttons(&sk, th, "agents", cx);
         let local = launcher::LocalAdapter::config_path();
-        let panel = div()
-            .id("agents-panel")
-            .debug_selector(|| "agents-panel".into())
-            .w(px(520.))
-            .max_h(px(self.tray_card_h()))
+        let viewport = self.last_win.map(|(_, _, w, _)| w).unwrap_or(1200.);
+        let enabled = self.skills_prefs.active();
+        // The switch changes the contents, never the menu's frame. Keep long
+        // settings and loadouts scrolling inside a compact, centred card.
+        let wide = viewport >= 760.;
+        let panel_w = 840_f32.min((viewport - 24.).max(280.));
+        let main_w = if wide && enabled {
+            panel_w * 0.52
+        } else {
+            panel_w
+        };
+        let height = self.tray_card_h().min(600.);
+        let main_h = if enabled && !wide {
+            height * 0.55
+        } else {
+            height - 4.
+        };
+        let main = div()
+            .id("agents-main")
+            .debug_selector(|| "agents-main".into())
+            .w(px(main_w))
+            .flex_shrink_0()
+            .h(px(main_h))
             .overflow_x_hidden()
             .overflow_y_scroll()
             .p_3()
-            .rounded(sk.radius_lg())
-            .border(sk.box_border(2.))
-            .border_color(th.accent.alpha(0.85))
-            .bg(darken(th.surface, 0.6))
-            .shadow(float_shadows(th.accent, th.grade.phosphor))
             .flex()
             .flex_col()
             .gap_2()
@@ -18599,7 +19201,6 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
             )
-            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .child(
                 div()
                     .flex()
@@ -18607,10 +19208,12 @@ impl Workspace {
                     .items_center()
                     .gap_2()
                     .text_size(sk.text_px(13.))
-                    .child(div().text_size(sk.text_px(18.)).child(sk.control(
-                        "\u{1f916}",
-                        crate::lang::current().strings().parts.ctl_agents,
-                    )))
+                    .when(!sk.text_controls(), |d| {
+                        d.child(div().text_size(sk.text_px(18.)).child(sk.control(
+                            "\u{1f916}",
+                            crate::lang::current().strings().parts.ctl_agents,
+                        )))
+                    })
                     .child(
                         div()
                             .font_weight(gpui::FontWeight::EXTRA_BOLD)
@@ -18624,6 +19227,49 @@ impl Workspace {
                     .text_color(th.accent.alpha(0.85))
                     .child(ui.ag_blurb),
             )
+            .child(section(ui.skill_hdr))
+            .child(
+                div()
+                    .text_size(sk.text_px(8.5))
+                    .text_color(th.text.alpha(0.65))
+                    .child(ui.skill_blurb),
+            )
+            .child(
+                div()
+                    .id("skill-toggle-0")
+                    .debug_selector(|| "skill-toggle-0".into())
+                    .flex()
+                    .items_center()
+                    .justify_between()
+                    .gap_2()
+                    .px_2()
+                    .py_2()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(if enabled {
+                        th.accent
+                    } else {
+                        th.text.alpha(0.2)
+                    })
+                    .cursor_pointer()
+                    .child(ui.skill_active)
+                    .child(slider_switch(enabled, th, &sk1))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _, cx| {
+                            cx.stop_propagation();
+                            ws.change_skill(0, false, cx);
+                            if !ws.skills_prefs.active() {
+                                ws.cancel_skill_import();
+                            }
+                        }),
+                    ),
+            )
+            .when(!enabled, |d| {
+                d.when_some(self.skills_error.clone(), |d, error| {
+                    d.child(div().text_color(th.complement).child(error))
+                })
+            })
             .child(section(ui.ag_rest_hdr))
             .child(
                 switch_row(
@@ -18643,7 +19289,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(0, ui.ag_rest_after, th, &sk, cx))
+            .child(self.agents_slider(0, Some(ui.ag_rest_after), th, &sk, cx))
             .child(
                 switch_row(
                     "\u{1f4a4}",
@@ -18667,7 +19313,7 @@ impl Workspace {
                     }),
                 ),
             )
-            .child(self.agents_slider(1, ui.ag_sleep_after, th, &sk, cx))
+            .child(self.agents_slider(1, Some(ui.ag_sleep_after), th, &sk, cx))
             .child(
                 div()
                     .px_2()
@@ -18744,26 +19390,75 @@ impl Workspace {
                         &[("path", &local.display().to_string())],
                     ))),
             );
+        let panel = div()
+            .id("agents-panel")
+            .debug_selector(|| "agents-panel".into())
+            .w(px(panel_w))
+            .h(px(height))
+            .overflow_hidden()
+            .rounded(sk.radius_lg())
+            .border(sk.box_border(2.))
+            .border_color(th.accent.alpha(0.85))
+            .bg(darken(th.surface, 0.6))
+            .shadow(float_shadows(th.accent, th.grade.phosphor))
+            .flex()
+            .when(wide, |d| d.flex_row())
+            .when(!wide, |d| d.flex_col())
+            .text_size(sk.text_px(10.))
+            .text_color(th.text)
+            .map(|d| sk.chrome(sk.popup(sk.finish(d))))
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
+            )
+            .child(main)
+            .when(enabled, |d| {
+                d.child(
+                    div()
+                        .id("skills-column")
+                        .debug_selector(|| "skills-column".into())
+                        .w(px(if wide { panel_w - main_w } else { panel_w }))
+                        .h(px(if wide {
+                            height - 4.
+                        } else {
+                            height - main_h - 4.
+                        }))
+                        .flex_shrink_0()
+                        .min_h(px(0.))
+                        .p_3()
+                        .when(wide, |d| {
+                            d.border_l(px(sk.m.hairline.max(1.)))
+                                .border_color(sk.ink.rule)
+                        })
+                        .when(!wide, |d| {
+                            d.border_t(px(sk.m.hairline.max(1.)))
+                                .border_color(sk.ink.rule)
+                        })
+                        .child(self.render_skills_section(th, &sk1, cx)),
+                )
+            });
         Some(
             div()
                 .absolute()
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .flex()
                 .items_center()
                 .justify_center()
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        if ws.agents_drag.take().is_some() {
+                        if ws.take_agents_drag().is_some() {
                             agentcfg::save(&ws.agents_prefs);
                         }
                         ws.agents_menu = false;
                         cx.notify();
                     }),
                 )
-                .child(panel),
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                })),
         )
     }
 
@@ -20433,7 +21128,7 @@ impl Workspace {
     /// handler there the head never advanced and the selection stayed a single
     /// cell that copied nothing (#87).
     fn focus_drag_extend(&mut self, pos: Point<Pixels>, cx: &mut Context<Self>) {
-        if !self.focus_sel_drag {
+        if !self.focus_sel_drag() {
             return;
         }
         if let (Some(cell), Some((anchor, head))) = (self.focus_cell_at(pos), self.focus_sel) {
@@ -20450,7 +21145,7 @@ impl Workspace {
     /// root `on_mouse_up` and the occluding FOCUS scrim (#87). Idempotent: the
     /// first caller takes the latch, a second sees it cleared and returns `false`.
     fn focus_drag_release(&mut self, cx: &mut Context<Self>) -> bool {
-        if !std::mem::take(&mut self.focus_sel_drag) {
+        if !self.take_focus_sel_drag() {
             return false;
         }
         match self.focus_sel {
@@ -20583,7 +21278,7 @@ impl Workspace {
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.card_scale_drag = true;
+                            ws.drag = Some(Drag::CardScale);
                             if let Some(fr) = ws.card_scale_from_pos(ev.position.x) {
                                 ws.set_card_scale(fr, cx);
                             }
@@ -20646,7 +21341,7 @@ impl Workspace {
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             // don't let the panel/scrim see this (no close, no move)
                             cx.stop_propagation();
-                            ws.focus_zoom_drag = true;
+                            ws.drag = Some(Drag::FocusZoom);
                             if let Some(f) = ws.focus_zoom_from_pos(ev.position.x) {
                                 ws.set_focus_zoom(f, cx);
                             }
@@ -20971,6 +21666,18 @@ impl Workspace {
     }
 
     /// Switch document presentation without replacing the view or its notes.
+    /// Settings › Threads: where a person's click opens an artifact.
+    pub(crate) fn set_artifact_place(
+        &mut self,
+        place: docopen::ArtifactPlace,
+        cx: &mut Context<Self>,
+    ) {
+        self.artifact_place = Some(place);
+        docopen::set_artifact_place(place);
+        self.save(cx);
+        cx.notify();
+    }
+
     fn toggle_doc_glow_pane(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let glow = self.doc_glow_pane != Some(true);
         self.doc_glow_pane = Some(glow);
@@ -20980,13 +21687,18 @@ impl Workspace {
             _ => self.focused_leaf(window, cx),
         });
         if let Some(pane) = pane {
-            let readable = pane.update(cx, |v, cx| v.set_float_to_read(!glow, cx));
-            if readable {
-                if glow && reader.as_ref() == Some(&pane) {
+            // Only what is being read moves between the two: a small square
+            // an agent opened stays small, and keeps leaving the keys alone.
+            if glow {
+                if reader.as_ref() == Some(&pane)
+                    && pane.update(cx, |v, cx| v.set_float_to_read(false, cx))
+                {
                     self.close_focus_read(cx);
-                } else if !glow {
-                    self.open_focus_read(pane, window, cx);
                 }
+            } else if pane.read(cx).reading_view(cx).is_some()
+                && pane.update(cx, |v, cx| v.set_float_to_read(true, cx))
+            {
+                self.open_focus_read(pane, window, cx);
             }
         }
         self.save(cx);
@@ -21048,6 +21760,35 @@ impl Workspace {
                 let none = self.lang.strings().ui.nav_art_none.to_string();
                 self.say_where_looking(none, cx);
             }
+        }
+    }
+
+    fn prepare_focused_artifact(&self, window: &Window, cx: &mut Context<Self>) {
+        let Some(pane) = self.focused_leaf(window, cx) else {
+            return;
+        };
+        let Some(path) = pane.read(cx).handovers().newest().and_then(|h| h.path()) else {
+            return;
+        };
+        let geometry = if self.doc_glow_pane == Some(true) {
+            pane.read(cx).prepare_float_geometry()
+        } else {
+            self.last_win.map(|(_, _, w, h)| {
+                let glass = ReaderGlass::in_window(w, h);
+                let border = f32::from(skin::skin(cx, 1.).box_border(2.));
+                docview::engine::Geometry {
+                    css_width: (glass.panel_w - glass.pad * 2. - border * 2.)
+                        .round()
+                        .max(1.) as u32,
+                    viewport_css_height: (glass.panel_h - glass.hdr_h - glass.pad - border * 2.)
+                        .ceil()
+                        .max(1.) as u32,
+                    scale: window.scale_factor(),
+                }
+            })
+        };
+        if let Some(geometry) = geometry {
+            docview::prepare::offer(pane.entity_id().as_u64(), path, geometry, cx);
         }
     }
 
@@ -21400,6 +22141,10 @@ impl Workspace {
     /// picker, a rename box, a menu, the reader. Typing belongs to it, not to a
     /// terminal, so the focus watchdog must keep its hands off.
     fn overlay_owns_keyboard(&self) -> bool {
+        self.focus_read.is_some() || self.overlay_covers_document()
+    }
+
+    fn overlay_covers_document(&self) -> bool {
         self.find.is_some()
             || self.lookup.is_some()
             || self.lang_picker.is_some()
@@ -21415,7 +22160,6 @@ impl Workspace {
             || self.osd_menu.is_some()
             || self.tab_menu.is_some()
             || self.group_menu.is_some()
-            || self.focus_read.is_some()
             || self.help_open
             || self.scale_menu
             || self.more_menu
@@ -21426,10 +22170,16 @@ impl Workspace {
             || self.plugins_menu
             || self.notif_menu
             || self.agents_menu
+            || self.settings.is_some()
             || self.bug_menu
             || self.admin_menu
             || self.update_menu
             || self.savings_menu
+            || self.composer.is_some()
+            || self.relate.is_some()
+            // The right-bar flyout after a click on it: without this, the
+            // render's focus plan hands the keyboard straight back to a pane.
+            || self.flyout.focused
     }
 
     fn focus_active(&self, window: &mut Window, cx: &mut Context<Self>) {
@@ -21538,6 +22288,25 @@ impl Workspace {
             self.rail_close();
             return true;
         }
+        // The composer is a page over the panes: Esc on a chip goes back to the
+        // sentence, and Esc on the sentence puts the page away with the draft
+        // kept for next time.
+        if self.composer.is_some() {
+            self.composer_escape();
+            return true;
+        }
+        // The relate dialog draws nothing until it is answered, so Esc is a
+        // plain no.
+        if self.relate.is_some() {
+            self.relate = None;
+            return true;
+        }
+        // Settings is a book over the whole window: Esc clears its search
+        // first, then puts it away on the page it was on.
+        if self.settings.is_some() {
+            self.settings_peel();
+            return true;
+        }
         // Overlays that stack ON TOP of the agent wall — peel these first.
         if self.savings_menu {
             self.savings_menu = false;
@@ -21556,7 +22325,9 @@ impl Workspace {
             return true;
         }
         if self.agents_menu {
-            self.agents_menu = false;
+            if !self.close_skill_form() {
+                self.agents_menu = false;
+            }
             return true;
         }
         if self.bug_menu {
@@ -21658,6 +22429,61 @@ impl Workspace {
         true
     }
 
+    /// The language dropdown owns the keyboard while open: esc closes, ↵
+    /// applies the selected language, ↑/↓ (tab) move, everything else edits
+    /// the fuzzy query. Called in the CAPTURE phase: the picker opens from a
+    /// click (the keys sheet's 🌐, Settings › General) that leaves a pane
+    /// holding the focus, and a key that reached that pane first went to its
+    /// shell (`verify_keyboard`, 2026-11-10). True when the picker took it.
+    fn lang_picker_key(&mut self, ks: &gpui::Keystroke, cx: &mut Context<Self>) -> bool {
+        let m = &ks.modifiers;
+        if let Some(mut lp) = self.lang_picker.take() {
+            match ks.key.as_str() {
+                "escape" => {
+                    cx.notify();
+                    return true;
+                }
+                "enter" => {
+                    let langs = Self::filtered_langs(&lp.query.text());
+                    if let Some(&l) = langs.get(lp.selected.min(langs.len().saturating_sub(1))) {
+                        self.lang = l;
+                        lang::set_current(l);
+                        self.save(cx);
+                    }
+                    cx.notify();
+                    return true;
+                }
+                "down" | "tab" => {
+                    let n = Self::filtered_langs(&lp.query.text()).len();
+                    if n > 0 {
+                        lp.selected = (lp.selected + 1).min(n - 1);
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+                "up" => {
+                    lp.selected = lp.selected.saturating_sub(1);
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+                _ => {
+                    let before = lp.query.text();
+                    lp.query
+                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
+                    if lp.query.text() != before {
+                        lp.selected = 0;
+                    }
+                    self.lang_picker = Some(lp);
+                    cx.notify();
+                    return true;
+                }
+            }
+        }
+        false
+    }
+
     /// The help sheet's keyboard, taken in the capture phase because a
     /// terminal pane still holds the focus under it. Typing filters the sheet
     /// (Parker, 2026-11-03: *"TYPING (no click just a raw 'word' will FUZZY
@@ -21751,6 +22577,19 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // The composer owns every key while it is up: one that fell through
+        // would reach a terminal behind a page.
+        if self.composer.is_some() && self.composer_key(ks, window, cx) {
+            return;
+        }
+        if self.relate.is_some() && self.relate_key(ks, window, cx) {
+            return;
+        }
+        // The flyout holds the keyboard after a click on it: every plain key
+        // is its own, so none reaches a terminal.
+        if self.flyout_key(ks, window, cx) {
+            return;
+        }
         // PAINT mode: BARE arrows walk the wall, the way Omarchy's own picker
         // walks its grid — no chord to learn while a full-screen overlay is up
         // and the terminal underneath is unreachable anyway. This sits ahead of
@@ -21840,51 +22679,43 @@ impl Workspace {
         if ks.key.as_str() == "escape" && self.escape_closes_the_reader(window, cx) {
             return;
         }
-        // The language dropdown owns the keyboard while open: esc closes, ↵ applies
-        // the selected language, ↑/↓ (tab) move, everything else edits the fuzzy query.
-        if let Some(mut lp) = self.lang_picker.take() {
+        // The language dropdown: see `lang_picker_key`, which the capture
+        // phase calls before any pane hears the key.
+        if self.agents_menu && self.skills_form.is_some() {
             match ks.key.as_str() {
-                "escape" => {
-                    cx.notify();
-                    return;
-                }
-                "enter" => {
-                    let langs = Self::filtered_langs(&lp.query.text());
-                    if let Some(&l) = langs.get(lp.selected.min(langs.len().saturating_sub(1))) {
-                        self.lang = l;
-                        lang::set_current(l);
-                        self.save(cx);
+                "escape" => self.cancel_skill_import(),
+                "enter" => self.import_skills(cx),
+                "v" if m.control => {
+                    if let Some(text) = cx.read_from_clipboard().and_then(|item| item.text()) {
+                        if let Some(form) = &mut self.skills_form {
+                            form.source.insert_capped(text.trim(), 2048);
+                        }
                     }
-                    cx.notify();
-                    return;
                 }
-                "down" | "tab" => {
-                    let n = Self::filtered_langs(&lp.query.text()).len();
-                    if n > 0 {
-                        lp.selected = (lp.selected + 1).min(n - 1);
+                "c" | "x" if m.control => {
+                    if let Some(form) = &mut self.skills_form {
+                        let buffer = &mut form.source;
+                        let (a, b) = buffer.sel_range();
+                        if a != b {
+                            cx.write_to_clipboard(gpui::ClipboardItem::new_string(
+                                buffer.chars[a..b].iter().collect(),
+                            ));
+                            if ks.key.as_str() == "x" {
+                                buffer.delete_sel();
+                            }
+                        }
                     }
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
                 }
-                "up" => {
-                    lp.selected = lp.selected.saturating_sub(1);
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
-                }
+                "tab" => {}
                 _ => {
-                    let before = lp.query.text();
-                    lp.query
-                        .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 24);
-                    if lp.query.text() != before {
-                        lp.selected = 0;
+                    if let Some(form) = &mut self.skills_form {
+                        form.source
+                            .apply(ks.key.as_str(), m, ks.key_char.as_deref(), 2048);
                     }
-                    self.lang_picker = Some(lp);
-                    cx.notify();
-                    return;
                 }
             }
+            cx.notify();
+            return;
         }
         // The LAUNCH AGENT panel owns the keyboard while open. Same contract as
         // every other picker, so the muscle memory transfers: esc cancels, ↵
@@ -22376,6 +23207,26 @@ impl Workspace {
                 // (or the live cursor's task) travels with the arrows
                 // instead of just the highlight. See `bar_carry_move`,
                 // `bar_carry_out`, `bar_carry_in`.
+                // With the spine on its INBOX face the same chords walk the
+                // inbox: ↑/↓ move the highlight row to row, → goes to the
+                // highlighted agent, ← lets the highlight go, and 1…9 go
+                // straight to that row (`inbox_view.rs`).
+                "up" | "down" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_walk(ks.key.as_str() == "down", cx);
+                }
+                "right" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_enter(cx);
+                }
+                "left" if self.left_bar && self.spine_inbox() && !m.shift => {
+                    self.inbox_cursor = None;
+                    cx.notify();
+                }
+                "1" | "2" | "3" | "4" | "5" | "6" | "7" | "8" | "9"
+                    if self.left_bar && self.spine_inbox() =>
+                {
+                    let n = (ks.key.as_bytes()[0] - b'0') as usize;
+                    self.inbox_jump(n, cx);
+                }
                 "up" | "down" if self.left_bar => {
                     let down = ks.key.as_str() == "down";
                     if m.shift {
@@ -22498,6 +23349,22 @@ impl Workspace {
     }
 
     fn on_mouse_move(&mut self, ev: &MouseMoveEvent, _w: &mut Window, cx: &mut Context<Self>) {
+        // the flyout's edge is being dragged: dragging left widens it, from
+        // where the grab started, as the left bar's own edge does
+        if let Some((from_x, from_w)) = self.flyout.resize {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.flyout.resize = None;
+                self.save(cx);
+                cx.notify();
+                return;
+            }
+            let s = theme::outer_choice(cx).grade.scale.max(0.1);
+            let delta = (from_x - f32::from(ev.position.x)) / s;
+            self.flyout.width =
+                (from_w + delta).clamp(flyout_view::FLYOUT_MIN, flyout_view::FLYOUT_MAX);
+            cx.notify();
+            return;
+        }
         // the left bar's edge is being dragged: the width follows the cursor
         // exactly, from where the grab started, so the bar cannot drift under a
         // fast drag the way a delta-per-frame resize does
@@ -22514,18 +23381,35 @@ impl Workspace {
             cx.notify();
             return;
         }
+        // an INBOX row carried toward another agent's row: engage past the
+        // same threshold as the tree, so a press on a row is still a click
+        if let Some(d) = self.inbox_drag_mut() {
+            if ev.pressed_button != Some(MouseButton::Left) {
+                self.take_inbox_drag();
+            } else {
+                d.at = ev.position;
+                let dx = f32::from(d.at.x) - f32::from(d.start.x);
+                let dy = f32::from(d.at.y) - f32::from(d.start.y);
+                d.engaged |= (dx * dx + dy * dy).sqrt() > 6.0;
+            }
+            cx.notify();
+            return;
+        }
         // a left-bar filing drag: engage past a threshold (so a click on a row
         // is still a click) and resolve which branch a release would file into
-        if self.bar_drag.is_some() {
+        if self.bar_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.bar_drag = None;
+                self.take_bar_drag();
                 cx.notify();
                 return;
             }
             let pos = ev.position;
-            let over = self.resolve_bar_drop(pos);
+            let relate = self
+                .bar_drag()
+                .and_then(|d| self.bar_relate_drop(d.what, pos, cx));
+            let over = relate.or_else(|| self.resolve_bar_drop(pos));
             let in_bay = self.point_in_bay(pos);
-            if let Some(d) = self.bar_drag.as_mut() {
+            if let Some(d) = self.bar_drag_mut() {
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -22547,9 +23431,9 @@ impl Workspace {
         // an outer-tab reorder in flight owns the move: track the cursor, engage
         // past a small threshold (so a plain tab click still activates), and
         // resolve which slot a release would drop the tab into.
-        if self.tab_drag.is_some() {
+        if self.tab_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.tab_drag = None;
+                self.take_tab_drag();
                 self.tab_drop = None;
                 self.tab_drop_newrow = false;
                 cx.notify();
@@ -22557,7 +23441,7 @@ impl Workspace {
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.tab_drag.as_mut().unwrap();
+                let d = self.tab_drag_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -22582,9 +23466,9 @@ impl Workspace {
         // a group drag in flight: track the cursor, engage past the threshold (so a
         // plain handle click still folds the group), and resolve the drop slot —
         // the whole group lands at the slot a release would drop it into.
-        if self.group_drag.is_some() {
+        if self.group_drag().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.group_drag = None;
+                self.take_group_drag();
                 self.tab_drop = None;
                 self.tab_drop_newrow = false;
                 cx.notify();
@@ -22592,7 +23476,7 @@ impl Workspace {
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.group_drag.as_mut().unwrap();
+                let d = self.group_drag_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -22617,16 +23501,16 @@ impl Workspace {
         // a sub-tab drag in flight owns the move: track the cursor, engage past
         // a small threshold (so a plain header click still focuses), and resolve
         // the drop landing under the cursor for the overlay.
-        if self.drag_pane.is_some() {
+        if self.drag_pane().is_some() {
             if ev.pressed_button != Some(MouseButton::Left) {
-                self.drag_pane = None;
+                self.take_drag_pane();
                 self.drop_target = None;
                 cx.notify();
                 return;
             }
             let pos = ev.position;
             let engaged = {
-                let d = self.drag_pane.as_mut().unwrap();
+                let d = self.drag_pane_mut().unwrap();
                 d.at = pos;
                 if !d.engaged {
                     let dx = f32::from(pos.x) - f32::from(d.start.x);
@@ -22645,7 +23529,7 @@ impl Workspace {
                 .unwrap_or((0.0, 0.0));
             let outside = engaged && outside_bounds(f32::from(pos.x), f32::from(pos.y), ow, oh);
             let in_bay = engaged && !outside && self.point_in_bay(pos);
-            if let Some(d) = self.drag_pane.as_mut() {
+            if let Some(d) = self.drag_pane_mut() {
                 d.left_window = outside;
                 d.over_bay = in_bay;
             }
@@ -22653,7 +23537,7 @@ impl Workspace {
             // in-window landing zones stop being offered: two affordances lit at
             // once is a release whose outcome nobody can predict.
             self.drop_target = if engaged && !outside && !in_bay {
-                let id = self.drag_pane.as_ref().unwrap().id;
+                let id = self.drag_pane().unwrap().id;
                 self.resolve_drop(pos, id)
             } else {
                 None
@@ -22667,37 +23551,37 @@ impl Workspace {
         // self-clear above, with their own drop teardown.)
         if ev.pressed_button != Some(MouseButton::Left)
             && (self.scrubbing
-                || self.wheel_drag.is_some()
-                || self.light_drag
-                || self.slider_drag.is_some()
-                || self.track_drag.is_some()
-                || self.tab_wheel_drag.is_some()
-                || self.tab_light_drag
-                || self.focus_zoom_drag
-                || self.card_scale_drag
-                || self.agents_drag.is_some()
-                || self.focus_sel_drag
-                || self.drag_split.is_some())
+                || self.wheel_drag().is_some()
+                || self.light_drag()
+                || self.slider_drag().is_some()
+                || self.track_drag().is_some()
+                || self.tab_wheel_drag().is_some()
+                || self.tab_light_drag()
+                || self.focus_zoom_drag()
+                || self.card_scale_drag()
+                || self.agents_drag().is_some()
+                || self.focus_sel_drag()
+                || self.drag_split().is_some())
         {
-            if self.agents_drag.take().is_some() {
+            if self.take_agents_drag().is_some() {
                 agentcfg::save(&self.agents_prefs);
             }
             self.scrubbing = false;
-            self.wheel_drag = None;
-            self.light_drag = false;
-            self.slider_drag = None;
-            self.track_drag = None;
-            self.tab_wheel_drag = None;
-            self.tab_light_drag = false;
-            self.focus_zoom_drag = false;
-            self.card_scale_drag = false;
-            self.focus_sel_drag = false;
-            self.drag_split = None;
+            self.take_wheel_drag();
+            self.take_light_drag();
+            self.take_slider_drag();
+            self.take_track_drag();
+            self.take_tab_wheel_drag();
+            self.take_tab_light_drag();
+            self.take_focus_zoom_drag();
+            self.take_card_scale_drag();
+            self.take_focus_sel_drag();
+            self.take_drag_split();
             cx.notify();
             return;
         }
         if ev.pressed_button == Some(MouseButton::Left) {
-            if let Some(split_id) = self.drag_split {
+            if let Some(split_id) = self.drag_split().copied() {
                 let bounds = self.split_bounds.lock().unwrap().get(&split_id).copied();
                 if std::env::var("TD_KEYDEBUG").is_ok() {
                     eprintln!(
@@ -22731,25 +23615,27 @@ impl Workspace {
                 self.set_scale(s, cx);
             }
         }
-        if let Some(key) = self.slider_drag {
+        if let Some(key) = self.slider_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(v) = self.grade_from_pos(key, ev.position.x) {
                     self.apply_grade(key, v, cx);
                 }
             }
         }
-        if self.focus_zoom_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.focus_zoom_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.focus_zoom_from_pos(ev.position.x) {
                 self.set_focus_zoom(frac, cx);
             }
         }
-        if self.card_scale_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.card_scale_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(frac) = self.card_scale_from_pos(ev.position.x) {
                 self.set_card_scale(frac, cx);
             }
         }
         // The Agents page's thresholds: a drag is smooth, to the minute.
-        if let (Some(which), Some(MouseButton::Left)) = (self.agents_drag, ev.pressed_button) {
+        if let (Some(which), Some(MouseButton::Left)) =
+            (self.agents_drag().copied(), ev.pressed_button)
+        {
             if let Some(pos) = self.agents_track_pos(which, ev.position.x) {
                 let (scale, _) = Self::agents_scale(which);
                 self.set_agents_minutes(which, agentrest::drag(&scale, pos));
@@ -22762,7 +23648,7 @@ impl Workspace {
         if ev.pressed_button == Some(MouseButton::Left) {
             self.focus_drag_extend(ev.position, cx);
         }
-        if let Some(target) = self.wheel_drag {
+        if let Some(target) = self.wheel_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 // hue + saturation follow the cursor; keep the marker's lightness
                 let l = self.wheel_color(target, cx).l;
@@ -22771,12 +23657,12 @@ impl Workspace {
                 }
             }
         }
-        if self.light_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.light_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(l) = self.light_from_pos(ev.position.x) {
                 self.set_active_lightness(l, cx);
             }
         }
-        if let Some(idx) = self.track_drag {
+        if let Some(idx) = self.track_drag().copied() {
             if ev.pressed_button == Some(MouseButton::Left) {
                 if let Some(v) = self.track_from_pos(idx, ev.position.x) {
                     self.apply_track(idx, v, cx);
@@ -22784,7 +23670,7 @@ impl Workspace {
             }
         }
         // tab-config wheel pip drag: hue + saturation follow the cursor, keep `l`
-        if let (Some(pip), Some(i)) = (self.tab_wheel_drag, self.tab_menu) {
+        if let (Some(pip), Some(i)) = (self.tab_wheel_drag().copied(), self.tab_menu) {
             if ev.pressed_button == Some(MouseButton::Left) {
                 let b = *self.tab_wheel_bounds.lock().unwrap();
                 if let Some(b) = b {
@@ -22796,7 +23682,7 @@ impl Workspace {
             }
         }
         // tab-config lightness drag for the active pip
-        if self.tab_light_drag && ev.pressed_button == Some(MouseButton::Left) {
+        if self.tab_light_drag() && ev.pressed_button == Some(MouseButton::Left) {
             if let Some(i) = self.tab_menu {
                 let b = *self.tab_light_bounds.lock().unwrap();
                 if let Some(b) = b {
@@ -22816,15 +23702,34 @@ impl Workspace {
 
     fn on_mouse_up(&mut self, ev: &MouseUpEvent, window: &mut Window, cx: &mut Context<Self>) {
         self.scrubbing = false;
+        if self.flyout.resize.take().is_some() {
+            self.save(cx);
+            cx.notify();
+            return;
+        }
         if self.bar_resize.take().is_some() {
             self.save(cx);
+            cx.notify();
+            return;
+        }
+        // an INBOX row let go over another agent's row: the two are introduced
+        // through the relate dialog. Anywhere else, the press was the click
+        // that already went to the row's pane.
+        if let Some(drag) = self.take_inbox_drag() {
+            if drag.engaged {
+                if let Some(to) = self.inbox_relate_target(drag.from, ev.position, cx) {
+                    if let Some(actor) = self.pane_by_id(drag.from) {
+                        self.offer_relate_to(actor, vec![to], None, window, cx);
+                    }
+                }
+            }
             cx.notify();
             return;
         }
         // a left-bar drag lands: file what was grabbed into the branch under the
         // cursor. A drag that never engaged was a click, and the click has
         // already done its work (activate / scope) on the way down.
-        if let Some(drag) = self.bar_drag.take() {
+        if let Some(drag) = self.take_bar_drag() {
             self.bay = 0.;
             if drag.engaged && drag.over_bay {
                 self.drop_in_bay(drag.what, window, cx);
@@ -22832,6 +23737,17 @@ impl Workspace {
                 return;
             }
             if drag.engaged {
+                // Over the middle of another tab's row: the two tabs' agents
+                // are being introduced, not filed (`bar_relate_drop`).
+                if let (BarDragged::Task(i), Some(tree::Drop::Into(tree::RowId::Task(j)))) =
+                    (drag.what, drag.over)
+                {
+                    if let Some(actor) = self.tab_agents(i, cx).into_iter().next() {
+                        self.offer_relate(actor, j, None, window, cx);
+                    }
+                    cx.notify();
+                    return;
+                }
                 if let Some(drop) = drag.over {
                     if self.apply_bar_drop(drag.what, drop, cx) {
                         self.save(cx);
@@ -22855,31 +23771,31 @@ impl Workspace {
                 return;
             }
         }
-        if self.wheel_drag.take().is_some()
-            || std::mem::take(&mut self.light_drag)
-            || self.track_drag.take().is_some()
-            || self.tab_wheel_drag.take().is_some()
-            || std::mem::take(&mut self.tab_light_drag)
+        if self.take_wheel_drag().is_some()
+            || self.take_light_drag()
+            || self.take_track_drag().is_some()
+            || self.take_tab_wheel_drag().is_some()
+            || self.take_tab_light_drag()
         {
             self.save(cx);
             cx.notify();
             return;
         }
-        if self.slider_drag.take().is_some() {
+        if self.take_slider_drag().is_some() {
             self.save(cx);
             cx.notify();
             return;
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
-        if std::mem::take(&mut self.focus_zoom_drag) {
+        if self.take_focus_zoom_drag() {
             cx.notify();
             return;
         }
-        if std::mem::take(&mut self.card_scale_drag) {
+        if self.take_card_scale_drag() {
             cx.notify();
             return;
         }
-        if self.agents_drag.take().is_some() {
+        if self.take_agents_drag().is_some() {
             agentcfg::save(&self.agents_prefs);
             cx.notify();
             return;
@@ -22892,7 +23808,7 @@ impl Workspace {
         }
         // a group drag: drop the whole group into its resolved slot, or — if it
         // never engaged — treat the handle press as a click that folds the group.
-        if let Some(drag) = self.group_drag.take() {
+        if let Some(drag) = self.take_group_drag() {
             let slot = self.tab_drop.take();
             if drag.engaged {
                 if let Some(to) = slot {
@@ -22905,7 +23821,7 @@ impl Workspace {
             return;
         }
         // a tab reorder: drop the grabbed tab into its resolved slot
-        if let Some(drag) = self.tab_drag.take() {
+        if let Some(drag) = self.take_tab_drag() {
             let slot = self.tab_drop.take();
             self.tab_drop_newrow = false;
             if drag.engaged {
@@ -22916,7 +23832,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if let Some(drag) = self.drag_pane.take() {
+        if let Some(drag) = self.take_drag_pane() {
             let target = self.drop_target.take();
             if drag.engaged {
                 let (ow, oh) = self
@@ -22931,8 +23847,38 @@ impl Workspace {
                     // here and a pane closed with alt+w land in one holding and
                     // come back the same way.
                     self.close_pane(drag.id, window, cx);
+                } else if let (Some(to), Some(pane)) = (
+                    self.inbox_relate_target(drag.id, ev.position, cx),
+                    self.pane_by_id(drag.id),
+                ) {
+                    // Onto an agent's INBOX row: that agent, exactly, and no
+                    // move — a row in the inbox is not a place to put a pane.
+                    self.offer_relate_to(pane, vec![to], None, window, cx);
                 } else if let Some(target) = target {
-                    self.perform_drop(drag.id, target, window, cx);
+                    // A pane dropped on ANOTHER tab with an agent in it asks how
+                    // the two agents work together; moving it in stays one of
+                    // the answers (`relate_view.rs`). No agent on either side,
+                    // and the drop joins the tab as it always did.
+                    let onto = match &target {
+                        DropTarget::Tab { index } | DropTarget::BarTask { index, .. } => {
+                            Some(*index)
+                        }
+                        _ => None,
+                    };
+                    let home = self.tabs.iter().position(|t| {
+                        let mut v = vec![];
+                        t.root.leaves(&mut v);
+                        v.iter().any(|e| e.entity_id() == drag.id)
+                    });
+                    let offered = match (onto, self.pane_by_id(drag.id)) {
+                        (Some(to), Some(pane)) if home != Some(to) => {
+                            self.offer_relate(pane, to, Some((drag.id, target.clone())), window, cx)
+                        }
+                        _ => false,
+                    };
+                    if !offered {
+                        self.perform_drop(drag.id, target, window, cx);
+                    }
                 } else if outside && self.pane_count() > 1 {
                     // released past the window edge → tear this pane off into a
                     // brand-new window. Guarded so you can't pop out your only
@@ -22944,7 +23890,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.drag_split.take().is_some() {
+        if self.take_drag_split().is_some() {
             self.save(cx);
         }
     }
@@ -23425,6 +24371,7 @@ impl Workspace {
                     // the thing the person promoted this morning.
                     level: t.level,
                     hotkey: t.hotkey,
+                    side: t.side,
                     root,
                     name: t.name,
                     focused: t.focused,
@@ -23711,6 +24658,10 @@ impl Workspace {
     ) -> gpui::Div {
         let sk = skin::for_theme(cx, th, 1.);
         const TRACK: f32 = 150.;
+        // Shown in Settings, a gauge has the column's room: a label that
+        // does not wrap, a track that runs to the readout, a target as tall
+        // as the row.
+        let wide = self.hosting() == Some(settings::Host::Gauges);
         let store = self.slider_bounds.clone();
         // `value` is in the channel's stored units; normalise to a 0..1 track
         // fraction so colour channels (0..1) and text size (0.7..1.6) share the
@@ -23766,7 +24717,8 @@ impl Workspace {
         });
         let label_el = div()
             .relative()
-            .w(px(74.))
+            .flex_shrink_0()
+            .w(px(if wide { 168. } else { 74. }))
             .text_size(sk.text_px(10.))
             .text_color(th.text.alpha(0.8))
             .child(if pinned {
@@ -23801,23 +24753,38 @@ impl Workspace {
             }
             None => label_el.into_any_element(),
         };
+        let acc = th.accent;
         div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
+            .when(wide, |d| {
+                d.w_full()
+                    .gap_4()
+                    .px_3()
+                    .py(px(5.))
+                    .rounded(sk.radius())
+                    .hover(move |st| st.bg(acc.alpha(0.07)))
+            })
             .child(label_el)
             .child(
                 div()
-                    .w(px(TRACK))
-                    .h(px(14.))
+                    .map(|d| {
+                        if wide {
+                            d.flex_1().min_w(px(120.)).h(px(22.))
+                        } else {
+                            d.w(px(TRACK)).h(px(14.))
+                        }
+                    })
                     .relative()
+                    .debug_selector(move || format!("osd-slider-{key:?}"))
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.slider_drag = Some(key);
+                            ws.drag = Some(Drag::Slider(key));
                             if let Some(v) = ws.grade_from_pos(key, ev.position.x) {
                                 ws.apply_grade(key, v, cx);
                             }
@@ -23836,7 +24803,9 @@ impl Workspace {
             )
             .child(
                 div()
-                    .w(px(sk.fit(28., 42.)))
+                    .flex_shrink_0()
+                    .w(px(if wide { 52. } else { sk.fit(28., 42.) }))
+                    .when(wide, |d| d.flex().justify_end())
                     .whitespace_nowrap()
                     .text_size(sk.text_px(9.))
                     .text_color(th.accent)
@@ -24113,31 +25082,48 @@ impl Workspace {
     ) -> gpui::Div {
         let sk = skin::for_theme(cx, th, 1.);
         const TRACK: f32 = 108.;
+        let wide = self.hosting() == Some(settings::Host::Gauges);
         let store = self.track_bounds[idx].clone();
         let frac = value.clamp(0.0, 1.0);
+        let acc = th.accent;
         div()
             .flex()
             .flex_row()
             .items_center()
             .gap_2()
+            .when(wide, |d| {
+                d.w_full()
+                    .gap_4()
+                    .px_3()
+                    .py(px(5.))
+                    .pr(px(52. + 16. + 12.))
+                    .rounded(sk.radius())
+                    .hover(move |st| st.bg(acc.alpha(0.07)))
+            })
             .child(
                 div()
-                    .w(px(58.))
+                    .flex_shrink_0()
+                    .w(px(if wide { 168. } else { 58. }))
                     .text_size(sk.text_px(10.))
                     .text_color(th.text.alpha(0.8))
                     .child(label.to_string()),
             )
             .child(
                 div()
-                    .w(px(TRACK))
-                    .h(px(14.))
+                    .map(|d| {
+                        if wide {
+                            d.flex_1().min_w(px(120.)).h(px(22.))
+                        } else {
+                            d.w(px(TRACK)).h(px(14.))
+                        }
+                    })
                     .relative()
                     .cursor_pointer()
                     .on_mouse_down(
                         MouseButton::Left,
                         cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.track_drag = Some(idx);
+                            ws.drag = Some(Drag::Track(idx));
                             if let Some(v) = ws.track_from_pos(idx, ev.position.x) {
                                 ws.apply_track(idx, v, cx);
                             }
@@ -24193,7 +25179,7 @@ impl Workspace {
                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
                     if let Some(t) = ws.wheel_grab(ev.position.x, ev.position.y, cx) {
-                        ws.wheel_drag = Some(t);
+                        ws.drag = Some(Drag::Wheel(t));
                         ws.wheel_active = t; // the lightness slider follows it
                         let l = ws.wheel_color(t, cx).l;
                         if let Some(hex) = ws.wheel_color_at(ev.position.x, ev.position.y, l) {
@@ -24307,7 +25293,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(|ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.light_drag = true;
+                    ws.drag = Some(Drag::Light);
                     if let Some(l) = ws.light_from_pos(ev.position.x) {
                         ws.set_active_lightness(l, cx);
                     }
@@ -24579,7 +25565,7 @@ impl Workspace {
         self.tab_menu = Some(i);
         self.tab_menu_at = Some(at);
         self.group_menu = None;
-        self.tab_drag = None;
+        self.take_tab_drag();
         self.tab_scope = TabScope::ThisTab;
         self.tab_pip = TabPip::Fill;
         cx.notify();
@@ -24596,7 +25582,7 @@ impl Workspace {
         self.tab_menu = self.tabs.iter().position(|t| t.group == Some(gid));
         self.tab_scope = TabScope::Group;
         self.tab_pip = TabPip::Fill;
-        self.tab_drag = None;
+        self.take_tab_drag();
         cx.notify();
     }
 
@@ -25079,8 +26065,7 @@ impl Workspace {
                 // when a drag is over it.
                 let store = self.bar_bounds.clone();
                 let hot = self
-                    .bar_drag
-                    .as_ref()
+                    .bar_drag()
                     .filter(|d| d.engaged)
                     .and_then(|d| d.over)
                     .is_some_and(|drop| {
@@ -25404,14 +26389,14 @@ impl Workspace {
                     };
                     match what {
                         Some(what) => {
-                            ws.bar_drag = Some(BarDrag {
+                            ws.set_bar_drag(Some(BarDrag {
                                 what,
                                 start: ev.position,
                                 at: ev.position,
                                 engaged: false,
                                 over: None,
                                 over_bay: false,
-                            });
+                            }));
                         }
                         // UNFILED: nothing to drag, so the press goes straight
                         // to the loose tabs, as any other branch press does
@@ -25438,12 +26423,7 @@ impl Workspace {
         th: &theme::Theme,
         sk: &skin::Skin,
     ) -> (bool, Option<gpui::Div>) {
-        let Some(drop) = self
-            .bar_drag
-            .as_ref()
-            .filter(|d| d.engaged)
-            .and_then(|d| d.over)
-        else {
+        let Some(drop) = self.bar_drag().filter(|d| d.engaged).and_then(|d| d.over) else {
             return (false, None);
         };
         let caret = |top: bool| {
@@ -25748,14 +26728,14 @@ impl Workspace {
                     return;
                 }
                 ws.activate_tab(i, window, cx);
-                ws.bar_drag = Some(BarDrag {
+                ws.set_bar_drag(Some(BarDrag {
                     what: BarDragged::Task(i),
                     start: ev.position,
                     at: ev.position,
                     engaged: false,
                     over: None,
                     over_bay: false,
-                });
+                }));
             }),
         )
         .into_any_element()
@@ -25846,10 +26826,16 @@ impl Workspace {
     /// No collector is run, no file is opened and nothing is awaited: the bar
     /// rebuilds every frame, and a widget that touched the disk during paint
     /// would be a stutter in a surface that is never not on screen.
+    /// The records that earn a row in the bar's allowance slot, in order.
+    /// `slot_rows` and the slot's drawing both walk this, so a row and its
+    /// record never fall out of step.
+    fn slot_records(&self) -> impl Iterator<Item = &usage::Record> {
+        self.usage_records.iter().filter(|r| r.earns_a_slot_row())
+    }
+
     fn slot_rows(&self) -> Vec<slot::ProviderRow> {
         let now = usage::now_epoch();
-        self.usage_records
-            .iter()
+        self.slot_records()
             .map(|r| {
                 // A record that does not say when it was written yields `None`
                 // here, and `from_record` treats that as one more thing nobody
@@ -25907,14 +26893,8 @@ impl Workspace {
             .filter(|(_, at)| at.elapsed() < BAY_SAYS_FOR)
             .map(|(what, _)| what.line(self.lang));
         // Aimed at the bin, by either gesture that can be.
-        let hot = self
-            .bar_drag
-            .as_ref()
-            .is_some_and(|d| d.engaged && d.over_bay)
-            || self
-                .drag_pane
-                .as_ref()
-                .is_some_and(|d| d.engaged && d.over_bay);
+        let hot = self.bar_drag().is_some_and(|d| d.engaged && d.over_bay)
+            || self.drag_pane().is_some_and(|d| d.engaged && d.over_bay);
 
         // How far each door slides to be fully open — its own width. Derived
         // from the bar rather than measured, because a door has to know where
@@ -26306,7 +27286,7 @@ impl Workspace {
             .px(px(6.0 * s))
             .pb(px(5.0 * s));
 
-        for (rec, row) in self.usage_records.iter().zip(&rows) {
+        for (rec, row) in self.slot_records().zip(&rows) {
             let deg = slot::Degrade::resolve(self.left_bar_w, rail_w, row.session_ticks);
 
             // The same pace math the usage panel's TOKEN USAGE PACE line uses
@@ -27321,7 +28301,18 @@ impl Workspace {
     /// for a frame now or every `pane::OFFSCREEN_REFRESH` (#964). Set here
     /// because the draw is the one place that knows exactly what is on
     /// screen, so a pane that has just come into view is told in that frame.
-    fn mark_shown_panes(&self, cx: &App) {
+    fn mark_shown_panes(&self, window: &Window, cx: &mut Context<Self>) {
+        let reader = self
+            .focus_read
+            .as_ref()
+            .and_then(|p| p.upgrade())
+            .map(|p| p.entity_id());
+        let foreground = window.is_window_active() && !self.overlay_covers_document();
+        let popup = self.tabs.get(self.active).is_some_and(|tab| {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            leaves.iter().any(|p| p.read(cx).popup_open())
+        });
         let mut active = Vec::new();
         if let Some(tab) = self.tabs.get(self.active) {
             tab.root.leaves(&mut active);
@@ -27332,6 +28323,14 @@ impl Workspace {
             for leaf in leaves {
                 let shown = active.iter().any(|a| a.entity_id() == leaf.entity_id());
                 leaf.read(cx).mark_shown(shown);
+                let in_reader = reader == Some(leaf.entity_id());
+                let focused = leaf.focus_handle(cx).contains_focused(window, cx);
+                let active =
+                    foreground && !popup && focused && shown && (reader.is_none() || in_reader);
+                leaf.update(cx, |v, cx| {
+                    v.document_visibility(shown, cx);
+                    v.document_exposure(active, in_reader, cx);
+                });
             }
         }
     }
@@ -27378,6 +28377,14 @@ impl Workspace {
     /// Parker, 2026-09-25: *"the single click open artifacts will now use this
     /// instead of goto new window on OS"*.
     fn rail_open_here(&mut self, href: &str, cx: &mut Context<Self>) {
+        // Settings › Threads can send artifacts to the side panel instead,
+        // as "◨ side" on the row does; what the panel cannot take still
+        // opens as below.
+        if docopen::artifact_place() == docopen::ArtifactPlace::Side && self.rail_put_side(href, cx)
+        {
+            self.rail_close();
+            return;
+        }
         let Some(target) = deliverable_file(href).and_then(|p| docopen::drawable_document(&p))
         else {
             pane::open_with_system(href);
@@ -27806,6 +28813,17 @@ impl Workspace {
             // an empty head keeps the button at the foot
             None => div(),
         };
+        // The flyout's chip sits under the pill, beside the spine it shares
+        // the right edge with, and goes where the pill goes.
+        let head = div()
+            .flex()
+            .flex_col()
+            .items_center()
+            .gap(px(6. * s))
+            .child(head)
+            .when(uiconfig::shown(cx, uiconfig::Key::Spine), |d| {
+                d.child(self.render_flyout_chip(cx))
+            });
         let splits = uiconfig::shown(cx, uiconfig::Key::SplitButtons);
         column
             .child(head)
@@ -28431,6 +29449,30 @@ impl Workspace {
                                     }),
                                 )
                         }))
+                        // "◨ side": the same deliverable in the right-bar
+                        // flyout of the task on screen, docked beside the
+                        // conversation and covering none of it. Offered by the
+                        // address alone, as "⇲ beside" is.
+                        .children(flyout_view::side_offers(&d.href).then(|| {
+                            let side = d.href.clone();
+                            div()
+                                .px(px(4. * s))
+                                .rounded(px(2. * s))
+                                .border(sk.box_border(1.))
+                                .border_color(hsla(0.58, 0.72, 0.62, 0.6))
+                                .child(SharedString::from(self.lang.strings().flyout.rail_chip))
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(move |ws, _: &MouseDownEvent, window, cx| {
+                                        cx.stop_propagation();
+                                        ws.rail_cursor = row_index;
+                                        if ws.rail_open_side(&side, window, cx) {
+                                            ws.rail_close();
+                                        }
+                                        cx.notify();
+                                    }),
+                                )
+                        }))
                         // Its own click, and it stops there. Opening what a turn
                         // produced and visiting the terminal that produced it are
                         // two different acts, and reading never does the second.
@@ -28919,7 +29961,32 @@ impl Workspace {
             // whatever a branch row is pinned to — only the whole session
             // widens it (see `render_strip_head`). This row's glyphs and their
             // arrangement are the next pass.
-            .child(div().flex_1().min_w_0())
+            // The spine's two faces — PROJECTS and INBOX — in the stretch the
+            // scope chip once had, so the buttons stay at the right-hand end.
+            // The tree's own buttons (fold all, new project) act on the tree,
+            // so the INBOX face leaves them out and carries + NEW instead.
+            .child(self.render_spine_faces(&sk, s, cx))
+            // The INBOX face ends in a + that opens the composer, where the
+            // PROJECTS face ends in the + that makes a project: one glyph in
+            // one place, each face's own new thing. It was "+ NEW", which ran
+            // under the ◀ in the chalk skin, and in Spanish, French and Russian
+            // in every skin.
+            .when(self.spine_inbox(), |d| {
+                d.child(with_tip(
+                    Self::bezel_btn_s(&sk, "+", false, s * 0.85)
+                        .id("spine-new-chat")
+                        .debug_selector(|| "spine-new-chat".into())
+                        .flex_none()
+                        .on_mouse_down(
+                            MouseButton::Left,
+                            cx.listener(|ws, _: &MouseDownEvent, window, cx| {
+                                cx.stop_propagation();
+                                ws.open_composer(window, cx);
+                            }),
+                        ),
+                    vec![self.lang.strings().entry.new_chat_tip.to_string()],
+                ))
+            })
             // Unboxed, ADD PROJECT lives here, beside the TABS handle with a
             // hairline between them: it is about the projects this tree lists,
             // and with it up here the top bar has nothing of its own left to
@@ -28928,7 +29995,7 @@ impl Workspace {
             // spine (adjescent and SEPARATED from tabs... this will eliminate
             // the TOP rail"*. With the spine shut it goes back to the top
             // corner, beside SPINE, since that is then the only way in.
-            .when(sk.unboxed(), |d| {
+            .when(sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     Self::bezel_btn_s(&sk, self.lang.strings().parts.ctl_add_project, false, s)
                         .id("spine-add-project")
@@ -28954,7 +30021,7 @@ impl Workspace {
             // project. The ◀ beside them is the handle that trades the tree for
             // tabs across the top, and it is never a switch: "we DEFINITELY DO
             // NOT HIDE THE little arrow to change this even in clean mode."
-            .when(bar_header && !sk.unboxed(), |d| {
+            .when(bar_header && !sk.unboxed() && !self.spine_inbox(), |d| {
                 d.child(
                     // fold or unfold the whole tree. One button rather than two,
                     // showing the triangle of what pressing it does: pointing down
@@ -29035,8 +30102,15 @@ impl Workspace {
             .flex_col()
             .gap(px(1. * s))
             .pb(px(6. * s));
-        for row in rows {
-            list = list.child(self.bar_row(row, cx));
+        if self.spine_inbox() {
+            // The INBOX face: the same list, holding every agent as a
+            // conversation to close (`inbox_view.rs`). The tree's keyboard
+            // cursor addresses tree rows, so it is not drawn here.
+            list = list.children(self.inbox_list(&th, s, cx));
+        } else {
+            for row in rows {
+                list = list.child(self.bar_row(row, cx));
+            }
         }
 
         Some(
@@ -29254,12 +30328,12 @@ impl Workspace {
                         // select now; arm a reorder drag that engages only if the
                         // cursor travels far enough (else it stays a plain click)
                         ws.activate_tab(i, window, cx);
-                        ws.tab_drag = Some(TabDrag {
+                        ws.set_tab_drag(Some(TabDrag {
                             from: i,
                             start: ev.position,
                             at: ev.position,
                             engaged: false,
-                        });
+                        }));
                         ws.tab_drop = None;
                     }
                 }),
@@ -29757,7 +30831,7 @@ impl Workspace {
                     if let Some(idx) = disk_grab(b, ev.position.x, ev.position.y, &cols) {
                         let pip = ws.tab_pip_colors(i, cx)[idx].0;
                         ws.tab_pip = pip;
-                        ws.tab_wheel_drag = Some(pip);
+                        ws.drag = Some(Drag::TabWheel(pip));
                         if let Some(hex) =
                             disk_color_at(b, ev.position.x, ev.position.y, cols[idx].l)
                         {
@@ -29837,7 +30911,7 @@ impl Workspace {
                 MouseButton::Left,
                 cx.listener(move |ws, ev: &MouseDownEvent, _w, cx| {
                     cx.stop_propagation();
-                    ws.tab_light_drag = true;
+                    ws.drag = Some(Drag::TabLight);
                     let Some(i) = ws.tab_menu else { return };
                     let Some(b) = *ws.tab_light_bounds.lock().unwrap() else {
                         return;
@@ -29976,6 +31050,43 @@ struct SlotTooltip {
 /// Hang a plain hover card on `el`: the first line is the heading, the rest
 /// read under it. One place hangs these, so the glass guard counts one site
 /// however many buttons say what they do.
+/// What a brief's notes bar says once ↪ has put its map into an agent's
+/// prompt: where it landed, how many characters, and what of it is unsaved.
+/// `who` is compared in English — "agent" is the word `send_label` answers
+/// with when nothing names the pane — and only the sentence drawn from it is
+/// translated. One whole phrase per case, because "whose" and "which place"
+/// agree with each other differently in every language. Said in the reader's
+/// language for the bar and in English for the notes report. Shared by a
+/// pane's documents and the flyout's pages.
+fn notes_landed_said(
+    landed: pane::NotesLanded,
+    who: &str,
+    unsaved_n: usize,
+    pictures_n: Option<usize>,
+) -> docview::notes_ui::Said {
+    use docview::notes_ui::{Said, Words};
+    let named = who != "agent";
+    Said::Done(Words::said(|l| {
+        let ui = l.strings().ui;
+        let (place, chars) = match landed {
+            pane::NotesLanded::Prompt(n) if named => (ui.doc_named_prompt, n),
+            pane::NotesLanded::Prompt(n) => (ui.doc_agents_prompt, n),
+            pane::NotesLanded::Composer(n) if named => (ui.doc_named_composer, n),
+            pane::NotesLanded::Composer(n) => (ui.doc_agents_composer, n),
+        };
+        let prompt = lang::fill(place, &[("who", who)]);
+        let unsaved = docview::notes_ui::landed_counts(l, unsaved_n, pictures_n);
+        lang::fill(
+            ui.doc_landed_in,
+            &[
+                ("place", &prompt),
+                ("chars", &chars.to_string()),
+                ("unsaved", &unsaved),
+            ],
+        )
+    }))
+}
+
 fn with_tip(el: gpui::Stateful<gpui::Div>, lines: Vec<String>) -> gpui::Stateful<gpui::Div> {
     el.tooltip(move |_w, cx| {
         cx.new(|_| SlotTooltip {
@@ -30850,7 +31961,7 @@ fn render_node(
                         MouseButton::Left,
                         cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                             cx.stop_propagation();
-                            ws.drag_split = Some(id);
+                            ws.drag = Some(Drag::Split(id));
                             cx.notify();
                         }),
                     );
@@ -30909,7 +32020,7 @@ fn render_node(
                                         .map(|b| (b.origin.x, b.size.width))
                                 );
                             }
-                            if ws.drag_split.is_some() {
+                            if ws.drag_split().is_some() {
                                 return; // an inner split already claimed this press
                             }
                             let Some(b) = store2.lock().unwrap().get(&id).copied() else {
@@ -30930,7 +32041,7 @@ fn render_node(
                                 if std::env::var("TD_KEYDEBUG").is_ok() {
                                     eprintln!("split handle grabbed: {id}");
                                 }
-                                ws.drag_split = Some(id);
+                                ws.drag = Some(Drag::Split(id));
                                 cx.notify();
                             }
                         }),
@@ -31274,7 +32385,8 @@ impl Render for Workspace {
             self.fold_open = None;
             self.fold_hover = None;
         }
-        self.mark_shown_panes(cx);
+        self.mark_shown_panes(window, cx);
+        self.prepare_focused_artifact(window, cx);
         self.reap(window, cx);
         self.forget_pictures_out_of_sight(cx);
         // Holdings past their window, let go of here because the render pass is
@@ -31410,6 +32522,23 @@ impl Render for Workspace {
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
                              // of reach of its own flat hit box. Suppress so the menu reads true.
+                             // The inbox advances its clock, marks the pane in front of the person
+                             // visited, saves and books its next wake — once a frame, after the
+                             // reap, so it never lists a pane this frame has already closed.
+        let looking = window.is_window_active() && !self.overlay_owns_keyboard();
+        self.inbox_tick(looking, cx);
+        // The composer holds the keyboard while it is up. If something else
+        // took it — a click on a tab, a pane, the tree — the page is put away
+        // rather than left over a terminal that is now being typed into.
+        if self.composer.is_some() && !self.focus_handle.is_focused(window) {
+            self.composer_put_away();
+        }
+        if self.relate.is_some() && !self.focus_handle.is_focused(window) {
+            self.relate = None;
+        }
+        // A pane clicked while the flyout held the keyboard: it holds it no
+        // longer, and the pane's typing is the pane's again.
+        self.flyout_lost_focus(window);
         warp::set_suppressed(
             pane_popup_open
                 // PAINT raises a card over EVERY pane at once, each one drawn
@@ -31439,6 +32568,7 @@ impl Render for Workspace {
                 || self.plugins_menu
                 || self.notif_menu
                 || self.agents_menu
+                || self.settings.is_some()
                 || self.bug_menu
                 || self.admin_menu
                 || self.update_menu
@@ -31455,6 +32585,9 @@ impl Render for Workspace {
                 || self.lang_picker.is_some()
                 || self.logo_picker.is_some()
                 || self.agent_launcher.is_some()
+                // The composer is a page over every pane of the active tab.
+                || self.composer.is_some()
+                || self.relate.is_some()
                 || self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some(),
         );
         // drop-hit-test rects are rebuilt every frame by the canvases below, so
@@ -31505,7 +32638,48 @@ impl Render for Workspace {
                         })
                     }
                     "help" => self.help_open = true,
+                    // Settings, at the page TD_SETTINGS_PAGE names.
+                    "settings" => {
+                        let page = std::env::var("TD_SETTINGS_PAGE")
+                            .ok()
+                            .and_then(|p| settings::Page::from_id(&p));
+                        self.open_settings(Some(page.unwrap_or(settings::Page::General)), cx);
+                        // A panel shown in place: TD_SETTINGS_HOST=palette|gauges|keys.
+                        match std::env::var("TD_SETTINGS_HOST").ok().as_deref() {
+                            Some("palette") => {
+                                self.menu_at = None;
+                                self.theme_menu = Some(MenuScope::Outer);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Palette);
+                                }
+                            }
+                            Some("gauges") => {
+                                self.open_osd(MenuScope::Outer, None);
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Gauges);
+                                }
+                            }
+                            Some("keys") => {
+                                self.help_open = true;
+                                if let Some(b) = self.settings.as_mut() {
+                                    b.host = Some(settings::Host::Keys);
+                                }
+                            }
+                            _ => {}
+                        }
+                        if let Ok(q) = std::env::var("TD_SETTINGS_QUERY") {
+                            if let Some(b) = self.settings.as_mut() {
+                                b.query = q;
+                            }
+                        }
+                    }
                     "size" => self.scale_menu = true,
+                    // The window's GAUGES tray, two groups open, so each shows
+                    // its picture over its sliders.
+                    "gauges" => {
+                        self.open_osd(MenuScope::Outer, None);
+                        self.osd_groups = vec![false, true, false, false, true];
+                    }
                     "tab" => self.open_tab_menu(self.active, point(px(350.), px(90.)), cx),
                     "launcher" => {
                         let cwd = first
@@ -31519,6 +32693,7 @@ impl Render for Workspace {
                                 path: cwd,
                                 name: "Native fixture".into(),
                                 repo: false,
+                                machine: None,
                             }],
                             order: vec![0],
                             selected: 0,
@@ -31576,6 +32751,10 @@ impl Render for Workspace {
             self.confirm_close = Some(self.active);
             cx.notify();
         }
+        // demo/capture hook (TD_RELATE_DEMO): the relate dialog, once.
+        self.relate_demo(window, cx);
+        // demo/capture hook (TD_FLYOUT_DEMO): the right-bar flyout, once.
+        self.flyout_demo(window, cx);
         // demo/capture hook (TD_THRESHING_FLOOR_DEMO): open the Threshing Floor for a rig that
         // cannot click the counter; a number selects that seat without granting access.
         if let Ok(how) = std::env::var("TD_THRESHING_FLOOR_DEMO") {
@@ -31629,6 +32808,11 @@ impl Render for Workspace {
         if std::env::var("TD_CONFIG_DEMO").is_ok() && !self.more_menu {
             self.more_menu = true;
             cx.notify();
+        }
+        // Opens the real settings for isolated-display capture. No fixture
+        // status, provider process or configuration write is fabricated.
+        if std::env::var("TD_SKILLS_DEMO").is_ok() && !self.agents_menu {
+            self.open_agents(cx);
         }
         // demo/capture hook (TD_OSD_DEMO): open the OUTER display tray, the
         // other tray raised from the bottom-right glyph row, so a change to
@@ -31998,8 +33182,8 @@ impl Render for Workspace {
             }
         }
         // while a tab is being dragged, an accent bar marks the slot it'd land in
-        let dragging_tab = self.tab_drag.as_ref().is_some_and(|d| d.engaged)
-            || self.group_drag.as_ref().is_some_and(|d| d.engaged);
+        let dragging_tab = self.tab_drag().is_some_and(|d| d.engaged)
+            || self.group_drag().is_some_and(|d| d.engaged);
         let drop_slot = self.tab_drop;
         let new_row_drop = dragging_tab && self.tab_drop_newrow;
         // the between-tabs insertion caret — bold + glowing so it can't be missed
@@ -32387,6 +33571,33 @@ impl Render for Workspace {
                     cx.notify();
                 }),
             );
+        // ⚙ Settings: the book every setting lives in. It leads the corner and
+        // nothing hides it, like CONFIG, because it is the way to everything
+        // the other glyphs open.
+        let ic_settings = with_tip(
+            Self::hicon_s(&sk, self.settings.is_some(), scale)
+                .id("toolbar-settings")
+                .debug_selector(|| "toolbar-settings".into())
+                .text_size(sk.text_px(if sk.text_controls() {
+                    11. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .line_height(px(if sk.text_controls() {
+                    14. * scale
+                } else {
+                    CHROME_GLYPH * scale
+                }))
+                .child(sk.control("\u{2699}", self.lang.strings().settings.title)),
+            vec![self.lang.strings().settings.glyph_tip.to_string()],
+        )
+        .on_mouse_down(
+            MouseButton::Left,
+            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                cx.stop_propagation();
+                ws.toggle_settings(cx);
+            }),
+        );
         let ic_agents = Self::hicon_s(&sk, self.agents_menu, scale)
             .id("toolbar-agents")
             .debug_selector(|| "toolbar-agents".into())
@@ -32566,65 +33777,18 @@ impl Render for Workspace {
             );
         let art_door_is_glyph = ui_glyph[6] && !chrome_narrow;
         let (art_dot, art_bumps) = (self.art_unseen, self.art_bumps);
-        let ic_more = Self::hicon_s(&sk, self.more_menu, scale)
-            .relative()
-            .text_size(sk.text_px(if sk.text_controls() {
-                11. * scale
-            } else {
-                CHROME_GLYPH * scale
-            }))
-            .line_height(px(if sk.text_controls() {
-                14. * scale
-            } else {
-                CHROME_GLYPH * scale
-            }))
-            .child(sk.control("\u{2026}", crate::lang::current().strings().parts.ctl_more))
-            .on_mouse_down(
-                MouseButton::Left,
-                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                    cx.stop_propagation();
-                    ws.more_menu = true;
-                    cx.notify();
-                }),
-            );
-        // CONFIG — the classic menu button, for a corner whose glyphs are put
-        // away. A hidden element never hides its news: the bug report's dot
-        // moves onto it, and so does the Git notice's alert ink.
+        // The corner's news, for ⚙ Settings to wear when the glyphs that
+        // carry it are put away: a hidden element never hides its news, so
+        // the bug report's dot moves onto ⚙, and so does the Git notice's
+        // alert ink. (CONFIG, the classic menu button that wore them, went:
+        // Parker, 2026-11-10, "settings and config are redundent - just
+        // settings stays … we built our way out of config".)
         let notice_ink = match self.coordination_store().snapshot.attention_severity() {
             Some(coordination::Severity::Alert) if !ui_notice => Some(th.ansi[1]),
             Some(coordination::Severity::Warning) if !ui_notice => Some(th.ansi[3]),
             _ => None,
         };
         let config_dot = crashed && !ui_glyph[4];
-        let ic_config = Self::bezel_btn_s(
-            &sk,
-            &format!("{} \u{25be}", s.ui.cfg_config),
-            self.more_menu,
-            scale,
-        )
-        .id("config-corner")
-        .relative()
-        .when_some(notice_ink, |d, ink| d.text_color(ink))
-        .when(config_dot, |d| {
-            d.child(
-                div()
-                    .absolute()
-                    .top(px(-2. * scale))
-                    .right(px(-2. * scale))
-                    .size(px(6. * scale))
-                    .rounded_full()
-                    .bg(gpui::hsla(0.07, 0.9, 0.55, 1.0)),
-            )
-        })
-        .on_mouse_down(
-            MouseButton::Left,
-            cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                cx.stop_propagation();
-                ws.more_menu = true;
-                cx.notify();
-            }),
-        );
-
         // At its natural width with its own gaps. As the tree's footer it was
         // stretched across the bar's width; at the right-hand end there is no
         // column under it to be the footer of, and a cluster is what reads as
@@ -32635,27 +33799,33 @@ impl Render for Workspace {
             .items_center()
             .gap(px(if sk.unboxed() { 18. } else { 12. } * scale))
             .map(|d| {
-                if chrome_narrow && config_corner {
-                    d.child(artifact_rail::art_news(
-                        ic_config, art_dot, art_bumps, scale,
-                    ))
-                } else if chrome_narrow {
-                    d.child(artifact_rail::art_news(ic_more, art_dot, art_bumps, scale))
-                } else {
-                    // CONFIG leads whatever glyphs are left, in the corner the
-                    // menus already live in. The 📜 comes first of the glyphs:
-                    // it is the agents' work, and the rest are the window's
-                    // own settings.
-                    d.when(config_corner, |d| {
-                        d.child(if art_door_is_glyph {
-                            ic_config
-                                .when(sk.unboxed(), |d| d.mr(px(8. * scale)))
-                                .into_any_element()
-                        } else {
-                            artifact_rail::art_news(ic_config, art_dot, art_bumps, scale)
-                        })
+                // ⚙ Settings leads the corner and is the one door that is
+                // always there, narrow window or wide: every glyph's panel
+                // has a page in it. It wears the news of what is hidden.
+                let settings = ic_settings
+                    .relative()
+                    .when(config_corner, |d| {
+                        d.when_some(notice_ink, |d, ink| d.text_color(ink))
                     })
-                    .when(ui_glyph[6], |d| {
+                    .when(config_dot, |d| {
+                        d.child(
+                            div()
+                                .absolute()
+                                .top(px(-2. * scale))
+                                .right(px(-2. * scale))
+                                .size(px(6. * scale))
+                                .rounded_full()
+                                .bg(gpui::hsla(0.07, 0.9, 0.55, 1.0)),
+                        )
+                    });
+                if chrome_narrow || !art_door_is_glyph {
+                    // The 📜 is not drawn, so its news rides on ⚙.
+                    d.child(artifact_rail::art_news(settings, art_dot, art_bumps, scale))
+                } else {
+                    d.child(settings)
+                }
+                .when(!chrome_narrow, |d| {
+                    d.when(ui_glyph[6], |d| {
                         d.child(artifact_rail::art_news(ic_art, art_dot, art_bumps, scale))
                     })
                     .when(ui_glyph[0], |d| d.child(ic_theme))
@@ -32665,7 +33835,7 @@ impl Render for Workspace {
                     .when(ui_glyph[3], |d| d.child(ic_notif))
                     .when(ui_glyph[4], |d| d.child(ic_bug))
                     .when(ui_glyph[5], |d| d.child(ic_plugins))
-                }
+                })
             });
 
         // THE MIDDLE of the top row: the ticker while the tree is open, hung
@@ -34118,7 +35288,21 @@ impl Render for Workspace {
                 panel_w
             };
             let panel_h_est = tray_panel_h_est();
-            let mut panel = sk.sheet().id("theme-panel").absolute().w(px(panel_w));
+            // Shown in place on Settings' Appearance page: no anchor to the
+            // footer, no cap to the band, the page scrolls it.
+            let hosted = self.hosting() == Some(settings::Host::Palette);
+            let mut panel = sk
+                .sheet()
+                .id("theme-panel")
+                .debug_selector(|| "theme-panel".into())
+                .when(!hosted, |d| d.absolute())
+                .map(|d| {
+                    if hosted {
+                        d.w_full().flex_wrap().items_start()
+                    } else {
+                        d.w(px(panel_w))
+                    }
+                });
             // Where the tray's top edge lands decides how tall it may be, so
             // the anchor is computed first and kept.
             let tray_top = match self.menu_at {
@@ -34130,31 +35314,42 @@ impl Render for Workspace {
                 // top of the band it hangs over, so that is what caps it.
                 None => self.tray_band().0,
             };
-            panel = match self.menu_at {
-                Some(at) => {
+            panel = match (hosted, self.menu_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
-                .when(sk.text_controls(), |d| d.right(px(8.)))
-                .p_3()
-                .rounded(sk.rad_raw(6.))
-                .border(sk.box_border(2.))
-                .border_color(th.accent.alpha(0.85))
-                .bg(sk.region_face(th.surface.alpha(0.82)))
+                .when(sk.text_controls() && !hosted, |d| d.right(px(8.)))
                 // never spill past the RENDER: clip horizontally, scroll a
                 // tall tray vertically rather than running down over the
                 // bottom bezel. The cap is the terminal band this tray hangs
                 // over plus one hairline — not the window, which is how the
                 // densest tray in the app came to cover the split buttons.
-                .max_h(px(self.tray_max_h(tray_top)))
+                // In the book, the book is the frame and the page scrolls.
+                .when(!hosted, |d| {
+                    d.p_3()
+                        .rounded(sk.rad_raw(6.))
+                        .border(sk.box_border(2.))
+                        .border_color(th.accent.alpha(0.85))
+                        .bg(sk.region_face(th.surface.alpha(0.82)))
+                        .max_h(px(self.tray_max_h(tray_top)))
+                        .overflow_y_scroll()
+                        .shadow(float_shadows(th.accent, th.grade.phosphor))
+                        .map(|d| sk.popup(sk.finish(d)))
+                })
+                .when(hosted, |d| {
+                    d.p_3()
+                        .rounded(sk.radius())
+                        .border(sk.box_border(1.))
+                        .border_color(th.text.alpha(0.14))
+                        .bg(th.text.alpha(0.03))
+                })
                 .overflow_x_hidden()
-                .overflow_y_scroll()
-                .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.popup(sk.finish(d)))
                 .flex()
                 .flex_row()
                 .gap_3()
@@ -34182,20 +35377,61 @@ impl Render for Workspace {
                         d.border_l(px(sk.m.hairline)).border_color(sk.ink.rule)
                     })
                 }))
-                .children(design_menu);
-            // full-screen scrim: click anywhere outside closes
+                .children(design_menu)
+                // Over the window it frosts what is behind it; in the book,
+                // the book already does.
+                .when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("theme-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.theme_menu = None;
-                        ws.design_menu = None;
-                        cx.notify();
-                    }),
-                )
+                .when(hosted, |d| {
+                    d.overflow_y_scroll()
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .pb_8()
+                })
+                .when(!hosted, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.theme_menu = None;
+                            ws.design_menu = None;
+                            cx.notify();
+                        }),
+                    )
+                })
+                // In the book, the look as it is now, over the choices that
+                // change it: each press below redraws it.
+                .when(hosted, |d| {
+                    let look = theme::resolve(cx, &cur);
+                    d.child(
+                        div()
+                            .w_full()
+                            .mb_4()
+                            .flex()
+                            .flex_row()
+                            .gap_3()
+                            .child(settings_preview::gauge(
+                                &look,
+                                &sk,
+                                settings_preview::Gauge::Picture,
+                                260.,
+                                120.,
+                            ))
+                            .child(settings_preview::gauge(
+                                &look,
+                                &sk,
+                                settings_preview::Gauge::Inactive,
+                                360.,
+                                120.,
+                            )),
+                    )
+                })
                 .child(panel)
         });
 
@@ -34323,12 +35559,72 @@ impl Render for Workspace {
                     ],
                 ),
             ];
+            // Shown in Settings, every group is open and is a section of the
+            // page, with a picture of what its gauges do beside its sliders.
+            // Parker, 2026-11-10: *"we are no longer concerned about space, so
+            // gauges should be UNCOLLAPSED"*. In the window's tray they fold,
+            // and an open group shows its picture over its sliders.
+            let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let look = theme::resolve(cx, &cur);
+            let samples = [
+                settings_preview::Gauge::Type,
+                settings_preview::Gauge::Picture,
+                settings_preview::Gauge::Document,
+                settings_preview::Gauge::Active,
+                settings_preview::Gauge::Inactive,
+            ];
+            // The tray's capitals in sentence case, keeping an acronym
+            // (CRT) as it is written.
+            let section_title = |s: &str| {
+                let s: String = s
+                    .split(' ')
+                    .enumerate()
+                    .map(|(i, w)| {
+                        if w.chars().count() <= 3 && w.chars().all(|c| c.is_uppercase()) {
+                            return w.to_string();
+                        }
+                        let mut c = w.chars();
+                        match c.next() {
+                            Some(f) if i == 0 => f
+                                .to_uppercase()
+                                .chain(c.flat_map(|c| c.to_lowercase()))
+                                .collect(),
+                            Some(_) => w.to_lowercase(),
+                            None => String::new(),
+                        }
+                    })
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                div()
+                    .text_size(sk.text_px(11.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(th.text.alpha(0.92))
+                    .child(s)
+            };
+            // A section's card in the book: the sliders, then the picture.
+            let card = |sliders: gpui::Div, sample: Option<AnyElement>| {
+                div()
+                    .flex()
+                    .flex_row()
+                    .items_start()
+                    .gap_4()
+                    .p_3()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(th.text.alpha(0.14))
+                    .bg(th.text.alpha(0.03))
+                    .child(sliders.flex_1().min_w(px(0.)).items_start())
+                    .children(sample)
+            };
+            const SAMPLE_W: f32 = 240.;
+            const SAMPLE_H: f32 = 132.;
             let mut rows = div()
                 .relative()
                 .flex()
                 .flex_col()
                 .gap_2()
-                .when(sk.m.frost > 0., |d| sk.finish_group(d).p_2());
+                .when(hosted, |d| d.gap_6())
+                .when(sk.m.frost > 0. && !hosted, |d| sk.finish_group(d).p_2());
             // A group is its heading until opened; a press on the heading opens
             // or shuts it. Unboxed, each group ends on a short rule, as the
             // CONFIG surfaces' sections do.
@@ -34340,12 +35636,22 @@ impl Render for Workspace {
             };
             let mut lingers_shown = false;
             for (gi, (heading, controls)) in groups.into_iter().enumerate() {
-                let open = self.osd_groups.get(gi).copied().unwrap_or(false);
-                let mut section = div().flex().flex_col().gap_1().child(
+                let open = hosted || self.osd_groups.get(gi).copied().unwrap_or(false);
+                let acc = th.accent;
+                let mut section = div().flex().flex_col().gap_1();
+                // In the book the group's title heads its card; in the tray
+                // the heading is the fold, lit under the pointer.
+                let mut head = if hosted {
+                    section_title(heading)
+                        .id(SharedString::from(format!("osd-group-{gi}")))
+                        .debug_selector(move || format!("osd-group-{gi}"))
+                } else {
                     div()
                         .id(SharedString::from(format!("osd-group-{gi}")))
                         .debug_selector(move || format!("osd-group-{gi}"))
                         .cursor_pointer()
+                        .rounded(sk.radius())
+                        .hover(move |st| st.bg(acc.alpha(0.10)))
                         .child(label(&format!("{} {heading}", fold_mark(open))))
                         .on_mouse_down(
                             MouseButton::Left,
@@ -34357,8 +35663,20 @@ impl Render for Workspace {
                                 ws.osd_groups[gi] = !ws.osd_groups[gi];
                                 cx.notify();
                             }),
-                        ),
-                );
+                        )
+                };
+                if hosted {
+                    head = head.pb_1();
+                }
+                section = section.child(head);
+                let sample = samples.get(gi).map(|which| {
+                    if hosted {
+                        settings_preview::gauge(&look, &sk, *which, SAMPLE_W, SAMPLE_H)
+                    } else {
+                        settings_preview::gauge(&look, &sk, *which, sk.fit(300., 320.) - 30., 64.)
+                    }
+                });
+                let mut sliders = div().flex().flex_col().gap_1();
                 if open {
                     if controls
                         .first()
@@ -34370,20 +35688,22 @@ impl Render for Workspace {
                         } else {
                             t.g_doc_reader
                         };
-                        section = section.child(
-                            Self::bezel_btn(
-                                &sk,
-                                &format!("{} {mode}", if glow { "◉" } else { "◯" }),
-                                glow,
-                            )
-                            .id("osd-doc-mode")
-                            .debug_selector(|| "osd-doc-mode".to_string())
-                            .on_mouse_down(
-                                MouseButton::Left,
-                                cx.listener(|ws, _: &MouseDownEvent, w, cx| {
-                                    cx.stop_propagation();
-                                    ws.toggle_doc_glow_pane(w, cx);
-                                }),
+                        sliders = sliders.child(
+                            div().flex().child(
+                                Self::bezel_btn(
+                                    &sk,
+                                    &format!("{} {mode}", if glow { "◉" } else { "◯" }),
+                                    glow,
+                                )
+                                .id("osd-doc-mode")
+                                .debug_selector(|| "osd-doc-mode".to_string())
+                                .on_mouse_down(
+                                    MouseButton::Left,
+                                    cx.listener(|ws, _: &MouseDownEvent, w, cx| {
+                                        cx.stop_propagation();
+                                        ws.toggle_doc_glow_pane(w, cx);
+                                    }),
+                                ),
                             ),
                         );
                     }
@@ -34395,14 +35715,21 @@ impl Render for Workspace {
                                 | G::InactiveCursorLingerMs
                                 | G::InactiveOffCursorLingerMs
                         );
-                        section = section.child(self.slider_row(key, name, value, &th, cx));
+                        sliders = sliders.child(self.slider_row(key, name, value, &th, cx));
                         if key == G::InactiveText {
-                            section = section.child(label(t.g_text_relative));
+                            sliders = sliders.child(label(t.g_text_relative));
                         }
                     }
                 }
+                if open {
+                    section = if hosted {
+                        section.child(card(sliders, sample))
+                    } else {
+                        section.children(sample).child(sliders)
+                    };
+                }
                 rows = rows.child(section);
-                if sk.unboxed() {
+                if sk.unboxed() && !hosted {
                     rows = rows.child(div().mx(px(18.)).child(sk.rule_h()));
                 }
             }
@@ -34422,7 +35749,11 @@ impl Render for Workspace {
             };
             let panel_w: f32 = sk.fit(300., 320.);
             const PANEL_H_EST: f32 = 830.; // grouped sliders, hints, reset and inheritance
-            let mut panel = sk.sheet().id("osd-panel").absolute().w(px(panel_w));
+            let mut panel = sk
+                .sheet()
+                .id("osd-panel")
+                .when(!hosted, |d| d.absolute())
+                .map(|d| if hosted { d.w_full() } else { d.w(px(panel_w)) });
             let tray_top = match self.osd_at {
                 Some(at) => {
                     let vh = f32::from(window.viewport_size().height);
@@ -34432,52 +35763,77 @@ impl Render for Workspace {
                 // the band's top, as the theme tray is
                 None => self.tray_band().0,
             };
-            panel = match self.osd_at {
-                Some(at) => {
+            panel = match (hosted, self.osd_at) {
+                (true, _) => panel,
+                (false, Some(at)) => {
                     let vw = f32::from(window.viewport_size().width);
                     let right = (vw - f32::from(at.x)).clamp(8., (vw - panel_w - 8.).max(8.));
                     panel.right(px(right)).top(px(tray_top))
                 }
-                None => over_the_footer(panel, scale),
+                (false, None) => over_the_footer(panel, scale),
             };
             panel = panel
                 // Nine slider rows on a short window is taller than the render
                 // it covers, and this tray had no cap at all — it simply drew
                 // past the bottom.
-                .max_h(px(self.tray_max_h(tray_top)))
+                .when(!hosted, |d| d.max_h(px(self.tray_max_h(tray_top))))
                 .overflow_x_hidden()
-                .overflow_y_scroll()
-                .p_3()
-                .rounded(sk.rad_raw(6.))
-                .border(sk.box_border(2.))
-                .border_color(th.accent.alpha(0.85))
-                .bg(sk.region_face(darken(th.surface, 0.6)))
-                .shadow(float_shadows(th.accent, th.grade.phosphor))
-                .map(|d| sk.popup(sk.finish(d)))
+                .when(!hosted, |d| {
+                    // The tray's own frame. In the book, the book is the frame
+                    // and the page scrolls.
+                    d.overflow_y_scroll()
+                        .p_3()
+                        .rounded(sk.rad_raw(6.))
+                        .border(sk.box_border(2.))
+                        .border_color(th.accent.alpha(0.85))
+                        .bg(sk.region_face(darken(th.surface, 0.6)))
+                        .shadow(float_shadows(th.accent, th.grade.phosphor))
+                        .map(|d| sk.popup(sk.finish(d)))
+                })
                 .flex()
                 .flex_col()
                 .gap_2()
+                .when(hosted, |d| d.gap_6())
                 .text_size(sk.text_px(10.))
                 .text_color(th.text)
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|_, _: &MouseDownEvent, _w, cx| cx.stop_propagation()),
-                )
-                .child(label(&format!(
-                    "{} — {}",
-                    t.d_display,
-                    if is_pane { t.scope_pane } else { t.scope_outer }
-                )))
-                .child(rows)
-                .child(
-                    Self::bezel_btn(&sk, t.d_reset, grade.is_neutral()).on_mouse_down(
-                        MouseButton::Left,
-                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                            cx.stop_propagation();
-                            ws.reset_grade(cx);
-                        }),
-                    ),
                 );
+            let reset = Self::bezel_btn(&sk, t.d_reset, grade.is_neutral())
+                .id("osd-reset")
+                .debug_selector(|| "osd-reset".into())
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.reset_grade(cx);
+                    }),
+                );
+            let scope_word = if is_pane { t.scope_pane } else { t.scope_outer };
+            panel = if hosted {
+                // In the book: whose gauges these are, and the reset, above
+                // the sections rather than between them.
+                panel
+                    .child(
+                        div()
+                            .flex()
+                            .flex_row()
+                            .items_center()
+                            .justify_between()
+                            .child(section_title(&format!(
+                                "{} \u{2014} {scope_word}",
+                                t.d_display
+                            )))
+                            .child(div().flex_shrink_0().child(reset)),
+                    )
+                    .child(rows)
+            } else {
+                panel
+                    .child(label(&format!("{} \u{2014} {scope_word}", t.d_display)))
+                    .child(rows)
+                    .child(reset)
+            };
             if is_pane {
                 // Grade-group toggle, independent of the theme tray's: on = this
                 // pane's monitor grade tracks the outer sliders live; off = it
@@ -34503,17 +35859,21 @@ impl Render for Workspace {
             // everything else here, so it scopes to pane/outer and inherits via
             // "follow outer". The angle/depth sliders only appear while crawl is
             // on.
-            panel = panel.child(
-                egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.crawl {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-crawl", self.osd_eggs.crawl, t.d_crawl_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.crawl = !ws.osd_eggs.crawl;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.crawl {
                 let crawl_on = grade.crawl;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -34550,24 +35910,39 @@ impl Render for Workspace {
                             cx,
                         ));
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_crawl_hdr).pb_1())
+                            .child(card(block, None)),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
             // ---- CRT: the master switch, then the tube it switches — warp, the
             // glass glare and the roll bar — behind the second collapsed row. Off is a flat
             // screen, and the knobs only appear while it is on, as crawl's do:
             // the dials keep their values either way, so switching on restores
             // exactly the tube they describe (see `theme::flatten_tube`).
-            panel = panel.child(
-                egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.crt = !ws.osd_eggs.crt;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.crt {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-crt", self.osd_eggs.crt, t.d_crt_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.crt = !ws.osd_eggs.crt;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.crt {
                 let crt_on = grade.crt;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -34643,23 +36018,47 @@ impl Render for Workspace {
                                 ),
                         );
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_crt_hdr).pb_1())
+                            .child(card(
+                                block,
+                                Some(settings_preview::gauge(
+                                    &look,
+                                    &sk,
+                                    settings_preview::Gauge::Crt,
+                                    SAMPLE_W,
+                                    SAMPLE_H,
+                                )),
+                            )),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
             // ---- CURSOR TRAIL: the cursor's phosphor afterimage, behind the
             // third collapsed row. Off until somebody turns it on; the style
             // and its two dials appear only while it is on, as the tube's do,
             // and keep their values when it goes off.
-            panel = panel.child(
-                egg_row("osd-egg-trail", self.osd_eggs.trail, t.d_trail_hdr).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.osd_eggs.trail = !ws.osd_eggs.trail;
-                        cx.notify();
-                    }),
-                ),
-            );
-            if self.osd_eggs.trail {
+            panel = if hosted {
+                panel
+            } else {
+                panel.child(
+                    egg_row("osd-egg-trail", self.osd_eggs.trail, t.d_trail_hdr).on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.osd_eggs.trail = !ws.osd_eggs.trail;
+                            cx.notify();
+                        }),
+                    ),
+                )
+            };
+            if hosted || self.osd_eggs.trail {
                 let trail = grade.cursor_trail.filter(|t| t.on);
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -34726,20 +36125,45 @@ impl Render for Workspace {
                         block = block.child(label(why));
                     }
                 }
-                panel = panel.child(block);
+                panel = if hosted {
+                    panel.child(
+                        div()
+                            .flex()
+                            .flex_col()
+                            .gap_1()
+                            .child(section_title(t.d_trail_hdr).pb_1())
+                            .child(card(block, None)),
+                    )
+                } else {
+                    panel.child(block)
+                };
             }
-            // full-screen scrim: click anywhere outside closes
+            let panel = panel.when(!hosted, |d| d.child(settings_view::frost_behind()));
+            // full-screen scrim: click anywhere outside closes. Shown in
+            // place, it is the page around the panel, scrolling it.
             div()
+                .on_children_prepainted(keep_panels_from_doc_grade)
+                .id("osd-scrim")
                 .absolute()
                 .inset_0()
-                .on_children_prepainted(keep_panels_from_doc_grade)
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        ws.osd_menu = None;
-                        cx.notify();
-                    }),
-                )
+                // In the book the page is the scrim: it scrolls, and a press
+                // on its margin does nothing (the breadcrumb and Esc go back).
+                .when(hosted, |d| {
+                    d.overflow_y_scroll()
+                        .flex()
+                        .justify_center()
+                        .items_start()
+                        .pb_8()
+                })
+                .when(!hosted, |d| {
+                    d.on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            ws.osd_menu = None;
+                            cx.notify();
+                        }),
+                    )
+                })
                 .child(panel)
         });
 
@@ -37055,7 +38479,7 @@ impl Render for Workspace {
                 .inset_0()
                 .on_children_prepainted(keep_panels_from_doc_grade)
                 .occlude()
-                .bg(th.bg.alpha(0.70))
+                .when(self.hosting().is_none(), |d| d.bg(th.bg.alpha(0.70)))
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
@@ -37063,7 +38487,9 @@ impl Render for Workspace {
                         cx.notify();
                     }),
                 )
-                .child(panel)
+                .child(panel.when(self.hosting().is_none(), |d| {
+                    d.child(settings_view::frost_behind())
+                }))
         });
 
         let confirm_overlay = self.confirm_close.and_then(|i| {
@@ -37909,6 +39335,8 @@ impl Render for Workspace {
             // Language-pack picker: click opens a fuzzy-search dropdown over all
             // languages (cycling was painful past a few langs).
             let lang_pick = div()
+                .id("help-lang")
+                .debug_selector(|| "help-lang".into())
                 .px_2()
                 .py_0p5()
                 .rounded(sk.radius())
@@ -39082,7 +40510,7 @@ impl Render for Workspace {
                             match ws.focus_cell_at(ev.position) {
                                 Some(cell) => {
                                     ws.focus_sel = Some((cell, cell));
-                                    ws.focus_sel_drag = true;
+                                    ws.drag = Some(Drag::FocusSel);
                                 }
                                 None => ws.focus_sel = None,
                             }
@@ -39227,7 +40655,7 @@ impl Render for Workspace {
         // filing a task or an initiative from the tree: the chip says where the
         // release would put it, in that branch's own colour, so a drop is never
         // a guess
-        let bar_chip = self.bar_drag.as_ref().filter(|d| d.engaged).map(|d| {
+        let bar_chip = self.bar_drag().filter(|d| d.engaged).map(|d| {
             let ui = self.lang.strings().ui;
             let named = |row: tree::RowId| match row {
                 tree::RowId::Project(p) => (
@@ -39251,6 +40679,13 @@ impl Render for Workspace {
             // client-server" and "above host debts" are different releases and
             // the caret alone does not name what it is next to.
             let (label, color) = match d.over {
+                Some(tree::Drop::Into(row @ tree::RowId::Task(_))) => {
+                    let (name, c) = named(row);
+                    (
+                        lang::fill(self.lang.strings().entry.drag_relate, &[("name", &name)]),
+                        c,
+                    )
+                }
                 Some(tree::Drop::Into(row)) => {
                     let (name, c) = named(row);
                     (lang::fill(ui.drag_into, &[("name", &name)]), c)
@@ -39278,7 +40713,7 @@ impl Render for Workspace {
                 .child(label)
         });
 
-        let drag_chip = self.drag_pane.as_ref().filter(|d| d.engaged).map(|d| {
+        let drag_chip = self.drag_pane().filter(|d| d.engaged).map(|d| {
             div()
                 .absolute()
                 .left(px(f32::from(d.at.x) + 12.))
@@ -39289,10 +40724,31 @@ impl Render for Workspace {
                 .bg(th.accent.alpha(0.9))
                 .text_color(th.bg)
                 .text_size(sk.text_px(10.5))
-                .child(self.lang.strings().ui.drag_moving_subtab)
+                .child(
+                    self.inbox_relate_target(d.id, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| self.lang.strings().ui.drag_moving_subtab.to_string()),
+                )
+        });
+        let inbox_chip = self.inbox_drag().filter(|d| d.engaged).map(|d| {
+            div()
+                .absolute()
+                .left(px(f32::from(d.at.x) + 12.))
+                .top(px(f32::from(d.at.y) + 12.))
+                .px_2()
+                .py_0p5()
+                .rounded(sk.radius())
+                .bg(th.accent.alpha(0.9))
+                .text_color(th.bg)
+                .text_size(sk.text_px(10.5))
+                .child(
+                    self.inbox_relate_target(d.from, d.at, cx)
+                        .map(|to| self.inbox_relate_chip(&to, cx))
+                        .unwrap_or_else(|| "\u{2026}".to_string()),
+                )
         });
 
-        let dragging = self.drag_split;
+        let dragging = self.drag_split().copied();
         let registry = self.split_bounds.clone();
         let pane_reg = self.pane_bounds.clone();
         let drop = self.drop_target.clone();
@@ -39323,7 +40779,11 @@ impl Render for Workspace {
             .mx_2()
             // Doubled black bezel gap between the mother bar and the screen.
             .mt(px(7.))
-            .child(pane_area);
+            .child(pane_area)
+            // The composer lies over the panes inside the screen's own box, so
+            // it can cover them without resizing any (`entry_view.rs`).
+            .children(self.render_composer(&th, cx))
+            .children(self.render_relate(&th, cx));
 
         // The tree and the screen share the space under the mother bar. The bar
         // is `flex_none` at its own width and the screen takes what is left, so
@@ -39336,6 +40796,9 @@ impl Render for Workspace {
             .min_h_0()
             .children(self.render_left_bar(cx))
             .child(screen)
+            // The right-bar flyout, docked: a flex sibling that costs the
+            // terminals its width and covers none of them (`flyout_view.rs`).
+            .children(self.render_flyout(cx))
             // A DOCKED queue sits here, between the panes and the spine, and is
             // a flex sibling like the left bar — so it costs the terminals its
             // width and nothing more. The overlay presentation is not in this
@@ -39345,6 +40808,22 @@ impl Render for Workspace {
             .children(self.render_rail_docked(cx))
             .child(self.render_spine(cx));
 
+        // A panel Settings is showing in place is drawn on the book's page,
+        // not over the window (`settings_view::host_or_root`).
+        let mut hosted: Option<AnyElement> = None;
+        use settings::Host as H;
+        let menu_overlay = self.host_or_root(H::Palette, menu_overlay, &mut hosted);
+        let osd_overlay = self.host_or_root(H::Gauges, osd_overlay, &mut hosted);
+        let update_overlay = self.host_or_root(H::Updates, update_overlay, &mut hosted);
+        let admin_overlay = self.host_or_root(H::Admin, admin_overlay, &mut hosted);
+        let notif_overlay = self.host_or_root(H::Notices, notif_overlay, &mut hosted);
+        let help_overlay = self.host_or_root(H::Keys, help_overlay, &mut hosted);
+        let agents_overlay = self.host_or_root(H::Skills, agents_overlay, &mut hosted);
+        let savings_overlay = self.host_or_root(H::Savings, savings_overlay, &mut hosted);
+        let bug_overlay = self.host_or_root(H::Bug, bug_overlay, &mut hosted);
+        let plugins_overlay = self.host_or_root(H::Plugins, plugins_overlay, &mut hosted);
+        let dead_overlay = self.host_or_root(H::Recover, dead_overlay, &mut hosted);
+        let settings_overlay = self.render_settings(&th, hosted, cx);
         let root = div()
             .size_full()
             .relative()
@@ -39371,7 +40850,20 @@ impl Render for Workspace {
                     cx.stop_propagation();
                     return;
                 }
+                // The language picker sits over the keys sheet and over
+                // Settings, so it hears its keys before either.
+                if ws.lang_picker_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
                 if ws.help_capture_key(&ev.keystroke, cx) {
+                    cx.stop_propagation();
+                    return;
+                }
+                // Settings takes its keys before the pane under it does: the
+                // pane keeps the focus it had when Ctrl+, was pressed, and a
+                // letter typed into the search must not reach its shell.
+                if ws.settings_key(&ev.keystroke, cx) {
                     cx.stop_propagation();
                     return;
                 }
@@ -39402,9 +40894,15 @@ impl Render for Workspace {
                 // is naturally typed with Alt still down, and that must pick the
                 // third row rather than go to the pane marked 3.
                 let digit = navkeys::row_digit(key).is_some();
+                // Not while the composer is up: a sentence is being typed, and
+                // a `y` or a digit in it must never answer an ask or jump a
+                // pane from a queue drawn underneath the page.
                 if !m.control
                     && !m.platform
                     && (!m.alt || digit)
+                    && ws.composer.is_none()
+                    && ws.relate.is_none()
+                    && !ws.flyout.focused
                     && (ws.rail_key(key, cx) || ws.art_key(key, cx))
                 {
                     cx.stop_propagation();
@@ -39516,6 +41014,7 @@ impl Render for Workspace {
                     .children(bug_overlay)
                     .children(admin_overlay)
                     .children(update_overlay)
+                    .children(settings_overlay)
                     .children(marquee)
                     .children(savings_overlay)
                     .children(confirm_overlay)
@@ -39530,6 +41029,7 @@ impl Render for Workspace {
                     .children(group_menu_overlay)
                     .children(bar_chip)
                     .children(drag_chip)
+                    .children(inbox_chip)
                     // the FOCUS reading modal rides above everything else
                     .children(focus_overlay)
                     // Document gauges must remain clickable while a brief is
@@ -40071,6 +41571,145 @@ mod tests {
         );
     }
 
+    /// One keystroke reaches a tab: Alt+N by place in the spine's order and
+    /// Alt+9 the last, pressed through a focused terminal; a pin follows its
+    /// tab through a reorder and a save; a letter the window already answers,
+    /// or another tab holds, is refused; and with the digits off Alt+N is the
+    /// program's again.
+    #[gpui::test]
+    fn a_person_reading_in_the_glow_pane_keeps_the_keyboard_and_the_tabs(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx);
+                    ws.split(SplitDir::Row, w, cx);
+                })
+            });
+        }
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        let dir = std::env::temp_dir().join(format!("td-glow-read-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let doc = dir.join("plan.md");
+        std::fs::write(&doc, "# Plan\n\nA paragraph to read.\n").unwrap();
+        let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+        let (second, beside) = ws.read_with(cx, |ws, _| {
+            let mut leaves = vec![];
+            ws.tabs[1].root.leaves(&mut leaves);
+            (leaves[0].clone(), leaves[1].clone())
+        });
+
+        // Opened on a pane that does not hold the keyboard, as the rail can:
+        // the keys follow the document.
+        ws.update(cx, |ws, _| ws.doc_glow_pane = Some(true));
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
+            w.focus(&beside.focus_handle(cx), cx);
+        });
+        draw(cx);
+        assert!(
+            !cx.update(|w, cx| second.focus_handle(cx).is_focused(w)),
+            "the pane beside it has the keyboard"
+        );
+        second
+            .update(cx, |v, cx| v.open_to_read(target, None, cx))
+            .unwrap();
+        draw(cx);
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "no frame comes up"
+        );
+        assert!(
+            second.read_with(cx, |v, cx| v.reading_view(cx).is_some()),
+            "the document in the glow pane is being read"
+        );
+        assert!(
+            cx.update(|w, cx| second.focus_handle(cx).is_focused(w)),
+            "and it holds the keyboard"
+        );
+
+        // Ctrl+= zooms the document, as it does in the frame.
+        let zoom = |cx: &mut gpui::VisualTestContext| {
+            let view = second.read_with(cx, |v, cx| v.reading_view(cx).expect("being read"));
+            view.read_with(cx, |v, _| v.zoom_now())
+        };
+        let before = zoom(cx);
+        assert!(before.is_some(), "a Markdown document has a zoom to step");
+        cx.simulate_keystrokes("ctrl-=");
+        draw(cx);
+        assert_ne!(zoom(cx), before, "Ctrl+= zooms the document in");
+
+        // A window chord is still the window's.
+        cx.simulate_keystrokes("ctrl-pageup");
+        draw(cx);
+        assert_eq!(ws.read_with(cx, |ws, _| ws.active), 0, "Ctrl+PgUp switches");
+        assert!(
+            second.read_with(cx, |v, _| v.has_float()),
+            "the brief waits"
+        );
+
+        // An agent's small square is nobody's read, whichever way the gauge
+        // is switched over it.
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
+            w.focus(&second.focus_handle(cx), cx);
+        });
+        draw(cx);
+        second.update(cx, |v, cx| {
+            v.close_float(cx);
+            let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+            v.open_float(target, None, cx).expect("the small square");
+        });
+        draw(cx);
+        for _ in 0..2 {
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.toggle_doc_glow_pane(w, cx)));
+            draw(cx);
+            assert!(
+                ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+                "no frame"
+            );
+            assert!(!second.read_with(cx, |v, _| v.float_to_read()));
+            assert!(second.read_with(cx, |v, cx| v.reading_view(cx).is_none()));
+            assert!(second.read_with(cx, |v, _| v.has_float()), "it stays up");
+        }
+    }
+
+    #[gpui::test]
     /// Alt+O climbs Parker's ladder from the FOCUSED pane: its newest artifact,
     /// then its own artifacts, then every pane's, then away. And what another
     /// pane has open never decides a rung — the bug of 2026-11-03, when the
@@ -40676,7 +42315,8 @@ mod tests {
                 gpui::Modifiers::default(),
             );
         };
-        ws.update(cx, |_, cx| {
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(false);
             uiconfig::flip(cx, uiconfig::Key::Agents, true);
             uiconfig::flip(cx, uiconfig::Key::AgentCounter, true);
         });
@@ -40684,6 +42324,117 @@ mod tests {
         click(cx, "toolbar-agents");
         draw(cx);
         assert!(cx.debug_bounds("agents-panel").is_some());
+        let frame = cx.debug_bounds("agents-panel").unwrap();
+        assert!(frame.size.width <= px(840.) && frame.size.height <= px(600.));
+
+        // A long loadout has its own column and scroll position. These fixture
+        // values live only in the test workspace, never in personal config.
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(true);
+            ws.skills_prefs.sources = (0..20)
+                .map(|n| skills::Source {
+                    name: format!("fixture-{n}"),
+                    description: "A skill with supporting material.".into(),
+                    path: format!("/tmp/td-fixture/{n}").into(),
+                    origin: "https://fixture.invalid/repo".into(),
+                    revision: "fixture".into(),
+                    enabled: Some(true),
+                    url: Some(format!("https://fixture.invalid/skill/{n}")),
+                })
+                .collect();
+            cx.notify();
+        });
+        draw(cx);
+        let main = cx.debug_bounds("agents-main").unwrap();
+        let skills = cx.debug_bounds("skills-column").unwrap();
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
+        assert!(
+            main.right() <= skills.left() + px(2.),
+            "the loadout opens beside Agents"
+        );
+        click(cx, "skill-source-3");
+        assert_eq!(
+            cx.opened_url().as_deref(),
+            Some("https://fixture.invalid/skill/0")
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.skills_prefs.sources[0].enabled == Some(true)),
+            "opening a source must not toggle it"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_scroll.set_offset(point(px(0.), px(-10000.)));
+            cx.notify();
+        });
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.skills_scroll.offset().y < px(0.)));
+        assert!(
+            cx.debug_bounds("skill-source-22").is_some(),
+            "the last of twenty imports is reachable"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(false);
+            cx.notify();
+        });
+        draw(cx);
+        assert!(cx.debug_bounds("skill-toggle-0").is_some());
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
+        assert!(
+            cx.debug_bounds("skills-column").is_none(),
+            "off closes the loadout"
+        );
+        ws.update(cx, |ws, cx| {
+            ws.skills_prefs.active = Some(true);
+            cx.notify();
+        });
+        draw(cx);
+        // The one-source form owns typing, clipboard and cancellation.
+        assert!(cx.debug_bounds("skill-toggle-0").is_some());
+        click(cx, "skill-add");
+        draw(cx);
+        assert_eq!(cx.debug_bounds("agents-panel").unwrap(), frame);
+        assert!(cx.debug_bounds("skill-field-0").is_some());
+        cx.simulate_keystrokes("f i x t u r e");
+        draw(cx);
+        assert!(
+            cx.debug_bounds("skill-field-1").is_none(),
+            "one source, not three input slots"
+        );
+        ws.read_with(cx, |ws, cx| {
+            let form = ws.skills_form.as_ref().expect("import form");
+            assert_eq!(form.source.text(), "fixture");
+            assert!(!ws.every_view()[0]
+                .read(cx)
+                .fixture_screen_text()
+                .contains("fixture"));
+        });
+        cx.simulate_keystrokes("ctrl-a ctrl-c backspace ctrl-v");
+        draw(cx);
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.skills_form.as_ref().unwrap().source.text()),
+            "fixture"
+        );
+        cx.simulate_keystrokes("escape");
+        draw(cx);
+        assert!(ws.read_with(cx, |ws, _| ws.skills_form.is_none() && ws.agents_menu));
+
+        // Both boxed and text-control skins keep the same compact frame; a
+        // switch cannot turn either one into a screen-height settings page.
+        for id in ["deco", "terminimalist"] {
+            ws.update(cx, |ws, cx| {
+                skin::select(cx, id).unwrap();
+                ws.skills_prefs.active = Some(false);
+                cx.notify();
+            });
+            draw(cx);
+            let off = cx.debug_bounds("agents-panel").unwrap();
+            assert!(off.size.width <= px(840.) && off.size.height <= px(600.));
+            ws.update(cx, |ws, cx| {
+                ws.skills_prefs.active = Some(true);
+                cx.notify();
+            });
+            draw(cx);
+            assert_eq!(cx.debug_bounds("agents-panel").unwrap(), off, "under {id}");
+        }
 
         ws.update(cx, |ws, cx| {
             ws.agents_menu = false;
@@ -41529,7 +43280,13 @@ mod tests {
             .expect("overlay_owns_keyboard");
         let end = code[at..].find("\n    }\n").expect("end of fn") + at;
         assert!(
-            code[at..end].contains("self.bar_rename.is_some()"),
+            code[at..end].contains("self.overlay_covers_document()") && {
+                let start = code
+                    .find("fn overlay_covers_document(")
+                    .expect("shared overlay predicate");
+                let end = code[start..].find("\n    }\n").expect("end of fn") + start;
+                code[start..end].contains("self.bar_rename.is_some()")
+            },
             "overlay_owns_keyboard no longer counts the left bar's name box, so the \
              deferred pane focus takes the keyboard back the moment a branch is made"
         );
@@ -43996,6 +45753,10 @@ mod tests {
                 cut(include_str!("threshing_floor_view.rs"), "\n#[cfg(test)]"),
             ),
             ("pane.rs", cut(include_str!("pane.rs"), "\n#[cfg(test)]")),
+            (
+                "relate_view.rs",
+                cut(include_str!("relate_view.rs"), "\n#[cfg(test)]"),
+            ),
             ("ctl.rs", cut(include_str!("ctl.rs"), "\n#[cfg(test)]")),
             ("mcp.rs", cut(include_str!("mcp.rs"), "\n#[cfg(test)]")),
             (
@@ -44236,8 +45997,10 @@ mod tests {
                 tray.contains(&format!("\"{id}\"")),
                 "the {what} tray region no longer holds its panel"
             );
+            // `(false, None)`: not shown in place in Settings, raised from
+            // the glyph row. Shown in place, the book's page holds it.
             assert!(
-                tray.contains("None => over_the_footer(panel, scale),"),
+                tray.contains("(false, None) => over_the_footer(panel, scale),"),
                 "the {what} tray, raised from the glyph row, must open over it"
             );
             assert!(
@@ -44399,6 +46162,7 @@ mod tests {
     fn tab_of(node: SavedNode) -> SavedTab {
         SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -45713,12 +47477,10 @@ mod tests {
             "the pane is the one the request names, which is the caller: {open}"
         );
         assert!(
-            open.contains(
-                "request_beside(request.target, None, docopen::Asker::Mcp, Some(reply), cx)"
-            ),
+            open.contains("request_beside(doc, None, docopen::Asker::Mcp, Some(reply), cx)"),
             "beside goes through the pane's own request: {open}"
         );
-        assert!(open.contains(".open_here(request.target, cx)"), "{open}");
+        assert!(open.contains(".open_here(doc, cx)"), "{open}");
         // A held open is news on the window: the 📜 bumps and keeps a dot.
         // Mutation-tested: the `art_held` call taken out fails this.
         assert!(
@@ -46032,6 +47794,7 @@ mod tests {
             color: None,
             text_color: None,
             group: None,
+            side: None,
             node: leaf_with(Some(12), "/work", None),
             project: None,
         };
@@ -46294,6 +48057,7 @@ mod tests {
                     text_color: None,
                     group: Some(7),
                     project: None,
+                    side: None,
                     node: leaf_with(None, "/work", None),
                 },
                 SavedTab {
@@ -46304,6 +48068,7 @@ mod tests {
                     text_color: None,
                     group: None,
                     project: Some(3),
+                    side: None,
                     node: leaf_with(None, "/work", None),
                 },
             ],
@@ -46324,6 +48089,62 @@ mod tests {
         assert_eq!(back.left_bar, Some(false));
         assert_eq!(back.left_bar_w, Some(260.0));
         assert_eq!(back.scope, Some(SavedScope::Project(3)));
+    }
+
+    /// The flyout's own state and each task's flyout tabs survive a save,
+    /// and a file written before the flyout opens it closed with no tabs —
+    /// absent, never an empty list written back as an opinion.
+    #[test]
+    fn a_state_file_keeps_the_flyout_and_each_tasks_tabs() {
+        let side = flyout::SavedSide {
+            tabs: vec![
+                flyout::Target::Changes {
+                    repo: "/work".into(),
+                    base: flyout::Base::Uncommitted,
+                },
+                flyout::Target::Pull {
+                    owner: "parker-brown-family".into(),
+                    repo: "terminal-delight".into(),
+                    number: 1400,
+                },
+            ],
+            active: 1,
+        };
+        let state = StateFile {
+            flyout: Some(flyout::SavedFlyout {
+                open: true,
+                width: Some(700.),
+            }),
+            tabs: vec![SavedTab {
+                hotkey: None,
+                level: None,
+                name: Some("diffs".into()),
+                color: None,
+                text_color: None,
+                group: None,
+                project: None,
+                side: Some(side.clone()),
+                node: leaf_with(None, "/work", None),
+            }],
+            ..Default::default()
+        };
+        let body = toml::to_string(&state).expect("serialise");
+        let back: StateFile = toml::from_str(&body).expect("read back");
+        assert_eq!(back.flyout, state.flyout);
+        assert_eq!(back.tabs[0].side, Some(side));
+        let restored = flyout::Side::restore(back.tabs[0].side.as_ref());
+        assert_eq!(restored.active, 1);
+
+        let old: StateFile =
+            toml::from_str("active = 0\npanes = 1\n[[tabs]]\n[tabs.node.Leaf]\ncwd = \"/work\"\n")
+                .expect("read an old file");
+        assert_eq!(old.flyout, None, "never opened is not closed-at-zero-width");
+        assert_eq!(old.tabs[0].side, None);
+        let shut = flyout_view::Flyout::restore(old.flyout.as_ref());
+        assert!(!shut.open);
+        assert_eq!(shut.width, flyout_view::FLYOUT_DEFAULT);
+        assert!(shut.saved().is_none(), "an untouched flyout writes nothing");
+        assert!(flyout::Side::restore(None).tabs.is_empty());
     }
 
     /// Every session on this machine predates the tree. Opening one must not
@@ -48378,6 +50199,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -48452,6 +50274,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -48541,6 +50364,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -48607,6 +50431,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -48837,6 +50662,7 @@ mod tests {
         };
         let tab = |node: SavedNode| SavedTab {
             hotkey: None,
+            side: None,
             level: None,
             name: None,
             color: None,
@@ -49139,6 +50965,7 @@ cwd = "/z"
             color: None,
             text_color: None,
             group: None,
+            side: None,
             node: saved,
             project: None,
         })
@@ -49171,6 +50998,7 @@ cwd = "/z"
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: saved,
                 project: None,
             })
@@ -49509,6 +51337,7 @@ warp = 1.5
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: SavedNode::Leaf {
                     off_limits: false,
                     agents: None,
@@ -49566,6 +51395,7 @@ warp = 1.5
                 color: None,
                 text_color: None,
                 group: None,
+                side: None,
                 node: SavedNode::Leaf {
                     off_limits: false,
                     agents: None,
@@ -49637,6 +51467,7 @@ warp = 1.5
                     color: Some("#aa3344".into()),
                     text_color: Some("#ffffff".into()),
                     group: Some(7),
+                    side: None,
                     node: leaf(),
                     project: None,
                 },
@@ -49647,6 +51478,7 @@ warp = 1.5
                     color: None,
                     text_color: None,
                     group: None,
+                    side: None,
                     node: leaf(),
                     project: None,
                 },
@@ -50479,6 +52311,7 @@ node = "Leaf"
             track: None,
             tabs: vec![SavedTab {
                 hotkey: None,
+                side: None,
                 level: None,
                 name: None,
                 color: None,
@@ -51018,6 +52851,8 @@ Usage:
                                  reads stdin when no file is given; --catalogue
                                  prints the kinds this build renders)
   terminal-delight briefing      print the briefing a LAUNCH AGENT pane gets, for this pane
+  terminal-delight skills [status|on|off|path|import SOURCE [SUBFOLDER [REVISION]]]
+                                 manage TD's additive skills for new agent sessions
   terminal-delight briefing hook [status|on|off]
                                  have Claude Code run that at the start of every session,
                                  so an agent you start by typing is told too
@@ -51294,6 +53129,7 @@ enum Verb {
     /// started by typing — what Claude Code's `SessionStart` hook runs — and
     /// put that hook in or take it out (see [`briefhook`]).
     Briefing,
+    Skills,
     /// Preview, plan and carry out a removal of Terminal Delight.
     Uninstall,
     /// Find, check, install and roll back builds from the stable or dev
@@ -51469,6 +53305,12 @@ const VERBS: &[VerbSpec] = &[
             "prints only inside a Terminal Delight pane, which a suite is not, and its hook verbs read and write the person's ~/.claude/settings.json",
         ),
     },
+    VerbSpec {
+        word: "skills",
+        verb: Verb::Skills,
+        typed: true,
+        piping: Piping::Ungated("skill settings and imports are personal state; fixtures exercise them in isolated directories"),
+    },
 ];
 
 /// One row of [`VERBS`].
@@ -51630,6 +53472,7 @@ fn main() {
                 Verb::Conversation => benchstore::run_cli(&argv[2..]),
                 Verb::DefaultTerminal => defaultterm::run_cli(&argv[2..]),
                 Verb::Briefing => briefhook::run_cli(&argv[2..]),
+                Verb::Skills => skills::run_cli(&argv[2..]),
                 Verb::Uninstall => uninstall::run_cli(&argv[2..]),
                 Verb::Update => update::run_cli(&argv[2..]),
                 Verb::WireReplay => wirecheck::run_cli(&argv[2..]),

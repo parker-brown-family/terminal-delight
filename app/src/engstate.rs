@@ -346,57 +346,82 @@ pub(crate) fn run_git_bytes(
     budget: Duration,
     limit: usize,
 ) -> Result<(i32, Vec<u8>), String> {
+    run_bounded(
+        "git",
+        dir,
+        args,
+        &[("GIT_OPTIONAL_LOCKS", "0")],
+        budget,
+        limit,
+        0,
+    )
+    .map(|r| (r.code, r.out))
+}
+
+/// How a bounded run ended, and what it printed.
+pub(crate) struct Ran {
+    pub code: i32,
+    pub out: Vec<u8>,
+    /// The first `err_limit` bytes of its stderr; empty when none were kept.
+    pub err: Vec<u8>,
+}
+
+/// Run `program` in `dir` under the bounds git has always run under here: its
+/// own process group, killed whole at `budget`, and stdout drained on its own
+/// thread and refused past `limit`. With `err_limit` above zero, stderr is
+/// drained the same way and its first `err_limit` bytes kept, for a tool that
+/// words its failures there (`gh`, in the right-bar flyout); at zero it goes
+/// to /dev/null, as git's always has.
+pub(crate) fn run_bounded(
+    program: &str,
+    dir: &Path,
+    args: &[&str],
+    env: &[(&str, &str)],
+    budget: Duration,
+    limit: usize,
+    err_limit: usize,
+) -> Result<Ran, String> {
     use std::os::unix::process::CommandExt;
+    // Git's messages keep the words they always had.
+    let name = if program == "git" {
+        "Git".to_string()
+    } else {
+        program.to_string()
+    };
     let started = Instant::now();
-    let mut child = Command::new("git")
+    let mut command = Command::new(program);
+    command
         .args(args)
         .current_dir(dir)
         .process_group(0)
-        .env("GIT_OPTIONAL_LOCKS", "0")
         .stdin(Stdio::null())
         .stdout(Stdio::piped())
-        .stderr(Stdio::null())
+        .stderr(if err_limit > 0 {
+            Stdio::piped()
+        } else {
+            Stdio::null()
+        });
+    for (k, v) in env {
+        command.env(k, v);
+    }
+    let mut child = command
         .spawn()
-        .map_err(|e| format!("Git could not start: {e}"))?;
+        .map_err(|e| format!("{name} could not start: {e}"))?;
     let group = child.id() as i32;
-    let mut pipe = child.stdout.take().ok_or("Git stdout unavailable")?;
-    use std::os::fd::AsRawFd;
-    let fd = pipe.as_raw_fd();
+    let pipe = child
+        .stdout
+        .take()
+        .ok_or_else(|| format!("{name} stdout unavailable"))?;
+    let errs = child.stderr.take();
     // A helper can detach from the process group while retaining stdout.
     // Nonblocking reads give the reader its own deadline even in that case.
-    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
-    if flags < 0 || unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } < 0 {
+    if !nonblocking(&pipe) || errs.as_ref().is_some_and(|e| !nonblocking(e)) {
         let _ = child.kill();
         let _ = child.wait();
-        return Err("Git stdout could not be bounded".into());
+        return Err(format!("{name} stdout could not be bounded"));
     }
-    let (tx, rx) = std::sync::mpsc::sync_channel(1);
-    let reader = std::thread::spawn(move || {
-        use std::io::Read;
-        let mut out = Vec::new();
-        let mut buffer = [0_u8; 16384];
-        let result = loop {
-            if started.elapsed() >= budget {
-                break Err(std::io::Error::new(
-                    std::io::ErrorKind::TimedOut,
-                    "Git stdout deadline reached",
-                ));
-            }
-            match pipe.read(&mut buffer) {
-                Ok(0) => break Ok(out),
-                Ok(n) => {
-                    let keep = n.min(limit.saturating_add(1).saturating_sub(out.len()));
-                    out.extend_from_slice(&buffer[..keep]);
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
-                    std::thread::sleep(Duration::from_millis(1))
-                }
-                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
-                Err(e) => break Err(e),
-            }
-        };
-        let _ = tx.send(result);
-    });
+    let (rx, reader) = drain(pipe, started, budget, limit, format!("{name} stdout"));
+    let err_reader = errs.map(|e| drain(e, started, budget, err_limit, format!("{name} stderr")));
     // Poll with a short backoff rather than a fixed tick. These calls really
     // cost two to seven milliseconds each; a flat 15 ms sleep rounded every
     // one of them up to 15, which across a whole scan was more time asleep
@@ -429,15 +454,82 @@ pub(crate) fn run_git_bytes(
         }
     }
     let _ = reader.join();
-    let status = status.ok_or("Git scan deadline reached")?;
+    // Whatever stderr said before the run ended; a reader still waiting at the
+    // deadline gives nothing rather than holding the answer up.
+    let err = err_reader
+        .map(|(erx, ereader)| {
+            let got = erx
+                .recv_timeout(budget.saturating_sub(started.elapsed()))
+                .ok()
+                .and_then(Result::ok)
+                .unwrap_or_default();
+            let _ = ereader.join();
+            got.into_iter().take(err_limit).collect::<Vec<u8>>()
+        })
+        .unwrap_or_default();
+    let status = status.ok_or_else(|| format!("{name} scan deadline reached"))?;
     let out = result
-        .map_err(|_| "Git stdout deadline reached")?
-        .map_err(|e| format!("Git stdout failed: {e}"))?;
+        .map_err(|_| format!("{name} stdout deadline reached"))?
+        .map_err(|e| format!("{name} stdout failed: {e}"))?;
     if out.len() > limit {
-        return Err("Git output limit reached".into());
+        return Err(format!("{name} output limit reached"));
     }
-    let code = status.code().ok_or("Git was interrupted")?;
-    Ok((code, out))
+    let code = status
+        .code()
+        .ok_or_else(|| format!("{name} was interrupted"))?;
+    Ok(Ran { code, out, err })
+}
+
+/// Put a pipe's read end in nonblocking mode, so its reader keeps its own
+/// deadline. False when the descriptor would not take it.
+fn nonblocking(pipe: &impl std::os::fd::AsRawFd) -> bool {
+    let fd = pipe.as_raw_fd();
+    let flags = unsafe { libc::fcntl(fd, libc::F_GETFL) };
+    flags >= 0 && unsafe { libc::fcntl(fd, libc::F_SETFL, flags | libc::O_NONBLOCK) } >= 0
+}
+
+type Drained = std::sync::mpsc::Receiver<std::io::Result<Vec<u8>>>;
+
+/// Read `pipe` to its end on a thread of its own, keeping `limit + 1` bytes at
+/// most (one more than the limit, so a reader can tell "exactly the limit"
+/// from "over it") and giving up at `budget`.
+fn drain<R>(
+    mut pipe: R,
+    started: Instant,
+    budget: Duration,
+    limit: usize,
+    what: String,
+) -> (Drained, std::thread::JoinHandle<()>)
+where
+    R: std::io::Read + Send + 'static,
+{
+    let (tx, rx) = std::sync::mpsc::sync_channel(1);
+    let reader = std::thread::spawn(move || {
+        let mut out = Vec::new();
+        let mut buffer = [0_u8; 16384];
+        let result = loop {
+            if started.elapsed() >= budget {
+                break Err(std::io::Error::new(
+                    std::io::ErrorKind::TimedOut,
+                    format!("{what} deadline reached"),
+                ));
+            }
+            match pipe.read(&mut buffer) {
+                Ok(0) => break Ok(out),
+                Ok(n) => {
+                    let keep = n.min(limit.saturating_add(1).saturating_sub(out.len()));
+                    out.extend_from_slice(&buffer[..keep]);
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::WouldBlock => {
+                    std::thread::sleep(Duration::from_millis(1))
+                }
+                Err(e) if e.kind() == std::io::ErrorKind::Interrupted => {}
+                Err(e) => break Err(e),
+            }
+        };
+        let _ = tx.send(result);
+    });
+    (rx, reader)
 }
 
 pub(crate) fn git_bytes(

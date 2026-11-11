@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><title>Chromium&#x27;s Hidden Work</title><!-- briefing: {"id": "td-html-fresh-open-chromium-hidden-work", "purpose": "engineering", "derives_from": ["fresh.html"], "calls": "fresh-open.calls.json"} --><!--BRIEF:head-->
+<style>
+/* This brief's own figures and notes. The house look arrives through BRIEF:head. */
+svg{display:block;width:100%;height:auto}.small{font-size:13px;color:var(--dim)}
+.bars text{font-size:13px}
+table.nums td,table.nums th{padding:6px 10px;text-align:right}table.nums td:first-child,table.nums th:first-child{text-align:left}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="last-time-strip" id="last-time" data-brief-anchor="last-time"><button class="last-time" type="button" data-dlg="d-last-time"><b>Last time</b> you hoped fresh opens would be a lot faster · they are faster, not 4×</button></div>
+<dialog id="d-last-time"><div class="dlg-head"><h3>Last time</h3><button class="x" type="button" data-close aria-label="Close">✕</button></div><div class="dlg-body"><table><thead><tr><th>Where</th><th>You said</th><th>What came of it</th></tr></thead><tbody>
+<tr><td>Outside the notes</td><td>“I was really hoping that a fresh open would be a lot faster!” and, this round, “it must not GOBBLE up ram”</td><td>A document never opened before now reaches its first screen about 28% sooner on a quiet machine and 1.6× sooner under your usual load, and Chromium holds 23% less memory with the reader open. The 4× target is still open.</td></tr>
+<tr><td>Call: preparation stays bounded</td><td>Concurred: no retained browser pages</td><td>Held to. A page kept ready for the next open was built, measured at about 60 ms for about 48 MiB, and left out.</td></tr>
+</tbody></table></div></dialog>
+<div class="eyebrow">Briefing · engineering · HTML</div><div class="opening" id="top" data-brief-anchor="top"><h1>Chromium&#x27;s Hidden Work</h1> <p class="lede">A brief you have never opened now paints its first screen in 486 ms instead of 673 on a quiet machine, and Chromium uses less memory doing it. That is not the fourfold you asked for: most of what is left is Chromium drawing the glass on the CPU.</p></div><nav class="sections"></nav></div></header>
+<main class="wrap">
+<section class="pane"><h2 id="sec-hidden" data-brief-anchor="sec-hidden"><span class="n">01</span> Two renderers nobody saw</h2>
+<p>Every fresh open makes a browser context of its own, so one brief can never read another&#x27;s storage. A trace of one open showed that Chromium 152 does more than load the page into that context. It also starts the address bar&#x27;s new dropdown, <code>chrome://omnibox-popup.top-chrome</code>, in a renderer of its own and runs about 190 ms of its script, for a window headless Chromium never shows. It keeps a spare renderer that no new context can use, and it runs the GPU process, a component extension and the network service as separate processes. The dropdown is also why last round&#x27;s spare-page experiment cost 90 MiB: every extra context dragged one in.</p>
+<figure id="fig-processes" data-brief-anchor="fig-processes"><span class="lbl">01 · What Chromium ran for one fresh open</span>
+<svg viewBox="0 0 680 300" role="img" aria-label="Before: seven processes including an address-bar dropdown renderer and a spare renderer. After: the browser with GPU and network inside it, and the page's renderer.">
+<text class="ink" x="20" y="24" font-size="15" font-weight="700">Before (installed build)</text>
+<text class="ink" x="370" y="24" font-size="15" font-weight="700">After (this change)</text>
+<rect class="box struct" x="20" y="40" width="300" height="34" rx="8"/><text class="ink" x="32" y="62" font-size="13">Browser · 121 MiB</text>
+<rect class="box struct" x="20" y="80" width="145" height="34" rx="8"/><text class="ink" x="30" y="102" font-size="13">GPU · 37</text>
+<rect class="box struct" x="175" y="80" width="145" height="34" rx="8"/><text class="ink" x="185" y="102" font-size="13">Network · 25</text>
+<rect class="box fail" x="20" y="120" width="145" height="34" rx="8"/><text class="ink" x="30" y="142" font-size="13">Extension · 30</text>
+<rect class="box fail" x="175" y="120" width="145" height="34" rx="8"/><text class="ink" x="185" y="142" font-size="13">Spare renderer · 15</text>
+<rect class="box fail" x="20" y="160" width="300" height="34" rx="8"/><text class="ink" x="32" y="182" font-size="13">Address-bar dropdown renderer · ~80</text>
+<rect class="box ready" x="20" y="200" width="300" height="34" rx="8"/><text class="ink" x="32" y="222" font-size="13">The page&#x27;s renderer · 89</text>
+<rect class="box struct" x="370" y="40" width="290" height="74" rx="8"/><text class="ink" x="382" y="62" font-size="13">Browser · 147 MiB</text><text class="ink" x="382" y="84" font-size="12">GPU and network work now run inside it</text>
+<rect class="box ready" x="370" y="200" width="290" height="34" rx="8"/><text class="ink" x="382" y="222" font-size="13">The page&#x27;s renderer · 89</text>
+<text class="ink" x="20" y="268" font-size="12">orange: did nothing for this page · green: the page · blue: browser plumbing</text>
+<text class="ink" x="20" y="288" font-size="12">zygotes and storage, about 30 MiB on both sides, not drawn</text>
+</svg>
+<figcaption><b>Three of the processes that started for each fresh open did nothing for the page.</b></figcaption><p class="small">Measured: PSS per process from <a href="evidence/fresh-open/README.md">the engine runs</a>, while a page was open. The dropdown&#x27;s ~80 MiB is the drop in total held memory when it was switched off, not a per-process reading.</p></figure></section>
+<section class="pane"><h2 id="sec-changed" data-brief-anchor="sec-changed"><span class="n">02</span> One trip instead of five</h2>
+<p>Switching those off took about 70 ms and close to a third of the held memory off each open. The rest came from waiting less. A screenshot clipped to the first screen made Chromium re-emulate the viewport and redraw every glass pane four times; the first screen is now photographed as the page already shows it, and a test compares every pixel against the clipped picture at scales 1, 1.25, 1.6 and 2. The eight set-up calls go out as one batch, and the screenshot starts while the probe is still reading the page. In the window itself, the cache check, the open, the screenshot and its decode used to come back to the UI thread between each step, waiting for the next frame of a window drawing twenty panes. They now run as one background task, and the first screen arrives decoded.</p>
+<figure id="fig-timeline" data-brief-anchor="fig-timeline"><span class="lbl">02 · One fresh open of a 200 KB brief, key press to first screen</span>
+<svg class="bars" viewBox="0 0 680 190" role="img" aria-label="Installed build: open 325 ms, screenshot 200, decode 25, paint 81, total 640. This change: open, screenshot and decode together 411 ms, paint 2, total 421.">
+<text class="ink" x="20" y="30" font-size="13">Installed</text>
+<rect class="box struct" x="110" y="16" width="285" height="22" rx="4"/><rect class="box fail" x="395" y="16" width="171" height="22" rx="4"/><rect class="box fail" x="566" y="16" width="21" height="22" rx="4"/><rect class="box unk" x="587" y="16" width="70" height="22" rx="4"/>
+<text class="ink" x="118" y="31" font-size="12">open the page · 325</text><text class="ink" x="403" y="31" font-size="12">screenshot · 200</text>
+<text class="ink" x="20" y="80" font-size="13">This change</text>
+<rect class="box ready" x="110" y="66" width="358" height="22" rx="4"/><text class="ink" x="118" y="81" font-size="12">open, screenshot and decode, one task · 411</text>
+<line class="wire" x1="110" y1="110" x2="660" y2="110"/>
+<text class="ink" x="110" y="128" font-size="12">0</text><text class="ink" x="368" y="128" font-size="12">300 ms</text><text class="ink" x="620" y="128" font-size="12">640 ms</text>
+<text class="ink" x="20" y="160" font-size="12">blue: open · orange: screenshot and decode · grey: waiting for the window to paint · green: the new single task</text>
+<text class="ink" x="20" y="180" font-size="12">first screen painted: 640 → 421 ms (medians; the key press adds about 65 ms to both)</text>
+</svg>
+<figcaption><b>The new build has the first screen decoded by the time the installed build has only laid the page out.</b></figcaption><p class="small">Measured: native rig medians, load average 5 to 8, 27 opens each, a new file path every open. <a href="evidence/fresh-open/native-quiet-final.txt">Stage table</a>.</p></figure></section>
+<section class="pane"><h2 id="sec-proof" data-brief-anchor="sec-proof"><span class="n">03</span> Same picture, less memory</h2>
+<table class="nums"><thead><tr><th>Fresh open, median / slow tail (p90)</th><th>Installed</th><th>This change</th></tr></thead><tbody>
+<tr><td>200 KB brief, quiet machine</td><td>673 / 791 ms</td><td>486 / 548 ms</td></tr>
+<tr><td>1.4 MB brief, quiet machine</td><td>842 / 1006 ms</td><td>595 / 652 ms</td></tr>
+<tr><td>Both, under load (81 opens each)</td><td>1328 · 1610 ms</td><td>843 · 1003 ms</td></tr>
+<tr><td>Chromium memory, reader open</td><td>288 MiB · 8 processes</td><td>223 MiB · 5</td></tr>
+<tr><td>Chromium memory, closed and idle</td><td>258 MiB · 7</td><td>229 MiB · 5</td></tr>
+</tbody></table>
+<p>The under-load row was measured with a ready page still in the branch, so it slightly flatters the merged code. Four read-only review rounds from Codex found seven real problems, all fixed in their own commits. The worst was a page left open in Chromium when its view closed mid-open, a leak that predates this work; a guard now owns every opened page until its view adopts it. The engine&#x27;s 94 real-Chromium tests and the document view&#x27;s 215 unit tests pass; the full app suite passed 3,255 of 3,256, the miss being the known load-sensitive pane-identity test. <a href="evidence/fresh-open/README.md">Evidence</a> · <a href="https://github.com/parker-brown-family/terminal-delight/pull/1391">the pull request</a>.</p>
+<p>It is merged into the dev branch. It reaches your window when the follower builds, tests and swaps the dev head; that same load-sensitive test is the one known to stall the follower.</p></section>
+<section class="pane"><h2 id="sec-left" data-brief-anchor="sec-left"><span class="n">04</span> What is still slow</h2>
+<p>Inside the 411 ms, Chromium loads the page and draws it, and on this machine it draws every glass pane&#x27;s blur on the CPU. That is now the larger share, and it grows with load. Three things could still move it. Keeping one page ready for the next open saved about 60 ms for about 48 MiB; you declined that kind of trade last round, so it is kept on a saved branch rather than shipped. Drawing with the GPU was measured last round at 220 MiB and a slower first open. The glass itself is the third: fewer blurred layers in the house look would cut drawing for every brief, at a cost to how the briefs look. The first open after the browser has idled out for five minutes still pays its start, about 0.4 s.</p></section>
+<section class="pane"><h2 id="sec-calls" data-brief-anchor="sec-calls">Judgement calls</h2>
+<p>Nobody had decided these, so I did and kept working. Stamp the ones you agree with.</p>
+<div class="grill">
+<div class="ask call" id="call-keep-the-ready-page-out" data-brief-anchor="call-keep-the-ready-page-out" data-call="sha256:3f507f231be226bfaa8380e59c10637f8fa7ef34f631ddddc5db59df933fd87e"><h3>Keep the ready page out</h3><dl class="facts"><dt>Chose</dt><dd>Each open makes its own page; the ready-page version waits on a saved ref</dd><dt>Because</dt><dd>It saved about 60 ms for about 48 MiB, the retained-page trade you declined last round</dd></dl><p><a href="#sec-left">The reasoning</a></p><figure id="fig-call-keep-the-ready-page-out-1" data-brief-anchor="fig-call-keep-the-ready-page-out-1"><span class="lbl">Keep the ready page out · file b3a0632edba8</span><p><a href="evidence/fresh-open/engine-ready-vs-not.jsonl">evidence/fresh-open/engine-ready-vs-not.jsonl</a></p><figcaption><b>What I was looking at when I chose: Each open makes its own page; the ready-page version waits on a saved ref.</b> A concur covers this file, b3a0632edba8, and no later one.</figcaption></figure><p class="rec"><b>Meanwhile:</b> carrying on as if you concur.</p></div>
+<div class="ask call" id="call-photograph-the-first-screen-unclipped" data-brief-anchor="call-photograph-the-first-screen-unclipped" data-call="sha256:6f40bb4efc513e2b41127f074fa3bb6fe12d43468968bb23d460602a7a80f194"><h3>Photograph the first screen unclipped</h3><dl class="facts"><dt>Chose</dt><dd>Capture the first screen as the page shows it, with a clipped retry</dd><dt>Because</dt><dd>A clip redrew every glass pane four times; the pixels matched at four scales</dd></dl><p><a href="#sec-changed">The reasoning</a></p><figure id="fig-call-photograph-the-first-screen-unclipped-1" data-brief-anchor="fig-call-photograph-the-first-screen-unclipped-1"><span class="lbl">Photograph the first screen unclipped · file 0bd8d67a61c9</span><p><a href="evidence/fresh-open/README.md">evidence/fresh-open/README.md</a></p><figcaption><b>What I was looking at when I chose: Capture the first screen as the page shows it, with a clipped retry.</b> A concur covers this file, 0bd8d67a61c9, and no later one.</figcaption></figure><p class="rec"><b>Meanwhile:</b> carrying on as if you concur.</p></div>
+</div></section>
+
+<footer><p>Primary artifact: this brief. Evidence notes, feedback maps and source are supporting links.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>

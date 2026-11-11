@@ -175,7 +175,7 @@ fn open_tags(b: &[u8], id: &[u8]) -> Vec<(usize, usize)> {
     out
 }
 
-fn find_island(b: &[u8], id: &[u8]) -> (Option<Island>, usize) {
+pub(crate) fn find_island(b: &[u8], id: &[u8]) -> (Option<Island>, usize) {
     let tags = open_tags(b, id);
     let first = tags.first().and_then(|&(tag_start, start)| {
         let end = find_ci(b, b"</script", start)?;
@@ -1652,6 +1652,10 @@ pub fn notes_regions(bytes: &[u8]) -> Vec<Range<usize>> {
     }
     if let Some(c) = r.concurs {
         out.push(c.tag_start..c.close_end.unwrap_or(c.end));
+    }
+    // Visible-time checkpoints are reader data too. They never invalidate layout.
+    if let (Some(i), 1) = find_island(bytes, b"report-reading") {
+        out.push(i.tag_start..i.close_end.unwrap_or(i.end));
     }
     out.sort_by_key(|r| r.start);
     let mut merged: Vec<Range<usize>> = Vec::new();

@@ -10,6 +10,10 @@
 | `name the source .md for Markdown or .src.html for HTML` | The suffix chose no medium | Rename the target |
 | `use a stable lowercase brief id, such as …` | The id must match `[a-z][a-z0-9-]*` | Use a short kebab-case name that will outlive the title |
 | `name the purpose: …` | The purpose was blank | Give `summary`, `engineering`, `decision`, or a stated outcome |
+| `a new round needs a --title of its own, …` | `--follows` was given no title, or the old brief's title | Title this page after the issue this round resolves |
+| `a new round is a new brief: give it its own --id` | `--follows` was given the old brief's id | Pick a new id; the old page keeps its comments |
+| `--follows builds the Last time strip of an HTML brief; …` | The source is Markdown | Link the earlier brief by hand |
+| `--follows names … which is not there` | The earlier brief is missing | Fix the path |
 
 ## Building: `html`
 
@@ -60,6 +64,8 @@
 | `broken local fragment: …` | The file exists but has no such heading, id or `^block` | Fix the fragment; a renamed heading changes its slug, an explicit id does not |
 | `cannot verify local fragment: …` | A fragment into a file that is neither Markdown nor HTML | Link to the file without a fragment, and name the place in prose |
 | `every h2 and figure needs an explicit data-brief-anchor` | A built page lost an anchor | Fix the source and rebuild |
+| `the title and first line take no note: …` | The header has no note control | Wrap them in `<div class="opening" id="top" data-brief-anchor="top">` |
+| `decisions over 80 words: …` | A card argues its case | Keep the question and the recommendation, move the reasoning to a section, and link to it |
 | `duplicate anchors: …` | Two targets share a name | Rename one before anyone comments on it |
 | `Markdown needs one <!-- briefing: {...} --> identity comment` / `brief identity …` / `brief metadata needs an explicit purpose` | The document does not say which brief it is | Add the identity comment; `new` shows its shape |
 | `supported now: .md and .html; MP4 is reserved` | Another file type | Video is not built yet |
@@ -76,6 +82,8 @@
 
 | Message begins | Meaning | Do this |
 |---|---|---|
+| `--title runs to … words and the limit is …` (or `--chose`, `--because`) | A call's row has to read at a glance | Say it shorter, and put the reasoning in a section named with `--see` |
+| `--see names a section by its lowercase id, …` | The anchor is not an id | Pass the section's id, such as `sec-footer` |
 | `… a calls ledger is named NAME.calls.json …` | The ledger path has another name | Name it `something.calls.json`; no other JSON is ever written over |
 | `… no calls ledger here …` | `calls`, `verdict` or `orient --calls` named a ledger that does not exist | `call` starts one; check the path |
 | `… malformed JSON …` / `… not a format-1 briefing calls ledger` / `every call needs an id and a known status, and …` | The ledger is damaged; the message names the call and the missing or malformed field. A field that is absent is refused, never read as empty | Repair it by hand; nothing was written |

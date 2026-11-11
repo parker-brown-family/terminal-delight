@@ -235,6 +235,9 @@ pub trait Backend {
         None
     }
 
+    /// The real host's foreground signal, independent of raster-probe activity.
+    fn exposure(&mut self, _active: bool, _cx: &mut Context<DocumentView>) {}
+
     /// Go back to a place the saved layout kept, as soon as the document has
     /// been laid out. A picture has no scroll to go back to.
     fn restore_scroll(&mut self, _at: DocScroll, _cx: &mut Context<DocumentView>) {}
@@ -297,6 +300,13 @@ pub trait Backend {
     /// document that moves or sounds by itself waits for a press instead of
     /// starting on its own. Only a video does either.
     fn hold(&mut self) {}
+
+    /// The owning pane knows whether this document is on screen. Hidden HTML
+    /// keeps reading state and notes, but gives back its render payload.
+    fn visible(&mut self, _shown: bool, _cx: &mut Context<DocumentView>) {}
+
+    /// The native canvas submitted this frame's paint commands.
+    fn painted(&mut self) {}
 
     // ── notes ───────────────────────────────────────────────────────────────
     //

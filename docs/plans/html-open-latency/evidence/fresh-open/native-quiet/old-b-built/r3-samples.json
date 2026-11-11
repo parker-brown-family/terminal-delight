@@ -1,0 +1,202 @@
+[
+  {
+    "cycle": 0,
+    "wall_ms": 971.414856147021,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-0.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 10.765497,
+      "cache_lookup": 64.541995,
+      "cache_hit": false,
+      "layout": 684.0845439999999,
+      "first_tile": 824.208438,
+      "first_decode": 836.972669,
+      "first_paint": 915.419133,
+      "viewport_paint": 915.423463
+    }
+  },
+  {
+    "cycle": 1,
+    "wall_ms": 764.5115852355957,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-1.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.4434880000000003,
+      "cache_lookup": 16.663015,
+      "cache_hit": false,
+      "layout": 396.790062,
+      "first_tile": 582.095223,
+      "first_decode": 595.255388,
+      "first_paint": 685.57993,
+      "viewport_paint": 685.58412
+    }
+  },
+  {
+    "cycle": 2,
+    "wall_ms": 787.2927482239902,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-2.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.748907,
+      "cache_lookup": 82.505744,
+      "cache_hit": false,
+      "layout": 480.640122,
+      "first_tile": 613.327881,
+      "first_decode": 629.134145,
+      "first_paint": 716.202798,
+      "viewport_paint": 716.20664
+    }
+  },
+  {
+    "cycle": 3,
+    "wall_ms": 971.3276950642467,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-3.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 4.354291,
+      "cache_lookup": 101.80026000000001,
+      "cache_hit": false,
+      "layout": 570.4458079999999,
+      "first_tile": 725.217848,
+      "first_decode": 806.965528,
+      "first_paint": 888.2339529999999,
+      "viewport_paint": 888.237305
+    }
+  },
+  {
+    "cycle": 4,
+    "wall_ms": 746.7577806673944,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-4.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 67.871287,
+      "cache_lookup": 82.910408,
+      "cache_hit": false,
+      "layout": 497.940932,
+      "first_tile": 645.057464,
+      "first_decode": 658.6007820000001,
+      "first_paint": 735.170734,
+      "viewport_paint": 735.1768109999999
+    }
+  },
+  {
+    "cycle": 5,
+    "wall_ms": 797.0305206254125,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-5.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.821193,
+      "cache_lookup": 17.609651,
+      "cache_hit": false,
+      "layout": 421.19721300000003,
+      "first_tile": 576.198474,
+      "first_decode": 643.650849,
+      "first_paint": 730.0768869999999,
+      "viewport_paint": 730.0805889999999
+    }
+  },
+  {
+    "cycle": 6,
+    "wall_ms": 833.1745299510658,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-6.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.868476,
+      "cache_lookup": 17.176212,
+      "cache_hit": false,
+      "layout": 402.155245,
+      "first_tile": 530.303771,
+      "first_decode": 677.598401,
+      "first_paint": 763.3008070000001,
+      "viewport_paint": 763.3051370000001
+    }
+  },
+  {
+    "cycle": 7,
+    "wall_ms": 942.7604828961194,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-7.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 3.44076,
+      "cache_lookup": 76.59761,
+      "cache_hit": false,
+      "layout": 554.232506,
+      "first_tile": 708.54345,
+      "first_decode": 779.395588,
+      "first_paint": 862.055264,
+      "viewport_paint": 862.058686
+    }
+  },
+  {
+    "cycle": 8,
+    "wall_ms": 763.7048428878188,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-8.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 2.950121,
+      "cache_lookup": 65.894971,
+      "cache_hit": false,
+      "layout": 433.688083,
+      "first_tile": 617.500445,
+      "first_decode": 628.773203,
+      "first_paint": 704.253553,
+      "viewport_paint": 704.257883
+    }
+  },
+  {
+    "cycle": 9,
+    "wall_ms": 842.2966483049095,
+    "path": "/home/parker/Work/td-fresh/native/s6/old-b-built-r3/fresh-9.html",
+    "geometry": {
+      "css_width": 1234,
+      "viewport_css_height": 795,
+      "scale": 1.0
+    },
+    "ms": {
+      "geometry": 3.0194039999999998,
+      "cache_lookup": 71.964021,
+      "cache_hit": false,
+      "layout": 392.10416100000003,
+      "first_tile": 617.883179,
+      "first_decode": 686.597597,
+      "first_paint": 770.093489,
+      "viewport_paint": 770.0968409999999
+    }
+  }
+]

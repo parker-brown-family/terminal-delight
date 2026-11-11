@@ -46,7 +46,7 @@ use std::collections::{BTreeMap, BTreeSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
-use std::time::{Duration, SystemTime};
+use std::time::{Duration, Instant, SystemTime};
 
 use gpui::{
     div, hsla, img, point, prelude::*, px, size, App, Bounds, Context, ImageSource, Keystroke,
@@ -57,12 +57,13 @@ use super::backend::{Backend, Drawn};
 use super::cache::{self, CacheKey};
 use super::engine::ConcurSupport;
 use super::engine::{
-    bands, layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener,
-    PageEngine, PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
+    layout_hash, Anchor, Band, DialogRender, EngineError, Geometry, Link, Opener, PageEngine,
+    PageId, PageLayout, PageRequest, PageVideo, RectCss, Unavailable, TILE_DEV,
 };
 use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said, Words};
 use super::progress::Reading;
+use super::reading;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -87,8 +88,9 @@ pub struct Residency {
 
 /// How far a band starting at `top` lies from the viewport, and on which
 /// side: 0 inside it. Ties go below first, the way a page is read.
-fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
-    let bottom = top.saturating_add(TILE_DEV);
+fn band_distance(band: Band, view_top: u32, view_h: u32) -> (u32, bool) {
+    let top = band.top_dev;
+    let bottom = top.saturating_add(band.height_dev);
     let view_bottom = view_top.saturating_add(view_h.max(1));
     if bottom <= view_top {
         (view_top - bottom + 1, true)
@@ -99,12 +101,25 @@ fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
     }
 }
 
+#[cfg(test)]
+fn distance(top: u32, view_top: u32, view_h: u32) -> (u32, bool) {
+    band_distance(
+        Band {
+            top_dev: top,
+            height_dev: TILE_DEV,
+        },
+        view_top,
+        view_h,
+    )
+}
+
 /// Pure. Which bands belong on the GPU for a viewport, and what to fetch.
 ///
 /// `all` is every band's top (in device rows); `resident` the tops on the GPU
 /// or on their way there; `have_png` the tops whose PNG is in hand. The
 /// visible bands are always wanted; one above and one below join them while
 /// the total stays within [`MAX_RESIDENT`].
+#[cfg(test)]
 pub fn plan_residency(
     all: &[u32],
     resident: &[u32],
@@ -112,7 +127,32 @@ pub fn plan_residency(
     view_top_dev: u32,
     view_h_dev: u32,
 ) -> Residency {
-    let mut order: Vec<u32> = all.to_vec();
+    let bands: Vec<Band> = all
+        .iter()
+        .map(|&top_dev| Band {
+            top_dev,
+            height_dev: TILE_DEV,
+        })
+        .collect();
+    plan_bands(&bands, resident, have_png, view_top_dev, view_h_dev)
+}
+
+fn plan_bands(
+    bands: &[Band],
+    resident: &[u32],
+    have_png: &[u32],
+    view_top_dev: u32,
+    view_h_dev: u32,
+) -> Residency {
+    let all: Vec<u32> = bands.iter().map(|b| b.top_dev).collect();
+    let distance = |top, view_top, view_h| {
+        band_distance(
+            *bands.iter().find(|b| b.top_dev == top).expect("known band"),
+            view_top,
+            view_h,
+        )
+    };
+    let mut order: Vec<u32> = all.clone();
     order.sort_by_key(|&t| {
         let (d, above) = distance(t, view_top_dev, view_h_dev);
         (d, above, t)
@@ -125,11 +165,9 @@ pub fn plan_residency(
     let mut wanted = visible.clone();
     let first = visible.iter().min().copied();
     let last = visible.iter().max().copied();
-    let neighbours = all.iter().copied().filter(|&t| {
-        let above = first.is_some_and(|f| t < f && f - t <= TILE_DEV);
-        let below = last.is_some_and(|l| t > l && t - l <= TILE_DEV);
-        above || below
-    });
+    let above = first.and_then(|f| all.iter().copied().filter(|&t| t < f).max());
+    let below = last.and_then(|l| all.iter().copied().filter(|&t| t > l).min());
+    let neighbours = above.into_iter().chain(below);
     let mut neighbours: Vec<u32> = neighbours.collect();
     neighbours.sort_by_key(|&t| distance(t, view_top_dev, view_h_dev));
     for t in neighbours {
@@ -360,6 +398,45 @@ fn open_if_wanted(
     out
 }
 
+/// A page the engine opened for a view, which closes it if it is dropped
+/// before the view adopts it. The task that would adopt it can be dropped at
+/// any await (the view closed, or a newer render replaced it), and a page
+/// nobody adopted lived on in Chromium until the browser idled out.
+struct Unadopted {
+    engine: Arc<dyn PageEngine>,
+    page: Option<PageId>,
+}
+
+impl Unadopted {
+    fn new(engine: &Arc<dyn PageEngine>, layout: &PageLayout) -> Self {
+        Self {
+            engine: engine.clone(),
+            page: layout.page,
+        }
+    }
+
+    /// The view holds the page now: closing it is the view's.
+    fn adopted(mut self) {
+        self.page = None;
+    }
+}
+
+impl Drop for Unadopted {
+    fn drop(&mut self) {
+        if let Some(page) = self.page.take() {
+            // Off whatever thread dropped it: closing talks to the browser.
+            let engine = self.engine.clone();
+            let spawned = std::thread::Builder::new()
+                .name("td-page-close".into())
+                .spawn(move || engine.close(page));
+            if spawned.is_err() {
+                // No thread to spare: closed here, which only blocks.
+                self.engine.close(page);
+            }
+        }
+    }
+}
+
 /// Every `Arc<RenderImage>` of one render lives in exactly one slot here.
 #[derive(Default)]
 struct TileSet {
@@ -376,7 +453,7 @@ impl TileSet {
     fn new(layout: &PageLayout) -> Self {
         Self {
             generation: layout.generation,
-            bands: bands(layout.geometry.height_dev(layout.height_css)),
+            bands: layout.bands(),
             ..Default::default()
         }
     }
@@ -387,6 +464,7 @@ impl TileSet {
 }
 
 struct Rendered {
+    stale_scroll: Option<f32>,
     layout: PageLayout,
     tiles: TileSet,
     /// The zoom this render was laid out at, which may no longer be the
@@ -434,6 +512,7 @@ pub struct Measured {
 }
 
 pub struct PageDoc {
+    timing: OpenTiming,
     path: PathBuf,
     engine: Result<Arc<dyn PageEngine>, Unavailable>,
     status: Status,
@@ -480,6 +559,55 @@ pub struct PageDoc {
     saving: Option<Task<()>>,
     /// The file read again after it changed on disk.
     rereading: Option<Task<()>>,
+    hidden: bool,
+    epoch: u64,
+    exposure_clock: Option<reading::Clock>,
+    exposure_start: Instant,
+    exposure_saved: Duration,
+    exposure_record: Option<reading::Record>,
+    exposure_error: Option<String>,
+    exposure_saving: bool,
+    exposure_sent: Option<reading::Session>,
+    exposure_on: bool,
+    reading_zones: Vec<(Bounds<Pixels>, String)>,
+    reading_offset: Option<usize>,
+    reading_active_anchor: Option<String>,
+    reading_cover: Option<Bounds<Pixels>>,
+}
+
+/// Elapsed milliseconds from the view's open request. Missing stages remain
+/// null. Paint is native command submission, not a monitor presentation claim.
+#[derive(serde::Serialize)]
+struct OpenTiming {
+    #[serde(skip)]
+    started: Instant,
+    geometry: Option<f64>,
+    cache_lookup: Option<f64>,
+    cache_hit: Option<bool>,
+    layout: Option<f64>,
+    first_tile: Option<f64>,
+    first_decode: Option<f64>,
+    first_paint: Option<f64>,
+    viewport_paint: Option<f64>,
+}
+
+impl OpenTiming {
+    fn new() -> Self {
+        Self {
+            started: Instant::now(),
+            geometry: None,
+            cache_lookup: None,
+            cache_hit: None,
+            layout: None,
+            first_tile: None,
+            first_decode: None,
+            first_paint: None,
+            viewport_paint: None,
+        }
+    }
+    fn elapsed(&self) -> f64 {
+        self.started.elapsed().as_secs_f64() * 1000.0
+    }
 }
 
 fn debug() -> bool {
@@ -492,8 +620,319 @@ fn page_of(view: &mut DocumentView) -> Option<&mut PageDoc> {
 }
 
 impl PageDoc {
+    fn draw_reading(&mut self, th: &Theme) -> Vec<gpui::AnyElement> {
+        self.reading_zones.clear();
+        self.reading_cover = None;
+        let (Some(r), Some(m), Some(clock)) = (&self.current, self.view, &self.exposure_clock)
+        else {
+            return vec![];
+        };
+        let Some(layout) = &r.layout.reading_layout else {
+            return vec![];
+        };
+        if layout.targets.is_empty() {
+            return vec![];
+        }
+        let totals = self
+            .exposure_record
+            .as_ref()
+            .map(|record| record.totals(&layout.revision, Some(&clock.session)));
+        let (label, saved, waiting, paused) = match crate::lang::current() {
+            crate::lang::Lang::En => ("Visible time", "Active", "Waiting to save", "Paused"),
+            crate::lang::Lang::Es => (
+                "Tiempo visible",
+                "Activo",
+                "Pendiente de guardar",
+                "En pausa",
+            ),
+            crate::lang::Lang::De => (
+                "Sichtbare Zeit",
+                "Aktiv",
+                "Speichern ausstehend",
+                "Pausiert",
+            ),
+            crate::lang::Lang::Fr => ("Temps visible", "Actif", "En attente", "En pause"),
+            crate::lang::Lang::Ru => ("Время на экране", "Активно", "Ожидает сохранения", "Пауза"),
+            crate::lang::Lang::Zh => ("可见时长", "活动中", "等待保存", "已暂停"),
+            crate::lang::Lang::Ja => ("表示時間", "計測中", "保存待ち", "一時停止"),
+            crate::lang::Lang::Ko => ("표시 시간", "기록 중", "저장 대기", "일시 중지"),
+            crate::lang::Lang::Hi => ("दिखाई देने का समय", "सक्रिय", "सहेजने की प्रतीक्षा", "रुका हुआ"),
+        };
+        let status = if self.exposure_error.is_some() || self.exposure_saving {
+            waiting
+        } else if !self.exposure_on {
+            paused
+        } else {
+            saved
+        };
+        let wide = r.layout.geometry.css_width >= 1100;
+        let width: f32 = m.size.width.into();
+        let height: f32 = m.size.height.into();
+        let active = layout
+            .targets
+            .iter()
+            .enumerate()
+            .rfind(|(_, t)| {
+                matches!(t.kind.as_str(), "opening" | "section")
+                    && t.rect.is_some_and(|rc| rc.y <= self.scroll_css + 120.0)
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        let rows = if wide {
+            ((height - 105.0) / 36.0).max(1.0) as usize
+        } else {
+            2
+        };
+        let automatic_start = active
+            .saturating_sub(rows / 2)
+            .min(layout.targets.len().saturating_sub(rows));
+        if self.reading_active_anchor.as_deref() != Some(&layout.targets[active].anchor) {
+            self.reading_offset = None;
+            self.reading_active_anchor = Some(layout.targets[active].anchor.clone());
+        }
+        let start = self
+            .reading_offset
+            .unwrap_or(automatic_start)
+            .min(layout.targets.len().saturating_sub(rows));
+        let rail_w = if wide { 216.0 } else { (width - 24.0).max(1.0) };
+        self.reading_cover = Some(Bounds {
+            origin: point(px(12.0), px(12.0)),
+            size: size(px(rail_w), px(28.0 + rows as f32 * 36.0)),
+        });
+        let mut children: Vec<gpui::AnyElement> = vec![div()
+            .absolute()
+            .left(px(8.0))
+            .top(px(6.0))
+            .text_size(px(11.0))
+            .text_color(th.text.alpha(0.8))
+            .child(format!("{label} · {status}"))
+            .into_any_element()];
+        for (offset, target) in layout.targets.iter().skip(start).take(rows).enumerate() {
+            let y = 28.0 + offset as f32 * 36.0;
+            let time = totals
+                .as_ref()
+                .and_then(|totals| totals.get(&target.anchor))
+                .map(|ms| format!("{}:{:02}", ms / 60000, ms / 1000 % 60))
+                .unwrap_or_else(|| "—".into());
+            let prefix = if target.parent.is_some() { "  " } else { "" };
+            children.push(
+                div()
+                    .absolute()
+                    .left(px(8.0))
+                    .top(px(y))
+                    .w(px(rail_w - 16.0))
+                    .h(px(34.0))
+                    .overflow_hidden()
+                    .text_size(px(12.0))
+                    .text_color(th.text)
+                    .bg(th
+                        .text
+                        .alpha(if target.anchor == layout.targets[active].anchor {
+                            0.14
+                        } else {
+                            0.03
+                        }))
+                    .child(
+                        div()
+                            .w(px((rail_w - 80.0).max(1.0)))
+                            .h(px(34.0))
+                            .overflow_hidden()
+                            .child(format!("{prefix}{}", target.title)),
+                    )
+                    .child(div().absolute().right(px(4.0)).top(px(8.0)).child(time))
+                    .into_any_element(),
+            );
+            self.reading_zones.push((
+                Bounds {
+                    origin: point(px(20.0), px(12.0 + y)),
+                    size: size(px(rail_w - 16.0), px(34.0)),
+                },
+                target.anchor.clone(),
+            ));
+        }
+        let mut summary = super::reading::summary(layout, totals.as_ref());
+        let pending = self
+            .exposure_record
+            .as_ref()
+            .and_then(|r| {
+                r.sessions
+                    .iter()
+                    .find(|s| s.session == clock.session.session)
+            })
+            .is_none_or(|s| s != &clock.session);
+        if pending {
+            summary.push_str("Live time includes a checkpoint not yet saved into the file.\n");
+        }
+        if let Some(error) = &self.exposure_error {
+            summary.push_str(&format!("Save is pending: {error}\n"));
+        }
+        if let Some(notes) = &mut self.notes {
+            let measured = clock.started
+                || self
+                    .exposure_record
+                    .as_ref()
+                    .is_some_and(|r| r.sessions.iter().any(|s| s.revision == layout.revision));
+            notes.set_reading_summary(if measured { summary } else { String::new() });
+        }
+        vec![div()
+            .absolute()
+            .left(px(12.0))
+            .top(px(12.0))
+            .w(px(rail_w))
+            .h(px(28.0 + rows as f32 * 36.0))
+            .bg(th.bg.alpha(0.93))
+            .children(children)
+            .into_any_element()]
+    }
+
+    fn exposure_tick(&mut self, active: bool, cx: &mut Context<DocumentView>) {
+        if std::env::var("TD_READING_RECORDING").as_deref() == Ok("0") {
+            return;
+        }
+        let Some(r) = &self.current else { return };
+        let Some(layout) = &r.layout.reading_layout else {
+            return;
+        };
+        if layout.targets.is_empty() {
+            return;
+        }
+        let map = self.map_for(r);
+        let rect = |b: Bounds<Pixels>| RectCss {
+            x: b.origin.x.into(),
+            y: b.origin.y.into(),
+            w: b.size.width.into(),
+            h: b.size.height.into(),
+        };
+        let mut covers = match &self.notes {
+            Some(layer) => self.view.and_then(|m| m.origin).and_then(|origin| {
+                layer.obscuring_bounds().map(|bounds| {
+                    bounds
+                        .into_iter()
+                        .map(|mut b| {
+                            b.origin -= origin;
+                            rect(b)
+                        })
+                        .collect::<Vec<_>>()
+                })
+            }),
+            None => Some(vec![]),
+        };
+        if let (Some(covers), Some(rail)) = (&mut covers, self.reading_cover) {
+            covers.push(rect(rail));
+        }
+        let eligible: Vec<String> = layout
+            .targets
+            .iter()
+            .filter(|t| t.rect.is_some())
+            .map(|t| t.anchor.clone())
+            .collect();
+        let visible: Vec<String> = layout
+            .targets
+            .iter()
+            .filter(|t| {
+                map.as_ref().zip(t.rect).is_some_and(|(m, rc)| {
+                    covers
+                        .as_ref()
+                        .zip(place(rc, m))
+                        .is_some_and(|(covers, b)| reading::exposed(rect(b), rect(m.clip), covers))
+                })
+            })
+            .map(|t| t.anchor.clone())
+            .collect();
+        let now = self.exposure_start.elapsed();
+        let on = active
+            && !self.hidden
+            && self.dialog.is_none()
+            && self.notes.as_ref().is_none_or(|n| n.note_box().is_none());
+        let state = if !on {
+            reading::Activity::Inactive
+        } else if map.is_none() || covers.is_none() || !self.covers_view() {
+            reading::Activity::Unknown
+        } else {
+            reading::Activity::Active
+        };
+        let Some(clock) = &mut self.exposure_clock else {
+            return;
+        };
+        let before: Vec<_> = clock
+            .session
+            .targets
+            .iter()
+            .map(|t| t.visible_ms.map(|ms| ms / 1000))
+            .collect();
+        if let Err(e) = clock.sample(now, state, &visible, &eligible) {
+            self.exposure_error = Some(e);
+            return;
+        }
+        let measuring = state == reading::Activity::Active;
+        let transitioned = self.exposure_on != measuring;
+        self.exposure_on = measuring;
+        let after: Vec<_> = clock
+            .session
+            .targets
+            .iter()
+            .map(|t| t.visible_ms.map(|ms| ms / 1000))
+            .collect();
+        if transitioned || before != after {
+            cx.notify();
+        }
+        let session = clock.checkpoint();
+        if !self.exposure_saving
+            && (now.saturating_sub(self.exposure_saved) >= Duration::from_secs(5)
+                || transitioned
+                || (!on && self.exposure_error.is_none()))
+        {
+            if let Some(session) = session
+                .filter(|s| self.exposure_sent.as_ref() != Some(s) || self.exposure_error.is_some())
+            {
+                // The detached write outlives a view being closed. The journal is
+                // retained on failure and retried on the next active checkpoint.
+                self.exposure_sent = Some(session.clone());
+                let path = self.path.clone();
+                let expected = r.layout.rendered;
+                self.exposure_saving = true;
+                self.exposure_saved = now;
+                let session_id = session.session.clone();
+                cx.spawn(async move |this, cx| {
+                    let saved = cx
+                        .background_spawn(
+                            async move { reading::persist(&path, expected, &session) },
+                        )
+                        .await;
+                    this.update(cx, |view, cx| {
+                        if let Ok((_, written)) = &saved {
+                            view.own_write = Some(FileStamp {
+                                mtime: written.mtime,
+                                len: written.len,
+                            });
+                        }
+                        let Some(p) = page_of(view) else { return };
+                        p.exposure_saving = false;
+                        if p.exposure_clock
+                            .as_ref()
+                            .is_none_or(|c| c.session.session != session_id)
+                        {
+                            return;
+                        }
+                        match saved {
+                            Ok((record, _)) => {
+                                p.exposure_record = Some(record);
+                                p.exposure_error = None;
+                            }
+                            Err(e) => p.exposure_error = Some(e),
+                        }
+                        cx.notify();
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        }
+    }
+
     pub fn new(path: &Path, engine: Result<Arc<dyn PageEngine>, Unavailable>) -> Self {
         Self {
+            timing: OpenTiming::new(),
             path: path.to_path_buf(),
             engine,
             status: Status::Waiting,
@@ -518,6 +957,20 @@ impl PageDoc {
             beside: None,
             saving: None,
             rereading: None,
+            hidden: false,
+            epoch: 0,
+            exposure_clock: None,
+            exposure_start: Instant::now(),
+            exposure_saved: Duration::ZERO,
+            exposure_record: None,
+            exposure_error: None,
+            exposure_saving: false,
+            exposure_sent: None,
+            exposure_on: false,
+            reading_zones: Vec::new(),
+            reading_offset: None,
+            reading_active_anchor: None,
+            reading_cover: None,
         }
     }
 
@@ -546,7 +999,7 @@ impl PageDoc {
         let zoom = zoom.max(0.01);
         Geometry {
             css_width: (f32::from(m.size.width) / zoom).round().max(1.0) as u32,
-            viewport_css_height: (f32::from(m.size.height) / zoom).round().max(1.0) as u32,
+            viewport_css_height: (f32::from(m.size.height) / zoom).ceil().max(1.0) as u32,
             scale: m.scale * zoom,
         }
     }
@@ -633,6 +1086,11 @@ impl PageDoc {
         }
         self.status = Status::Failed(why);
         self.work = None;
+        if let (Some((page, _)), Ok(engine)) = (self.live.take(), &self.engine) {
+            let engine = engine.clone();
+            cx.background_spawn(async move { engine.close(page) })
+                .detach();
+        }
         // Once, however the view is resized afterwards: a file handed to the
         // desktop on every resize would open a browser window each time.
         if desktop && !self.handed_over {
@@ -652,6 +1110,13 @@ impl PageDoc {
     }
 
     fn start(&mut self, g: Geometry, zoom: f32, cx: &mut Context<DocumentView>) {
+        if self.hidden {
+            return;
+        }
+        if self.asked.is_some() {
+            self.timing = OpenTiming::new();
+        }
+        self.timing.geometry = Some(self.timing.elapsed());
         self.asked = Some((g, zoom));
         // Handed to the desktop already: this view only says why from now on.
         if self.handed_over {
@@ -675,33 +1140,64 @@ impl PageDoc {
         // newer render replaced it — so a page the browser finishes opening
         // after that is closed at once instead of living on in Chromium.
         let wanted = Wanted::new();
+        let foreground = super::prepare::foreground(cx);
+        // A page opened for the first time, with no place in it asked for,
+        // is read from the top: its first band is the one wanted first.
+        let top_first =
+            self.current.is_none() && self.pending_top.is_none() && self.pending_fragment.is_none();
+        let started = self.timing.started;
+        let svg = cx.svg_renderer();
         self.work = Some(cx.spawn(async move |this, cx| {
+            let _foreground = foreground;
             let wanted = wanted;
             let root = cache::root();
             let name = engine.name();
             // Read, hash and look the render up, off the foreground. The
             // notes are read from these same bytes, so what the layer shows
             // belongs to the render it is drawn over.
+            //
+            // A render the cache does not have is opened right here, and a
+            // page read from the top has its first band photographed here
+            // too: each trip back to the foreground in between waited for the
+            // window's next frame, and bought nothing.
             let found = cx
                 .background_spawn({
-                    let (path, root) = (path.clone(), root.clone());
+                    let (path, root, engine, still) =
+                        (path.clone(), root.clone(), engine.clone(), wanted.flag());
                     async move {
                         let bytes = std::fs::read(&path).map_err(|e| (path.display().to_string(), e.to_string()))?;
                         let hash = layout_hash(&bytes);
                         let read = notes::read(&bytes);
                         let key = cache::key(&path, hash, g, name, EXTRACT_VERSION);
-                        let cached = cache::lookup(&root, key).and_then(|c| {
-                            let mut pngs = Vec::with_capacity(c.tiles.len());
-                            for (band, file) in &c.tiles {
-                                pngs.push((*band, Arc::<[u8]>::from(std::fs::read(file).ok()?)));
-                            }
-                            Some((c.layout, pngs))
+                        let cached = cache::lookup(&root, key);
+                        let looked = started.elapsed().as_secs_f64() * 1000.0;
+                        let opened = cached.is_none().then(|| {
+                            let req = PageRequest { path: path.clone(), geometry: g, expect: hash };
+                            open_if_wanted(&*engine, &req, &still).map(|mut l| {
+                                let owned = Unadopted::new(&engine, &l);
+                                let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                                l.diagnostics.extend(why.into_iter().flatten());
+                                // Decoded here too: the first screen arrives
+                                // ready to draw.
+                                let first = l
+                                    .page
+                                    .zip(l.bands().first().copied())
+                                    .filter(|_| top_first)
+                                    .and_then(|(id, band)| engine.tile(id, l.generation, band).ok())
+                                    .map(|t| {
+                                        let image = gpui::Image::from_bytes(gpui::ImageFormat::Png, t.png.clone())
+                                            .to_image_data(svg)
+                                            .ok();
+                                        (t, image)
+                                    });
+                                (l, first, owned)
+                            })
                         });
-                        Ok::<_, (String, String)>((hash, read, key, cached))
+                        Ok::<_, (String, String)>((hash, read, key, cached, looked, opened))
                     }
                 })
                 .await;
-            let (mut hash, mut read, key, cached) = match found {
+            let (mut hash, mut read, key, cached, looked, mut opened) = match found {
                 Ok(f) => f,
                 Err((at, e)) => {
                     let t = &crate::lang::current().strings().parts;
@@ -715,26 +1211,56 @@ impl PageDoc {
                     return;
                 }
             };
-            if let Some((layout, pngs)) = cached {
-                if debug() {
-                    eprintln!("[doc] page cache hit {} ({} tiles)", path.display(), pngs.len());
+            this.update(cx, |view, _| {
+                if let Some(p) = page_of(view) {
+                    p.timing.cache_lookup = Some(looked);
+                    p.timing.cache_hit = Some(cached.is_some());
                 }
+            }).ok();
+            if let Some(cached) = cached {
+                let generation = cached.layout.generation;
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.adopt(layout, key, None, read, zoom, cx);
-                        for (band, png) in pngs {
-                            p.landed(band, png, cx);
-                        }
-                        p.status = Status::Ready;
-                        p.work = None;
+                        p.adopt(cached.layout, key, None, read, zoom, cx);
                     }
-                })
-                .ok();
+                }).ok();
+                loop {
+                    let next = this.update(cx, |view, _| page_of(view).and_then(|p| p.next_fetch(generation))).ok().flatten();
+                    let Some(band) = next else { break };
+                    let Some((_, file)) = cached.tiles.iter().find(|(b, _)| *b == band) else { break };
+                    let file = file.clone();
+                    let root = root.clone();
+                    let png = cx.background_spawn(async move {
+                        let read = std::fs::read(file);
+                        if read.is_err() { cache::invalidate(&root, key); }
+                        read
+                    }).await;
+                    let keep = this.update(cx, |view, cx| {
+                        let Some(p) = page_of(view) else { return false };
+                        if !p.is_current(generation) { return false; }
+                        match png {
+                            Ok(png) => { p.landed(band, Arc::from(png), cx); true }
+                            Err(_) => {
+                                // Eviction raced the read. Start a fresh render;
+                                // never keep a ready page with a missing band.
+                                p.asked = None;
+                                p.start(g, zoom, cx);
+                                false
+                            }
+                        }
+                    }).unwrap_or(false);
+                    if !keep { return; }
+                }
+                this.update(cx, |view, _| {
+                    if let Some(p) = page_of(view) { p.status = Status::Ready; }
+                }).ok();
                 return;
             }
             // Render. A file that changed between the read and the load is
             // read again, once.
             let mut layout = None;
+            let mut first_tile = None;
+            let mut owned = None;
             for attempt in 0..2 {
                 let req = PageRequest {
                     path: path.clone(),
@@ -744,15 +1270,23 @@ impl PageDoc {
                 let (engine, still, root) = (engine.clone(), wanted.flag(), root.clone());
                 // A film the page carries inside itself is kept as a file
                 // here, off the foreground, before anything can press it.
-                let opened = cx.background_spawn(async move {
-                    let mut l = open_if_wanted(&*engine, &req, &still)?;
-                    let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
-                    l.diagnostics.extend(why.into_iter().flatten());
-                    Ok(l)
-                });
-                match opened.await {
-                    Ok(l) => {
+                let result = match opened.take() {
+                    Some(done) => done,
+                    None => cx
+                        .background_spawn(async move {
+                            let mut l = open_if_wanted(&*engine, &req, &still)?;
+                            let owned = Unadopted::new(&engine, &l);
+                            let why = l.videos.as_deref_mut().map(|v| cache::keep_clips(&root, v));
+                            l.diagnostics.extend(why.into_iter().flatten());
+                            Ok((l, None, owned))
+                        })
+                        .await,
+                };
+                match result {
+                    Ok((l, first, page)) => {
                         layout = Some(Ok(l));
+                        first_tile = first;
+                        owned = Some(page);
                         break;
                     }
                     Err(EngineError::FileChanged) if attempt == 0 => {
@@ -807,14 +1341,39 @@ impl PageDoc {
                 );
             }
             let adopted = this
-                .update(cx, |view, cx| page_of(view).map(|p| p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx)))
+                .update(cx, |view, cx| {
+                    page_of(view).map(|p| {
+                        p.adopt(layout, key, page.map(|id| (id, generation)), read, zoom, cx);
+                        // In the same update: the view closes it from here on.
+                        if let Some(owned) = owned.take() {
+                            owned.adopted();
+                        }
+                        // The first band came with the layout, decoded: it lands
+                        // in the same update, and is neither asked for nor
+                        // decoded again. One that would not decode lands as a
+                        // PNG, and the usual decode says why.
+                        if let Some((t, image)) = first_tile {
+                            if p.is_current(generation) {
+                                let top = t.band.top_dev;
+                                if image.is_some() {
+                                    if let Some(r) = p.current.as_mut() {
+                                        r.tiles.decoding.insert(top);
+                                    }
+                                }
+                                p.landed(t.band, Arc::from(t.png), cx);
+                                if image.is_some() {
+                                    p.decoded(generation, top, image, cx);
+                                }
+                            }
+                        }
+                    })
+                })
                 .ok()
                 .flatten();
             if adopted.is_none() {
-                // The view went while the page was loading.
-                if let Some(id) = page {
-                    cx.background_spawn(async move { engine.close(id) }).detach();
-                }
+                // The view went while the page was loading: dropping what
+                // it never adopted closes the page.
+                drop(owned);
                 return;
             }
             let Some(page) = page else { return };
@@ -826,8 +1385,8 @@ impl PageDoc {
                     .ok()
                     .flatten();
                 let Some(band) = next else { break };
-                let engine = engine.clone();
-                let got = cx.background_spawn(async move { engine.tile(page, generation, band) }).await;
+                let capturing = engine.clone();
+                let got = cx.background_spawn(async move { capturing.tile(page, generation, band) }).await;
                 let ok = this
                     .update(cx, |view, cx| {
                         let Some(p) = page_of(view) else { return false };
@@ -849,9 +1408,27 @@ impl PageDoc {
                     })
                     .unwrap_or(false);
                 if !ok {
+                    let closing = engine.clone();
+                    cx.background_spawn(async move { closing.close(page) }).detach();
+                    this.update(cx, |view, _| {
+                        if let Some(p) = page_of(view) {
+                            if p.live == Some((page, generation)) { p.live = None; }
+                        }
+                    }).ok();
                     return;
                 }
             }
+            this.update(cx, |view, _| {
+                if let Some(p) = page_of(view) {
+                    if p.live == Some((page, generation)) { p.live = None; }
+                }
+            }).ok();
+            let closing = engine.clone();
+            let dependencies = cx.background_spawn(async move {
+                let dependencies = closing.dependencies(page);
+                closing.close(page);
+                dependencies
+            }).await;
             // Every band landed: keep the render whole on disk.
             let whole = this
                 .update(cx, |view, cx| {
@@ -869,10 +1446,10 @@ impl PageDoc {
                 })
                 .ok()
                 .flatten();
-            if let Some((layout, tiles)) = whole {
+            if let (Some((layout, tiles)), Some(dependencies)) = (whole, dependencies) {
                 cx.background_spawn(async move {
                     let borrowed: Vec<(Band, &[u8])> = tiles.iter().map(|(b, p)| (*b, &p[..])).collect();
-                    if let Err(e) = cache::store(&root, key, &layout, &borrowed) {
+                    if let Err(e) = cache::store_validated(&root, key, &layout, &borrowed, &dependencies) {
                         if debug() {
                             eprintln!("[doc] page cache store failed: {e}");
                         }
@@ -901,6 +1478,47 @@ impl PageDoc {
         zoom: f32,
         cx: &mut Context<DocumentView>,
     ) {
+        self.epoch = self.epoch.wrapping_add(1);
+        self.timing.layout = Some(self.timing.elapsed());
+        if let Some(geometry) = &layout.reading_layout {
+            let same = self.exposure_clock.as_ref().is_some_and(|c| {
+                c.session.document == geometry.document && c.session.revision == geometry.revision
+            });
+            if !same {
+                self.exposure_clock = reading::Clock::new(geometry).ok();
+                self.exposure_record = None;
+                self.exposure_sent = None;
+                self.exposure_start = Instant::now();
+                self.exposure_saved = Duration::ZERO;
+                let path = self.path.clone();
+                let identity = (geometry.document.clone(), geometry.revision.clone());
+                cx.spawn(async move |this, cx| {
+                    let got = cx
+                        .background_spawn(async move {
+                            std::fs::read(path)
+                                .map_err(|e| e.to_string())
+                                .and_then(|b| reading::read(&b))
+                        })
+                        .await;
+                    this.update(cx, |v, cx| {
+                        let Some(p) = page_of(v) else { return };
+                        if p.exposure_clock.as_ref().is_some_and(|c| {
+                            (c.session.document.clone(), c.session.revision.clone()) == identity
+                        }) {
+                            match got {
+                                Ok(record) => p.exposure_record = Some(record),
+                                Err(e) => p.exposure_error = Some(e),
+                            }
+                            cx.notify();
+                        }
+                    })
+                    .ok();
+                })
+                .detach();
+            }
+        } else {
+            self.exposure_clock = None;
+        }
         // The notes the new render's bytes hold, read as its own page reads
         // them. A note box open on an anchor the new render still has stays
         // open: a resize re-lays the page out and moves nothing it says.
@@ -926,6 +1544,7 @@ impl PageDoc {
         if unread {
             super::read_pictures::<PageDoc>(self.path.clone(), cx, |p| p.notes.as_mut());
         }
+        let previous_scroll = self.scroll_css;
         self.land(&layout);
         let previous_live = self.live.take();
         if let (Some((old_page, _)), Ok(engine)) = (previous_live, &self.engine) {
@@ -936,11 +1555,13 @@ impl PageDoc {
         self.live = live;
         self.key = Some(key);
         let incoming = Rendered {
+            stale_scroll: None,
             tiles: TileSet::new(&layout),
             layout,
             zoom,
         };
         if let Some(mut outgoing) = self.current.replace(incoming) {
+            outgoing.stale_scroll = Some(previous_scroll);
             let visible = self.visible_tops(&outgoing);
             let mut spare = Vec::new();
             outgoing.tiles.gpu.retain(|top, image| {
@@ -952,8 +1573,10 @@ impl PageDoc {
             });
             outgoing.tiles.png.clear();
             give_back(spare, cx);
-            if let Some(mut older) = self.old.replace(outgoing) {
-                give_back(older.tiles.take_gpu(), cx);
+            if !outgoing.tiles.gpu.is_empty() {
+                if let Some(mut older) = self.old.replace(outgoing) {
+                    give_back(older.tiles.take_gpu(), cx);
+                }
             }
         }
         self.clamp_scroll();
@@ -970,9 +1593,7 @@ impl PageDoc {
         if let Some(top) = self.pending_top.take() {
             self.scroll_css = top * layout.height_css;
         } else if let Some(prev) = &self.current {
-            if prev.layout.height_css > 0.0 {
-                self.scroll_css *= layout.height_css / prev.layout.height_css;
-            }
+            self.scroll_css = layout.reading_top(&prev.layout, self.scroll_css);
         }
         let fragment = self.pending_fragment.take();
         if let Some(top) = fragment.and_then(|f| layout.fragment_top_css(&f)) {
@@ -1000,6 +1621,9 @@ impl PageDoc {
 
     /// A band's PNG is in hand.
     fn landed(&mut self, band: Band, png: Arc<[u8]>, cx: &mut Context<DocumentView>) {
+        if self.timing.first_tile.is_none() {
+            self.timing.first_tile = Some(self.timing.elapsed());
+        }
         if let Some(r) = self.current.as_mut() {
             r.tiles.fetching.remove(&band.top_dev);
             r.tiles.png.insert(band.top_dev, png);
@@ -1011,16 +1635,14 @@ impl PageDoc {
         let m = self.view?;
         let g = r.layout.geometry;
         let stretch = self.stretch(r);
-        let top = (f64::from(self.scroll_css) * f64::from(g.scale))
+        let top = (f64::from(r.stale_scroll.unwrap_or(self.scroll_css)) * f64::from(g.scale))
             .round()
             .max(0.0) as u32;
-        let h = (f64::from(f32::from(m.size.height)) / f64::from(stretch) * f64::from(g.scale))
-            .ceil() as u32;
+        let h = g.height_dev(f32::from(m.size.height) / stretch);
         Some((top, h))
     }
 
     fn residency(&self, r: &Rendered) -> Residency {
-        let all: Vec<u32> = r.tiles.bands.iter().map(|b| b.top_dev).collect();
         let resident: Vec<u32> = r
             .tiles
             .gpu
@@ -1030,7 +1652,7 @@ impl PageDoc {
             .collect();
         let have: Vec<u32> = r.tiles.png.keys().copied().collect();
         let (top, h) = self.view_dev(r).unwrap_or((0, TILE_DEV));
-        plan_residency(&all, &resident, &have, top, h)
+        plan_bands(&r.tiles.bands, &resident, &have, top, h)
     }
 
     fn visible_tops(&self, r: &Rendered) -> Vec<u32> {
@@ -1040,14 +1662,18 @@ impl PageDoc {
         r.tiles
             .bands
             .iter()
+            .filter(|&&b| band_distance(b, top, h).0 == 0)
             .map(|b| b.top_dev)
-            .filter(|&t| distance(t, top, h).0 == 0)
             .collect()
     }
 
     /// Bring the GPU in line with the viewport: evict what is out of reach,
     /// decode what is wanted and in hand.
     fn plan(&mut self, cx: &mut Context<DocumentView>) {
+        if self.hidden {
+            return;
+        }
+        let epoch = self.epoch;
         let Some(r) = self.current.as_ref() else {
             return;
         };
@@ -1079,7 +1705,9 @@ impl PageDoc {
                     .await;
                 this.update(cx, |view, cx| {
                     if let Some(p) = page_of(view) {
-                        p.decoded(generation, top, decoded.ok(), cx);
+                        if p.epoch == epoch && !p.hidden {
+                            p.decoded(generation, top, decoded.ok(), cx);
+                        }
                     }
                 })
                 .ok();
@@ -1101,6 +1729,33 @@ impl PageDoc {
         image: Option<Arc<RenderImage>>,
         cx: &mut Context<DocumentView>,
     ) {
+        if image.is_none() && self.is_current(generation) {
+            // Do not retry the same corrupt PNG on every frame. A cached
+            // image gets one fresh render; a bad capture reports its failure.
+            if self.timing.cache_hit == Some(true) {
+                if let (Some(key), Some((g, zoom))) = (self.key, self.asked) {
+                    self.work = Some(cx.spawn(async move |this, cx| {
+                        cx.background_spawn(async move { cache::invalidate(&cache::root(), key) })
+                            .await;
+                        this.update(cx, |view, cx| {
+                            if let Some(p) = page_of(view) {
+                                p.start(g, zoom, cx);
+                            }
+                        })
+                        .ok();
+                    }));
+                    return;
+                }
+            }
+            let error = EngineError::Page("Could not decode the captured page image".into());
+            self.fail(
+                error.say(crate::lang::current()),
+                error.to_string(),
+                false,
+                cx,
+            );
+            return;
+        }
         let wanted = {
             let Some(r) = self
                 .current
@@ -1120,6 +1775,9 @@ impl PageDoc {
         r.tiles.decoding.remove(&top);
         match image {
             Some(image) if wanted && !r.tiles.gpu.contains_key(&top) => {
+                if self.timing.first_decode.is_none() {
+                    self.timing.first_decode = Some(self.timing.elapsed());
+                }
                 r.tiles.gpu.insert(top, image);
             }
             _ => {}
@@ -1175,6 +1833,37 @@ impl PageDoc {
             cx.notify();
             return;
         }
+        if self
+            .pointer
+            .is_some_and(|at| self.reading_zones.iter().any(|(b, _)| b.contains(&at)))
+        {
+            if let Some(layout) = self
+                .current
+                .as_ref()
+                .and_then(|r| r.layout.reading_layout.as_ref())
+            {
+                let first = self
+                    .reading_zones
+                    .first()
+                    .and_then(|(_, id)| layout.targets.iter().position(|t| &t.anchor == id))
+                    .unwrap_or(0);
+                let next = if dy < 0.0 {
+                    first.saturating_add(1)
+                } else {
+                    first.saturating_sub(1)
+                };
+                self.reading_offset = Some(
+                    next.min(
+                        layout
+                            .targets
+                            .len()
+                            .saturating_sub(self.reading_zones.len()),
+                    ),
+                );
+                cx.notify();
+                return;
+            }
+        }
         let stretch = self
             .current
             .as_ref()
@@ -1211,6 +1900,9 @@ impl PageDoc {
     /// The marks the notes layer draws on the page itself: none while one of
     /// the brief's own dialogs covers it.
     fn page_marks(&self) -> Vec<Mark> {
+        if self.old.is_some() && !self.covers_view() {
+            return Vec::new();
+        }
         let (Some(layer), Some(r)) = (self.notes.as_ref(), self.current.as_ref()) else {
             return Vec::new();
         };
@@ -1291,6 +1983,14 @@ impl PageDoc {
         report["send_to"] = serde_json::json!(layer
             .send_button(&r.layout.anchors, self.beside.as_deref())
             .map(|(label, _)| label));
+        report["reading"] = serde_json::json!({
+            "active": self.exposure_on,
+            "session": self.exposure_clock.as_ref().and_then(|c| c.checkpoint()),
+            "saved": self.exposure_record,
+            "saving": self.exposure_saving,
+            "pending_error": self.exposure_error,
+            "rail_targets": self.reading_zones.len()
+        });
         Some(report)
     }
 
@@ -1547,6 +2247,9 @@ impl PageDoc {
     /// copies the map. Answers whether anything changed.
     pub fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
         use super::ReadAct;
+        if self.old.is_some() && !self.covers_view() {
+            return false;
+        }
         let Some(r) = self.current.as_ref() else {
             return false;
         };
@@ -1745,6 +2448,20 @@ impl PageDoc {
                     return Pressed::Took;
                 }
                 LayerPress::Pass => {}
+            }
+        }
+        if self.old.is_some() && self.dialog.is_none() && !self.covers_view() {
+            return Pressed::Took;
+        }
+        if self.dialog.is_none() {
+            if let Some((_, anchor)) = self
+                .reading_zones
+                .iter()
+                .find(|(bounds, _)| bounds.contains(&at))
+            {
+                let anchor = anchor.clone();
+                self.show_fragment(anchor, cx);
+                return Pressed::Took;
             }
         }
         let marks = match self.dialog.is_some() {
@@ -2030,10 +2747,8 @@ impl PageDoc {
                                 let l = open_if_wanted(&*engine, &req, &still)?;
                                 let page = l.page.ok_or(EngineError::Closed)?;
                                 let drawn = try_live(page, l.generation);
-                                if drawn.is_err() || !still.load(Ordering::SeqCst) {
-                                    engine.close(page);
-                                }
-                                (drawn?, Some((page, l.generation)))
+                                engine.close(page);
+                                (drawn?, None)
                             }
                             other => (other?, None),
                         };
@@ -2107,6 +2822,53 @@ impl PageDoc {
     /// Everything this page holds on the GPU, and the live page, given back.
     /// Runs from the view's release hook, when every window is in gpui's list,
     /// so the textures are dropped at once rather than deferred.
+    fn visibility(&mut self, shown: bool, cx: &mut Context<DocumentView>) {
+        if self.hidden == !shown {
+            return;
+        }
+        self.hidden = !shown;
+        if shown {
+            self.timing = OpenTiming::new();
+            self.asked = None;
+            self.lay_out(cx);
+        } else {
+            self.epoch = self.epoch.wrapping_add(1);
+            self.work = None;
+            self.settle = None;
+            self.asked = None;
+            let mut images = Vec::new();
+            if let Some(r) = &mut self.current {
+                images.extend(r.tiles.take_gpu());
+                r.tiles.png.clear();
+                r.tiles.decoding.clear();
+                r.tiles.fetching.clear();
+            }
+            if let Some(mut r) = self.old.take() {
+                images.extend(r.tiles.take_gpu());
+            }
+            if let Some(d) = self.dialog.take() {
+                images.extend(d.image);
+            }
+            give_back(images, cx);
+            if let (Some((page, _)), Ok(engine)) = (self.live.take(), &self.engine) {
+                let engine = engine.clone();
+                cx.background_spawn(async move { engine.close(page) })
+                    .detach();
+            }
+            if debug() {
+                eprintln!(
+                    "[doc-hidden] {}",
+                    serde_json::json!({
+                        "path": self.path, "resident_tiles": self.current.as_ref().map(|r| r.tiles.gpu.len()),
+                        "png_bytes": self.current.as_ref().map(|r| r.tiles.png.values().map(|p| p.len()).sum::<usize>()),
+                        "browser_page": self.live.is_some(), "scroll_css": self.scroll_css,
+                    })
+                );
+            }
+        }
+        cx.notify();
+    }
+
     pub fn release(&mut self, cx: &mut App) -> usize {
         let mut images = Vec::new();
         if let Some(mut r) = self.current.take() {
@@ -2135,7 +2897,7 @@ impl PageDoc {
     fn tiles_of(&self, r: &Rendered, m: Measured) -> Vec<gpui::AnyElement> {
         let g = r.layout.geometry;
         let stretch = self.stretch(r);
-        let scroll_dev = (f64::from(self.scroll_css) * f64::from(g.scale))
+        let scroll_dev = (f64::from(r.stale_scroll.unwrap_or(self.scroll_css)) * f64::from(g.scale))
             .round()
             .max(0.0) as u32;
         // Tiles are snapped to whole device pixels against the view's origin.
@@ -2201,6 +2963,7 @@ impl PageDoc {
         if origin.is_some() {
             m.origin = origin;
         }
+        self.view = Some(m);
         if let Some(old) = self.old.as_ref() {
             layers.extend(self.tiles_of(old, m));
         }
@@ -2227,6 +2990,9 @@ impl PageDoc {
                     eprintln!("[doc] drew {} tiles={r}", self.path.display());
                 }
             }
+        }
+        if self.dialog.is_none() {
+            layers.extend(self.draw_reading(th));
         }
         // Forget where the bar and the note box were; the canvases below
         // record where they land this frame.
@@ -2295,6 +3061,7 @@ fn write_notes(
     concurs: bool,
     rendered: super::engine::LayoutHash,
 ) -> Result<(notes::WritePlan, notes::Written), Words> {
+    let _lock = reading::review_lock(path).map_err(Words::as_is)?;
     let name = path
         .file_name()
         .map(|n| n.to_string_lossy().into_owned())
@@ -2379,6 +3146,38 @@ pub fn moved_anchors(drawn: &[(String, Option<RectCss>)], now: &[Anchor]) -> Vec
 // fragment, follows its file and carries a brief's notes. It does not zoom or
 // follow a drag, so those are the trait's defaults.
 impl Backend for PageDoc {
+    fn exposure(&mut self, active: bool, cx: &mut Context<DocumentView>) {
+        self.exposure_tick(active, cx);
+    }
+    fn painted(&mut self) {
+        if self.hidden {
+            return;
+        }
+        let any = self
+            .current
+            .as_ref()
+            .is_some_and(|r| !r.tiles.gpu.is_empty());
+        let mut changed = false;
+        if any && self.timing.first_paint.is_none() {
+            self.timing.first_paint = Some(self.timing.elapsed());
+            changed = true;
+        }
+        if self.covers_view() && self.timing.viewport_paint.is_none() {
+            self.timing.viewport_paint = Some(self.timing.elapsed());
+            changed = true;
+        }
+        if changed && debug() {
+            eprintln!(
+                "[doc-timing] {}",
+                serde_json::json!({"path": self.path, "geometry": self.asked.map(|(g, _)| g), "ms": self.timing})
+            );
+        }
+    }
+
+    fn visible(&mut self, shown: bool, cx: &mut Context<DocumentView>) {
+        self.visibility(shown, cx);
+    }
+
     fn read_act(&mut self, act: super::ReadAct, cx: &mut Context<DocumentView>) -> bool {
         PageDoc::read_act(self, act, cx)
     }
@@ -2394,6 +3193,25 @@ impl Backend for PageDoc {
     }
 
     fn give_back(&mut self, path: &Path, cx: &mut App) {
+        // The release hook also covers tab/window destruction, where no close
+        // gesture gets a chance to run. Settle and save outside the dropped view.
+        if let (Some(clock), Some(r)) = (&mut self.exposure_clock, &self.current) {
+            let _ = clock.sample(
+                self.exposure_start.elapsed(),
+                reading::Activity::Inactive,
+                &[],
+                &[],
+            );
+            if let Some(session) = clock.checkpoint() {
+                let path = self.path.clone();
+                let expected = r.layout.rendered;
+                cx.background_executor()
+                    .spawn(async move {
+                        let _ = reading::persist(&path, expected, &session);
+                    })
+                    .detach();
+            }
+        }
         let n = self.release(cx);
         if debug() {
             eprintln!("[doc] released {} textures={n}", path.display());
@@ -2563,6 +3381,94 @@ impl Backend for PageDoc {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[gpui::test]
+    fn hiding_a_document_cancels_work_and_releases_pixels_but_keeps_its_place(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        use super::super::engine::{ConcurSupport, LayoutHash, NotesCapability};
+        cx.update(|cx| super::super::set_engine(cx, Err(Unavailable::Off)));
+        let view = cx.new(|cx| {
+            DocumentView::new(
+                crate::docopen::DocTarget {
+                    path: "/missing/visibility-test.html".into(),
+                    kind: crate::docopen::DocKind::Html,
+                },
+                cx,
+            )
+        });
+        let image = Arc::new(RenderImage::new(vec![::image::Frame::new(
+            ::image::RgbaImage::new(8, 8),
+        )]));
+        let wanted = Wanted::new();
+        let flag = wanted.flag();
+        view.update(cx, |v, cx| {
+            let p = page_of(v).unwrap();
+            let layout = PageLayout {
+                page: None,
+                generation: 7,
+                rendered: LayoutHash(1),
+                geometry: Geometry {
+                    css_width: 600,
+                    viewport_css_height: 800,
+                    scale: 1.6,
+                },
+                height_css: 4000.,
+                notes_file: None,
+                reading_layout: None,
+                capability: NotesCapability {
+                    notes_islands: 0,
+                    concurs_island: false,
+                    tagged: 0,
+                    concur: ConcurSupport::Unknown,
+                },
+                anchors: vec![],
+                links: vec![],
+                targets: None,
+                openers: vec![],
+                dialogs: vec![],
+                diagnostics: vec![],
+                videos: None,
+            };
+            let mut tiles = TileSet::new(&layout);
+            tiles.gpu.insert(0, image.clone());
+            tiles.png.insert(0, Arc::from(&b"cached PNG"[..]));
+            tiles.decoding.insert(1280);
+            tiles.fetching.insert(2560);
+            p.current = Some(Rendered {
+                layout,
+                tiles,
+                stale_scroll: None,
+                zoom: 1.,
+            });
+            p.scroll_css = 1234.;
+            p.pending_fragment = Some("the-passage".into());
+            p.work = Some(cx.spawn(async move |_, _| {
+                let _wanted = wanted;
+                std::future::pending::<()>().await;
+            }));
+            let epoch = p.epoch;
+            p.visibility(false, cx);
+            assert_ne!(p.epoch, epoch, "late decode results have an obsolete epoch");
+            let r = p.current.as_ref().unwrap();
+            assert!(r.tiles.gpu.is_empty() && r.tiles.png.is_empty());
+            assert!(r.tiles.decoding.is_empty() && r.tiles.fetching.is_empty());
+            assert!(p.work.is_none() && p.asked.is_none());
+            assert_eq!(p.scroll_css, 1234.);
+            assert_eq!(p.pending_fragment.as_deref(), Some("the-passage"));
+            assert_eq!(r.layout.height_css, 4000.);
+            p.visibility(true, cx);
+            assert!(!p.hidden);
+            assert_eq!(p.scroll_css, 1234.);
+        });
+        cx.run_until_parked();
+        assert_eq!(
+            Arc::strong_count(&image),
+            1,
+            "the deferred atlas release has run"
+        );
+        assert!(!flag.load(std::sync::atomic::Ordering::SeqCst));
+    }
 
     fn tops(n: u32) -> Vec<u32> {
         (0..n).map(|k| k * TILE_DEV).collect()

@@ -1,0 +1,207 @@
+{
+  "format": 1,
+  "kind": "briefing-calls",
+  "calls": [
+    {
+      "id": "call-every-chip-opens-its-list-in-one-place-at-one-he",
+      "at": "2026-11-09T17:32Z",
+      "title": "Every chip opens its list in one place, at one height",
+      "context": null,
+      "chose": "One list under the chips, as tall as the project list, for all six",
+      "because": "The card is centred, so a list of another height moved it under the pointer on every Tab.",
+      "passed_over": [
+        "A popover anchored to each chip, as T3 draws it"
+      ],
+      "undo": "Draw the other lists at their own height",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-09T17:42Z",
+        "via": "reported",
+        "note": "Asked in chat on 2026-11-09 with the alternative beside it; Parker chose the built option.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      },
+      "see": "still"
+    },
+    {
+      "id": "call-enter-on-a-chip-goes-back-to-the-sentence-instea",
+      "at": "2026-11-09T17:32Z",
+      "title": "Enter on a chip goes back to the sentence instead of starting",
+      "context": null,
+      "chose": "Enter takes the lit row and returns; Ctrl+Enter still starts from anywhere",
+      "because": "With the options in view, Enter reads as choose, which is what T3's pickers mean by it.",
+      "passed_over": [
+        "Enter starts the agent from anywhere, as before"
+      ],
+      "undo": "Delete one match arm in composer_key",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "high",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "taste is high"
+        ]
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-09T17:42Z",
+        "via": "reported",
+        "note": "Asked in chat on 2026-11-09 with the alternative beside it; Parker chose the built option.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      },
+      "see": "lists"
+    },
+    {
+      "id": "call-no-project-leads-the-project-list-whatever-is-ch",
+      "at": "2026-11-09T17:32Z",
+      "title": "No project leads the project list whatever is chosen",
+      "context": null,
+      "chose": "Pinned first, named no project, found by its words when typing",
+      "because": "In a window kept on the chosen project it scrolled away whenever that project sat ninth or later.",
+      "passed_over": [
+        "Leave it in the scrolling window and add a more-above count"
+      ],
+      "undo": "Unpin it: one line in composer_project_list",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "none"
+    },
+    {
+      "id": "call-the-lit-row-is-the-chip-s-value-as-the-arrows-mo",
+      "at": "2026-11-09T17:32Z",
+      "title": "The lit row is the chip's value as the arrows move",
+      "context": null,
+      "chose": "Keep the composer's live choice; Esc keeps it too",
+      "because": "The chips already worked this way; a highlight only Enter commits adds a second undo nobody asked for.",
+      "passed_over": [
+        "T3's highlight, committed only by Enter or a click"
+      ],
+      "undo": "Separate a highlight from the value in the composer",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "lists"
+    },
+    {
+      "id": "call-each-option-carries-the-word-that-says-what-it-d",
+      "at": "2026-11-09T17:32Z",
+      "title": "Each option carries the word that says what it does",
+      "context": null,
+      "chose": "Wire id, the model's own effort, reach flags, ssh destination, local's command",
+      "because": "REACH anywhere and an effort called default say nothing until you see what they add.",
+      "passed_over": [
+        "Names alone, as the chips show them"
+      ],
+      "undo": "Empty the captions in Composer::choices",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "low",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "carry-on",
+        "reasons": []
+      },
+      "status": "open",
+      "verdict": null,
+      "see": "fig-lists"
+    },
+    {
+      "id": "call-t3-s-ctrl-1-9-row-keys-are-left-out-of-the-lists",
+      "at": "2026-11-09T17:33Z",
+      "title": "T3's Ctrl+1–9 row keys are left out of the lists",
+      "context": null,
+      "chose": "Typing a few letters reaches any row; no numbers on rows",
+      "because": "Numbers on the project list move as its window scrolls, and two keyboard routes to one row is clutter.",
+      "passed_over": [
+        "Ctrl+1–9 on the first nine rows of any list, as T3 shows"
+      ],
+      "undo": "Add the keys and their labels",
+      "door": "two-way",
+      "evidence": [],
+      "conflicts": [],
+      "under": null,
+      "judgement": {
+        "slot": "{System 1 JUDGEMENT Surface Placeholder}",
+        "filled_by": "agent",
+        "uncertainty": "medium",
+        "taste": "medium",
+        "posture": "standard",
+        "posture_declared": true,
+        "outcome": "stop",
+        "reasons": [
+          "both readings are medium under a standard posture"
+        ]
+      },
+      "status": "concurred",
+      "verdict": {
+        "at": "2026-11-09T17:42Z",
+        "via": "reported",
+        "note": "Asked in chat on 2026-11-09 with the alternative beside it; Parker chose the built option.",
+        "follow_up": null,
+        "superseded_by": null,
+        "seen": []
+      },
+      "see": "lists"
+    }
+  ]
+}

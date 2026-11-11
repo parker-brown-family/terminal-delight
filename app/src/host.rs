@@ -626,6 +626,11 @@ impl Host {
             ENV_TAG.to_string(),
             crate::hostproto::session_tag(&self.key),
         );
+        if self.shell.is_none() {
+            if let Err(error) = crate::skills::shell_environment(&mut options.env) {
+                eprintln!("TD skill command bridge unavailable: {error}");
+            }
+        }
         if let Some(program) = &self.shell {
             options.shell = Some((program.clone(), vec![]));
         }

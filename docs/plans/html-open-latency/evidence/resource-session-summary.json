@@ -1,0 +1,36 @@
+{
+  "session_summary": {
+    "project": "terminal-delight",
+    "session_date": "2026-11-05",
+    "tickets_closed": [],
+    "tickets_opened": [],
+    "files_modified": [
+      "docs/plans/html-open-latency/resources.src.html",
+      "docs/plans/html-open-latency/resources.html",
+      "docs/plans/html-open-latency/plan.md",
+      "docs/plans/html-open-latency/00-status.md",
+      "docs/plans/html-open-latency/brief.src.html",
+      "docs/plans/html-open-latency/brief.html",
+      "docs/plans/html-open-latency/evidence/resources.md",
+      "docs/plans/html-open-latency/evidence/resources-default.jsonl",
+      "docs/plans/html-open-latency/evidence/resources-vulkan.jsonl",
+      "docs/plans/html-open-latency/evidence/resource-summary.json",
+      "docs/plans/html-open-latency/evidence/cache-census.json"
+    ],
+    "decisions_made": [
+      "Resource-first investigation completed before implementation, per Parker. Nine recent panes is proposed preparation priority, not nine retained live browser pages.",
+      "Keep shared 256 MiB disk cache; recommend closing page contexts after capture and releasing hidden native buffers, preserving notes and position. No duplicate pinned PNG cache without measured benefit.",
+      "Actual nine-page default browser PSS 1975 MiB; Vulkan 1245 MiB PSS plus859 MiB NVIDIA; closed contexts leave293/475 MiB browser PSS. Pixel arithmetic adds281 MiB decoded payload and48 MiB PNG for sampled nine native views; native driver allocation unmeasured.",
+      "Disk census:58 render versions229 MiB plus6 media21 MiB. Resource browser warm/default161 MiB; one captured page498 MiB. These are retained snapshots, not transient peaks.",
+      "Prior cache-read benchmark immediately followed writes;1\u20136 ms is hot filesystem cache, not a cold disk measurement."
+    ],
+    "blockers_escalated": [],
+    "next_agent_must_know": "Worktree /home/parker/Work/td-html-open-latency contains docs/evidence only, no production implementation. User asked to measure cost before choosing strategy. Resource review at docs/plans/html-open-latency/resources.html; combined software-factory plan remains unapproved. Do not enable Vulkan: repeated cold first opens6\u20138seconds. Native timing, peak resource cost, visibility/reopen, cold disk-cache reads and30/50-pane runs remain implementation acceptance checks. Diagnostic harness is APES scripts/html-open-profile; lean-ctx cargo places executable in~/.lean-ctx/build-cache/cargo-target/release.",
+    "contract_compliance": {
+      "dry_plan_used": "yes",
+      "tiered_context_used": "yes",
+      "escalations_filed": "0",
+      "side_effects_checked": "yes"
+    }
+  }
+}

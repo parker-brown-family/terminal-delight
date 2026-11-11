@@ -34,6 +34,8 @@ Projects differ in how much being wrong and fixing it later they can afford. A p
 python3 scripts/brief.py call work.calls.json --title "Drag footer at 28 px" --chose "a 28 px footer" --because "the map needs the room and 28 px still fits a thumb" --passed-over "40 px, the old height" --undo "one constant" --door two-way --evidence shots/footer.png --uncertainty low --taste medium --posture relaxed
 ```
 
+A title runs to 12 words at most, a choice to 15 and a reason to 25, and `call` refuses anything longer. Put the rest in a section of the brief and name it with `--see sec-footer`, so the row links to it. `--context`, `--passed-over` and `--undo` stay in the ledger and off the row, unless the door is one-way. The row's last line says **Meanwhile** for a call that carries on, and **Recommendation** for one that stops and waits.
+
 Exit 0 means carry on. Exit 3 means stop and ask: the call is recorded as `asked`. The ledger is `NAME.calls.json`, one JSON object kept beside the work, and nothing else is ever written to a file of that name. Its fields follow the Markdown Architectural Decision Record (MADR), which has served teams writing decisions down for years:
 
 | Field | MADR's name for it | Holds |

@@ -1,0 +1,94 @@
+{
+  "baseline": [
+    {
+      "file": "2026-11-04-td-formal-verification.html",
+      "samples": 3,
+      "read_ms": 0.06,
+      "notes_ms": 0.42,
+      "open_ms": 427.36,
+      "first_ms": 1352.15,
+      "viewport_ms": 2351.02,
+      "all_ms": 3362.97,
+      "cache_read_ms": 1.54
+    },
+    {
+      "file": "system-contention-2026-11-04.html",
+      "samples": 3,
+      "read_ms": 0.07,
+      "notes_ms": 0.42,
+      "open_ms": 421.06,
+      "first_ms": 1605.73,
+      "viewport_ms": 2134.66,
+      "all_ms": 2134.66,
+      "cache_read_ms": 0.87
+    },
+    {
+      "file": "2026-11-02-agent-identity-built.html",
+      "samples": 3,
+      "read_ms": 0.07,
+      "notes_ms": 0.72,
+      "open_ms": 344.97,
+      "first_ms": 1445.07,
+      "viewport_ms": 2298.47,
+      "all_ms": 9819.63,
+      "cache_read_ms": 3.43
+    },
+    {
+      "file": "2026-10-20-chalk-marker-and-depth.html",
+      "samples": 3,
+      "read_ms": 24.71,
+      "notes_ms": 100.25,
+      "open_ms": 1757.47,
+      "first_ms": 2384.37,
+      "viewport_ms": 2656.62,
+      "all_ms": 4131.53,
+      "cache_read_ms": 5.81
+    }
+  ],
+  "vulkan": [
+    {
+      "file": "2026-11-04-td-formal-verification.html",
+      "samples": 3,
+      "read_ms": 0.05,
+      "notes_ms": 0.43,
+      "open_ms": 253.25,
+      "first_ms": 488.5,
+      "viewport_ms": 646.27,
+      "all_ms": 857.7,
+      "cache_read_ms": 0.69
+    },
+    {
+      "file": "system-contention-2026-11-04.html",
+      "samples": 3,
+      "read_ms": 0.06,
+      "notes_ms": 0.37,
+      "open_ms": 247.53,
+      "first_ms": 451.88,
+      "viewport_ms": 603.01,
+      "all_ms": 603.02,
+      "cache_read_ms": 0.63
+    },
+    {
+      "file": "2026-11-02-agent-identity-built.html",
+      "samples": 3,
+      "read_ms": 0.07,
+      "notes_ms": 0.74,
+      "open_ms": 302.56,
+      "first_ms": 617.78,
+      "viewport_ms": 831.26,
+      "all_ms": 2531.3,
+      "cache_read_ms": 2.51
+    },
+    {
+      "file": "2026-10-20-chalk-marker-and-depth.html",
+      "samples": 3,
+      "read_ms": 18.05,
+      "notes_ms": 93.67,
+      "open_ms": 1263.38,
+      "first_ms": 1712.27,
+      "viewport_ms": 1940.6,
+      "all_ms": 3250.05,
+      "cache_read_ms": 4.43
+    }
+  ]
+}

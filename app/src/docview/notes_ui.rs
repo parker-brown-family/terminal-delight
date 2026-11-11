@@ -551,6 +551,7 @@ pub enum Pasting {
 pub struct NotesLayer {
     /// The page's `NOTES_FILE`, what the map's header names.
     label: String,
+    reading_summary: String,
     keeping: Keeping,
     /// The document the notes are on: whose pictures TD keeps.
     doc: std::path::PathBuf,
@@ -698,6 +699,7 @@ impl NotesLayer {
         let (base, writable) = Self::judge(read, tagged, path);
         let mut layer = NotesLayer {
             label,
+            reading_summary: String::new(),
             keeping: Keeping::File,
             doc: path.to_path_buf(),
             pictures: Pictures::Unread,
@@ -749,6 +751,7 @@ impl NotesLayer {
         };
         let mut layer = NotesLayer {
             label,
+            reading_summary: String::new(),
             keeping: Keeping::Store(doc.to_path_buf()),
             doc: doc.to_path_buf(),
             pictures: Pictures::Unread,
@@ -1058,7 +1061,6 @@ impl NotesLayer {
         &self.base
     }
 
-    #[cfg(test)]
     pub fn note_box(&self) -> Option<&NoteBox> {
         self.note_box.as_ref()
     }
@@ -1180,6 +1182,10 @@ impl NotesLayer {
     /// The map notes.js's copy map would give for this page, unsaved notes
     /// included as the brief's own copy map includes them. `None` when the
     /// page shows no notes; empty of blocks when it has none yet.
+    pub fn set_reading_summary(&mut self, summary: String) {
+        self.reading_summary = summary;
+    }
+
     pub fn map(&self, anchors: &[Anchor]) -> Option<String> {
         let notes = self.notes()?;
         let pictures = self.picture_lines();
@@ -1207,6 +1213,7 @@ impl NotesLayer {
         if let Pictures::Unreadable(why) = &self.pictures {
             map.push_str(&format!("\nPictures not listed here: {}\n", why.english()));
         }
+        map.push_str(&self.reading_summary);
         Some(map)
     }
 
@@ -1224,7 +1231,8 @@ impl NotesLayer {
     fn mappable(&self, anchors: &[Anchor]) -> bool {
         let (notes, concurs) = self.counts(anchors);
         let pictures = self.picture_count().unwrap_or(0);
-        self.notes().is_some() && notes + concurs.unwrap_or(0) + pictures > 0
+        self.notes().is_some()
+            && (notes + concurs.unwrap_or(0) + pictures > 0 || !self.reading_summary.is_empty())
     }
 
     /// The bar's ↪, when it is drawn: its words, and whether it can be
@@ -2035,6 +2043,18 @@ impl NotesLayer {
     pub fn clear_zones(&self) {
         self.zones.borrow_mut().clear();
         self.drawn.set((0, 0));
+    }
+
+    /// Actual painted bar/cue bounds; unread before a bar has been painted.
+    pub fn obscuring_bounds(&self) -> Option<Vec<Bounds<Pixels>>> {
+        let zones = self.zones.borrow();
+        zones.iter().any(|(_, z)| *z == Zone::Bar).then(|| {
+            zones
+                .iter()
+                .filter(|(_, z)| matches!(z, Zone::Bar | Zone::Cue))
+                .map(|(b, _)| *b)
+                .collect()
+        })
     }
 
     /// A canvas that records where its parent was painted as `zone`.
@@ -2908,6 +2928,18 @@ mod tests {
     }
 
     const ONE_NOTE: &str = r#"{"a":[{"text":"hello","title":"a title","ts":"2026-09-24 10:00"}]}"#;
+
+    #[test]
+    fn time_only_feedback_uses_the_existing_copy_and_send_controls() {
+        let mut l = layer("{}", "{}", ConcurSupport::Supported);
+        assert!(!l.mappable(&[]));
+        l.set_reading_summary("\nVISIBLE TIME\n[a] 1200 ms\n".into());
+        assert!(l.mappable(&[]));
+        assert!(l.send(&[]).unwrap().map.contains("[a] 1200 ms"));
+        assert!(l.send_button(&[], Some("agent")).unwrap().1);
+        l.set_reading_summary(String::new());
+        assert!(!l.mappable(&[]));
+    }
 
     #[test]
     fn concur_is_offered_only_where_the_brief_offers_it() {

@@ -4,7 +4,7 @@ Before drawing, read `decision-brief/reference/pictures.md` and `decision-brief/
 
 Start with `scripts/brief.py new name.src.html --id STABLE-ID --purpose PURPOSE`, which writes a source with every marker in place, one section, one drawn figure and `TODO(brief)` where the writing goes. It also writes `<!-- briefing: {"id": …, "purpose": …} -->` into the head, so `html name.src.html name.html` needs no flags; a flag that disagrees with that comment is refused. [The engineering source](../examples/engineering.src.html) is a finished example. A complete source has one `<!--BRIEF:head-->` slot in its head, one `<!--BRIEF:notes-->` slot at the end of its body, and one `<!--brief-content-->` / `<!--/brief-content-->` pair around the authored header and main. The assembler rejects unknown or repeated slots, and slots inside the content region: anything assembled there would change the page's fingerprint and make every comment look stale from the start.
 
-Give each significant comment target an explicit stable id and matching `data-brief-anchor`. Every section heading and figure needs one, and so does every decision a reader can stamp: an `.ask`, a `.grill-q`, or a `.q` inside a `.grill`. Name decisions `q-…` and calls `call-…`, so `orient` can tell them apart at a glance. Use the same id after renaming the heading; never reuse a removed id for a different claim.
+Give each significant comment target an explicit stable id and matching `data-brief-anchor`. Every section heading and figure needs one, and so does every decision a reader can stamp: an `.ask`, a `.grill-q`, or a `.q` inside a `.grill`. The title and first line need one too, in `<div class="opening" id="top" data-brief-anchor="top">`, which `new` writes and `adopt` adds to the `h1`. Name decisions `q-…` and calls `call-…`, so `orient` can tell them apart at a glance. Use the same id after renaming the heading; never reuse a removed id for a different claim.
 
 ```html
 <h2 id="sec-return" data-brief-anchor="sec-return">Returning a comment</h2>
@@ -14,6 +14,8 @@ Give each significant comment target an explicit stable id and matching `data-br
   <figcaption>A removed target keeps its comment unresolved.</figcaption>
 </figure>
 ```
+
+Terminal Delight draws a page as a picture and presses only links and `[data-dlg]` buttons, so a closed `<details>` stays closed there. Anything collapsed is a button that opens a `<dialog>`, which is what the Last time strip is.
 
 Build with `scripts/brief.py html SOURCE OUTPUT`, adding `--id` and `--purpose` when the source does not name itself. It reads the existing canonical notes assets, with a checked one-line adaptation for explicit anchors. There is no forked asset or storage-format migration. Rebuild through the same command; do not paste empty notes islands over a reader's comments.
 

@@ -49,6 +49,19 @@ The inserter validates the whole batch before an atomic write. It refuses missin
 
 Audit all tracked Rust sources with `python3 scripts/translation-suggest.py --all --json`. Candidates still need a reader decision: an agent refusal, a saved identifier, a fixture and a human caption have different translation rules. The detector recognizes text controls and status fields and excludes standalone tests as well as test modules.
 
+## Completing a Surface
+
+The November completion used four grouped requests in one conversation for 179 new fields across all nine languages. The retained [batches](plans/complete-translations/batches/) and [native proof](plans/complete-translations/proof/) show what was checked. No timing comparison was measured; the saving comes from preparing and inserting one batch rather than editing nine tables separately.
+
+1. **Classify readers first.** Mark each candidate as human chrome, authored content, or machine output before requesting translations. Keep model ids, agent refusals, saved observations and authored titles unchanged. A menu caption such as CONFIG is human text; capitalization alone does not make it a product name.
+2. **Follow shared render paths.** Inspect icon-to-word converters, built-in catalog captions and state formatters alongside literal strings. A scan can find a literal yet miss the English returned by a helper. Exercise text-control skins as well as glyph controls.
+3. **Group by surface in one conversation.** Supply stable keys, context, the glossary, placeholders, physical keycaps and width constraints. Request all nine languages together. Use JSON as the insertion source because it can carry plural forms and explicit cognates; export CSV for review. Reject missing or truncated rows before wiring.
+4. **Use the inserter, then verify the installed tables.** Run the refusal tests and `--verify` after formatting. A legitimate cognate such as Spanish “error” must not be rejected merely because it matches English. Every exception needs a reason.
+5. **Translate at the reader.** Reuse typed localized captions such as `AgentState::label_in`; keep `label` for machine ids and agent answers. Help and notifications should interpolate the menu's translated caption so their directions cannot drift.
+6. **Photograph the first wired surface early.** German exposes long captions; Japanese exposes font fallback and two-part labels. Include the configuration corner, text controls, a state-bearing artifact card and a narrow window. Check every changed language when the surface is cheap to stage. Table completeness and a passing test suite do not prove that the screen uses the table.
+
+Record proof by surface, language, control mode, geometry and observed state. An idle card proves idle was rendered; resting and asleep need their own observation or an explicit shared-render-path argument backed by label tests. Keep unvisited width slots marked unverified. A screenshot proves the slot it shows, not a global width budget.
+
 ## Wording
 
 - **Translate the idea, not the words.** Write what a native-speaking developer expects from a well-localized pro tool. Keep hedges exactly as strong as the English: "unconfirmed", "unknown" and "not established" never become firmer or softer.

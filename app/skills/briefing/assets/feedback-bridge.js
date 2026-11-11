@@ -64,6 +64,14 @@
       field.value += extra;
     });
   }
+  // Terminal Delight opens a page's own dialogs itself; a browser needs this.
+  document.addEventListener('click', function (event) {
+    var opener = event.target.closest('[data-dlg]');
+    var dialog = opener ? document.getElementById(opener.dataset.dlg) : event.target.closest('dialog');
+    if (!dialog || dialog.id === 'd-note' || dialog.id === 'd-export') return;
+    if (opener) dialog.showModal();
+    else if (event.target === dialog || event.target.closest('[data-close]')) dialog.close();
+  });
   if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', init);
   else init();
 })();

@@ -1,0 +1,340 @@
+{
+  "file": "docs/plans/html-open-latency/resources.html",
+  "subject": "The measured storage and memory cost of faster HTML opening in Terminal Delight, and a bounded cache strategy for many panes.",
+  "reader": "Parker uses Terminal Delight with 30 to 50 agent panes and asks whether caching only nine recent panes avoids excessive overhead. He wants measured costs and a clear recommendation.",
+  "model": "jev-latest",
+  "backend": "https://openrouter.ai/api",
+  "document": {
+    "opens_cold": {
+      "type": "noul",
+      "noul": 0.77
+    },
+    "headings_tell_the_story": {
+      "type": "noul",
+      "noul": 0.83
+    },
+    "arc": {
+      "type": "choice",
+      "choice": "argument",
+      "probabilities": {
+        "journey": 0.16,
+        "catalogue": 0.02,
+        "argument": 0.79,
+        "report": 0.02,
+        "none_of_the_above": 0.01
+      },
+      "confidence": 0.74
+    }
+  },
+  "document_failure": null,
+  "sections": [
+    {
+      "index": 1,
+      "heading": "What Faster Opening Costs",
+      "text": "To speed up HTML opening across 30\u201350 Terminal Delight panes, save the finished page pictures on disk. The disk cache currently holds 58 rendered versions in 229 MiB. Keeping nine browser pages alive used 1.93 GiB of RAM.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.02,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.18,
+            "1": 0.63,
+            "2": 0.18,
+            "3": 0.01
+          },
+          "confidence": 0.62
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.06
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.85
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0.06,
+            "complication": 0.01,
+            "turn": 0.03,
+            "consequence": 0.88,
+            "resolution": 0,
+            "aside": 0.02,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.86
+        }
+      },
+      "latency_ms": 243.36927407421172,
+      "failure": null
+    },
+    {
+      "index": 2,
+      "heading": "01 Stored Artifacts",
+      "text": "Declaring an artifact stores its link and label; it does not render the page. The original HTML stays where its author saved it. Completed renders live in the shared cache below, with a 256 MiB budget across panes and windows . \n\n /home/parker/.cache/terminal-delight/pages/ \n 01 \u00b7 Existing Disk Cache \n\n The existing disk budget already holds dozens of rendered versions. Measured census: 58 renders and six media entries. Median render 3.3 MiB; largest 22.2 MiB. Different sizes or revisions can occupy separate entries. Census . \n\nThe cache holds compressed page pictures and layout data. Eviction removes the least recently used entries after storage, so temporary writes can exceed the budget. Linux may also cache these files in reclaimable RAM.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.13,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.15,
+            "1": 0.59,
+            "2": 0.25,
+            "3": 0.01
+          },
+          "confidence": 0.58
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.41
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.3,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.56,
+            "2": 0.34,
+            "3": 0.02
+          },
+          "confidence": 0.54
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.58
+        },
+        "role": {
+          "type": "choice",
+          "choice": "setup",
+          "probabilities": {
+            "setup": 0.34,
+            "complication": 0.03,
+            "turn": 0.13,
+            "consequence": 0.31,
+            "resolution": 0.01,
+            "aside": 0.18,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.23
+        }
+      },
+      "latency_ms": 199.077159864828,
+      "failure": null
+    },
+    {
+      "index": 3,
+      "heading": "02 Open Browser Pages",
+      "text": "Fresh rendering opens a page in TD\u2019s shared Chromium process. I retained nine pages using the real renderer, then closed them. The faster Vulkan mode reduced RAM but used additional graphics memory. \n 02 \u00b7 Closing Pages Releases Most of the Cost \n\n Nine live browser pages are an expensive cache. RAM is measured across Chromium\u2019s processes with shared memory apportioned once. Graphics memory is reported separately by the NVIDIA driver. Closing every page leaves the shared browser running; shutdown released all measured browser memory. Method and raw evidence . \n\nThree ordinary glass briefs, each opened three times, at 968 \u00d7 1400 CSS pixels and scale 1.6. One resource run per mode. The source closes the browser after five minutes without an engine call. Temporary profiles normally live under /run/user/1000/terminal-delight/ ; the experiment\u2019s profile files occupied about 2.6 MiB in the default run.",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.73,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.01,
+            "1": 0.29,
+            "2": 0.66,
+            "3": 0.04
+          },
+          "confidence": 0.65
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.19
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.34,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.03,
+            "1": 0.6,
+            "2": 0.36,
+            "3": 0.01
+          },
+          "confidence": 0.59
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.55
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0.01,
+            "complication": 0.1,
+            "turn": 0.18,
+            "consequence": 0.65,
+            "resolution": 0.01,
+            "aside": 0.05,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.59
+        }
+      },
+      "latency_ms": 1137.0416849385947,
+      "failure": null
+    },
+    {
+      "index": 4,
+      "heading": "03 Thirty to Fifty Panes",
+      "text": "TD keeps its own compressed pictures and decoded pixels while a document remains open, including when its pane is hidden. For the nine sampled views, those add 48 MiB of PNGs and 281 MiB of decoded pixel data . Native display textures cost extra; their actual driver allocation was not measured. \n 03 \u00b7 Growth Without Releasing Pages \n | \n | Open documents | Browser RAM | Decoded pixels \n | 9 \u00b7 measured browser | 1.93 GiB | 281 MiB \n | 30 \u00b7 estimate | 6.1 GiB | 936 MiB \n | 50 \u00b7 estimate | 10.0 GiB | 1,560 MiB \n\n Keeping many rendered documents alive can cost gigabytes. The 30/50 rows extrapolate the measured nine-page mix; they are not stress-test results. Pixel counts come from image dimensions and TD\u2019s retention rule. Smaller panes cost less. These rows describe opened documents before browser idle shutdown, not links sitting on the artifact rail. Arithmetic and limits .",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.37,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.05,
+            "1": 0.55,
+            "2": 0.38,
+            "3": 0.02
+          },
+          "confidence": 0.53
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.23
+        },
+        "seam": {
+          "type": "score",
+          "score": 1.05,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.14,
+            "1": 0.67,
+            "2": 0.19,
+            "3": 0
+          },
+          "confidence": 0.67
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.82
+        },
+        "role": {
+          "type": "choice",
+          "choice": "consequence",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0.11,
+            "turn": 0.01,
+            "consequence": 0.88,
+            "resolution": 0,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.86
+        }
+      },
+      "latency_ms": 202.55430811084807,
+      "failure": null
+    },
+    {
+      "index": 5,
+      "heading": "04 Recommended Strategy",
+      "text": "Use the nine most recently visited panes to rank preparation , beginning with the focused pane\u2019s newest artifact. Run one cancellable job at a time, close its browser page when capture finishes, and retain the completed disk snapshot. Release decoded images from hidden documents while preserving notes and scroll position. \n 04 \u00b7 Bound the Expensive Work \n\n Recency chooses the work; byte budgets limit storage. Proposed policy, unimplemented. Avoid eagerly rendering all nine candidates. Completed cache reads previously took 1\u20136 ms, so a second cache of PNGs pinned in RAM has little demonstrated benefit. Preparation still consumes CPU/GPU time and needs cancellation and a measured memory ceiling. \n\n The next check is how quickly a hidden document reopens after its images are released. The revised plan tests that with 9, 30 and 50 panes before rollout. It keeps the 200\u2013300 ms ambition for prepared opens. The earlier speed measurements also show why Vulkan\u2019s first-open delay needs repair. \n\nThese are proposed changes. The application still behaves as before; the combined implementation plan awaits approval. \n\n Measurement details and source links \u00b7 Resource data \u00b7 Recorded judgments \u00b7 Continuation state \n . notes.js finds these by id.\n Nothing here needs editing except NOTES_FILE. -->\n\n 0 notes \n \ud83d\udccb copy map \n \u2715 \n\n<!-- then paste the contents of assets/notes.js inline, inside a",
+      "answers": {
+        "unexplained": {
+          "type": "score",
+          "score": 1.46,
+          "legend": {
+            "0": "Nothing. Every term the passage leans on is either ordinary English or is explained in the passage at the point it is first used. The reader follows it from the first sentence to the last without stopping.",
+            "1": "One or two things are named without being explained \u2014 a file, a component, a product \u2014 but the sentences around them make their role clear enough that the reader keeps going without losing the thread.",
+            "2": "Several names or terms arrive unexplained, so the reader follows the argument only by taking them on trust.",
+            "3": "The passage is written for somebody already inside the project. Its central sentences cannot be understood at all without knowledge the document has not supplied anywhere."
+          },
+          "probabilities": {
+            "0": 0.08,
+            "1": 0.44,
+            "2": 0.42,
+            "3": 0.06
+          },
+          "confidence": 0.38
+        },
+        "stands_on_identifier": {
+          "type": "noul",
+          "noul": 0.45
+        },
+        "seam": {
+          "type": "score",
+          "score": 0.98,
+          "legend": {
+            "0": "The opening sentence continues the thought the previous passage ended on. It would not stand on its own if the previous passage were deleted.",
+            "1": "The opening turns to a new subject and says in its first sentences how that subject follows from what came before.",
+            "2": "The opening turns to a new subject and leaves the reader to work out for themselves how it relates to what came before.",
+            "3": "The opening reads as the first paragraph of a separate document about a different subject."
+          },
+          "probabilities": {
+            "0": 0.13,
+            "1": 0.76,
+            "2": 0.11,
+            "3": 0
+          },
+          "confidence": 0.76
+        },
+        "raises_a_question": {
+          "type": "noul",
+          "noul": 0.6
+        },
+        "role": {
+          "type": "choice",
+          "choice": "resolution",
+          "probabilities": {
+            "setup": 0,
+            "complication": 0,
+            "turn": 0.01,
+            "consequence": 0,
+            "resolution": 0.99,
+            "aside": 0,
+            "none_of_the_above": 0
+          },
+          "confidence": 0.99
+        }
+      },
+      "latency_ms": 237.6330909319222,
+      "failure": null
+    }
+  ]
+}
