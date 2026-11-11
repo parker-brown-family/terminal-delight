@@ -263,6 +263,19 @@ fn kind(procs: &[Proc], shell: i32, agent: i32, p: &Proc) -> Kind {
     if p.listens {
         return Kind::Foreign(Foreign::Listener { pid, name });
     }
+    // A process on the path from the shell to the agent launched the agent
+    // and waits on it (TD's skills bridge, a node wrapper): it is part of the
+    // agent's own launch, not a job beside it. Counted as a shell job, it
+    // kept every bridged Codex awake (Greptile on PR 1438).
+    let mut up = parent(agent);
+    for _ in 0..64 {
+        match up {
+            Some(pp) if pp == p.pid => return Kind::Itself,
+            Some(pp) if pp == shell => break,
+            Some(pp) => up = parent(pp),
+            None => break,
+        }
+    }
     // Walk up to the agent, the shell, or the edge of the group.
     let mut cur = p.pid;
     let mut under_agent = false;
@@ -1688,6 +1701,47 @@ mod tests {
         assert_eq!(r.session_id.as_deref(), Some(SID));
         assert_eq!(r.since_ms, Some(1_792_480_845_491));
         assert_eq!(parse_self_report(&text, 4), None);
+    }
+
+    /// TD's skills bridge starts Codex and waits on it, so it sits between
+    /// the pane's shell and the agent. It is the agent's own launch, not a
+    /// job of the shell, and a bridged Codex may rest; a real shell job
+    /// beside it still refuses.
+    #[test]
+    fn the_bridge_that_launched_the_agent_is_part_of_it_not_a_job() {
+        let p = |pid, ppid, argv: &[&str]| Proc {
+            pid,
+            ppid,
+            argv: s(argv),
+            listens: false,
+            session: Some(1),
+        };
+        let procs = vec![
+            p(1, 0, &["bash"]),
+            p(
+                2,
+                1,
+                &[
+                    "python3",
+                    "/home/p/.local/share/terminal-delight/skills/bridge.py",
+                    "codex",
+                ],
+            ),
+            p(3, 2, &["/usr/bin/codex"]),
+            p(4, 3, &["/usr/bin/codex", "app-server"]),
+        ];
+        assert!(
+            foreign(&procs, 1, 3).is_empty(),
+            "{:?}",
+            foreign(&procs, 1, 3)
+        );
+        let mut with_job = procs.clone();
+        with_job.push(p(5, 1, &["sleep", "600"]));
+        assert_eq!(
+            foreign(&with_job, 1, 3).len(),
+            1,
+            "a shell job beside the bridge still counts"
+        );
     }
 
     #[test]

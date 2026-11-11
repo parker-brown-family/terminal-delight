@@ -1278,6 +1278,12 @@ impl DocumentView {
         self.backend.visible(shown || self.lent.is_some(), cx);
     }
 
+    /// Whether this view was last told it is being read; `None` if never.
+    #[cfg(test)]
+    pub(crate) fn exposure_on(&self) -> Option<bool> {
+        self.exposure_active
+    }
+
     pub(crate) fn exposure(&mut self, active: bool, cx: &mut Context<Self>) {
         self.exposure_active = Some(active);
         self.backend.exposure(active, cx);
