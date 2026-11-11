@@ -7,6 +7,92 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Upgrading from 0.5.2
+
+- **CONFIG is now Settings.** The corner keeps one door, ⚙, and Ctrl+, opens
+  it too. Everything CONFIG held is in the book: its pages follow T3 Code's
+  layout, and a panel opened from it (the palette, the gauges) shows inside it.
+- **Restart Terminal Delight once.** The skills bridge lives in the session
+  host, so after updating, quit every window, start again and open a new Bash
+  terminal before starting an agent. Until then a new shell starts cleanly
+  without the bridge.
+- **The left spine is the INBOX.** What used to be the agent list is now
+  shelves of what wants you, and the composer that starts an agent opens from it.
+
+### Front door
+
+- **A sentence starts an agent.** The composer (Ctrl+Shift+E, or ＋ on the
+  INBOX) takes what you want done, then where and with what: project, harness,
+  model, effort, reach and machine, each a chip with a list. It shows the line
+  it will run. Enter takes you to the agent's new tab; Ctrl+Enter starts it
+  behind and leaves you on the composer.
+- **No project is a choice.** An agent with no project gets a folder of its own
+  under `~/.scratch`, and Backspace on the PROJECT chip takes the project away.
+- **Add a project from the composer** (Ctrl+O): a machine, then a folder on it,
+  or a repository cloned or started there.
+- **Pictures and long pastes go with the sentence.** A pasted picture rides
+  along as a file, and a long paste stands in as one token and goes out whole.
+- **The INBOX** shelves every agent by what it needs from you (LOOK AT ME,
+  working, sleep and quiet), keeps one clock, and marks the pane you are in.
+  Dropping a pane or a tab onto another tab asks how the two agents work together.
+
+### Side panel
+
+- **A right-hand panel beside the panes** shows a task's changes, files and pull
+  requests in tabs, with a finder that matches a few letters, without covering
+  a terminal. Pull requests too big for one diff are read file by file.
+- **A Markdown file in the side panel can be written in**, from its source or by
+  clicking its page.
+- **An agent opens what it made in its own tab's side panel**, and never over
+  what you are reading. Settings can send artifacts there too.
+
+### Settings
+
+- **One book over the window**, frosting what is behind it, at one column.
+  Language and text size have their own rows, and a press anywhere on a row acts.
+- **Code › Worktrees** lists worktrees T3's cleanup rules would remove, with a
+  review and a second press. A tree is moved out of reach before it is removed,
+  so nobody walking into it loses work, and one with changes is never removed.
+
+### Agents
+
+- **An agent waiting on its own scheduled wakeup** (a `/loop`) is never rested
+  or put to sleep, so its next turn comes.
+- **Rest checks again once frozen.** If the agent's own status changed between
+  the look and the freeze (a timer fired), it is thawed at once.
+- **A sleeping agent wakes** even when its bridge folder, launcher or pane
+  folder moved while it slept.
+- **A new shell opens clean**: no window types skill setup into it any more.
+
+### Window
+
+- **The surface you raise is the one on top.** Opening the composer or a pane's
+  design menu puts the Settings book away rather than opening underneath it, so
+  your letters and your Esc reach what you can see.
+- **One caret per pane.** Opening a pane's rename box posts a sticky note being
+  written, and Alt+S while renaming commits the name, so a name typed after
+  starting a note goes into the name.
+- **A drag the window never saw end can't come back to life** on the next press.
+- The left bar's allowance rows show only subscriptions with something to draw.
+
+### Documents
+
+- **A never-seen HTML document opens in about half the time**, with no more
+  browser memory.
+- **Briefs record reading time**, and Copy map names what you scrolled past.
+
+### Fixes
+
+- A CRT glitch and four stale code comments from the 2026-11-07 backlog triage;
+  hidden-window cleanup survives errexit.
+
+### Development
+
+- **The window's promises are checked models.** `verify/` holds TLA+ models of
+  what is on top, rest and sleep, worktree removal, the side panel, the
+  composer, drags, keys inside a pane and five user flows, each with a skill;
+  CI's Formal models job checks every one on every push.
+
 ### Documents
 
 - Prepare the newest HTML artifact from recently visited panes before opening it,
@@ -21,7 +107,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   on or off keeps the same centred frame. Settings and long skill lists scroll
   inside it; smaller windows keep both sections within the available space.
 
-- **Choose optional skills in CONFIG → Agents.** Turn on TD Skills to open a
+- **Choose optional skills in Settings → Agents.** Turn on TD Skills to open a
   separate scrolling list, with Briefing and Software Factory as starter
   choices. Import a skill file, folder or repository through one source field;
   one source can add several skills. Skill names open their sources.
