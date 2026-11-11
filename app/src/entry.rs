@@ -139,22 +139,31 @@ pub fn valid_destination(dest: &str) -> bool {
 /// runs the quoted command. A `cwd` under this machine's home is written from
 /// `~` — the far box's home is not this one's, and the same repositories live
 /// at the same place under it far more often than at the same absolute path.
-/// `make` makes the folder first (`mkdir -p`), for an agent with no project,
-/// whose folder of its own does not exist on the far box until it starts.
+/// `make` claims the folder first, for an agent with no project, whose folder
+/// of its own does not exist on the far box until it starts: a free name, as
+/// [`claim_scratch`] picks one here.
 pub fn line_on(machine: &Machine, home: &Path, cwd: &Path, agent_line: &str, make: bool) -> String {
     let Some(dest) = machine.ssh.as_deref() else {
         return agent_line.to_string();
     };
-    let target = match cwd.strip_prefix(home) {
+    let far = |p: &Path| match p.strip_prefix(home) {
         Ok(rel) if rel.as_os_str().is_empty() => "~".to_string(),
         // `~/` stays outside the quotes so the far shell expands it.
         Ok(rel) => format!("~/{}", launcher::shell_quote(&rel.to_string_lossy())),
-        Err(_) => launcher::shell_quote(&cwd.to_string_lossy()),
+        Err(_) => launcher::shell_quote(&p.to_string_lossy()),
     };
-    let cd = if make {
-        format!("mkdir -p {target} && cd {target}")
-    } else {
-        format!("cd {target}")
+    let target = far(cwd);
+    let cd = match (make, cwd.parent()) {
+        // A folder of its own, claimed the way `claim_scratch` claims one
+        // here: the name, then name-2, name-3…, never one that exists, so two
+        // agents asked the same thing on the same day never share a folder.
+        (true, Some(parent)) => format!(
+            "mkdir -p {p} && d={target} && n=1 && while ! mkdir \"$d\" 2>/dev/null; do \
+             n=$((n+1)); [ $n -gt 99 ] && exit 1; d={target}-$n; done && cd \"$d\"",
+            p = far(parent)
+        ),
+        (true, None) => format!("mkdir -p {target} && cd {target}"),
+        (false, _) => format!("cd {target}"),
     };
     format!(
         "ssh -t {dest} {}",
@@ -674,13 +683,65 @@ mod tests {
             .lines()
             .map(str::to_string)
             .collect();
-        assert_eq!(
-            words,
-            [
-                "box",
-                "mkdir -p ~/'.scratch/2026-11-09-fix-it' && cd ~/'.scratch/2026-11-09-fix-it' && claude 'fix it'"
-            ]
+        assert_eq!(words.len(), 2, "{words:?}");
+        assert_eq!(words[0], "box");
+        assert!(
+            words[1].starts_with("mkdir -p ~/'.scratch' && d=~/'.scratch/2026-11-09-fix-it'"),
+            "{}",
+            words[1]
         );
+        assert!(
+            words[1].ends_with("&& cd \"$d\" && claude 'fix it'"),
+            "{}",
+            words[1]
+        );
+    }
+
+    /// Two agents asked the same thing on the same day on one far machine get
+    /// two folders, as they do here: the far line claims a free name rather
+    /// than entering whichever folder already has it (Greptile on PR 1438).
+    #[test]
+    fn two_far_projectless_agents_asked_the_same_thing_get_two_folders() {
+        let home = std::env::temp_dir().join(format!("td-far-scratch-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&home);
+        std::fs::create_dir_all(&home).unwrap();
+        let line = line_on(
+            &far("box"),
+            Path::new("/home/p"),
+            Path::new("/home/p/.scratch/2026-11-11-same-words"),
+            "pwd",
+            true,
+        );
+        // What the far shell runs: the second word ssh would be handed.
+        let words = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(line.replacen("ssh -t", "printf '%s\\n'", 1))
+            .output()
+            .expect("sh");
+        let far_command = String::from_utf8_lossy(&words.stdout)
+            .lines()
+            .nth(1)
+            .unwrap()
+            .to_string();
+        let run = || {
+            let out = std::process::Command::new("sh")
+                .arg("-c")
+                .arg(&far_command)
+                .env("HOME", &home)
+                .output()
+                .expect("sh");
+            String::from_utf8_lossy(&out.stdout).trim().to_string()
+        };
+        let (first, second) = (run(), run());
+        assert!(
+            first.ends_with("/.scratch/2026-11-11-same-words"),
+            "{first}"
+        );
+        assert!(
+            second.ends_with("/.scratch/2026-11-11-same-words-2"),
+            "{second}"
+        );
+        let _ = std::fs::remove_dir_all(&home);
     }
 
     #[test]

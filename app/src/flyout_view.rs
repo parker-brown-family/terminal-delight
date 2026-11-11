@@ -1980,7 +1980,14 @@ impl Workspace {
             let shown = paged && current.as_ref() == Some(t);
             if face.shown != shown {
                 face.shown = shown;
-                face.view.update(cx, |v, cx| v.visible(shown, cx));
+                // Shown is also on the reading clock, as in a pane's square:
+                // without it a brief read here recorded no time (Greptile on
+                // PR 1438). The view's own heartbeat still pauses it while
+                // the window is not active.
+                face.view.update(cx, |v, cx| {
+                    v.visible(shown, cx);
+                    v.exposure(shown, cx);
+                });
             }
             if shown {
                 let b = beside.clone();
@@ -7416,6 +7423,39 @@ mod tests {
         empty.land(Err("gone".into()));
         empty.same();
         assert_eq!((empty.got(), empty.error(), empty.at()), (None, None, None));
+    }
+
+    /// A page shown in the side panel is on its reading clock, and one put
+    /// behind another tab is off it.
+    #[gpui::test]
+    fn a_page_shown_in_the_side_panel_is_on_its_reading_clock(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let dir = std::env::temp_dir().join(format!("td-flyout-clock-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let page = dir.join("brief.md");
+        std::fs::write(&page, "# A brief\n\nRead me.\n").unwrap();
+        let key = Target::File { path: page.clone() };
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                ws.flyout_toggle(w, cx);
+                let task = ws.active;
+                ws.flyout_show(task, key.clone(), None, true, w, cx);
+            })
+        });
+        redraw(cx);
+        ws.read_with(cx, |ws, cx| {
+            let Some(Live::File(f)) = ws.flyout.live.get(&key) else {
+                panic!("the page has no reading");
+            };
+            let face = f.face.as_ref().expect("the page is drawn");
+            assert_eq!(face.view.read(cx).exposure_on(), Some(true));
+        });
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A file that goes away and comes back as it was takes its red note
