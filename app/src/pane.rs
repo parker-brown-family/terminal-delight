@@ -7542,6 +7542,11 @@ impl TerminalView {
     /// blind press a coin flip over thirty seconds of typing, so taking a note
     /// down is always an explicit second gesture.
     pub fn sticky_open(&mut self, cx: &mut Context<Self>) {
+        // One caret: a name being written is committed first, as a click out
+        // of the rename box commits it (see `rename_open`).
+        if self.renaming.is_some() {
+            self.commit_rename(cx);
+        }
         match self.note.as_mut() {
             Some(note) => note.reopen(),
             None => {
@@ -7698,6 +7703,20 @@ impl TerminalView {
     /// whether the tab carries a pin badge, so it stays a field read.
     pub fn note_pinned(&self) -> bool {
         self.note.as_ref().is_some_and(|n| n.pinned)
+    }
+
+    /// Open the header's rename box, seeded with the pane's name. The header's
+    /// double-click and right-click both come here. A pane holds one caret,
+    /// the one opened last: a note being written is posted first, as a click
+    /// away from it posts it, or the routing ladder (where Sticky sits above
+    /// Rename) would send the letters meant for the name into the note
+    /// (verify/keys-in-a-pane, `OneCaret`).
+    pub fn rename_open(&mut self, cx: &mut Context<Self>) {
+        if self.sticky_composing() {
+            self.sticky_commit(cx);
+        }
+        self.renaming = Some(self.name.clone().unwrap_or_default());
+        cx.notify();
     }
 
     pub fn sticky_composing(&self) -> bool {
@@ -13146,7 +13165,7 @@ impl Render for TerminalView {
                             cx.stop_propagation();
                             if ev.click_count >= 2 {
                                 // double-click to rename (the file-manager gesture)
-                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                view.rename_open(cx);
                                 window.focus(&view.focus_handle, cx);
                                 cx.notify();
                             } else {
@@ -13161,7 +13180,7 @@ impl Render for TerminalView {
                             if minimal_header {
                                 view.hdr_overflow = Some(ev.position);
                             } else {
-                                view.renaming = Some(view.name.clone().unwrap_or_default());
+                                view.rename_open(cx);
                                 window.focus(&view.focus_handle, cx);
                             }
                             cx.notify();
