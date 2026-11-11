@@ -11,6 +11,7 @@ Tests check the cases someone thought to write. These check every order of steps
 | [`composer/`](composer/SKILL.md) | PROJECT's list shows what its field says, and the add-a-project dialog is the only face while it is up | TLA+ and a window replay (`addproject_view/tests.rs`) | 0 findings (a list left narrowed under an empty field; fixed) |
 | [`side-panel-reading/`](side-panel-reading/SKILL.md) | a side-panel tab's red note is about its latest read, and trouble never blanks what you were reading | TLA+ and the real window (`flyout_view.rs` tests) | 0 findings (a stale red note; fixed) |
 | [`drags/`](drags/SKILL.md) | a press drags only what it pressed, and a release ends every drag | TLA+ and a window replay (`app/src/drag.rs`) | 0 findings (a lost release brought a drag back to life; fixed by one `Drag`) |
+| [`keys-in-a-pane/`](keys-in-a-pane/SKILL.md) | a pane shows one caret, and a letter goes to the one opened last | TLA+ and a pane replay (`pane/behaviour.rs`) | 0 findings (a name typed into a sticky note; fixed) |
 | [`flows/`](flows/README.md) | the INBOX and the Settings book, as user flows | TLA+ | hold |
 
 `verify/check.sh SPEC.tla [CONFIG.cfg]` checks one model, each rule on its own, against the folder's `findings.txt`. `verify/mutate.sh` proves a rule can fail. Each folder's `view.ts` is the reader's words for the pstack `/statechart` skill, which draws the model and gives each break as a path. `scripts/link-verify-skills.sh` links each `SKILL.md` where Claude Code finds project skills.

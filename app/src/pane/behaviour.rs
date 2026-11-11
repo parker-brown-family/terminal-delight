@@ -4866,6 +4866,49 @@ fn a_deliverable_line_read_from_the_transcript_is_kept_like_one_read_off_the_scr
     assert_eq!(rebuilt(&mut pane), said, "the same line, filed once");
 }
 
+/// One surface in a pane holds the caret: the one opened last. A sticky note
+/// being written, then the header's rename box opened (a double-click on the
+/// title does exactly this): a letter goes into the name, and the note is
+/// posted, as a click away from it posts it. And the other way: Alt+S while
+/// the name is being written commits the name and starts the note. The bug
+/// path of `OneCaret` in verify/keys-in-a-pane: before, both stayed open and
+/// the routing ladder sent the letter to the note behind the name's caret.
+#[gpui::test]
+fn the_surface_opened_last_holds_the_caret_and_the_other_is_put_away(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "echo ready; exec cat");
+    pane.wait_for("ready");
+    pane.settle();
+    pane.keys("alt-s");
+    assert!(pane.read(|v| v.sticky_composing()), "alt+s starts a note");
+    pane.keys("n o t e");
+    // The header's double-click, as its handler does it.
+    pane.view.update(pane.cx, |v, cx| v.rename_open(cx));
+    pane.keys("q");
+    assert_eq!(
+        pane.read(|v| v.renaming.clone())
+            .as_deref()
+            .map(|n| n.ends_with('q')),
+        Some(true),
+        "the letter is the name's"
+    );
+    assert!(
+        !pane.read(|v| v.sticky_composing()),
+        "the note was put away"
+    );
+    assert!(
+        pane.read(|v| v.note.as_ref().map(|n| n.text.clone()))
+            .is_some_and(|t| t == "note"),
+        "posted as written, without the letter meant for the name"
+    );
+    // And back: alt+s while naming commits the name and starts writing.
+    pane.keys("alt-s");
+    assert!(pane.read(|v| v.renaming.is_none()), "the name is committed");
+    assert!(
+        pane.read(|v| v.sticky_composing()),
+        "the note is being written again"
+    );
+}
+
 /// A paste while the pane's title is being renamed lands in the name, by each
 /// of the three chords, and never in the terminal under the header.
 ///
