@@ -2,8 +2,8 @@
 {
   "title": "Install",
   "description": "Terminal Delight ships as one file, terminal-delight-x86_64.AppImage, for 64-bit Linux on X11 or Wayland. Download it, make it executable, run it. 0.5.0 is the stable release, with a SHA-256 file beside it. Optional: poppler, libmpv, Chromium and ffplay.",
-  "updated": "2026-11-05",
-  "trueOf": "release v0.5.2",
+  "updated": "2026-11-11",
+  "trueOf": "release v0.5.3",
   "summary": "One AppImage, three commands"
 }
 </script>
@@ -21,7 +21,7 @@ chmod +x terminal-delight-x86_64.AppImage
 </div>
 
 <div class="pair">
-  <div class="term"><p>Those commands fetch the stable release, 0.5.2. Its <a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.5.2">release page</a> lists what is new, and the same commands fetch each stable release after it.</p></div>
+  <div class="term"><p>Those commands fetch the stable release, 0.5.3. Its <a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.5.3">release page</a> lists what is new, and the same commands fetch each stable release after it.</p></div>
   <div class="bench"></div>
 </div>
 
@@ -98,7 +98,7 @@ chmod +x terminal-delight-x86_64.AppImage
   <div class="bench">
 <pre class="cmd"><code>curl -LO https://github.com/parker-brown-family/terminal-delight/releases/latest/download/terminal-delight-x86_64.AppImage.sha256
 sha256sum --check terminal-delight-x86_64.AppImage.sha256</code></pre>
-<dl class="facts"><span class="cap">Releases</span><dt>stable</dt><dd>v0.5.2, 2026-11-05, 41.9 MB</dd><dt>asset</dt><dd>terminal-delight-x86_64.AppImage</dd><dt>checksum</dt><dd>.sha256 beside it, from 0.4.0</dd><dt>licence</dt><dd>MIT, no GPL crates linked</dd></dl>
+<dl class="facts"><span class="cap">Releases</span><dt>stable</dt><dd>v0.5.3, 2026-11-11, 43.8 MB</dd><dt>asset</dt><dd>terminal-delight-x86_64.AppImage</dd><dt>checksum</dt><dd>.sha256 beside it, from 0.4.0</dd><dt>licence</dt><dd>MIT, no GPL crates linked</dd></dl>
   </div>
 </div>
 
@@ -214,7 +214,7 @@ bash scripts/install-hotkey.sh --uninstall</code></pre>
 </section>
 
 <ol data-sources>
-<li id="s1"><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.5.2">Release v0.5.2</a>; the checksum is written and checked in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/.github/workflows/ci.yml">ci.yml</a>; the release kinds: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/RELEASING.md">RELEASING.md</a>.</li>
+<li id="s1"><a href="https://github.com/parker-brown-family/terminal-delight/releases/tag/v0.5.3">Release v0.5.3</a>; the checksum is written and checked in <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/.github/workflows/ci.yml">ci.yml</a>; the release kinds: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/RELEASING.md">RELEASING.md</a>.</li>
 <li id="s2">PDFs: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/poppler.rs">docview/poppler.rs</a>; video and sound: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/mpv.rs">docview/mpv.rs</a>; HTML: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/docview/engine.rs">docview/engine.rs</a>; the ping: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/bell.rs">bell.rs</a>.</li>
 <li id="s3">The launcher: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/build-appimage.sh">build-appimage.sh</a>; the subcommands: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a> (<code>VERBS</code>); 0.5.0's: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/src/main.rs">main.rs</a>; licences: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/deny.toml">app/deny.toml</a>.</li>
 <li id="s4"><a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/prepare-gpui.sh">prepare-gpui.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/tree/main/docs/patches">docs/patches/</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/setup-deps.sh">setup-deps.sh</a>, <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/release-smoke.sh">release-smoke.sh</a> and <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/app/Cargo.toml">app/Cargo.toml</a>; 0.5.0's patches: <a href="https://github.com/parker-brown-family/terminal-delight/blob/main/scripts/prepare-gpui.sh">prepare-gpui.sh</a>.</li>

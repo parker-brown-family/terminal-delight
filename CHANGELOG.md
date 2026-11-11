@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.5.3] — 2026-11-11
+
 ### Upgrading from 0.5.2
 
 - **CONFIG is now Settings.** The corner keeps one door, ⚙, and Ctrl+, opens
