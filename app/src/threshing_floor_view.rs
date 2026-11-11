@@ -641,7 +641,7 @@ impl Workspace {
         let sk = skin::for_theme(cx, th, th.grade.scale);
         let ui = self.lang.strings().ui;
         let lang = self.lang;
-        let dragging = self.floor_drag.as_ref().filter(|_| cx.has_active_drag());
+        let dragging = self.floor_drag().filter(|_| cx.has_active_drag());
         let removing = self.floor_tether.is_none()
             && dragging.is_some_and(|leaf| leaf.read(cx).seat.is_some());
         let drag_active = dragging.is_some() && self.floor_tether.is_none();
@@ -2326,7 +2326,7 @@ impl Workspace {
                         .as_mut()
                         .is_some_and(|map| map.drag.take().is_some());
                     let panning = ws.floor_view.drag.take().is_some();
-                    if ws.floor_drag.take().is_some()
+                    if ws.take_floor_drag().is_some()
                         || ws.floor_tether.is_some()
                         || panning
                         || moved_org
@@ -2473,7 +2473,7 @@ impl Workspace {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) {
-        self.floor_drag = Some(leaf.clone());
+        self.drag = Some(Drag::Floor(leaf.clone()));
         self.floor_context = None;
         self.floor_feedback = None;
         window.focus(&self.focus_handle, cx);
@@ -2682,7 +2682,7 @@ impl Workspace {
                 return true;
             }
             if cx.stop_active_drag(window) {
-                self.floor_drag = None;
+                self.take_floor_drag();
                 self.floor_tether = None;
                 cx.notify();
                 return true;
@@ -3256,7 +3256,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::Div {
         let ui = self.lang.strings().ui;
-        let dragging = self.floor_drag.is_some() && cx.has_active_drag();
+        let dragging = self.floor_drag().is_some() && cx.has_active_drag();
         let mut choices = div().flex().flex_row().flex_none().items_center().gap_1();
         for org in self.floor_orgs.saved() {
             let id = org.id;
@@ -3374,7 +3374,7 @@ impl Workspace {
         // the door says how it is used.
         let open_org = self.floor_org.filter(|_| self.floor_map.is_none());
         let org_in_hand =
-            cx.has_active_drag() && self.floor_drag.is_none() && self.floor_tether.is_none();
+            cx.has_active_drag() && self.floor_drag().is_none() && self.floor_tether.is_none();
         let red = th.ansi[1];
         let delete_door = (!self.floor_orgs.saved().is_empty()).then(|| {
             let (word, tip) = match open_org {
@@ -6925,7 +6925,7 @@ impl Workspace {
         self.floor_move = None;
         self.floor_delete_org = None;
         self.floor_drop = None;
-        self.floor_drag = None;
+        self.take_floor_drag();
         self.floor_context = None;
         self.floor_feedback = None;
         self.threshing_floor_query = EditBuffer::seeded("");
@@ -7853,7 +7853,7 @@ mod tests {
                 .access_ask
                 .is_none());
             assert!(ws.floor_feedback.as_ref().unwrap().contains("Lead"));
-            assert!(ws.floor_drag.is_none());
+            assert!(ws.floor_drag().is_none());
             let saved: StateFile =
                 toml::from_str(&toml::to_string(&ws.build_state(cx)).unwrap()).unwrap();
             match &saved.tabs[0].node {
