@@ -1,7 +1,7 @@
 # Isolated session-host laboratory
 
 Both tested binaries retained their synthetic PTYs and passed the initial nine experiments.
-The wave binary also passed the expanded eleven-experiment suite.
+The wave binary also passed the final twelve-experiment suite.
 No Terminal Delight defect was found in these bounded runs. The laboratory
 opens no window and discovers or controls no live session.
 
@@ -21,6 +21,8 @@ processes the experiment created. Core dumps are disabled.
 - [host-results.json](host-results.json): wave binary, SHA-256 `aaa87fb5a925145b7f5c16a300c9ee8582ef7f2df479933405a4ac1f9f40df1f`.
 - [preview-results.json](preview-results.json): preview binary, SHA-256 `8654331d95095b313cf3a1cc2214a46e8620ff356cf13d9e2e91057c42b608d4`.
 - [host-expanded-results.json](host-expanded-results.json): adds concurrent/interrupted saves and resize/Unicode probes on the wave binary.
+- [host-final-results.json](host-final-results.json): final twelve-experiment run, including host-crash reclamation and executable hashes before/after the run.
+- [host-crash-results.json](host-crash-results.json): preserves the earlier crash-reclamation pass.
 - [host-results-initial.json](host-results-initial.json): first measurements and an erroneous expectation that a duplicate host must return nonzero. The actual protection worked: the original host and socket survived. The corrected test accepts idempotent success and checks ownership.
 
 The checkout used to read the protocol is `ef6dcde5`. It is not established
@@ -56,12 +58,16 @@ establish a performance difference between the binaries.
    a concurrent observer reads it. A partially sent save leaves the saved file unchanged.
 8. Thirty-two resize/fragmented-UTF-8 rounds make progress and preserve the final
    wide-character marker in a newly attached snapshot.
+9. SIGKILL of this isolated host leaves its saved layout parseable. A replacement
+   claims the stale socket and preserves the exact saved bytes, including an
+   unknown client field. It starts with no live PTYs: saved layout recovery is
+   distinct from terminal-process survival.
 
 ## What Remains Unmeasured
 
 This does not measure frame time, GPU memory, physical input-to-photon latency,
 scrollback rendering, CRT cost, rapid UI splits, a window's reconstruction of a
-snapshot, agent transcript parsing or persisted state after host SIGKILL.
+snapshot, agent transcript parsing or disk durability across power loss.
 Those measurements remain null, not zero. No conclusion about their safety or
 performance follows from these results.
 
@@ -69,3 +75,6 @@ The suite reuses the existing host protocol from `app/src/hostproto.rs`, the
 snapshot fence used by `app/tests/host_socket.rs`, and the XDG separation of
 `scripts/td-host-lab.mjs`. It adds a repeatable multi-PTY workload and records
 the chosen executable, rather than introducing another terminal runtime.
+The final runner records kernel process start times before fallback cleanup, so
+a recycled child PID is not treated as an owned process. It also rejects a run
+whose executable bytes changed while the experiment was running.
