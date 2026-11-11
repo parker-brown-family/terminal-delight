@@ -1,0 +1,682 @@
+{
+  "schema": "td-host-adversarial-v1",
+  "binary": "/home/parker/.local/lib/terminal-delight/td-018621e7-wave",
+  "binary_sha256": "aaa87fb5a925145b7f5c16a300c9ee8582ef7f2df479933405a4ac1f9f40df1f",
+  "source_revision": "ef6dcde524a13b2e9c2d0b9477d1a93436a4afbd",
+  "source_binary_match": null,
+  "paid_model_calls": 0,
+  "gui_opened": false,
+  "results": [
+    {
+      "id": "scaling-2",
+      "status": "corroborated",
+      "wall_s": 0.03892923300008988,
+      "evidence": {
+        "panes": 2,
+        "rounds": 12,
+        "spawn_wall_s": 0.0093,
+        "traffic_wall_s": 0.0017,
+        "input_bytes": 1968,
+        "echo_samples": 24,
+        "echo_ms_p50": 0.0812599992059404,
+        "echo_ms_p95": 0.15155499932006933,
+        "echo_ms_max": 0.2730779997364152,
+        "host_empty": {
+          "rss_kib": 22488,
+          "threads": 4,
+          "cpu_s": 0.01
+        },
+        "host_active": {
+          "rss_kib": 25636,
+          "threads": 12,
+          "cpu_s": 0.02
+        },
+        "host_cpu_delta_s": 0.01,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-5",
+      "status": "corroborated",
+      "wall_s": 0.030013750998477917,
+      "evidence": {
+        "panes": 5,
+        "rounds": 12,
+        "spawn_wall_s": 0.0066,
+        "traffic_wall_s": 0.0063,
+        "input_bytes": 4920,
+        "echo_samples": 60,
+        "echo_ms_p50": 0.1811675010685576,
+        "echo_ms_p95": 0.3196620018570684,
+        "echo_ms_max": 1.8991859978996217,
+        "host_empty": {
+          "rss_kib": 22520,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 28616,
+          "threads": 24,
+          "cpu_s": 0.02
+        },
+        "host_cpu_delta_s": 0.02,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-20",
+      "status": "corroborated",
+      "wall_s": 0.09601419500177144,
+      "evidence": {
+        "panes": 20,
+        "rounds": 12,
+        "spawn_wall_s": 0.0376,
+        "traffic_wall_s": 0.0159,
+        "input_bytes": 19680,
+        "echo_samples": 240,
+        "echo_ms_p50": 0.6238549995032372,
+        "echo_ms_p95": 1.0953860000881832,
+        "echo_ms_max": 1.908965001348406,
+        "host_empty": {
+          "rss_kib": 22380,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 33908,
+          "threads": 84,
+          "cpu_s": 0.07
+        },
+        "host_cpu_delta_s": 0.07,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "scaling-50",
+      "status": "corroborated",
+      "wall_s": 0.23381991700080107,
+      "evidence": {
+        "panes": 50,
+        "rounds": 12,
+        "spawn_wall_s": 0.1165,
+        "traffic_wall_s": 0.0447,
+        "input_bytes": 49200,
+        "echo_samples": 600,
+        "echo_ms_p50": 1.8062630006170366,
+        "echo_ms_p95": 2.753132001089398,
+        "echo_ms_max": 7.032220000837697,
+        "host_empty": {
+          "rss_kib": 22660,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "host_active": {
+          "rss_kib": 51628,
+          "threads": 204,
+          "cpu_s": 0.25
+        },
+        "host_cpu_delta_s": 0.25,
+        "children_retained_same_identity": true,
+        "snapshot_contains_last_round": true,
+        "renderer_frame_ms": null,
+        "crt_overhead_ms": null,
+        "gpu_memory_kib": null,
+        "scope": "Host+PTY echo, including line discipline and cat; no window or rendering. Host RSS excludes children.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "fragmented-wire",
+      "status": "corroborated",
+      "wall_s": 0.013323846997082,
+      "evidence": {
+        "cases": [
+          {
+            "payload": "{bad-json}",
+            "reply": {
+              "reply": "error",
+              "msg": "unreadable request: key must be a string at line 1 column 2"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          },
+          {
+            "payload": "{\"verb\":\"not-a-verb\"}",
+            "reply": {
+              "reply": "error",
+              "msg": "unreadable request: unknown variant `not-a-verb`, expected one of `hello`, `list-panes`, `spawn-pane`, `attach-pane`, `resize`, `close-pane`, `grid-check`, `save`, `watch`, `shutdown` at line 1 column 20"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          },
+          {
+            "payload": "{\"verb\":\"hello\",\"proto\":999,\"kind\":\"tool\"}",
+            "reply": {
+              "reply": "error",
+              "msg": "protocol mismatch: this build speaks 1, the other side speaks 999"
+            },
+            "following_reply": {
+              "reply": "panes",
+              "panes": []
+            }
+          }
+        ],
+        "hello_after_interrupted_request": {
+          "reply": "hello",
+          "proto": 1,
+          "session": "adversarial",
+          "panes": 0,
+          "attended": false,
+          "host": 3883229
+        },
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "concurrent-lifecycle",
+      "status": "corroborated",
+      "wall_s": 0.6030375830014236,
+      "evidence": {
+        "spawn_count": 32,
+        "unique_ids": true,
+        "census_count": 32,
+        "killed_owned_children": 16,
+        "close_replies": [
+          {
+            "reply": "closed",
+            "pane": 1,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883267,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 2,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883283,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 3,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883286,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 4,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883289,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 5,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883293,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 6,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883303,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 7,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883307,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 8,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883324,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 9,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883327,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 10,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883332,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 11,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883336,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 12,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883342,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 13,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883346,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 15,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883355,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 14,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883350,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 16,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883360,
+                "signalled": false
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 17,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883364,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 18,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883368,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 19,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883373,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 20,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883377,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 21,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883381,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 22,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883384,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 23,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883387,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 24,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883390,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 25,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883393,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 26,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883396,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 27,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883399,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 28,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883402,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 29,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883405,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 30,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883408,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 31,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883411,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          },
+          {
+            "reply": "closed",
+            "pane": 32,
+            "outcome": {
+              "ok": {
+                "shell_pid": 3883414,
+                "signalled": true,
+                "cleanup": {
+                  "hangup_sent": true,
+                  "kill_sent": true,
+                  "exit_observed": true,
+                  "observed_jobs_remaining": 0,
+                  "error": null
+                }
+              }
+            }
+          }
+        ],
+        "census_after_close": [],
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "stalled-clients",
+      "status": "corroborated",
+      "wall_s": 0.26697490999868023,
+      "evidence": {
+        "stalled_connections": 32,
+        "before": {
+          "rss_kib": 22716,
+          "threads": 4,
+          "cpu_s": 0.0
+        },
+        "during": {
+          "rss_kib": 23212,
+          "threads": 36,
+          "cpu_s": 0.0
+        },
+        "after_disconnect": {
+          "rss_kib": 23488,
+          "threads": 4,
+          "cpu_s": 0.01
+        },
+        "host_still_answers": true,
+        "scope": "Bounded 32-client test; no claim that connection count or line size is capped.",
+        "host_log_tail": ""
+      }
+    },
+    {
+      "id": "duplicate-host",
+      "status": "falsified",
+      "wall_s": 0.030788706997554982,
+      "evidence": {
+        "duplicate_exit": 0,
+        "duplicate_log": "terminal-delight serve: session 'adversarial' is already served by process 3883591\n",
+        "original_host_retained": true,
+        "host_log_tail": ""
+      }
+    }
+  ]
+}
