@@ -17,10 +17,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **CONFIG is now Settings.** The corner keeps one door, ⚙, and Ctrl+, opens
   it too. Everything CONFIG held is in the book: its pages follow T3 Code's
   layout, and a panel opened from it (the palette, the gauges) shows inside it.
-- **Restart Terminal Delight once.** The skills bridge lives in the session
-  host, so after updating, quit every window, start again and open a new Bash
-  terminal before starting an agent. Until then a new shell starts cleanly
-  without the bridge.
+- **Restart Terminal Delight once, the session host included.** The skills
+  bridge lives in the session host, and the host outlives its windows: with
+  every window closed it keeps your terminals running for about twelve hours,
+  so closing and reopening is not enough. After updating, quit every window,
+  end the host with `pkill -f '[t]erminal-delight.* serve --session'` (or
+  restart the computer), start again and open a new Bash terminal before
+  starting an agent. Tabs come back from the saved session and agents are
+  resumed; scrollback and other running programs are not. Until then a new
+  shell starts cleanly without the bridge. (Corrected after release: the
+  first wording said quitting every window was enough, and it is not.)
 - **The left spine is the INBOX.** What used to be the agent list is now
   shelves of what wants you, and the composer that starts an agent opens from it.
 
@@ -120,8 +126,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   preserves personal skills, exclusions and provider configuration. Each pane's
   TD Skills indicator reports confirmed, partial, absent or unknown attachment;
   availability does not mean the agent followed an instruction. The command
-  bridge lives in the session host, so after updating, restart everything once
-  and open a new Bash terminal before starting the agent. Until then a new shell
+  bridge lives in the session host, so after updating, restart the host once
+  (see Upgrading above: closing every window does not end it) and open a new
+  Bash terminal before starting the agent. Until then a new shell
   starts cleanly without the bridge. Existing running agents keep their original
   selection.
 
