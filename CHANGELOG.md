@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+- Click a Threshing Floor line’s arrow to cycle through either direction or both. Matching two-way permissions share one label; clicking the permission text still opens its editor.
+
 ## [0.5.3] — 2026-11-11
 
 ### Upgrading from 0.5.2
