@@ -206,6 +206,19 @@ pub struct UiChoice {
     pub outer: BTreeMap<String, bool>,
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub panes: BTreeMap<String, bool>,
+    /// Last hand-tuned arrangement, kept when a named set is tried.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub yours: Option<Box<UiSnapshot>>,
+}
+
+#[derive(Clone, Debug, Default, PartialEq, Serialize, Deserialize)]
+pub struct UiSnapshot {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub set: Option<String>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub outer: BTreeMap<String, bool>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub panes: BTreeMap<String, bool>,
 }
 
 impl UiChoice {
@@ -241,6 +254,37 @@ impl UiChoice {
     /// Any switch flipped by hand at all — the set row reads YOURS.
     pub fn has_flips(&self) -> bool {
         !self.outer.is_empty() || !self.panes.is_empty()
+    }
+
+    pub fn has_yours(&self) -> bool {
+        self.has_flips() || self.yours.is_some()
+    }
+
+    /// Try a named set without discarding the person's hand-tuned arrangement.
+    pub fn pick_set(&mut self, set: Option<String>) {
+        if self.has_flips() {
+            self.yours = Some(Box::new(UiSnapshot {
+                set: self.set.clone(),
+                outer: self.outer.clone(),
+                panes: self.panes.clone(),
+            }));
+        }
+        self.set = set;
+        self.outer.clear();
+        self.panes.clear();
+    }
+
+    pub fn restore_yours(&mut self) -> bool {
+        if self.has_flips() {
+            return false;
+        }
+        let Some(saved) = self.yours.as_ref() else {
+            return false;
+        };
+        self.set = saved.set.clone();
+        self.outer = saved.outer.clone();
+        self.panes = saved.panes.clone();
+        true
     }
 
     /// The window's old `left_bar` field, read into the new switch. A bar the
@@ -393,13 +437,13 @@ pub fn flip_all(cx: &mut App, keys: &[Key], on: bool) {
 }
 
 /// Pick a set by hand (`Some`), or go back to following the design (`None`).
-/// Either way the switches flipped by hand are cleared: picking a set is
-/// asking for that set, whole.
+/// The current hand-tuned arrangement is kept under YOURS.
 pub fn pick_set(cx: &mut App, set: Option<String>) {
-    let st = cx.global_mut::<UiState>();
-    st.choice.set = set;
-    st.choice.outer.clear();
-    st.choice.panes.clear();
+    cx.global_mut::<UiState>().choice.pick_set(set);
+}
+
+pub fn restore_yours(cx: &mut App) -> bool {
+    cx.global_mut::<UiState>().choice.restore_yours()
 }
 
 // ---------------------------------------------------------------------------
@@ -587,14 +631,19 @@ mod tests {
             pick_set(cx, Some(ALL.into()));
             assert_eq!(active_set(cx), ALL);
             assert!(shown(cx, Key::PaneClose));
+            assert!(choice(cx).has_yours());
             pick_set(cx, None);
             assert_eq!(active_set(cx), CLEAN);
 
             for id in ["default", "chalk", "ops"] {
                 crate::skin::select(cx, id).unwrap();
                 assert_eq!(active_set(cx), baseline, "{id} keeps its design's defaults");
-                assert_eq!(choice(cx), initial);
+                assert_eq!(choice(cx).set, initial.set);
+                assert!(choice(cx).has_yours());
             }
+            assert!(restore_yours(cx));
+            assert!(shown(cx, Key::GitNotice));
+            assert!(shown(cx, Key::LeftBar));
         });
     }
 
@@ -734,6 +783,36 @@ mod tests {
                 && wire.contains("agents = false"),
             "{wire}"
         );
+    }
+
+    #[test]
+    fn picking_sets_keeps_yours_until_the_person_replaces_it() {
+        let mut choice = UiChoice::default();
+        choice.flip(Key::Agents, false);
+        choice.flip(Key::PaneFace, true);
+        let original = choice.clone();
+        choice.pick_set(Some(CLEAN.into()));
+        assert!(choice.has_yours());
+        assert!(!choice.has_flips());
+        choice.pick_set(Some(ALL.into()));
+        assert!(choice.restore_yours());
+        assert_eq!(choice.outer, original.outer);
+        assert_eq!(choice.panes, original.panes);
+        assert_eq!(choice.set, original.set);
+
+        let wire = toml::to_string(&choice).unwrap();
+        let mut restored: UiChoice = toml::from_str(&wire).unwrap();
+        restored.pick_set(Some(CLEAN.into()));
+        assert!(restored.restore_yours());
+        assert_eq!(restored.outer, original.outer);
+        assert_eq!(restored.panes, original.panes);
+
+        restored.flip(Key::Counts, false);
+        assert!(
+            !restored.restore_yours(),
+            "the active Yours is never rolled back"
+        );
+        assert_eq!(restored.flipped(Key::Counts), Some(false));
     }
 
     /// A key a newer build added is reported, not fatal.

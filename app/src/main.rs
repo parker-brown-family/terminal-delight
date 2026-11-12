@@ -32291,6 +32291,12 @@ impl Workspace {
         self.ui_changed(cx);
     }
 
+    fn pick_ui_yours(&mut self, cx: &mut Context<Self>) {
+        if uiconfig::restore_yours(cx) {
+            self.ui_changed(cx);
+        }
+    }
+
     /// "use this window": a new window will open wearing this one's design,
     /// grade, palette, pinned skin and UI CONFIG.
     fn save_new_window(&mut self, cx: &mut Context<Self>) {
@@ -35047,7 +35053,7 @@ impl Render for Workspace {
             let ui_area = (!is_pane && !hosted).then(|| {
                 use uiconfig::Key as K;
                 let ui_choice = uiconfig::choice(cx);
-                let following = ui_choice.set.is_none();
+                let following = !ui_choice.has_flips() && ui_choice.set.is_none();
                 let active_set = uiconfig::active_set(cx);
                 let on_panes = self.ui_cfg_panes;
                 let switch =
@@ -35082,16 +35088,7 @@ impl Render for Workspace {
                     .items_center()
                     .gap_1()
                     .child(page(t.scope_outer, false, "ui-page-outer", cx))
-                    .child(page(t.ui.ui_panes, true, "ui-page-panes", cx))
-                    .when(ui_choice.has_flips(), |d| {
-                        d.child(
-                            div()
-                                .ml_1()
-                                .text_size(sk.text_px(9.))
-                                .text_color(th.text.alpha(0.6))
-                                .child(format!("\u{b7} {}", t.ui.ui_yours)),
-                        )
-                    });
+                    .child(page(t.ui.ui_panes, true, "ui-page-panes", cx));
                 // Follow the active appearance preference, or pick a set.
                 let follow_label = if sk.unboxed() {
                     "skin"
@@ -35110,7 +35107,7 @@ impl Render for Workspace {
                         ),
                 );
                 for set in uiconfig::sets(cx) {
-                    let lit = !following && set.id == active_set;
+                    let lit = !ui_choice.has_flips() && !following && set.id == active_set;
                     let id = set.id.clone();
                     let caption = if set.id == uiconfig::CLEAN {
                         t.thm_clean.to_string()
@@ -35125,6 +35122,19 @@ impl Render for Workspace {
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
                                     ws.pick_ui_set(Some(id.clone()), cx);
+                                }),
+                            ),
+                    );
+                }
+                if ui_choice.has_yours() {
+                    set_row = set_row.child(
+                        theme_icon_btn(&th, &sk, "\u{2726}", t.ui.ui_yours, ui_choice.has_flips())
+                            .id("ui-set-yours")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.pick_ui_yours(cx);
                                 }),
                             ),
                     );

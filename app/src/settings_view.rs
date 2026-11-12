@@ -1259,18 +1259,23 @@ impl Workspace {
         let active = uiconfig::active_set(cx);
         let mut buttons = div().flex().flex_row().flex_wrap().items_center().gap_2();
         buttons = buttons.child(
-            Self::bezel_btn_s(sk, ui.ui_set_design, choice.set.is_none(), 0.85)
-                .id("st-ui-set-design")
-                .on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
-                        cx.stop_propagation();
-                        ws.pick_ui_set(None, cx);
-                    }),
-                ),
+            Self::bezel_btn_s(
+                sk,
+                ui.ui_set_design,
+                !choice.has_flips() && choice.set.is_none(),
+                0.85,
+            )
+            .id("st-ui-set-design")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.pick_ui_set(None, cx);
+                }),
+            ),
         );
         for set in uiconfig::sets(cx) {
-            let lit = choice.set.is_some() && set.id == active;
+            let lit = !choice.has_flips() && choice.set.is_some() && set.id == active;
             let id = set.id.clone();
             let caption = if set.id == uiconfig::CLEAN {
                 self.lang.strings().thm_clean.to_string()
@@ -1289,8 +1294,18 @@ impl Workspace {
                     ),
             );
         }
-        if choice.has_flips() {
-            buttons = buttons.child(ui.ui_yours.to_string());
+        if choice.has_yours() {
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, ui.ui_yours, choice.has_flips(), 0.85)
+                    .id("st-ui-set-yours")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pick_ui_yours(cx);
+                        }),
+                    ),
+            );
         }
         buttons.into_any_element().into()
     }
@@ -1807,18 +1822,12 @@ impl Workspace {
                     UI_INTERFACE
                         .iter()
                         .map(|(id, title, keys)| {
-                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
                             Self::st_row_shown(
                                 th,
                                 sk,
                                 &sentence(title(t)),
                                 None,
-                                if *id == "st-ui-glyphs" {
-                                    Some(Self::st_ui_glyphs(sk, cx))
-                                } else {
-                                    settings_preview::Spot::of(keys)
-                                        .map(|spot| settings_preview::interface(th, sk, spot, on))
-                                },
+                                (*id == "st-ui-glyphs").then(|| Self::st_ui_glyphs(sk, cx)),
                                 Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                             )
                         })
@@ -1833,14 +1842,12 @@ impl Workspace {
                 UI_WINDOW_CHROME
                     .iter()
                     .map(|(id, title, keys)| {
-                        let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
                         Self::st_row_shown(
                             th,
                             sk,
                             &sentence(title(t)),
                             None,
-                            settings_preview::Spot::of(keys)
-                                .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                            None,
                             Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                         )
                     })
@@ -1854,14 +1861,12 @@ impl Workspace {
                 UI_PANE_PARTS
                     .iter()
                     .map(|(id, title, keys)| {
-                        let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
                         Self::st_row_shown(
                             th,
                             sk,
                             &sentence(title(t)),
                             None,
-                            settings_preview::Spot::of(keys)
-                                .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                            None,
                             Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                         )
                     })
@@ -2853,6 +2858,30 @@ mod tests {
             assert!(
                 content.bottom() <= viewport.bottom() + px(2.),
                 "{page:?} exceeds the viewport: content {content:?}, viewport {viewport:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn settings_pages_fit_without_scrolling_in_terminimalist(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| {
+            skin::select(cx, "terminimalist").unwrap();
+            uiconfig::flip(cx, uiconfig::Key::Artifacts, true);
+        });
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        for page in Page::all() {
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("page viewport");
+            let content = cx.debug_bounds("st-column").expect("page content");
+            assert!(
+                content.bottom() <= viewport.bottom() + px(2.),
+                "{page:?} exceeds the Terminimalist viewport: content {content:?}, viewport {viewport:?}"
             );
         }
     }
