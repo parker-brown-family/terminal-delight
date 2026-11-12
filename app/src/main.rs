@@ -34072,6 +34072,7 @@ impl Render for Workspace {
         // ---- theme breakout: icon grid + seed swatches, per scope ----
         let menu_overlay = self.theme_menu.clone().map(|scope| {
             let is_pane = matches!(scope, MenuScope::Pane(_));
+            let hosted = self.hosting() == Some(settings::Host::Palette);
             let cur = self.menu_choice(cx);
             let t = self.lang.strings();
             let help_owner = cx.entity().downgrade();
@@ -34933,11 +34934,14 @@ impl Render for Workspace {
                 );
             }
             // ---- UI CONFIG: what chrome the window draws (see `uiconfig`) ----
+            // The book has dedicated Interface, Window chrome and Pane parts pages. Keep this
+            // area in the quick tray, but do not stack it under the palette in
+            // Settings: that made the page require scrolling.
             // A fourth area, on the OUTER tray only: "EACH INDIVIDUAL PANE IS
             // NOT IN CHARGE OF ITS OWN CONFIG", so a pane's 🎨 card has no UI
             // CONFIG, the way it has no SKIN. Two pages, OUTER and PANES, the
             // second being one config for every pane at once.
-            let ui_area = (!is_pane).then(|| {
+            let ui_area = (!is_pane && !hosted).then(|| {
                 use uiconfig::Key as K;
                 let ui_choice = uiconfig::choice(cx);
                 let following = ui_choice.set.is_none();
@@ -35288,9 +35292,7 @@ impl Render for Workspace {
                 panel_w
             };
             let panel_h_est = tray_panel_h_est();
-            // Shown in place on Settings' Appearance page: no anchor to the
-            // footer, no cap to the band, the page scrolls it.
-            let hosted = self.hosting() == Some(settings::Host::Palette);
+            // Shown in place on Settings' Appearance page: no footer anchor.
             let mut panel = sk
                 .sheet()
                 .id("theme-panel")
@@ -35559,12 +35561,42 @@ impl Render for Workspace {
                     ],
                 ),
             ];
-            // Shown in Settings, every group is open and is a section of the
-            // page, with a picture of what its gauges do beside its sliders.
-            // Parker, 2026-11-10: *"we are no longer concerned about space, so
-            // gauges should be UNCOLLAPSED"*. In the window's tray they fold,
-            // and an open group shows its picture over its sliders.
+            // In Settings each gauge group is its own menu. The selected group
+            // is fully open beside its picture; the others are reached by one
+            // click above it. The window's quick tray keeps its folding groups.
             let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let hosted_page = self
+                .settings
+                .as_ref()
+                .map(|book| book.gauges_page)
+                .unwrap_or(0)
+                .min(groups.len() + 2);
+            let tabs = hosted.then(|| {
+                let mut tabs = div().flex().flex_row().flex_wrap().gap_2();
+                for (gi, heading) in groups
+                    .iter()
+                    .map(|(heading, _)| *heading)
+                    .chain([t.d_crawl_hdr, t.d_crt_hdr, t.d_trail_hdr])
+                    .enumerate()
+                {
+                    tabs = tabs.child(
+                        Self::bezel_btn_s(&sk, heading, hosted_page == gi, 0.85)
+                            .id(SharedString::from(format!("osd-page-{gi}")))
+                            .debug_selector(move || format!("osd-page-{gi}"))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(book) = ws.settings.as_mut() {
+                                        book.gauges_page = gi;
+                                    }
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+                tabs
+            });
             let look = theme::resolve(cx, &cur);
             let samples = [
                 settings_preview::Gauge::Type,
@@ -35636,6 +35668,9 @@ impl Render for Workspace {
             };
             let mut lingers_shown = false;
             for (gi, (heading, controls)) in groups.into_iter().enumerate() {
+                if hosted && gi != hosted_page {
+                    continue;
+                }
                 let open = hosted || self.osd_groups.get(gi).copied().unwrap_or(false);
                 let acc = th.accent;
                 let mut section = div().flex().flex_col().gap_1();
@@ -35752,6 +35787,7 @@ impl Render for Workspace {
             let mut panel = sk
                 .sheet()
                 .id("osd-panel")
+                .debug_selector(|| "osd-panel".to_string())
                 .when(!hosted, |d| d.absolute())
                 .map(|d| if hosted { d.w_full() } else { d.w(px(panel_w)) });
             let tray_top = match self.osd_at {
@@ -35827,6 +35863,7 @@ impl Render for Workspace {
                             )))
                             .child(div().flex_shrink_0().child(reset)),
                     )
+                    .children(tabs)
                     .child(rows)
             } else {
                 panel
@@ -35873,7 +35910,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.crawl {
+            if (hosted && hosted_page == 5) || (!hosted && self.osd_eggs.crawl) {
                 let crawl_on = grade.crawl;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -35942,7 +35979,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.crt {
+            if (hosted && hosted_page == 6) || (!hosted && self.osd_eggs.crt) {
                 let crt_on = grade.crt;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -36058,7 +36095,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.trail {
+            if (hosted && hosted_page == 7) || (!hosted && self.osd_eggs.trail) {
                 let trail = grade.cursor_trail.filter(|t| t.on);
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(

@@ -551,6 +551,9 @@ fn page_name_in(l: lang::Lang, p: Page) -> &'static str {
     match p {
         Page::General => s.p_general,
         Page::Appearance => s.p_appearance,
+        Page::Interface => s.s_interface,
+        Page::WindowChrome => s.p_window_chrome,
+        Page::PaneParts => s.s_pane_parts,
         Page::Notifications => s.p_notifications,
         Page::Keybindings => s.p_keybindings,
         Page::Providers => s.p_providers,
@@ -594,7 +597,7 @@ fn scale_step(at: f32, by: f32) -> f32 {
     (next / 10.).clamp(SCALE_MIN, SCALE_MAX)
 }
 
-/// UI CONFIG's switches as Appearance rows: what the window's own chrome
+/// UI CONFIG's switches: what the window's own chrome
 /// shows, then what every pane shows. One table, read by the page that draws
 /// the rows and by the search that finds them. Each row flips its keys
 /// together, as the surface config's switch for it does.
@@ -617,6 +620,14 @@ const UI_INTERFACE: &[UiRow] = &[
         |t| t.ui.ui_splits,
         &[uiconfig::Key::SplitButtons],
     ),
+    (
+        "st-ui-rows",
+        |t| t.ui.ui_option_rows,
+        &[uiconfig::Key::OptionRows],
+    ),
+];
+
+const UI_WINDOW_CHROME: &[UiRow] = &[
     (
         "st-ui-mark",
         |t| t.ui.ui_app_mark,
@@ -643,11 +654,6 @@ const UI_INTERFACE: &[UiRow] = &[
         "st-ui-allowance",
         |t| t.ui.ui_allowance,
         &[uiconfig::Key::Allowance],
-    ),
-    (
-        "st-ui-rows",
-        |t| t.ui.ui_option_rows,
-        &[uiconfig::Key::OptionRows],
     ),
 ];
 
@@ -702,6 +708,8 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::Appearance, s.s_look, s.r_palette, s.r_palette_sub),
         (Page::Appearance, s.s_look, s.r_gauges, s.r_gauges_sub),
         (Page::Appearance, s.s_agent_panes, s.r_tint, s.r_tint_sub),
+        (Page::Interface, ui.ui_hdr, ui.ui_set_design, ""),
+        (Page::Interface, ui.ui_hdr, ui.ui_new_windows, ""),
         (
             Page::Notifications,
             s.s_notices,
@@ -790,11 +798,19 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
     ];
     let ui_rows = UI_INTERFACE
         .iter()
-        .map(|(_, title, _)| (Page::Appearance, s.s_interface, title(l.strings()), ""))
+        .map(|(_, title, _)| (Page::Interface, s.s_interface, title(l.strings()), ""))
+        .chain(UI_WINDOW_CHROME.iter().map(|(_, title, _)| {
+            (
+                Page::WindowChrome,
+                s.p_window_chrome,
+                title(l.strings()),
+                "",
+            )
+        }))
         .chain(
             UI_PANE_PARTS
                 .iter()
-                .map(|(_, title, _)| (Page::Appearance, s.s_pane_parts, title(l.strings()), "")),
+                .map(|(_, title, _)| (Page::PaneParts, s.s_pane_parts, title(l.strings()), "")),
         )
         .collect::<Vec<_>>();
     let mut items: Vec<Item> = rows
@@ -1197,6 +1213,90 @@ impl Workspace {
             press: Some(press(cx)),
             id: Some(id),
         }
+    }
+
+    /// The UI set belongs with the Interface switches in the book, rather
+    /// than at the foot of the theme palette.
+    fn st_ui_sets(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let ui = self.lang.strings().ui;
+        let choice = uiconfig::choice(cx);
+        let active = uiconfig::active_set(cx);
+        let mut buttons = div().flex().flex_row().flex_wrap().items_center().gap_2();
+        buttons = buttons.child(
+            Self::bezel_btn_s(sk, ui.ui_set_design, choice.set.is_none(), 0.85)
+                .id("st-ui-set-design")
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                        cx.stop_propagation();
+                        ws.pick_ui_set(None, cx);
+                    }),
+                ),
+        );
+        for set in uiconfig::sets(cx) {
+            let lit = choice.set.is_some() && set.id == active;
+            let id = set.id.clone();
+            let caption = if set.id == uiconfig::CLEAN {
+                self.lang.strings().thm_clean.to_string()
+            } else {
+                set.name.clone()
+            };
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, &caption, lit, 0.85)
+                    .id(SharedString::from(format!("st-ui-set-{id}")))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pick_ui_set(Some(id.clone()), cx);
+                        }),
+                    ),
+            );
+        }
+        if choice.has_flips() {
+            buttons = buttons.child(ui.ui_yours.to_string());
+        }
+        buttons.into_any_element().into()
+    }
+
+    fn st_new_windows(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let ui = self.lang.strings().ui;
+        let mut buttons = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(if self.new_window_saved {
+                ui.ui_saved
+            } else {
+                ui.pal_thm_deco
+            })
+            .child(
+                Self::bezel_btn_s(sk, ui.ui_use_this, false, 0.85)
+                    .id("st-ui-use-window")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.save_new_window(cx);
+                        }),
+                    ),
+            );
+        if self.new_window_saved {
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, ui.pal_thm_deco, false, 0.85)
+                    .id("st-ui-reset-window")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.clear_new_window(cx);
+                        }),
+                    ),
+            );
+        }
+        buttons.into_any_element().into()
     }
 
     /// A button that acts inside the book.
@@ -1651,6 +1751,18 @@ impl Workspace {
                         ),
                     )],
                 ),
+            ],
+            Page::Interface => vec![
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-ui-sets",
+                    ui.ui_hdr,
+                    vec![
+                        row(&sentence(ui.ui_set_design), "", self.st_ui_sets(sk, cx)),
+                        row(ui.ui_new_windows, "", self.st_new_windows(sk, cx)),
+                    ],
+                ),
                 Self::st_section(
                     th,
                     sk,
@@ -1672,28 +1784,49 @@ impl Workspace {
                         })
                         .collect(),
                 ),
-                Self::st_section(
-                    th,
-                    sk,
-                    "st-sec-pane-parts",
-                    s.s_pane_parts,
-                    UI_PANE_PARTS
-                        .iter()
-                        .map(|(id, title, keys)| {
-                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
-                            Self::st_row_shown(
-                                th,
-                                sk,
-                                &sentence(title(t)),
-                                None,
-                                settings_preview::Spot::of(keys)
-                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
-                                Some(self.st_ui_switch(th, sk1, id, keys, cx)),
-                            )
-                        })
-                        .collect(),
-                ),
             ],
+            Page::WindowChrome => vec![Self::st_section(
+                th,
+                sk,
+                "st-sec-window-chrome",
+                s.p_window_chrome,
+                UI_WINDOW_CHROME
+                    .iter()
+                    .map(|(id, title, keys)| {
+                        let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
+                        Self::st_row_shown(
+                            th,
+                            sk,
+                            &sentence(title(t)),
+                            None,
+                            settings_preview::Spot::of(keys)
+                                .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                            Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                        )
+                    })
+                    .collect(),
+            )],
+            Page::PaneParts => vec![Self::st_section(
+                th,
+                sk,
+                "st-sec-pane-parts",
+                s.s_pane_parts,
+                UI_PANE_PARTS
+                    .iter()
+                    .map(|(id, title, keys)| {
+                        let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
+                        Self::st_row_shown(
+                            th,
+                            sk,
+                            &sentence(title(t)),
+                            None,
+                            settings_preview::Spot::of(keys)
+                                .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                            Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                        )
+                    })
+                    .collect(),
+            )],
             Page::Notifications => vec![Self::st_section(
                 th,
                 sk,
@@ -2663,6 +2796,27 @@ mod tests {
         }
     }
 
+    #[gpui::test]
+    fn settings_pages_fit_without_scrolling_at_desktop_size(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        for page in Page::all() {
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("page viewport");
+            let content = cx.debug_bounds("st-column").expect("page content");
+            assert!(
+                content.bottom() <= viewport.bottom() + px(2.),
+                "{page:?} exceeds the viewport: content {content:?}, viewport {viewport:?}"
+            );
+        }
+    }
+
     /// Ctrl+, from a pane opens the book, the ⚙ is in the corner, typing
     /// searches and Enter goes to the lit result, the arrows walk the pages,
     /// Esc clears a search before it closes the book, and the book opens
@@ -2917,49 +3071,36 @@ mod tests {
         redraw(cx);
     }
 
-    /// UI CONFIG's switches are Appearance rows: a press flips what the
+    /// UI CONFIG's switches are on their own pages: a press flips what the
     /// window shows, and the search finds them by their titles. The menu
     /// glyphs row flips every corner glyph together.
     ///
     /// Mutation-tested: flipping to `on` instead of `!on` leaves the switch
     /// where it was.
     #[gpui::test]
-    fn ui_config_switches_are_appearance_rows_the_search_finds(cx: &mut gpui::TestAppContext) {
+    fn ui_config_switches_have_pages_the_search_finds(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
         let (ws, cx) = book_window(cx);
         redraw(cx);
-        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Interface), cx));
         redraw(cx);
         let shown = |cx: &mut gpui::VisualTestContext, k| cx.update(|_, cx| uiconfig::shown(cx, k));
-        // The page is taller than the window: wheel it until a row is in view.
-        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
-            for _ in 0..20 {
-                let page = cx.debug_bounds("st-page").expect("the page");
-                let row = cx.debug_bounds(id).expect("the row's switch is drawn");
-                if row.bottom() <= page.bottom() && row.top() >= page.top() {
-                    return;
-                }
-                let down = row.top() > page.top();
-                cx.simulate_event(gpui::ScrollWheelEvent {
-                    position: page.center(),
-                    delta: gpui::ScrollDelta::Pixels(point(
-                        px(0.),
-                        px(if down { -120. } else { 120. }),
-                    )),
-                    ..Default::default()
-                });
-                redraw(cx);
-            }
-            panic!("{id} never came into view");
-        };
-        for (id, key) in [
-            ("st-ui-counts", uiconfig::Key::Counts),
-            ("st-ui-p-close", uiconfig::Key::PaneClose),
+        for (page, id, key) in [
+            (Page::Interface, "st-ui-counts", uiconfig::Key::Counts),
+            (Page::WindowChrome, "st-ui-notice", uiconfig::Key::GitNotice),
+            (Page::PaneParts, "st-ui-p-close", uiconfig::Key::PaneClose),
         ] {
-            into_view(cx, id);
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("the page");
+            let visible = cx.debug_bounds(id).expect("the switch is drawn");
+            assert!(
+                visible.top() >= viewport.top() && visible.bottom() <= viewport.bottom(),
+                "{id} fits without scrolling"
+            );
             let before = shown(cx, key);
             let at = cx.debug_bounds(id).expect("the row's switch is drawn");
             cx.simulate_click(at.center(), gpui::Modifiers::none());
@@ -2970,7 +3111,8 @@ mod tests {
             redraw(cx);
             assert_eq!(shown(cx, key), before, "and back");
         }
-        into_view(cx, "st-ui-glyphs");
+        ws.update(cx, |ws, cx| ws.settings_go(Page::Interface, cx));
+        redraw(cx);
         let at = cx.debug_bounds("st-ui-glyphs").expect("the glyphs row");
         cx.simulate_click(at.center(), gpui::Modifiers::none());
         redraw(cx);
@@ -2987,17 +3129,23 @@ mod tests {
         let en = settings_items_in(lang::Lang::En);
         let title = lang::Lang::En.strings().ui.ui_counts;
         let hit = settings::search(title, &en);
-        assert_eq!(en[hit[0]].page, Page::Appearance, "{title:?} is found");
+        assert_eq!(en[hit[0]].page, Page::Interface, "{title:?} is found");
+        let title = lang::Lang::En.strings().ui.ui_git_notice;
+        let hit = settings::search(title, &en);
+        assert_eq!(en[hit[0]].page, Page::WindowChrome, "{title:?} is found");
+        let title = lang::Lang::En.strings().ui.ui_close;
+        let hit = settings::search(title, &en);
+        assert_eq!(en[hit[0]].page, Page::PaneParts, "{title:?} is found");
     }
 
     /// A press anywhere on a row does what the row's control does: on a
     /// switch row's words it flips the switch, and on the Gauges row's words
-    /// it shows the gauges in place, every group open, with nothing shut by
+    /// it shows the gauges in place, each group open on its own page, with nothing shut by
     /// a press on the page's margin. Parker, 2026-11-10: *"click ANYWHERE on
     /// the card should open"* and *"gauges should be UNCOLLAPSED"*.
     ///
     /// Mutation-tested: dropping the row's press fails "the words flip it";
-    /// reading the fold in the book again fails "group 4 is open".
+    /// folding the selected group in the book fails "group 4 is open".
     #[gpui::test]
     fn a_press_anywhere_on_a_row_does_what_its_control_does(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
@@ -3006,30 +3154,9 @@ mod tests {
         cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
         let (ws, cx) = book_window(cx);
         redraw(cx);
-        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Interface), cx));
         redraw(cx);
-        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
-            for _ in 0..20 {
-                let page = cx.debug_bounds("st-page").expect("the page");
-                let row = cx.debug_bounds(id).expect("the row is drawn");
-                if row.bottom() <= page.bottom() && row.top() >= page.top() {
-                    return;
-                }
-                let down = row.top() > page.top();
-                cx.simulate_event(gpui::ScrollWheelEvent {
-                    position: page.center(),
-                    delta: gpui::ScrollDelta::Pixels(point(
-                        px(0.),
-                        px(if down { -120. } else { 120. }),
-                    )),
-                    ..Default::default()
-                });
-                redraw(cx);
-            }
-            panic!("{id} never came into view");
-        };
         // The words of a switch row, well clear of its switch.
-        into_view(cx, "st-ui-counts-row");
         let shown = |cx: &mut gpui::VisualTestContext| {
             cx.update(|_, cx| uiconfig::shown(cx, uiconfig::Key::Counts))
         };
@@ -3047,7 +3174,8 @@ mod tests {
         redraw(cx);
         assert_eq!(shown(cx), before, "the switch flips it once");
         // The words of the Gauges row open the gauges in place.
-        into_view(cx, "st-open-gauges-row");
+        ws.update(cx, |ws, cx| ws.settings_go(Page::Appearance, cx));
+        redraw(cx);
         let row = cx.debug_bounds("st-open-gauges-row").unwrap();
         cx.simulate_click(
             point(row.left() + px(24.), row.center().y),
@@ -3059,17 +3187,41 @@ mod tests {
             Some(Host::Gauges),
             "the gauges are shown in place"
         );
-        for id in [
-            "osd-group-0",
-            "osd-group-1",
-            "osd-group-2",
-            "osd-group-3",
-            "osd-group-4",
-        ] {
-            assert!(cx.debug_bounds(id).is_some(), "{id} is drawn");
+        for (gi, (tab_id, group_id)) in [
+            ("osd-page-0", Some("osd-group-0")),
+            ("osd-page-1", Some("osd-group-1")),
+            ("osd-page-2", Some("osd-group-2")),
+            ("osd-page-3", Some("osd-group-3")),
+            ("osd-page-4", Some("osd-group-4")),
+            ("osd-page-5", None),
+            ("osd-page-6", None),
+            ("osd-page-7", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let tab = cx
+                .debug_bounds(tab_id)
+                .expect("each gauge group has a menu choice");
+            cx.simulate_click(tab.center(), gpui::Modifiers::none());
+            redraw(cx);
+            let panel = cx.debug_bounds("osd-panel").expect("the gauges panel");
+            let viewport = cx.debug_bounds("st-page").unwrap();
+            assert!(
+                panel.bottom() <= viewport.bottom(),
+                "gauge menu {gi} fits without scrolling: {panel:?} in {viewport:?}"
+            );
+            if let Some(group_id) = group_id {
+                assert!(
+                    cx.debug_bounds(group_id).is_some(),
+                    "the selected group {gi} is drawn"
+                );
+            }
         }
-        // Every group open: the inactive terminals' sliders are drawn
-        // though nobody pressed their heading.
+        // The inactive terminals' sliders are drawn without opening a fold.
+        let tab = cx.debug_bounds("osd-page-4").unwrap();
+        cx.simulate_click(tab.center(), gpui::Modifiers::none());
+        redraw(cx);
         assert!(
             ws.read_with(cx, |ws, _| ws.osd_groups.get(4).copied() != Some(true)),
             "nobody opened group 4"
@@ -3184,6 +3336,15 @@ mod tests {
         assert!(
             page.contains(&tray.origin),
             "the tray is drawn on the page, not over the window: {tray:?} in {page:?}"
+        );
+        assert!(
+            cx.debug_bounds("ui-config-area").is_none(),
+            "UI Config has its own Settings pages"
+        );
+        let viewport = cx.debug_bounds("st-page").unwrap();
+        assert!(
+            tray.bottom() <= viewport.bottom(),
+            "theme fits without scrolling"
         );
         assert!(
             cx.debug_bounds("st-crumb-host").is_some(),
