@@ -7,6 +7,7 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+- Appearance now gives interface, window chrome and pane controls their own Settings pages. Theme choices no longer bury UI Config below the visible page; presets and new-window defaults remain with the interface controls. Gauges have one menu per group, with each selected group fully open.
 - Click a Threshing Floor line’s arrow to cycle through either direction or both. Matching two-way permissions share one label; clicking the permission text still opens its editor.
 
 ## [0.5.3] — 2026-11-11

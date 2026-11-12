@@ -13,8 +13,9 @@
 //! shows them in, each page's glyph, and the search. The names, groups and
 //! order follow T3's `SETTINGS_NAV_GROUPS` (pingdotgg/t3code, MIT,
 //! `apps/web/src/components/settings/settingsSearch.ts`), keeping only the
-//! pages Terminal Delight has something to put on. The glyphs are the nearest
-//! single characters to T3's lucide icons. The view is `settings_view.rs`;
+//! pages Terminal Delight has something to put on, with Interface, Window
+//! chrome and Pane parts split from Appearance so each page fits without scrolling. The glyphs
+//! are the nearest single characters to T3's lucide icons. The view is `settings_view.rs`;
 //! the words are `lang/settings.rs`.
 
 /// One page of the book.
@@ -22,6 +23,9 @@
 pub enum Page {
     General,
     Appearance,
+    Interface,
+    WindowChrome,
+    PaneParts,
     Notifications,
     Keybindings,
     Providers,
@@ -53,6 +57,9 @@ pub const GROUPS: &[(Option<Heading>, &[Page])] = &[
         &[
             Page::General,
             Page::Appearance,
+            Page::Interface,
+            Page::WindowChrome,
+            Page::PaneParts,
             Page::Notifications,
             Page::Keybindings,
         ],
@@ -83,6 +90,9 @@ impl Page {
         match self {
             Page::General => "general",
             Page::Appearance => "appearance",
+            Page::Interface => "interface",
+            Page::WindowChrome => "window-chrome",
+            Page::PaneParts => "pane-parts",
             Page::Notifications => "notifications",
             Page::Keybindings => "keybindings",
             Page::Providers => "providers",
@@ -111,6 +121,9 @@ impl Page {
         match self {
             Page::General => "\u{2699}",        // ⚙
             Page::Appearance => "\u{1f3a8}",    // 🎨
+            Page::Interface => "\u{25a3}",      // ▣
+            Page::WindowChrome => "\u{25a7}",   // ▧
+            Page::PaneParts => "\u{25a4}",      // ▤
             Page::Notifications => "\u{1f514}", // 🔔
             Page::Keybindings => "\u{2328}",    // ⌨
             Page::Providers => "\u{1f916}",     // 🤖
@@ -211,7 +224,7 @@ pub fn search(query: &str, items: &[Item]) -> Vec<usize> {
 /// the fconfig being explored"*.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Host {
-    /// The surface config: theme, style, rules, UI CONFIG.
+    /// The surface config: theme, style, and rules. UI CONFIG has book pages.
     Palette,
     Gauges,
     Updates,
@@ -235,6 +248,8 @@ pub struct Book {
     pub query: String,
     /// The lit result while searching.
     pub pick: usize,
+    /// The gauge group selected in Appearance's Gauges menu.
+    pub gauges_page: usize,
 }
 
 impl Book {
@@ -244,6 +259,7 @@ impl Book {
             host: None,
             query: String::new(),
             pick: 0,
+            gauges_page: 0,
         }
     }
 
