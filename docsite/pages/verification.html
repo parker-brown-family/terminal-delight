@@ -1,7 +1,7 @@
 <script type="application/json" data-page>
 {
   "title": "How it is verified",
-  "description": "Every change to Terminal Delight runs 3,269 Rust tests on two terminal cores, twelve models that try every order of events against nine promises about the window, a supply-chain audit, a release build and an uninstall from a throwaway account. A change merges when all of it is green.",
+  "description": "Nothing reaches Terminal Delight's main branch or a release until its tests have passed on two terminal cores, twelve models have tried every order of events against nine promises about the window, and a supply-chain audit, a release build and an uninstall from a throwaway account are green. Day-to-day work lands on a development branch first, where CI reports and does not gate.",
   "updated": "2026-11-12",
   "trueOf": "main at 8ca71a1b",
   "summary": "The checks every change passes, and what none of them cover"
@@ -9,21 +9,21 @@
 </script>
 
 <section data-register="brief">
-<p class="lede">Every change to Terminal Delight is checked by machine before it merges. The checks are 3,269 Rust tests run on two terminal cores, twelve models that try every order of events against nine promises about the window, an audit of every dependency, a release build, and an uninstall run from a throwaway account.</p>
+<p class="lede">Nothing reaches Terminal Delight's <code>main</code> branch, or a release, until every check on this page is green. The checks are the test suite run on two terminal cores, twelve models that try every order of events against nine promises about the window, an audit of every dependency, a release build, and an uninstall run from a throwaway account.</p>
 <p>A test checks the cases someone thought to write. A model checks every order of steps in a small copy of the design, which is where a window goes wrong: two things happen at once and the keys go to the wrong place. Each promise is one sentence a person could hold the program to, such as <i>typing into a surface never reaches the shell behind it</i>.</p>
-<p>The same checks gate a release. In the thirty days to 12 November 2026, 314 changes merged, 128 of the 130 CI runs on <code>main</code> were green, and one change was reverted.</p>
+<p>Day-to-day work lands faster than that. A change merges into the development branch once its author's own formatting, lint and test run pass, without waiting for CI. CI still runs on every push and names the push that broke it, and the branch goes into <code>main</code> as one pull request that the full checks gate. In the thirty days to 12 November 2026, 314 changes merged, 129 of them into <code>main</code>; 128 of the 130 CI runs on <code>main</code> were green, and one change was reverted.</p>
 <p class="invite">Technical lists each check, each promise, the numbers with the command that measures them, and what none of it covers.</p>
 </section>
 
 <section data-register="technical" data-headline="The checks">
 <h3>What runs on every change</h3>
-<p>These are the jobs in the CI workflow<sup><a href="#s1">1</a></sup>. They run on every pull request and every push.</p>
+<p>These are the jobs in the CI workflow<sup><a href="#s1">1</a></sup>. They run on every pull request and every push. On <code>main</code> they are required before a merge. On the development branch they report after a change lands<sup><a href="#s4">4</a></sup>.</p>
 <table>
   <thead><tr><th>Job</th><th>What it proves</th></tr></thead>
   <tbody>
     <tr><td>Rust checks</td><td>Formatting. Clippy with every warning an error, on the Rio core and on the Alacritty reference core. The whole test suite on both cores. The Restricted commands boundary against the real operating system. A release build. An uninstall, end to end, including from a fresh account with an empty home.</td></tr>
     <tr><td>Formal models</td><td>Every model under <code>verify/</code> against its list of expected findings.</td></tr>
-    <tr><td>Supply-chain checks</td><td>No dependency with a known advisory, and none with a licence or a source the project does not accept.</td></tr>
+    <tr><td>Supply-chain checks</td><td>No dependency with a known advisory, apart from two named exceptions, and none with a licence or a source the project does not accept. The exceptions are <code>RUSTSEC-2026-0194</code> and <code>RUSTSEC-2026-0195</code>, a denial-of-service fault in a library reached only through a pinned, vendored dependency<sup><a href="#s6">6</a></sup>.</td></tr>
     <tr><td>Browser prototype checks</td><td>The web pages parse, the robot faces match the app, and this docs site builds from the app's own help sheet.</td></tr>
     <tr><td>Translation integrity</td><td>The completed translations agree with all nine installed language tables.</td></tr>
     <tr><td>Release policy</td><td>The release scripts refuse a wrong tag, version or changelog, proven against fixtures, and the installer works against a fake release.</td></tr>
@@ -54,17 +54,17 @@
 <pre class="cmd"><code>verify/check-all.sh</code></pre>
 
 <h3>What a release needs</h3>
-<p>A release is cut from a commit on <code>main</code> or a release branch with green CI, and the release scripts refuse a tag whose version, changelog or notes do not match<sup><a href="#s4">4</a></sup>. A red push reaches nobody: the Dev channel serves the newest green commit only.</p>
+<p>A release is cut from a commit on <code>main</code> or a release branch with green CI, and the release scripts refuse a tag whose version, changelog or notes do not match<sup><a href="#s4">4</a></sup>. A red push to the development branch reaches nobody outside the project: the Dev channel serves the newest green commit only.</p>
 
 <h3>The numbers</h3>
-<p>Measured on 12 November 2026 for the thirty days before it. The script prints them again from the repository and from GitHub, and prints <code>not measured</code> where it cannot reach a source<sup><a href="#s5">5</a></sup>.</p>
+<p>Measured on 12 November 2026 for the thirty days before it. The script prints them again from the repository and from GitHub. Where it cannot read a source it prints <code>not measured</code>, and where a list comes back cut off it prints <code>incomplete</code><sup><a href="#s5">5</a></sup>.</p>
 <table>
   <thead><tr><th>Measure</th><th>Value</th></tr></thead>
   <tbody>
-    <tr><td>Rust tests in the tree</td><td>3,269</td></tr>
+    <tr><td>Test declarations in the source</td><td>3,269, of which 18 are marked ignored. A normal run skips those; CI runs the ignored ones in the Restricted suite only.</td></tr>
     <tr><td>Models</td><td>12, in 9 folders</td></tr>
-    <tr><td>Changes merged</td><td>314: 129 into <code>main</code>, 183 into a release branch</td></tr>
-    <tr><td>Half of them merged within</td><td>18 minutes of opening</td></tr>
+    <tr><td>Changes merged</td><td>314: 129 into <code>main</code> under required checks, 183 into a development branch</td></tr>
+    <tr><td>Half of them merged within</td><td>16 minutes of opening</td></tr>
     <tr><td>CI runs on <code>main</code></td><td>130, of which 128 green</td></tr>
     <tr><td>Revert commits on <code>main</code></td><td>1</td></tr>
     <tr><td>Releases</td><td>14, of which 4 stable</td></tr>
@@ -86,6 +86,7 @@
   <li id="s1"><code>.github/workflows/ci.yml</code>: the jobs Rust checks, Browser prototype checks, Formal models, Supply-chain checks, Translation integrity, Release policy and AppImage.</li>
   <li id="s2"><code>verify/README.md</code>: the table of folders, promises, tools and findings, and the credit to pstack.</li>
   <li id="s3"><code>verify/mutate.sh</code> and <code>verify/check.sh</code>.</li>
-  <li id="s4"><code>RELEASING.md</code>: the tag, version, changelog and channel rules.</li>
+  <li id="s4"><code>RELEASING.md</code>: waves on the development branch, and the tag, version, changelog and channel rules.</li>
   <li id="s5"><code>scripts/verification-numbers.sh</code>.</li>
+  <li id="s6"><code>app/deny.toml</code> and the Supply-chain checks job in <code>.github/workflows/ci.yml</code>.</li>
 </ol>
