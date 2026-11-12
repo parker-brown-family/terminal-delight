@@ -5532,6 +5532,10 @@ struct Workspace {
     /// `None` is the ordinary window that owns its own terminals — still the
     /// default, and untouched by any of this until the numbers say otherwise.
     attach: Option<AttachCtx>,
+    /// One surviving window may reclaim streams abandoned by a later window.
+    /// Held until this process exits, so two older windows cannot trade them back
+    /// and forth after the newer window closes.
+    reclaim_lock: Option<std::fs::File>,
     /// Frameless drag latch: a mousedown on the mother bar arms it; the first
     /// mouse-move while armed hands off to the compositor's window-move (so a
     /// plain click on the bar doesn't get eaten). Cleared on mouse-up.
@@ -6157,6 +6161,14 @@ fn ending_of(pane: u64, live: &[hostproto::PaneInfo]) -> Ending {
         Some(info) if !info.ended => Ending::Superseded,
         _ => Ending::Exited,
     }
+}
+
+/// A stream taken by another window can be reclaimed once that window is gone.
+/// An absent or unreadable owner is unknown, not permission to steal a live pane.
+fn may_reclaim_stream(owner: Option<u32>, our_pid: u32) -> bool {
+    owner.is_some_and(|pid| {
+        pid == our_pid || !std::path::Path::new(&format!("/proc/{pid}")).exists()
+    })
 }
 
 /// Every leaf of a saved tree, in the order [`build_node`] builds them.
@@ -7083,6 +7095,7 @@ impl Workspace {
             #[cfg(test)]
             spine_in_scratch: false,
             attach,
+            reclaim_lock: None,
             should_move: false,
             ghosts: Vec::new(),
             next_ghost_id: 0,
@@ -7818,6 +7831,7 @@ impl Workspace {
         // failure adoption exists to prevent, arriving thirty seconds early.
         self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
+        Self::watch_for_abandoned_streams(window, cx);
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
         Self::rest_idle_agents(cx);
@@ -8512,9 +8526,10 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let view = leaf.read(cx);
-                if view.superseded() {
-                    // Its terminal is somebody else's now; there is nothing for
-                    // this window's copy to agree or disagree with.
+                if view.exited || view.superseded() {
+                    // A closed stream has no valid offset to compare. It may
+                    // belong to another window even before reap classifies it;
+                    // the grid guard must not steal it back while hidden.
                     continue;
                 }
                 if let Some(pane) = view.pane_id() {
@@ -8814,10 +8829,98 @@ impl Workspace {
         for (leaf, pane) in unexplained {
             if ending_of(pane, &live) == Ending::Superseded {
                 eprintln!(
-                    "terminal-delight: pane {pane} is being shown by another window; \
-                     this one keeps what it last drew and stops there"
+                    "terminal-delight: pane {pane} was taken by another window; \
+                     waiting to reconnect if that window exits"
                 );
                 leaf.update(cx, |view, cx| view.mark_superseded(cx));
+            }
+        }
+    }
+
+    /// A later window may take a pane, then disappear. The stream stays closed
+    /// and its last screen looks normal, but every key sent to it is lost. Keep
+    /// checking only while panes are superseded; the host's window record names
+    /// the last taker, and its death lets one surviving window take them back.
+    fn watch_for_abandoned_streams(window: &Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if this
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.reclaim_abandoned_streams(window, cx);
+                })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    fn reclaim_abandoned_streams(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if instance::released() {
+            return;
+        }
+        // A hidden window may not render, so reap may not yet have classified
+        // its closed streams. Do that here before looking for abandoned panes.
+        self.explain_endings(cx);
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let mut abandoned = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if view.superseded() {
+                    if let Some(pane) = view.pane_id() {
+                        abandoned.push((pane, (*leaf).clone()));
+                    }
+                }
+            }
+        }
+        if abandoned.is_empty() {
+            return;
+        }
+        let owner_path = hostproto::window_pid_beside(ctx.link.socket(), ctx.link.session());
+        let owner = std::fs::read_to_string(&owner_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        if !may_reclaim_stream(owner, std::process::id()) {
+            return;
+        }
+        if self.reclaim_lock.is_none() {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+            let lock_path = owner_path.with_extension("reclaim.lock");
+            let Ok(file) = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&lock_path)
+            else {
+                return;
+            };
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                return;
+            }
+            self.reclaim_lock = Some(file);
+        }
+        let Ok(live) = ctx.link.list_panes() else {
+            return;
+        };
+        // The old window's dead pid also strands MCP relays from hosted agent
+        // panes. Once this window has the recovery lease, make it discoverable.
+        hostproto::write_window_pid_beside(
+            ctx.link.socket(),
+            ctx.link.session(),
+            std::process::id(),
+        );
+        for (pane, leaf) in abandoned {
+            if ending_of(pane, &live) == Ending::Superseded && leaf.read(cx).superseded() {
+                eprintln!("terminal-delight: reconnecting abandoned pane {pane}");
+                self.reattach_pane(hostproto::PaneId(pane), &leaf, window, cx);
             }
         }
     }
@@ -47822,6 +47925,15 @@ mod tests {
         // shown somewhere else, so there is nothing to hesitate about.
         assert_eq!(ending_of(4, &[]), Ending::Exited);
         assert_eq!(ending_of(4, &[running(9, false)]), Ending::Exited);
+    }
+
+    #[test]
+    fn a_surviving_window_reclaims_only_after_the_last_taker_is_gone() {
+        let us = std::process::id();
+        assert!(may_reclaim_stream(Some(us), us));
+        assert!(may_reclaim_stream(Some(u32::MAX), us));
+        assert!(!may_reclaim_stream(None, us));
+        assert!(!may_reclaim_stream(Some(1), us));
     }
 
     #[test]
