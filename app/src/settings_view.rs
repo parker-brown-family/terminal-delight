@@ -1150,6 +1150,42 @@ impl Workspace {
         }
     }
 
+    /// The combined Menu glyphs switch is convenient, but each corner button
+    /// must remain independently configurable in Settings as it was in the
+    /// hosted palette. A chip stops the row's combined-switch press.
+    fn st_ui_glyphs(sk: &skin::Skin, cx: &mut Context<Self>) -> AnyElement {
+        use uiconfig::Key as K;
+        let mut chips = div().flex().flex_row().flex_wrap().gap_1();
+        for (glyph, key, id) in [
+            ("\u{1f4dc}", K::Artifacts, "st-ui-g-artifacts"),
+            ("\u{1f3a8}", K::Surfaces, "st-ui-g-surfaces"),
+            ("\u{1f4ca}", K::Sliders, "st-ui-g-sliders"),
+            ("\u{1f916}", K::Agents, "st-ui-g-agents"),
+            ("\u{1faa6}", K::Graveyard, "st-ui-g-graveyard"),
+            ("\u{1f514}", K::Notifications, "st-ui-g-notifications"),
+            ("\u{1f41e}", K::BugReport, "st-ui-g-bug"),
+            ("\u{1f9e9}", K::Plugins, "st-ui-g-plugins"),
+        ] {
+            let on = uiconfig::shown(cx, key);
+            chips = chips.child(
+                sk.chip(on)
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .cursor_pointer()
+                    .when(!on, |d| d.opacity(0.35))
+                    .child(sk.control_text(glyph))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.flip_ui(&[key], !on, cx);
+                        }),
+                    ),
+            );
+        }
+        chips.into_any_element()
+    }
+
     /// The button on a row whose setting still has a panel of its own. With a
     /// `host` the panel opens in place, on this page of the book; without one
     /// (the composer, the Threshing Floor, which are whole surfaces) the book
@@ -1777,8 +1813,12 @@ impl Workspace {
                                 sk,
                                 &sentence(title(t)),
                                 None,
-                                settings_preview::Spot::of(keys)
-                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                                if *id == "st-ui-glyphs" {
+                                    Some(Self::st_ui_glyphs(sk, cx))
+                                } else {
+                                    settings_preview::Spot::of(keys)
+                                        .map(|spot| settings_preview::interface(th, sk, spot, on))
+                                },
                                 Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                             )
                         })
@@ -3125,6 +3165,19 @@ mod tests {
         assert!(
             hidden == 0 || hidden == uiconfig::Key::MENU_GLYPHS.len(),
             "the glyphs flip together: {hidden} hidden"
+        );
+        let plugins_before = shown(cx, uiconfig::Key::Plugins);
+        let notices_before = shown(cx, uiconfig::Key::Notifications);
+        let plugin_chip = cx
+            .debug_bounds("st-ui-g-plugins")
+            .expect("Plugins has its own glyph switch");
+        cx.simulate_click(plugin_chip.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(shown(cx, uiconfig::Key::Plugins), !plugins_before);
+        assert_eq!(
+            shown(cx, uiconfig::Key::Notifications),
+            notices_before,
+            "one glyph switch leaves the others alone"
         );
         let en = settings_items_in(lang::Lang::En);
         let title = lang::Lang::En.strings().ui.ui_counts;
