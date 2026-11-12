@@ -490,6 +490,30 @@ impl Chart {
         });
     }
 
+    /// Cycle a pair in stable seat order: forward, reverse, both, forward.
+    /// Moving a line carries its full grant, including unknown words and limits.
+    /// No line means no action: a stale click cannot create a relationship.
+    pub fn cycle_direction(&mut self, a: SeatId, b: SeatId) -> bool {
+        let (a, b) = if a.0 < b.0 { (a, b) } else { (b, a) };
+        if a == b {
+            return false;
+        }
+        match (self.line(a, b).cloned(), self.line(b, a).cloned()) {
+            (Some(mut line), None) => {
+                self.erase(a, b);
+                std::mem::swap(&mut line.from, &mut line.to);
+                self.put(line);
+            }
+            (None, Some(mut line)) => {
+                std::mem::swap(&mut line.from, &mut line.to);
+                self.put(line);
+            }
+            (Some(_), Some(_)) => self.erase(b, a),
+            (None, None) => return false,
+        }
+        true
+    }
+
     /// A person pressed Yes on a bypass ask. Callers: the rail only. A bypass
     /// never shortens a drawn line that already reaches as far.
     pub fn grant_bypass(&mut self, from: SeatId, to: SeatId, prompts: u8) {
@@ -1317,6 +1341,48 @@ impl AskBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direction_cycle_keeps_grants_and_round_trips() {
+        let (a, b) = (SeatId(1), SeatId(2));
+        for (rung, prompts_left) in [
+            (RungWord::Known(Rung::Prompt), None),
+            (RungWord::Known(Rung::Ask), Some(3)),
+            (RungWord::Unknown("future-rung".into()), None),
+        ] {
+            let mut chart = Chart::from_saved(
+                vec![Line {
+                    from: a,
+                    to: b,
+                    rung: rung.clone(),
+                    prompts_left,
+                }],
+                vec![],
+            );
+            for expected in [(false, true), (true, true), (true, false)] {
+                // Endpoint order must not reset the cycle after an arrow reverses.
+                assert!(chart.cycle_direction(b, a));
+                assert_eq!(
+                    (chart.line(a, b).is_some(), chart.line(b, a).is_some()),
+                    expected
+                );
+                for line in chart.saved() {
+                    assert_eq!(line.rung, rung);
+                    assert_eq!(line.prompts_left, prompts_left);
+                }
+                let json = serde_json::to_string(chart.saved()).unwrap();
+                chart = Chart::from_saved(serde_json::from_str(&json).unwrap(), vec![]);
+            }
+        }
+        let mut chart = Chart::default();
+        assert!(!chart.cycle_direction(a, b));
+        assert!(!chart.cycle_direction(a, a));
+        chart.draw(a, b, Rung::See);
+        chart.draw(b, a, Rung::Prompt);
+        chart.cycle_direction(a, b);
+        assert_eq!(chart.line(a, b).unwrap().rung.known(), Some(Rung::See));
+        assert!(chart.line(b, a).is_none());
+    }
 
     #[test]
     fn legacy_org_migration_keeps_labels_unknown_and_seats_stable() {

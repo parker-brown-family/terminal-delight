@@ -1,0 +1,71 @@
+{
+  "display": "isolated Xvfb",
+  "test": "Same pointer position cycles directions; saved state checked after every press",
+  "checks": [
+    {
+      "state": "forward",
+      "saved_lines": [
+        [
+          100,
+          101
+        ]
+      ],
+      "click": null
+    },
+    {
+      "state": "reverse",
+      "saved_lines": [
+        [
+          101,
+          100
+        ]
+      ],
+      "click": [
+        223,
+        565
+      ]
+    },
+    {
+      "state": "both",
+      "saved_lines": [
+        [
+          100,
+          101
+        ],
+        [
+          101,
+          100
+        ]
+      ],
+      "click": [
+        223,
+        565
+      ]
+    },
+    {
+      "state": "forward-again",
+      "saved_lines": [
+        [
+          100,
+          101
+        ]
+      ],
+      "click": [
+        223,
+        565
+      ]
+    }
+  ],
+  "validation": {
+    "format": "passed",
+    "clippy": "passed with -D warnings for the app; existing GPUI dependency deprecation warnings",
+    "tests_passed": 3677,
+    "tests_ignored": 18,
+    "test_command": "cargo test --locked --no-fail-fast",
+    "source_sha256": {
+      "app/src/threshing_floor.rs": "478dea10b11704aceabaa9a81a40603dc315cc32f3febd83734913b414327382",
+      "app/src/threshing_floor_view.rs": "f6e0e03884d8a05739656b1a916b55b439e85e7604b556262270894ce7092427",
+      "app/src/main.rs": "8c5e32ac968e959fd9911d88f3a8f2d7306d8d5dcbfa26c6a391a177ff04c2fd"
+    }
+  }
+}

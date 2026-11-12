@@ -45776,6 +45776,7 @@ mod tests {
                 }
                 for verb in [
                     ".chart.draw(",
+                    ".chart.cycle_direction(",
                     ".chart.erase(",
                     ".chart.forget_seat(",
                     ".chart.grant_bypass(",
@@ -45793,6 +45794,7 @@ mod tests {
             calls,
             vec![
                 "main.rs: .chart.grant_bypass(",
+                "threshing_floor_view.rs: .chart.cycle_direction(",
                 "threshing_floor_view.rs: .chart.draw(",
                 "threshing_floor_view.rs: .chart.erase(",
                 "threshing_floor_view.rs: .chart.forget_seat(",

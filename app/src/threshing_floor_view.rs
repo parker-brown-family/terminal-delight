@@ -32,6 +32,8 @@ const MAX_ZOOM: f32 = 2.5;
 
 pub(crate) struct FloorViewport {
     zoom: f32,
+    /// A direction press holds the visible card positions until reset or close.
+    direction_layout: Option<(threshing_floor::OrgId, Vec<threshing_floor::Placed>)>,
     offset: Point<Pixels>,
     drag: Option<(Point<Pixels>, Point<Pixels>)>,
     bounds: std::rc::Rc<std::cell::Cell<Option<Bounds<Pixels>>>>,
@@ -41,6 +43,7 @@ impl Default for FloorViewport {
     fn default() -> Self {
         Self {
             zoom: 1.,
+            direction_layout: None,
             offset: point(px(0.), px(0.)),
             drag: None,
             bounds: Default::default(),
@@ -51,6 +54,7 @@ impl Default for FloorViewport {
 impl FloorViewport {
     fn reset(&mut self) {
         self.zoom = 1.;
+        self.direction_layout = None;
         self.offset = point(px(0.), px(0.));
         self.drag = None;
     }
@@ -146,6 +150,8 @@ struct Wire {
     /// step. A one-way line's label sits on the line, at zero.
     beside: (f32, f32),
     label: String,
+    direction: &'static str,
+    show_label: bool,
 }
 
 #[derive(Clone)]
@@ -771,7 +777,19 @@ impl Workspace {
                 .iter()
                 .map(|seat| (*seat, String::new(), ui.floor_unavailable.to_string())),
         );
-        let placed = threshing_floor::layout(&keys, &self.chart);
+        let placed = self
+            .floor_view
+            .direction_layout
+            .as_ref()
+            .filter(|(org, placed)| {
+                Some(*org) == self.floor_org
+                    && placed.len() == keys.len()
+                    && keys
+                        .iter()
+                        .all(|(seat, _, _)| placed.iter().any(|p| p.seat == *seat))
+            })
+            .map(|(_, placed)| placed.clone())
+            .unwrap_or_else(|| threshing_floor::layout(&keys, &self.chart));
         // Room above the first row for the border's name.
         let top = pad + 18. * s;
         let rows = placed.iter().map(|p| p.row + 1).max().unwrap_or(0);
@@ -780,7 +798,11 @@ impl Workspace {
             .chart
             .saved()
             .iter()
-            .filter(|l| self.chart.line(l.to, l.from).is_some())
+            .filter(|l| {
+                self.chart
+                    .line(l.to, l.from)
+                    .is_some_and(|back| back.rung != l.rung || back.prompts_left != l.prompts_left)
+            })
             .filter_map(|l| Some((row_of(l.from)?, row_of(l.to)?)))
             .collect();
         let row_room = two_way_row_room(rows, &two_way_rows, TWO_WAY_GAP * s);
@@ -895,47 +917,55 @@ impl Workspace {
             threshing_floor::Rung::Ask => ui.floor_rung_ask,
             threshing_floor::Rung::Prompt => ui.floor_rung_prompt,
         };
-        let wires: Vec<Wire> = self
-            .chart
-            .saved()
-            .iter()
-            .filter_map(|l| {
-                let (fx, fy) = at(l.from)?;
-                let (tx, ty) = at(l.to)?;
-                // The wire reads as a sentence fragment with a direction — "may
-                // prompt \u{2192}" — so the relationship, not just a bare word,
-                // shows on the line. A bypass keeps its remaining-count; a word
-                // this build cannot read is drawn as "?", granting nothing.
-                let label = match (l.rung.known(), l.prompts_left) {
-                    (Some(r), None) => lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
-                    (Some(r), Some(n)) => format!(
-                        "{} · {}",
-                        lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
-                        lang::fill(ui.floor_bypass, &[("n", &n.to_string())])
-                    ),
-                    (None, _) => lang::fill(ui.floor_rel_wire, &[("rung", ui.floor_unknown)]),
-                };
-                let two_way = self.chart.line(l.to, l.from).is_some();
-                let route = line_route((fx, fy), (tx, ty), two_way, sw, sh, cg, rg);
-                // Two labels on one line cannot both point right, so each says
-                // which way its own half runs.
-                let label = if two_way {
-                    label.replace('\u{2192}', arrival_arrow(&route.points))
-                } else {
-                    label
-                };
-                Some(Wire {
-                    from: l.from,
-                    to: l.to,
-                    points: route.points,
-                    bypass: l.is_bypass(),
-                    rung: l.rung.known(),
-                    label_at: route.label_at,
-                    beside: route.beside,
-                    label,
+        let wires: Vec<Wire> =
+            self.chart
+                .saved()
+                .iter()
+                .filter_map(|l| {
+                    let (fx, fy) = at(l.from)?;
+                    let (tx, ty) = at(l.to)?;
+                    // The wire reads as a sentence fragment with a direction — "may
+                    // prompt \u{2192}" — so the relationship, not just a bare word,
+                    // shows on the line. A bypass keeps its remaining-count; a word
+                    // this build cannot read is drawn as "?", granting nothing.
+                    let label = match (l.rung.known(), l.prompts_left) {
+                        (Some(r), None) => lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
+                        (Some(r), Some(n)) => format!(
+                            "{} · {}",
+                            lang::fill(ui.floor_rel_wire, &[("rung", rung_word(r))]),
+                            lang::fill(ui.floor_bypass, &[("n", &n.to_string())])
+                        ),
+                        (None, _) => lang::fill(ui.floor_rel_wire, &[("rung", ui.floor_unknown)]),
+                    };
+                    let two_way = self.chart.line(l.to, l.from).is_some();
+                    let route = line_route((fx, fy), (tx, ty), two_way, sw, sh, cg, rg);
+                    // Equal grants share one chip; asymmetric grants stay visible.
+                    let shared = self.chart.line(l.to, l.from).is_some_and(|back| {
+                        back.rung == l.rung && back.prompts_left == l.prompts_left
+                    });
+                    let direction = if shared {
+                        match arrival_arrow(&route.points) {
+                            "↑" | "↓" => "↕",
+                            _ => "↔",
+                        }
+                    } else {
+                        arrival_arrow(&route.points)
+                    };
+                    let label = label.replace('\u{2192}', "").trim().to_string();
+                    Some(Wire {
+                        from: l.from,
+                        to: l.to,
+                        points: route.points,
+                        bypass: l.is_bypass(),
+                        rung: l.rung.known(),
+                        label_at: route.label_at,
+                        beside: if shared { (0., 0.) } else { route.beside },
+                        label,
+                        direction,
+                        show_label: !shared || l.from.0 < l.to.0,
+                    })
                 })
-            })
-            .collect();
+                .collect();
 
         // ---- the chart: wires on a canvas, seats and labels over it ----
         let line_ink = th.accent;
@@ -1551,7 +1581,8 @@ impl Workspace {
                     ),
             );
         }
-        for w in &wires {
+        for w in wires.iter().filter(|w| w.show_label) {
+            let held_layout = self.floor_org.map(|org| (org, placed.clone()));
             let (from, to) = (w.from, w.to);
             // The chip is inked by the rung, so the clearance reads at a glance:
             // prompt, which writes into the worker, in the action amber; ask in
@@ -1569,7 +1600,7 @@ impl Workspace {
                 }
             };
             // Sized to its words, and kept inside the chart's own edges.
-            let lw = (w.label.chars().count() as f32 * 6.4 + 16.) * s;
+            let lw = (w.label.chars().count() as f32 * 6.4 + 42.) * s;
             let lx = (w.label_at.0 - lw / 2. + w.beside.0 * (lw / 2. + 3. * s))
                 .clamp(2., (chart_w - lw - 2.).max(2.));
             chart = chart.child(
@@ -1600,7 +1631,32 @@ impl Workspace {
                             .text_size(sk.text_px(8.))
                             .text_color(rink)
                             .cursor_pointer()
-                            .child(SharedString::from(w.label.clone())),
+                            .flex()
+                            .items_center()
+                            .child(SharedString::from(w.label.clone()))
+                            .child(
+                                div()
+                                    .id(SharedString::from(format!(
+                                        "floor-direction-{}-{}",
+                                        from.0, to.0
+                                    )))
+                                    .debug_selector(move || {
+                                        format!("floor-direction-{}-{}", from.0, to.0)
+                                    })
+                                    .ml(px(5. * s))
+                                    .px(px(6. * s))
+                                    .border_l_1()
+                                    .border_color(rink.alpha(0.7))
+                                    .child(w.direction)
+                                    .on_mouse_down(
+                                        MouseButton::Left,
+                                        cx.listener(move |ws, _: &MouseDownEvent, _, cx| {
+                                            cx.stop_propagation();
+                                            ws.floor_view.direction_layout = held_layout.clone();
+                                            ws.threshing_floor_cycle_direction(from, to, cx);
+                                        }),
+                                    ),
+                            ),
                     )
                     .on_mouse_down(
                         MouseButton::Left,
@@ -6914,6 +6970,7 @@ impl Workspace {
     /// Close the Threshing Floor and let go of any half-drawn line.
     pub(crate) fn close_threshing_floor(&mut self) {
         self.floor_view.drag = None;
+        self.floor_view.direction_layout = None;
         if let Some(map) = self.floor_map.as_mut() {
             map.drag = None;
         }
@@ -7014,6 +7071,29 @@ impl Workspace {
             };
             cx.notify();
         }
+    }
+
+    fn threshing_floor_cycle_direction(
+        &mut self,
+        from: threshing_floor::SeatId,
+        to: threshing_floor::SeatId,
+        cx: &mut Context<Self>,
+    ) {
+        let before = [
+            self.chart.line(from, to).cloned(),
+            self.chart.line(to, from).cloned(),
+        ];
+        if !self.chart.cycle_direction(from, to) {
+            return;
+        }
+        for ((a, b), old) in [(from, to), (to, from)].into_iter().zip(before) {
+            if old.as_ref() != self.chart.line(a, b) {
+                self.threshing_floor_forget_pair(a, b, cx);
+            }
+        }
+        self.floor_relation = None;
+        self.save(cx);
+        cx.notify();
     }
 
     /// The edge label opens an explicit editor; it never cycles a permission.
@@ -7138,17 +7218,19 @@ fn line_route(
     cg: f32,
     rg: f32,
 ) -> LineRoute {
+    let forward = (from.1, from.0) < (to.1, to.0);
+    let (a, b) = if forward { (from, to) } else { (to, from) };
+    let (mut route, label_at) = wire_route(a, b, sw, sh, cg, rg);
     if !two_way {
-        let (points, label_at) = wire_route(from, to, sw, sh, cg, rg);
+        if !forward {
+            route.reverse();
+        }
         return LineRoute {
-            points,
+            points: route,
             label_at,
             beside: (0., 0.),
         };
     }
-    let forward = (from.1, from.0) < (to.1, to.0);
-    let (a, b) = if forward { (from, to) } else { (to, from) };
-    let (route, label_at) = wire_route(a, b, sw, sh, cg, rg);
     let side = if forward { 1. } else { -1. };
     let vertical = route.iter().all(|p| (p.0 - route[0].0).abs() < 0.01);
     let (to_a, to_b) = halves(&route);
@@ -11744,15 +11826,24 @@ mod tests {
         assert_eq!(add_target_face(false, false, "Choose target"), ("+", 20.));
     }
 
-    /// A one-way line keeps its own route and its label on the line.
+    /// Reversing a line follows the same path, with its label in the same place.
     #[test]
-    fn a_one_way_line_is_routed_as_it_always_was() {
-        let (a, b) = (seat_xy(1, 1), seat_xy(0, 0));
-        let route = line_route(a, b, false, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
-        let (points, label_at) = wire_route(a, b, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
-        assert_eq!(route.points, points);
-        assert_eq!(route.label_at, label_at);
-        assert_eq!(route.beside, (0., 0.));
+    fn reversing_a_one_way_line_keeps_its_route_and_label() {
+        let a = seat_xy(0, 0);
+        for b in [seat_xy(1, 0), seat_xy(0, 1), seat_xy(1, 1), seat_xy(0, 3)] {
+            let there = line_route(a, b, false, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+            let back = line_route(b, a, false, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+            let (points, label_at) = wire_route(a, b, SEAT_W, SEAT_H, COL_GAP, ROW_GAP);
+            assert_eq!(there.points, points);
+            assert_eq!(there.label_at, label_at);
+            assert_eq!(
+                back.points,
+                there.points.iter().rev().copied().collect::<Vec<_>>()
+            );
+            assert_eq!(back.label_at, there.label_at);
+            assert_eq!(there.beside, (0., 0.));
+            assert_eq!(back.beside, (0., 0.));
+        }
     }
 
     /// Room opens at each boundary a two-way line crosses, and only there.
@@ -11765,10 +11856,84 @@ mod tests {
         assert_eq!(two_way_row_room(0, &[], 10.), [0.]);
     }
 
+    #[gpui::test]
+    fn direction_control_cycles_the_saved_pair_without_opening_the_editor(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        let (a, b) = (threshing_floor::SeatId(100), threshing_floor::SeatId(101));
+        ws.update(cx, |ws, cx| {
+            ws.chart.draw(a, b, threshing_floor::Rung::Ask);
+            ws.asks.open(
+                threshing_floor::AskId(900),
+                pending_copy(ws, cx, threshing_floor::CopyStage::Running),
+            );
+            cx.notify();
+        });
+        cx.update(|w, cx| {
+            w.refresh();
+            w.draw(cx).clear();
+        });
+        let original_cards = (bounds(cx, "floor-seat-100"), bounds(cx, "floor-seat-101"));
+        let original_arrow = bounds(cx, "floor-direction-100-101").center();
+        for (selector, expected) in [
+            ("floor-direction-100-101", (false, true)),
+            ("floor-direction-101-100", (true, true)),
+            ("floor-direction-100-101", (true, false)),
+        ] {
+            click(cx, selector);
+            ws.read_with(cx, |ws, _| {
+                assert_eq!(
+                    (ws.chart.line(a, b).is_some(), ws.chart.line(b, a).is_some()),
+                    expected
+                );
+                assert!(
+                    ws.floor_relation.is_none(),
+                    "arrow opened the permission editor"
+                );
+                assert!(
+                    ws.asks.get(threshing_floor::AskId(900)).is_none(),
+                    "revoked work survived"
+                );
+            });
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            assert_eq!(
+                (bounds(cx, "floor-seat-100"), bounds(cx, "floor-seat-101")),
+                original_cards
+            );
+            let next_arrow = if expected == (false, true) {
+                "floor-direction-101-100"
+            } else {
+                "floor-direction-100-101"
+            };
+            assert_eq!(bounds(cx, next_arrow).center(), original_arrow);
+            if expected == (true, true) {
+                assert!(cx.debug_bounds("floor-line-100-101").is_some());
+                assert!(
+                    cx.debug_bounds("floor-line-101-100").is_none(),
+                    "equal grants need only one label"
+                );
+            }
+        }
+        click(cx, "floor-line-100-101");
+        ws.read_with(cx, |ws, _| {
+            assert_eq!(
+                ws.floor_relation.as_ref().and_then(|e| e.editing),
+                Some((a, b))
+            )
+        });
+    }
+
     /// Drawn: the lower seat moves down for a two-way line, the two labels do
     /// not touch, and each one still opens its own direction.
     #[gpui::test]
-    fn each_direction_of_a_two_way_line_keeps_its_own_label(cx: &mut gpui::TestAppContext) {
+    fn unequal_directions_keep_their_own_permission_labels(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
@@ -11778,7 +11943,11 @@ mod tests {
                 ws.chart.draw(
                     threshing_floor::SeatId(a),
                     threshing_floor::SeatId(b),
-                    threshing_floor::Rung::Prompt,
+                    if a < b {
+                        threshing_floor::Rung::Prompt
+                    } else {
+                        threshing_floor::Rung::Read
+                    },
                 );
                 cx.notify();
             });
