@@ -211,6 +211,10 @@
         {
           "slug": "languages",
           "title": "Languages"
+        },
+        {
+          "slug": "verification",
+          "title": "How it is verified"
         }
       ],
       "short": "Reference"

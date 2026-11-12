@@ -1,0 +1,91 @@
+<script type="application/json" data-page>
+{
+  "title": "How it is verified",
+  "description": "Every change to Terminal Delight runs 3,269 Rust tests on two terminal cores, twelve models that try every order of events against nine promises about the window, a supply-chain audit, a release build and an uninstall from a throwaway account. A change merges when all of it is green.",
+  "updated": "2026-11-12",
+  "trueOf": "main at 8ca71a1b",
+  "summary": "The checks every change passes, and what none of them cover"
+}
+</script>
+
+<section data-register="brief">
+<p class="lede">Every change to Terminal Delight is checked by machine before it merges. The checks are 3,269 Rust tests run on two terminal cores, twelve models that try every order of events against nine promises about the window, an audit of every dependency, a release build, and an uninstall run from a throwaway account.</p>
+<p>A test checks the cases someone thought to write. A model checks every order of steps in a small copy of the design, which is where a window goes wrong: two things happen at once and the keys go to the wrong place. Each promise is one sentence a person could hold the program to, such as <i>typing into a surface never reaches the shell behind it</i>.</p>
+<p>The same checks gate a release. In the thirty days to 12 November 2026, 314 changes merged, 128 of the 130 CI runs on <code>main</code> were green, and one change was reverted.</p>
+<p class="invite">Technical lists each check, each promise, the numbers with the command that measures them, and what none of it covers.</p>
+</section>
+
+<section data-register="technical" data-headline="The checks">
+<h3>What runs on every change</h3>
+<p>These are the jobs in the CI workflow<sup><a href="#s1">1</a></sup>. They run on every pull request and every push.</p>
+<table>
+  <thead><tr><th>Job</th><th>What it proves</th></tr></thead>
+  <tbody>
+    <tr><td>Rust checks</td><td>Formatting. Clippy with every warning an error, on the Rio core and on the Alacritty reference core. The whole test suite on both cores. The Restricted commands boundary against the real operating system. A release build. An uninstall, end to end, including from a fresh account with an empty home.</td></tr>
+    <tr><td>Formal models</td><td>Every model under <code>verify/</code> against its list of expected findings.</td></tr>
+    <tr><td>Supply-chain checks</td><td>No dependency with a known advisory, and none with a licence or a source the project does not accept.</td></tr>
+    <tr><td>Browser prototype checks</td><td>The web pages parse, the robot faces match the app, and this docs site builds from the app's own help sheet.</td></tr>
+    <tr><td>Translation integrity</td><td>The completed translations agree with all nine installed language tables.</td></tr>
+    <tr><td>Release policy</td><td>The release scripts refuse a wrong tag, version or changelog, proven against fixtures, and the installer works against a fake release.</td></tr>
+    <tr><td>AppImage</td><td>The package builds.</td></tr>
+  </tbody>
+</table>
+
+<h3>The promises checked in every order</h3>
+<p>Each row is a folder under <code>verify/</code> with a model, the rules it checks, and a skill that tells the next person whether their change touches it<sup><a href="#s2">2</a></sup>.</p>
+<table>
+  <thead><tr><th>Promise</th><th>Checked with</th><th>What it found</th></tr></thead>
+  <tbody>
+    <tr><td>Typing into a surface never reaches the shell behind it.</td><td>The real window</td><td>The language picker leaked keys. Fixed.</td></tr>
+    <tr><td>Rest never freezes a turn, and sleep never loses pending work.</td><td>A model and the policy's tests</td><td>A waiting <code>/loop</code> rested and slept. Fixed.</td></tr>
+    <tr><td>Removing a worktree never deletes work, or a tree under a running process.</td><td>A model and a real repository</td><td>A process could walk in between the last check and the delete. Fixed with a quarantine.</td></tr>
+    <tr><td>What is on top gets your keys and your Esc.</td><td>A model and replays</td><td>Two surfaces opened under the book. Fixed.</td></tr>
+    <tr><td>The project list shows what its field says, and the add-a-project dialog is the only face while it is up.</td><td>A model and a window replay</td><td>A list stayed narrowed under an empty field. Fixed.</td></tr>
+    <tr><td>A side-panel tab's red note is about its latest read, and trouble never blanks what you were reading.</td><td>A model and the real window</td><td>A stale red note. Fixed.</td></tr>
+    <tr><td>A press drags only what it pressed, and a release ends every drag.</td><td>A model and a window replay</td><td>A lost release brought a drag back. Fixed.</td></tr>
+    <tr><td>A pane shows one caret, and a letter goes to the one opened last.</td><td>A model and a pane replay</td><td>A name typed into a sticky note. Fixed.</td></tr>
+    <tr><td>The INBOX, the Settings book, launching an agent, prompting across the Floor and an agent opening its document behave as drawn.</td><td>Five models, with charts</td><td>All hold.</td></tr>
+  </tbody>
+</table>
+<p>The models are written in TLA+ and checked with TLC 1.7.4, pinned by checksum<sup><a href="#s1">1</a></sup>. They were designed with two skills from pstack by Lauren Tan, under the MIT licence; no file of theirs is in the repository<sup><a href="#s2">2</a></sup>.</p>
+
+<h3>How a rule is known to be able to fail</h3>
+<p>A rule that has never failed proves nothing. <code>verify/mutate.sh</code> copies a model, breaks it the way a careless change to the code would, and checks that the rule now breaks<sup><a href="#s3">3</a></sup>. Each folder keeps a list of expected findings, and a change that breaks a promise, or fixes one without saying so, fails the Formal models job.</p>
+<pre class="cmd"><code>verify/check-all.sh</code></pre>
+
+<h3>What a release needs</h3>
+<p>A release is cut from a commit on <code>main</code> or a release branch with green CI, and the release scripts refuse a tag whose version, changelog or notes do not match<sup><a href="#s4">4</a></sup>. A red push reaches nobody: the Dev channel serves the newest green commit only.</p>
+
+<h3>The numbers</h3>
+<p>Measured on 12 November 2026 for the thirty days before it. The script prints them again from the repository and from GitHub, and prints <code>not measured</code> where it cannot reach a source<sup><a href="#s5">5</a></sup>.</p>
+<table>
+  <thead><tr><th>Measure</th><th>Value</th></tr></thead>
+  <tbody>
+    <tr><td>Rust tests in the tree</td><td>3,269</td></tr>
+    <tr><td>Models</td><td>12, in 9 folders</td></tr>
+    <tr><td>Changes merged</td><td>314: 129 into <code>main</code>, 183 into a release branch</td></tr>
+    <tr><td>Half of them merged within</td><td>18 minutes of opening</td></tr>
+    <tr><td>CI runs on <code>main</code></td><td>130, of which 128 green</td></tr>
+    <tr><td>Revert commits on <code>main</code></td><td>1</td></tr>
+    <tr><td>Releases</td><td>14, of which 4 stable</td></tr>
+  </tbody>
+</table>
+<pre class="cmd"><code>scripts/verification-numbers.sh</code></pre>
+<p>One revert commit is a floor. A change repaired by a later change, with no revert, is not counted here, and nothing measures it yet.</p>
+
+<h3>What none of this covers</h3>
+<ul>
+  <li>Speed. No check measures startup time or the delay between a key and its letter. A same-machine keystroke comparison against Alacritty and a 20-pane stress proof are open work on the 1.0 milestone.</li>
+  <li>Features with no model. Nine promises are modelled. Everything else, such as themes, the CRT look and usage readings, has no model and rests on its tests.</li>
+  <li>Other machines. CI runs on Ubuntu images. Graphics drivers, other compositors and other distributions are checked by the people who run it.</li>
+  <li>Whether it is useful. A green build says the window keeps its promises, and nothing about whether a person wants it.</li>
+</ul>
+</section>
+
+<ol data-sources>
+  <li id="s1"><code>.github/workflows/ci.yml</code>: the jobs Rust checks, Browser prototype checks, Formal models, Supply-chain checks, Translation integrity, Release policy and AppImage.</li>
+  <li id="s2"><code>verify/README.md</code>: the table of folders, promises, tools and findings, and the credit to pstack.</li>
+  <li id="s3"><code>verify/mutate.sh</code> and <code>verify/check.sh</code>.</li>
+  <li id="s4"><code>RELEASING.md</code>: the tag, version, changelog and channel rules.</li>
+  <li id="s5"><code>scripts/verification-numbers.sh</code>.</li>
+</ol>

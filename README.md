@@ -346,6 +346,10 @@ their licences are in [BELL_SOUNDS.md](BELL_SOUNDS.md).
 newly-introduced copyleft dependency fails CI. CI also runs formatting, strict
 Clippy, tests, the release build, an advisory audit, and (on push) builds the
 AppImage.
+Every check a change passes, the nine promises about the window that are
+model-checked in every order of events, and the numbers for the last thirty
+days are on the docs site, under
+[How it is verified](https://docs.terminal-delight.brownfamilysports.com/verification).
 The clean-room rule for Zed reference is in docs/PLAN.md §2.
 
 ### Privacy
