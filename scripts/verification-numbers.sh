@@ -13,6 +13,9 @@
 set -uo pipefail
 days=30
 [ "${1:-}" = "--days" ] && days=${2:?--days needs a number}
+case "$days" in
+  ''|*[!0-9]*|0) echo "--days needs a whole number of days, 1 or more; got '$days'" >&2; exit 2 ;;
+esac
 root=$(cd "$(dirname "$0")/.." && pwd)
 cd "$root" || exit 1
 repo=parker-brown-family/terminal-delight
@@ -27,7 +30,12 @@ echo "  test declarations:     $(count '#\[(tokio::)?test\]') ($(count '#\[ignor
 echo "  folders with findings: $(find verify -mindepth 2 -maxdepth 2 -name findings.txt | wc -l)"
 echo "  models:                $(find verify -name '*.tla' | wc -l)"
 
-since=$(date -u -d "$days days ago" +%Y-%m-%d)
+# Every activity line filters on this date, so without it nothing below is a
+# measurement of the period asked for.
+if ! since=$(date -u -d "$days days ago" +%Y-%m-%d 2>/dev/null) || [ -z "$since" ]; then
+  echo "last $days days: not measured (could not work out the start date)" >&2
+  exit 2
+fi
 echo "last $days days, since $since"
 
 if git rev-parse --verify --quiet origin/main >/dev/null; then
@@ -59,7 +67,7 @@ measure() {
 # shellcheck disable=SC2016
 measure "merged changes:" "$PR_CAP" \
   "gh pr list -R $repo --state merged --search 'merged:>=$since' --limit $PR_CAP --json baseRefName,createdAt,mergedAt" \
-  '"\(length) (\([.[] | select(.baseRefName == "main")] | length) into main, \([.[] | select(.baseRefName | startswith("dev/"))] | length) into a development branch); half open under \(([.[] | ((.mergedAt | fromdate) - (.createdAt | fromdate)) / 60] | sort | .[(length / 2 | floor)] // 0) | round) minutes"'
+  '"\(length) (\([.[] | select(.baseRefName == "main")] | length) into main, \([.[] | select(.baseRefName | startswith("dev/"))] | length) into a development branch); \(if length == 0 then "time open not measured (nothing merged)" else "half open under \([.[] | ((.mergedAt | fromdate) - (.createdAt | fromdate)) / 60] | sort | .[(length / 2 | floor)] | round) minutes" end)"'
 # shellcheck disable=SC2016
 measure "CI runs on main:" "$RUN_CAP" \
   "gh run list -R $repo --branch main --workflow CI --created '>=$since' --limit $RUN_CAP --json conclusion" \
