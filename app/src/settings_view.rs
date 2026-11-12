@@ -2863,7 +2863,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn interface_fits_without_scrolling_in_terminimalist(cx: &mut gpui::TestAppContext) {
+    fn settings_pages_fit_without_scrolling_in_terminimalist(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
@@ -2872,14 +2872,18 @@ mod tests {
             skin::select(cx, "terminimalist").unwrap();
             uiconfig::flip(cx, uiconfig::Key::Artifacts, true);
         });
-        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Interface), cx));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
         redraw(cx);
-        let viewport = cx.debug_bounds("st-page").expect("page viewport");
-        let content = cx.debug_bounds("st-column").expect("page content");
-        assert!(
-            content.bottom() <= viewport.bottom() + px(2.),
-            "Interface exceeds the viewport: content {content:?}, viewport {viewport:?}"
-        );
+        for page in Page::all() {
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("page viewport");
+            let content = cx.debug_bounds("st-column").expect("page content");
+            assert!(
+                content.bottom() <= viewport.bottom() + px(2.),
+                "{page:?} exceeds the Terminimalist viewport: content {content:?}, viewport {viewport:?}"
+            );
+        }
     }
 
     /// Ctrl+, from a pane opens the book, the ⚙ is in the corner, typing
