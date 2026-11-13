@@ -4756,9 +4756,9 @@ dependencies = [
 
 [[package]]
 name = "regex"
-version = "1.12.4"
+version = "1.13.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "f1292b7759ae1cb9ec195452d1390a074f0cd8541ab7a5a8c31cd6db45d4a6ba"
+checksum = "f020237b6c8eed93db2e2cb53c00c60a8e1bc73da7d073199a1180401450218d"
 dependencies = [
  "aho-corasick",
  "memchr",
@@ -4817,9 +4817,9 @@ dependencies = [
 
 [[package]]
 name = "rio-grapheme-width"
-version = "0.5.29"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "7ef9487fce3556a0b27b6598a956c4402a46b8bb25afe2ec53ab0378c75e402c"
+checksum = "c63b82fc8015fdf8306d2d77c0cb844181405f24e8ca1d9310bdf5d4e43fd1f1"
 dependencies = [
  "phf",
  "ucd-trie",
@@ -4827,9 +4827,9 @@ dependencies = [
 
 [[package]]
 name = "rio-graphics"
-version = "0.5.29"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "736eb317aa3bdb7256f58b1ad18f971a831d6de928854a9aee6e13c6792bcf19"
+checksum = "c703f4df641a46839513225235ff2846fb9ef4fadeeb4f971a8fb0ce375af1d5"
 dependencies = [
  "image",
  "parking_lot",
@@ -4841,15 +4841,15 @@ dependencies = [
 
 [[package]]
 name = "rio-unicode"
-version = "0.5.29"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "ed68c9eaee951073cac248ece99f5f1ebabf92a1c0305ac28fa622a8fa1679d5"
+checksum = "ac2f4612a6d26adb275436095fc297f0a19fd3573be6dd1b0ebc999fb47b6571"
 
 [[package]]
 name = "rio-vt"
-version = "0.5.29"
+version = "0.5.32"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "28b1c817c56394ca5777f25a66925e9700e6d395154c7f55f1100a5f8cb0ef39"
+checksum = "db9d27ae74bf4518ef2bdfca93e5c198d7b2c556b89cf19368260160e5f81c64"
 dependencies = [
  "base64 0.23.1",
  "bitflags 2.13.0",

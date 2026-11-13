@@ -1,4 +1,4 @@
-//! The core: rio-vt 0.5.29, the emulator inside the Rio terminal, behind TD's
+//! The core: rio-vt 0.5.32, the emulator inside the Rio terminal, behind TD's
 //! boundary.
 //!
 //! rio-vt began as a fork of alacritty's `Term`, so most of the translation
@@ -89,6 +89,14 @@ fn as_terminal_delight(answer: String) -> Option<String> {
         .strip_prefix("\x1b[?")
         .and_then(|rest| rest.strip_suffix('u'));
     if body.is_some_and(|flags| !flags.is_empty() && flags.bytes().all(|b| b.is_ascii_digit())) {
+        return None;
+    }
+    // Program status (OSC 7501, rio-vt 0.5.31): `OSC 7501 ; ? ST` answered
+    // in kind says the terminal shows a program's working, blocked and done
+    // reports. TD drops them at the relay below, so a program believing it
+    // would report into nothing. A session host still on an older rio-vt
+    // gave no answer, and neither does this.
+    if answer.starts_with("\x1b]7501;") {
         return None;
     }
     // XTGETTCAP: DCS 1 + r (or 0 + r) … ST. rio-vt answers from Rio's own
@@ -336,7 +344,7 @@ impl super::hold::Core for Parsing<'_> {
 }
 
 impl Backend for Core {
-    const NAME: &'static str = "rio-vt 0.5.29";
+    const NAME: &'static str = "rio-vt 0.5.32";
 
     fn new(size: TermSize, listener: Arc<dyn Listener>, scrollback: usize) -> Self {
         let mut term = Crosswords::new(
@@ -902,6 +910,28 @@ mod tests {
         // XTGETTCAP for the terminal's name, `TN`, in hex.
         let (replies, _) = replies_to(b"\x1bP+q544e\x1b\\");
         assert!(replies.is_empty(), "{replies:?}");
+    }
+
+    #[test]
+    fn program_status_support_goes_unanswered_and_its_reports_unheard() {
+        // rio-vt 0.5.31 answers the OSC 7501 query in both terminator forms,
+        // and sends a report on as an event; TD shows neither.
+        for query in [&b"\x1b]7501;?\x07"[..], &b"\x1b]7501;?\x1b\\"[..]] {
+            let (replies, _) = replies_to(query);
+            assert!(replies.is_empty(), "{replies:?}");
+        }
+        let (replies, _) = replies_to(b"\x1b]7501;state=blocked:kind=question:app=x\x07");
+        assert!(replies.is_empty(), "{replies:?}");
+        // rio-vt 0.5.32 answers only when the embedder turns program status
+        // on, which TD does not, so the replies above are empty either way.
+        // The filter is checked on the answers 0.5.31 and 0.5.32 give, in
+        // case a later core answers by default again.
+        for answer in [
+            "\x1b]7501;?\x07",
+            "\x1b]7501;?:states=idle,working,done,blocked,error:kinds=permission,question,auth\x1b\\",
+        ] {
+            assert_eq!(super::as_terminal_delight(answer.to_string()), None, "{answer:?}");
+        }
     }
 
     #[test]
