@@ -1,0 +1,1 @@
+env LD_LIBRARY_PATH=/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/pkgs/chafa/usr/lib /tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/pkgs/chafa/usr/bin/chafa -s 40x12 /tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/test.png

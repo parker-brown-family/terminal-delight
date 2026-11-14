@@ -1,0 +1,58 @@
+{
+ "identity": "td-today",
+ "cmd": [
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/rimg/target/release/rimg",
+  "test.png",
+  "/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/cap/rimg-td-today.log"
+ ],
+ "bytes_out": 6902,
+ "secs": 1.21,
+ "placeholder_cells_U10EEEE": 0,
+ "apc_payload_bytes": 4,
+ "apc_a_T_count": 0,
+ "apc_keys": {
+  "i=*": 1,
+  "s=*": 1,
+  "v=*": 1,
+  "a=q": 1,
+  "t=d": 1,
+  "f=24": 1
+ },
+ "seq_counts": {
+  "CSI c": 1,
+  "CSI nt": 1,
+  "CSI nn": 1
+ },
+ "events": [
+  {
+   "t": 0.002,
+   "apc": "i=31,s=1,v=1,a=q,t=d,f=24",
+   "payload": 4
+  },
+  {
+   "t": 0.003,
+   "q": "DA1"
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b[?6c"
+  },
+  {
+   "t": 0.003,
+   "q": "16t"
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b[6;22;10t"
+  },
+  {
+   "t": 0.003,
+   "q": "DSR5"
+  },
+  {
+   "t": 0.003,
+   "reply": "\u001b[0n"
+  }
+ ],
+ "text": ""
+}

@@ -1,0 +1,1 @@
+/tmp/claude-1000/-home-parker-Work-terminal-delight/2aae45b7-7163-4590-8990-5cc58ef8f92f/scratchpad/pkgs/kitten icat --detect-support
