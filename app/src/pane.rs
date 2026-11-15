@@ -4904,6 +4904,21 @@ impl TerminalView {
         cx.notify();
     }
 
+    /// One more report that this pane's stream closed, delivered the way the
+    /// terminal's own loop delivers it.
+    #[cfg(test)]
+    pub(crate) fn stream_closed_for_test(&mut self, cx: &mut Context<Self>) {
+        self.handle_term_event(TermEvent::Exit, cx);
+    }
+
+    /// A pane held through a dropped link turned out to have finished while
+    /// the link was down. It is over, and the next reap takes it.
+    pub fn mark_ended(&mut self, cx: &mut Context<Self>) {
+        self.superseded = false;
+        self.exited = true;
+        cx.notify();
+    }
+
     /// The mode a session host reported, replacing the answer a pane with a PTY
     /// of its own reads from the kernel. Nothing calls this until the host has
     /// a way to say so; it is the receiving half of that sentence.
@@ -6654,7 +6669,16 @@ impl TerminalView {
                 cx.notify();
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
-                self.exited = true;
+                // A stream that closes reports it more than once, and the
+                // reports are not atomic with the frame that asks the host what
+                // the first one meant. A pane already known to be held — its
+                // terminal still running, shown elsewhere or behind a dropped
+                // link — stays held: taking a late report as a fresh ending
+                // would reap a pane whose work never stopped, and with it the
+                // last tab and the window.
+                if !self.superseded {
+                    self.exited = true;
+                }
                 cx.notify();
                 return false;
             }

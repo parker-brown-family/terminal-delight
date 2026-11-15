@@ -15,6 +15,7 @@ use serde::{Deserialize, Serialize};
 mod chrome;
 mod coord;
 mod entry;
+mod far;
 mod flyout;
 mod help;
 mod parts;
@@ -22,6 +23,7 @@ mod settings;
 pub use chrome::Chrome;
 pub use coord::Coord;
 pub use entry::Entry;
+pub use far::Far;
 pub use flyout::Flyout;
 pub use help::Help;
 pub use parts::Parts;
@@ -473,6 +475,9 @@ pub struct Strings {
     /// Settings: the book that holds every setting, laid out as T3 Code
     /// lays out its own.
     pub settings: &'static Settings,
+    /// Other machines: the window that shows another machine's Terminal
+    /// Delight, the Machines page, and far agents on the Threshing Floor.
+    pub far: &'static Far,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -833,6 +838,7 @@ pub const EN: Strings = Strings {
     entry: &entry::EN,
     flyout: &flyout::EN,
     settings: &settings::EN,
+    far: &far::EN,
 };
 
 /// Español.
@@ -1113,6 +1119,7 @@ pub const ES: Strings = Strings {
     entry: &entry::ES,
     flyout: &flyout::ES,
     settings: &settings::ES,
+    far: &far::ES,
 };
 
 /// Deutsch.
@@ -1393,6 +1400,7 @@ pub const DE: Strings = Strings {
     entry: &entry::DE,
     flyout: &flyout::DE,
     settings: &settings::DE,
+    far: &far::DE,
 };
 
 /// 中文 (简体).
@@ -1673,6 +1681,7 @@ pub const ZH: Strings = Strings {
     entry: &entry::ZH,
     flyout: &flyout::ZH,
     settings: &settings::ZH,
+    far: &far::ZH,
 };
 
 /// Français.
@@ -1953,6 +1962,7 @@ pub const FR: Strings = Strings {
     entry: &entry::FR,
     flyout: &flyout::FR,
     settings: &settings::FR,
+    far: &far::FR,
 };
 
 /// Русский.
@@ -2233,6 +2243,7 @@ pub const RU: Strings = Strings {
     entry: &entry::RU,
     flyout: &flyout::RU,
     settings: &settings::RU,
+    far: &far::RU,
 };
 
 /// 日本語.
@@ -2513,6 +2524,7 @@ pub const JA: Strings = Strings {
     entry: &entry::JA,
     flyout: &flyout::JA,
     settings: &settings::JA,
+    far: &far::JA,
 };
 
 /// 한국어.
@@ -2793,6 +2805,7 @@ pub const KO: Strings = Strings {
     entry: &entry::KO,
     flyout: &flyout::KO,
     settings: &settings::KO,
+    far: &far::KO,
 };
 
 /// हिन्दी.
@@ -3074,6 +3087,7 @@ pub const HI: Strings = Strings {
     entry: &entry::HI,
     flyout: &flyout::HI,
     settings: &settings::HI,
+    far: &far::HI,
 };
 
 #[cfg(test)]
@@ -3439,6 +3453,7 @@ mod tests {
             ("entry", include_str!("lang/entry.rs")),
             ("flyout", include_str!("lang/flyout.rs")),
             ("settings", include_str!("lang/settings.rs")),
+            ("far", include_str!("lang/far.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {
