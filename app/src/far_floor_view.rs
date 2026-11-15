@@ -75,8 +75,15 @@ pub(crate) struct FarFloor {
     /// Machines that asked who is here and were shown nothing, since this
     /// window opened: what Settings offers a person to decide about.
     pub(crate) knocked: Vec<String>,
-    /// Which machine the Floor's own section is showing. `None`: all.
-    pub(crate) shown: Option<String>,
+    /// The ceilings in `sharing.toml`, as last read: what Settings draws.
+    pub(crate) sharing: farfloor::Sharing,
+    pub(crate) sharing_trouble: Option<String>,
+    /// Each machine's own account of itself, for Settings.
+    pub(crate) probes: std::collections::HashMap<String, ProbeView>,
+    pub(crate) probing: std::collections::HashSet<String>,
+    /// The machine a window was just asked to open on, and when: the page
+    /// says so for a few seconds, since the window itself takes a moment.
+    pub(crate) opening: Option<(String, Instant)>,
     /// The local seat whose far lines the section edits.
     pub(crate) from: Option<threshing_floor::SeatId>,
 }
@@ -740,6 +747,20 @@ impl Workspace {
                     cx.notify();
                 });
             }
+            let Ok(probes) = this.update(cx, |ws: &mut Workspace, _| ws.far_probes_due()) else {
+                break;
+            };
+            for machine in probes {
+                let asked = machine.clone();
+                let result = cx
+                    .background_executor()
+                    .spawn(async move { far::probe(&asked) })
+                    .await;
+                let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.far_probe_arrived(&machine.name, result);
+                    cx.notify();
+                });
+            }
             for (id, dest, far_window, far_id) in statuses {
                 let line = farfloor::request(
                     farfloor::M_STATUS,
@@ -805,12 +826,6 @@ impl Workspace {
         }
     }
 
-    /// Whether Settings is open on its Machines page, which wants the same
-    /// fresh answers the Floor does.
-    pub(crate) fn far_machines_page_open(&self) -> bool {
-        false
-    }
-
     /// Read `machines.toml` again. Cheap, and done on every pass that asks a
     /// machine anything, so a machine added in Settings is asked on the next.
     pub(crate) fn far_reload_machines(&mut self) {
@@ -822,6 +837,16 @@ impl Workspace {
             Err(why) => {
                 self.far_floor.machines.clear();
                 self.far_floor.machines_trouble = Some(why);
+            }
+        }
+        match farfloor::Sharing::load(&instance::config_dir()) {
+            Ok(sharing) => {
+                self.far_floor.sharing = sharing;
+                self.far_floor.sharing_trouble = None;
+            }
+            Err(why) => {
+                self.far_floor.sharing = Default::default();
+                self.far_floor.sharing_trouble = Some(why);
             }
         }
     }
@@ -1339,5 +1364,403 @@ impl Workspace {
                 )
                 .child(body),
         )
+    }
+}
+
+// ---- Settings › Machines ----
+
+/// What a machine said about itself when Settings last asked.
+#[derive(Clone, Debug)]
+pub(crate) enum ProbeView {
+    Asking,
+    Done {
+        at: Instant,
+        result: Result<far::Probe, String>,
+    },
+}
+
+/// How long a machine's own account of itself is good for while Settings is
+/// open on it.
+const PROBE_SECS: u64 = 15;
+
+impl Workspace {
+    /// Whether Settings is open on its Machines page, which wants the same
+    /// fresh answers the Floor does.
+    pub(crate) fn far_machines_page_open(&self) -> bool {
+        self.settings
+            .as_ref()
+            .is_some_and(|b| b.page == settings::Page::Environments)
+    }
+
+    /// The machines whose own account has gone stale while Settings shows
+    /// them.
+    pub(crate) fn far_probes_due(&mut self) -> Vec<entry::Machine> {
+        if !self.far_machines_page_open() {
+            return vec![];
+        }
+        let mut due = vec![];
+        for m in self.far_floor.machines.clone() {
+            let stale = match self.far_floor.probes.get(&m.name) {
+                None => true,
+                Some(ProbeView::Asking) => false,
+                Some(ProbeView::Done { at, .. }) => at.elapsed().as_secs() >= PROBE_SECS,
+            };
+            if stale && self.far_floor.probing.insert(m.name.clone()) {
+                self.far_floor
+                    .probes
+                    .entry(m.name.clone())
+                    .or_insert(ProbeView::Asking);
+                due.push(m);
+            }
+        }
+        due
+    }
+
+    pub(crate) fn far_probe_arrived(&mut self, name: &str, result: Result<far::Probe, String>) {
+        self.far_floor.probing.remove(name);
+        self.far_floor.probes.insert(
+            name.to_string(),
+            ProbeView::Done {
+                at: Instant::now(),
+                result,
+            },
+        );
+    }
+
+    /// Open a far session in a window of its own, the way `terminal-delight
+    /// remote` does from a terminal. The new window is its own process: this
+    /// one neither waits for it nor owns it. If the machine does not answer,
+    /// that process says so on the desktop.
+    fn far_open_here(&mut self, name: &str, session: &str, cx: &mut Context<Self>) {
+        use std::os::unix::process::CommandExt;
+        let Ok(exe) = std::env::current_exe() else {
+            return;
+        };
+        let mut cmd = std::process::Command::new(exe);
+        cmd.args(["remote", name, session])
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        // What names THIS window's panes must not ride into another window.
+        for var in [
+            "TD_SESSION",
+            "TD_PANE_ID",
+            "TD_TAG",
+            "TD_SCRATCH",
+            "TD_SEED_CWD",
+            "TD_SEED_RESUME",
+            "TD_DEMO_STATE",
+            far::ENV_NAME,
+            far::ENV_DEST,
+            far::ENV_SESSION,
+        ] {
+            cmd.env_remove(var);
+        }
+        // Its own session, so closing this window does not take it along.
+        unsafe {
+            cmd.pre_exec(|| {
+                libc::setsid();
+                Ok(())
+            });
+        }
+        match cmd.spawn() {
+            Ok(_) => {
+                self.far_floor.opening = Some((name.to_uppercase(), Instant::now()));
+            }
+            Err(err) => eprintln!("terminal-delight: could not open {name}: {err}"),
+        }
+        cx.notify();
+    }
+
+    /// Set how far `host`'s agents may reach into this machine, and write it.
+    fn far_set_sharing(
+        &mut self,
+        host: &str,
+        reach: Option<threshing_floor::Rung>,
+        cx: &mut Context<Self>,
+    ) {
+        let config = instance::config_dir();
+        // Read first: another window may have changed the file since this one
+        // last looked, and a save from a stale copy would undo it.
+        let mut sharing = farfloor::Sharing::load(&config).unwrap_or_default();
+        if sharing.set(host, reach) {
+            match sharing.save(&config) {
+                Ok(()) => self.far_floor.sharing_trouble = None,
+                Err(why) => self.far_floor.sharing_trouble = Some(why),
+            }
+        }
+        self.far_floor.sharing = sharing;
+        self.far_floor
+            .knocked
+            .retain(|k| !k.eq_ignore_ascii_case(host) || reach.is_none());
+        cx.notify();
+    }
+
+    /// The five chips that say how far one machine reaches into this one.
+    fn far_sharing_chips(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        key: usize,
+        host: &str,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
+        let s = self.lang.strings().far;
+        let ui = self.lang.strings().ui;
+        let now = self.far_floor.sharing.ceiling(host);
+        let acc = th.accent;
+        let choices: [(Option<threshing_floor::Rung>, &str); 5] = [
+            (None, s.st_nothing),
+            (Some(threshing_floor::Rung::See), ui.floor_rung_see),
+            (Some(threshing_floor::Rung::Read), ui.floor_rung_read),
+            (Some(threshing_floor::Rung::Ask), ui.floor_rung_ask),
+            (Some(threshing_floor::Rung::Prompt), ui.floor_rung_prompt),
+        ];
+        let mut row = div().flex().flex_row().gap_1();
+        for (i, (reach, label)) in choices.into_iter().enumerate() {
+            let lit = reach == now;
+            let host = host.to_string();
+            row = row.child(
+                div()
+                    .id(("far-share", key * 10 + i))
+                    .debug_selector(move || format!("far-share-{key}-{i}"))
+                    .px_2()
+                    .py_0p5()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(if lit { acc } else { th.text.alpha(0.18) })
+                    .when(lit, |d| d.bg(acc.alpha(0.16)))
+                    .text_size(sk.text_px(9.))
+                    .text_color(if lit { th.text } else { th.text.alpha(0.65) })
+                    .cursor_pointer()
+                    .child(SharedString::from(label.to_string()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.far_set_sharing(&host, reach, cx);
+                        }),
+                    ),
+            );
+        }
+        row.into_any_element()
+    }
+
+    /// The Machines page's rows for each machine, and the sections under
+    /// them: this machine's own name, and machines that asked and were shown
+    /// nothing.
+    pub(crate) fn far_machines_page(
+        &self,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> (Vec<gpui::Div>, Vec<AnyElement>) {
+        let s = self.lang.strings().far;
+        let acc = th.accent;
+        let mut rows = vec![];
+        if let Some(why) = &self.far_floor.machines_trouble {
+            rows.push(Self::st_row(
+                th,
+                sk,
+                "machines.toml",
+                Some(why.clone()),
+                None,
+            ));
+        }
+        if self.far_floor.machines.is_empty() && self.far_floor.machines_trouble.is_none() {
+            rows.push(Self::st_row(
+                th,
+                sk,
+                s.st_none,
+                Some(s.st_none_sub.to_string()),
+                None,
+            ));
+        }
+        for (mi, m) in self.far_floor.machines.iter().enumerate() {
+            let dest = m.ssh.clone().unwrap_or_default();
+            let probe = self.far_floor.probes.get(&m.name);
+            let (status, host, sessions) = match probe {
+                None | Some(ProbeView::Asking) => (s.st_asking.to_string(), None, vec![]),
+                Some(ProbeView::Done {
+                    result: Err(why), ..
+                }) => (why.clone(), None, vec![]),
+                Some(ProbeView::Done { result: Ok(p), .. }) => {
+                    let mut line = match (&p.td, &p.version) {
+                        (None, _) => s.st_no_td.to_string(),
+                        (Some(_), Some(v)) => s.st_td.replace("{version}", v),
+                        (Some(_), None) => s.st_td.replace("{version}", "?"),
+                    };
+                    if p.tailscale.as_deref().is_some_and(|ip| !ip.is_empty()) {
+                        line.push_str(&format!(" \u{b7} {}", s.st_tailscale));
+                    }
+                    if p.td.is_some() && p.sessions.is_empty() {
+                        line.push_str(&format!("\n{}", s.st_no_session));
+                    }
+                    (line, p.host.clone(), p.sessions.clone())
+                }
+            };
+            let opening = self
+                .far_floor
+                .opening
+                .as_ref()
+                .filter(|(name, at)| *name == m.name.to_uppercase() && at.elapsed().as_secs() < 8)
+                .map(|(name, _)| s.st_opening.replace("{machine}", name));
+            rows.push(Self::st_row(
+                th,
+                sk,
+                &format!("\u{21c4} {} \u{b7} {dest}", m.name.to_uppercase()),
+                Some(match opening {
+                    Some(o) => format!("{status}\n{o}"),
+                    None => status,
+                }),
+                None,
+            ));
+            for (si, session) in sessions.iter().enumerate() {
+                let sub = match session.window {
+                    Some(true) => s.st_session_window,
+                    Some(false) => s.st_session_idle,
+                    None => s.st_session_unknown,
+                };
+                let (name, key) = (m.name.clone(), session.key.clone());
+                let open = div()
+                    .id(("far-open", mi * 100 + si))
+                    .debug_selector(move || format!("far-open-{mi}-{si}"))
+                    .flex_none()
+                    .px_2()
+                    .py_0p5()
+                    .rounded(sk.radius())
+                    .border(sk.box_border(1.))
+                    .border_color(acc)
+                    .bg(acc.alpha(0.14))
+                    .text_size(sk.text_px(9.))
+                    .text_color(th.text)
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.28)))
+                    .child(SharedString::from(format!("{} \u{2197}", s.st_open_here)))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.far_open_here(&name, &key, cx);
+                        }),
+                    )
+                    .into_any_element();
+                rows.push(Self::st_row(
+                    th,
+                    sk,
+                    &s.st_session.replace("{key}", &session.key),
+                    Some(sub.to_string()),
+                    Some(open.into()),
+                ));
+            }
+            // Sharing goes by the name the machine gives itself, which is
+            // known once it has answered. Its Terminal Delight's own word for
+            // that comes first: it is the word it will knock with, and it is
+            // not always the hostname.
+            let host = self
+                .far_floor
+                .census
+                .get(&m.name)
+                .and_then(MachineView::census)
+                .and_then(|c| c.windows.first())
+                .map(|w| w.machine.clone())
+                .or(host);
+            let sharing = match &host {
+                Some(host) => Self::st_row(
+                    th,
+                    sk,
+                    s.st_sharing,
+                    Some(s.st_sharing_sub.to_string()),
+                    Some(self.far_sharing_chips(th, sk, mi, host, cx).into()),
+                ),
+                None => Self::st_row(
+                    th,
+                    sk,
+                    s.st_sharing,
+                    Some(s.st_sharing_unknown.to_string()),
+                    None,
+                ),
+            };
+            rows.push(sharing);
+        }
+        let mut sections = vec![];
+        // Machines that asked and are not among the ones listed above.
+        let listed: Vec<String> = self
+            .far_floor
+            .probes
+            .values()
+            .filter_map(|p| match p {
+                ProbeView::Done { result: Ok(p), .. } => p.host.clone(),
+                _ => None,
+            })
+            .collect();
+        let asked: Vec<&String> = self
+            .far_floor
+            .knocked
+            .iter()
+            .chain(
+                self.far_floor
+                    .sharing
+                    .hosts()
+                    .map(|h| &h.host)
+                    .filter(|h| !self.far_floor.knocked.contains(h)),
+            )
+            .filter(|h| !listed.iter().any(|l| l.eq_ignore_ascii_case(h)))
+            .collect();
+        if !asked.is_empty() {
+            let asked_rows = asked
+                .into_iter()
+                .enumerate()
+                .map(|(i, host)| {
+                    Self::st_row(
+                        th,
+                        sk,
+                        &host.to_uppercase(),
+                        Some(s.st_asked_sub.to_string()),
+                        Some(self.far_sharing_chips(th, sk, 500 + i, host, cx).into()),
+                    )
+                })
+                .collect();
+            sections.push(Self::st_section(
+                th,
+                sk,
+                "st-sec-far-asked",
+                s.st_asked,
+                asked_rows,
+            ));
+        }
+        let mut this_rows = vec![Self::st_row(
+            th,
+            sk,
+            s.st_name,
+            Some(s.st_name_sub.to_string()),
+            Some(
+                div()
+                    .debug_selector(|| "far-this-name".to_string())
+                    .text_size(sk.text_px(10.))
+                    .font_weight(gpui::FontWeight::SEMIBOLD)
+                    .text_color(acc)
+                    .child(SharedString::from(farfloor::machine_name()))
+                    .into_any_element()
+                    .into(),
+            ),
+        )];
+        if let Some(why) = &self.far_floor.sharing_trouble {
+            this_rows.push(Self::st_row(
+                th,
+                sk,
+                "sharing.toml",
+                Some(why.clone()),
+                None,
+            ));
+        }
+        sections.push(Self::st_section(
+            th,
+            sk,
+            "st-sec-far-this",
+            s.st_this,
+            this_rows,
+        ));
+        (rows, sections)
     }
 }

@@ -840,7 +840,7 @@ impl Workspace {
     // ---- pieces --------------------------------------------------------
 
     /// A row: its title and plain line on the left, its control on the right.
-    fn st_row(
+    pub(super) fn st_row(
         th: &theme::Theme,
         sk: &skin::Skin,
         title: &str,
@@ -915,7 +915,7 @@ impl Workspace {
 
     /// A section: its title in sentence case over a rounded group of rows
     /// with a hairline between each.
-    fn st_section(
+    pub(super) fn st_section(
         th: &theme::Theme,
         sk: &skin::Skin,
         id: &'static str,
@@ -2152,30 +2152,38 @@ impl Workspace {
                     Ok(m) => m.len().to_string(),
                     Err(e) => e,
                 };
-                vec![Self::st_section(
+                // Each machine in the list: what it runs, its sessions with
+                // a way to open one here, and how far its agents may reach
+                // into this machine. Then this machine's own name.
+                let (machines, more) = self.far_machines_page(th, sk, cx);
+                let mut rows = vec![row(
+                    s.r_machines,
+                    &lang::fill(
+                        s.r_machines_sub,
+                        &[("n", &n), ("path", &path.display().to_string())],
+                    ),
+                    self.st_open(
+                        th,
+                        sk,
+                        "st-open-machines",
+                        None,
+                        |ws, w, cx| {
+                            ws.open_composer(w, cx);
+                            ws.add_project_open(cx);
+                        },
+                        cx,
+                    ),
+                )];
+                rows.extend(machines);
+                let mut sections = vec![Self::st_section(
                     th,
                     sk,
                     "st-sec-machines",
                     s.s_machines,
-                    vec![row(
-                        s.r_machines,
-                        &lang::fill(
-                            s.r_machines_sub,
-                            &[("n", &n), ("path", &path.display().to_string())],
-                        ),
-                        self.st_open(
-                            th,
-                            sk,
-                            "st-open-machines",
-                            None,
-                            |ws, w, cx| {
-                                ws.open_composer(w, cx);
-                                ws.add_project_open(cx);
-                            },
-                            cx,
-                        ),
-                    )],
-                )]
+                    rows,
+                )];
+                sections.extend(more);
+                sections
             }
             Page::Access => {
                 let expose = self.mcp.expose;

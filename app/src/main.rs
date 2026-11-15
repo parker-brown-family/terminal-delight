@@ -7929,7 +7929,16 @@ impl Workspace {
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
         Self::rest_idle_agents(cx);
-        Self::watch_the_save(cx);
+        // Not for a far window. This check reads the session file from this
+        // machine's disk, and a far session's file is on the far machine,
+        // written by the host there. The copy here is what the window was
+        // opened from and is never written again, so the check would find it
+        // stale on every pass, save again each time, and end by raising an
+        // alarm about a file that is right where it belongs. What a far
+        // window has instead is the far host's own answer to each save.
+        if far::current().is_none() {
+            Self::watch_the_save(cx);
+        }
     }
 
     /// Check, on a clock, that the session file says what this window shows.
@@ -54434,6 +54443,10 @@ fn main() {
         t
     } else if demo {
         "terminal-delight".to_string()
+    } else if let Some(far) = far::current() {
+        // The machine first: it is what tells this window from the others in
+        // a window list.
+        format!("{} \u{2014} terminal-delight", far.badge())
     } else {
         window_title(scratch, &key)
     };
