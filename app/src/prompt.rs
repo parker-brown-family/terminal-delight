@@ -1016,6 +1016,26 @@ pub fn header(id: AskId, sender: &str, sender_pid: Option<u32>, returns: bool) -
     )
 }
 
+/// The header for a prompt that came from an agent on another machine.
+///
+/// It says a different thing from [`header`], because a different thing is
+/// true: no person drew a line on this machine. A person on the sending
+/// machine drew one there, and a person here told this machine to take
+/// prompts from that one. The worker is told both, and where the sender is.
+pub fn header_far(id: AskId, sender: &str, returns: bool) -> String {
+    let back = if returns {
+        "Your last message this turn is returned to the sender."
+    } else {
+        "The sender is told when you finish."
+    };
+    format!(
+        "[{} from {}: an agent on another machine. A person there drew a prompt line from it \
+         to you, and this machine is set to take prompts from that one. {back}]",
+        tag(id),
+        one_line(sender, 120)
+    )
+}
+
 /// The header, a blank line, and the brief.
 pub fn compose(header: &str, brief: &str) -> String {
     format!("{header}\n\n{brief}")

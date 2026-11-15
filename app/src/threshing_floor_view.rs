@@ -2279,7 +2279,10 @@ impl Workspace {
                     .overflow_x_scroll()
                     .overflow_y_scroll()
                     .child(off),
-            );
+            )
+            // Agents on other machines: not panes of this window, so not in
+            // the pool above, and reached along lines of their own.
+            .children(self.far_floor_section(th, &sk, cx));
         let panel = div()
             .id("threshing-floor-panel")
             .debug_selector(|| "threshing-floor-panel".to_string())
@@ -6133,8 +6136,13 @@ impl Workspace {
                 crate::prompt::now_ms(),
             ) {
                 Some(status) => mcp::AskReply::Prompt(status),
-                None => mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchPrompt),
+                // Not one of this window's own: it may have gone to an agent
+                // on another machine, which a different book holds.
+                None => self.far_prompt_status(prompt_id.0, *caller_pane).unwrap_or(
+                    mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchPrompt),
+                ),
             },
+            mcp::AskCall::Far(call) => self.far_bridge(call, cx),
         }
     }
 
@@ -6246,6 +6254,9 @@ impl Workspace {
             .prompts
             .open()
             .map(|s| s.sender_pane)
+            // A prompt another machine handed over has no pane here to have
+            // closed: its sender is that machine, and it stays to its end.
+            .filter(|p| !crate::far_floor_view::is_far_sender(*p))
             .filter(|p| self.leaf_by_pane_id(*p, cx).is_none())
             .collect();
         let mut book = std::mem::take(&mut self.prompts);
@@ -6290,6 +6301,13 @@ impl Workspace {
         let mut party = prompt_party(v);
         party.is_agent |= waking;
         let allowed = match self.leaf_by_pane_id(sent.sender_pane, cx) {
+            // Another machine sent it: there is no seat here to hold a line.
+            // What is checked again on every look is what let it in, that
+            // machine's ceiling as it stands now, so a person who withdraws
+            // it stops a prompt that has not been typed yet.
+            None if crate::far_floor_view::is_far_sender(sent.sender_pane) => {
+                self.far_inbound_allowed(sent.sender_pane, &party)
+            }
             Some(c) => threshing_floor::decide_prompt(
                 &self.mcp,
                 &self.chart,
@@ -6739,7 +6757,7 @@ impl Workspace {
 
     /// Append one stage to this window's ask record, and read the numbers
     /// back for the Threshing Floor.
-    fn record(&mut self, entry: &askrecord::Entry) {
+    pub(super) fn record(&mut self, entry: &askrecord::Entry) {
         let record = askrecord::path_for(crate::instance::key());
         if let Err(e) = askrecord::append(&record, entry) {
             eprintln!("[threshing-floor] the ask record could not be written: {e}");
@@ -7440,7 +7458,7 @@ fn stroke_wire(
 /// A pane as a prompt sees it: an asleep agent is still an agent, and so is
 /// one the sleep has signalled and not yet recorded (`rest.stopping`), whose
 /// pane reads as a plain shell for up to one rest sweep after it exits.
-fn prompt_party(v: &TerminalView) -> threshing_floor::Party {
+pub(super) fn prompt_party(v: &TerminalView) -> threshing_floor::Party {
     let mut party = v.party();
     party.is_agent |= v.rest.dormancy.asleep().is_some() || v.rest.stopping.is_some();
     party

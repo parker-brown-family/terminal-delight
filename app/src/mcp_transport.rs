@@ -296,6 +296,7 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         chart: ws.chart.clone(),
         orgs: ws.floor_orgs.clone(),
         moved: ws.mcp_moves(cx),
+        far: ws.far_seen(cx),
     }
 }
 
@@ -634,6 +635,7 @@ mod tests {
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
             moved: vec![],
+            far: vec![],
         }
     }
 

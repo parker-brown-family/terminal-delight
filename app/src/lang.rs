@@ -3405,6 +3405,10 @@ mod tests {
         "settings.s_interface", // fr: interface is the standard French word for a user interface.
         // A product surface's name, kept as the window draws it.
         "settings.r_floor",
+        // A product name and a version number.
+        "far.st_td",
+        // French says Session for a session.
+        "far.st_session",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,

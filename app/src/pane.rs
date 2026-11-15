@@ -4779,6 +4779,11 @@ impl TerminalView {
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
+        if crate::far::current().is_some() {
+            // Another machine's pane: no pid here to ask, so it is what that
+            // machine's host last said (`set_host_facts`).
+            return self.staged.cwd.clone();
+        }
         let pid = self.session.shell_pid?;
         match &self.session.master {
             Some(master) => crate::session::capture_cwd(Some(master.file()?.as_ref()), pid),
@@ -4902,6 +4907,31 @@ impl TerminalView {
         self.exited = false;
         self.superseded = true;
         cx.notify();
+    }
+
+    /// Where a far host says this pane is, and what would resume its agent.
+    ///
+    /// A reading the host did not take is `None`, and leaves what is known
+    /// alone: a host that could not see where a pane is has not said the pane
+    /// is nowhere.
+    pub fn set_host_facts(
+        &mut self,
+        cwd: Option<String>,
+        resume: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        if cwd.is_some() && cwd != self.staged.cwd {
+            self.staged.cwd = cwd;
+            changed = true;
+        }
+        if resume.is_some() && resume != self.staged.resume {
+            self.staged.resume = resume;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
     }
 
     /// One more report that this pane's stream closed, delivered the way the

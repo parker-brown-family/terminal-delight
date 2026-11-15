@@ -68,6 +68,8 @@ mod entry;
 use drag::Drag;
 mod entry_view;
 mod far;
+mod far_floor_view;
+mod farfloor;
 mod fav;
 mod feedback;
 mod flyout;
@@ -3013,6 +3015,12 @@ struct StateFile {
     /// it. Written only beside `floor_orgs`, so a legacy chart never grows one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     org_lines: Vec<threshing_floor::OrgLine>,
+    /// Lines a person drew from a seat here to an agent on another machine
+    /// (see [`farfloor`]). Absent on every file from before machines could be
+    /// reached, and on any window nobody has drawn one in: no far lines, which
+    /// reaches nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    far_lines: Vec<farfloor::FarLine>,
     /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
     ///
     /// Saved under the key it had before the Threshing Floor was renamed, so a build
@@ -3139,6 +3147,7 @@ impl Default for StateFile {
             mcp: None,
             lines: vec![],
             org_lines: vec![],
+            far_lines: vec![],
             floor_orgs: None,
             floor_org: None,
             ask_press_tokens: None,
@@ -5542,6 +5551,10 @@ struct Workspace {
     /// machine's own window took back: those stay with it, and these are taken
     /// again the moment the road returns.
     far_lost: std::collections::HashSet<u64>,
+    /// Other machines on the Threshing Floor: the lines a person drew to
+    /// their agents, what each machine last said about who is there, and the
+    /// prompts sent across (see [`far_floor_view`]).
+    far_floor: far_floor_view::FarFloor,
     /// What this window is saying about that road, when it has something to
     /// say. `None` on a local window, and on a far one whose link is up.
     far_notice: Option<FarNotice>,
@@ -7163,6 +7176,10 @@ impl Workspace {
             attach,
             reclaim_lock: None,
             far_lost: Default::default(),
+            far_floor: far_floor_view::FarFloor {
+                lines: farfloor::FarLines::from_saved(saved.far_lines.clone()),
+                ..Default::default()
+            },
             far_notice: None,
             should_move: false,
             ghosts: Vec::new(),
@@ -7303,6 +7320,12 @@ impl Workspace {
             }
         })
         .detach();
+        // Other machines: asked only while the Floor is open on them, a line
+        // to one of their agents is drawn, or a prompt sent across is open.
+        if !scratch && !demo {
+            ws.far_reload_machines();
+            Self::watch_far_floor(window, cx);
+        }
         // The right-bar flyout's poll: the tab on screen is read again when
         // it is due, and nothing is read while the flyout is shut.
         cx.spawn(async move |this, cx| loop {
@@ -8957,7 +8980,24 @@ impl Workspace {
             }) else {
                 break;
             };
-            let Some(link) = link else { continue };
+            let Some(link) = link else {
+                // The road is up. Ask the host where its panes are now: a far
+                // pane has no pid here to read that from, and what the window
+                // learned when it attached goes stale at the first `cd`.
+                let Ok(Some(link)) = this.update(cx, |ws: &mut Workspace, _| {
+                    ws.attach.as_ref().map(|ctx| ctx.link.clone())
+                }) else {
+                    continue;
+                };
+                let panes = cx
+                    .background_executor()
+                    .spawn(async move { link.list_panes() })
+                    .await;
+                if let Ok(panes) = panes {
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| ws.far_facts(&panes, cx));
+                }
+                continue;
+            };
             let outcome = cx
                 .background_executor()
                 .spawn(async move { far_relink(&link) })
@@ -9003,6 +9043,24 @@ impl Workspace {
                 why: None,
             });
             cx.notify();
+        }
+    }
+
+    /// What the far host says each pane's folder and agent are, put where the
+    /// pane reads them.
+    fn far_facts(&mut self, panes: &[hostproto::PaneInfo], cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let Some(id) = leaf.read(cx).pane_id() else {
+                    continue;
+                };
+                if let Some(info) = panes.iter().find(|p| p.pane.0 == id) {
+                    let (cwd, resume) = (info.cwd.clone(), info.resume.clone());
+                    leaf.update(cx, |view, cx| view.set_host_facts(cwd, resume, cx));
+                }
+            }
         }
     }
 
@@ -9366,6 +9424,7 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
             org_lines: self.chart.org_lines().to_vec(),
+            far_lines: self.far_floor.lines.saved().to_vec(),
             floor_orgs: Some(self.floor_orgs.saved().to_vec()),
             floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
@@ -10545,6 +10604,13 @@ impl Workspace {
     /// One request per live agent pane, carrying the stamp of what the card is
     /// already showing so an unchanged transcript is never re-parsed.
     fn vitals_requests(&self, cx: &App) -> Vec<vitals::PaneReq> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for tab in self.tabs.iter() {
             let mut leaves = Vec::new();
@@ -10968,6 +11034,13 @@ impl Workspace {
     /// per-pane facts only. The reading — project directories, transcript
     /// edges — happens off this thread, against the whole set at once.
     fn pane_facts(&self, cx: &App) -> Vec<paneident::PaneFacts> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut facts = Vec::new();
         for tab in self.tabs.iter() {
             let mut leaves = Vec::new();
@@ -16126,7 +16199,15 @@ impl Workspace {
         let mut others = Vec::new();
         let mut unlocated = Vec::new();
         let full_scope = self.coordination_full_scope();
-        for (i, tab) in self.tabs.iter().enumerate() {
+        // No participants from a far window: git would be run in this
+        // machine's folder of the same name, and its branches reported as the
+        // far machine's (see `vitals_requests`).
+        let scanned = if far::current().is_some() {
+            &self.tabs[..0]
+        } else {
+            &self.tabs[..]
+        };
+        for (i, tab) in scanned.iter().enumerate() {
             let place = self.place_of(i);
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
@@ -16926,6 +17007,13 @@ impl Workspace {
     /// model dial, which a user who turned the tool glyphs off still sees. The
     /// gate is applied where the face is, in [`Self::apply_tool_faces`].
     fn tool_probe_requests(&self, cx: &App) -> Vec<toolprop::ToolProbeReq> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut out = vec![];
         for tab in &self.tabs {
             let mut leaves = vec![];

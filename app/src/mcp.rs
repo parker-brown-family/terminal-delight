@@ -814,6 +814,33 @@ pub struct Snapshot {
     /// where its agent went ([`Snapshot::moved_answer`]), never to re-aim a
     /// call at the new pane.
     pub moved: Vec<Moved>,
+    /// Agents on other machines that a seat here has a line to, as each far
+    /// machine last reported them. Empty when nobody here has drawn one.
+    pub far: Vec<FarSeen>,
+}
+
+/// One agent on another machine, as one seat here reaches it.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub struct FarSeen {
+    /// The seat here whose line this is. Never on the wire: a caller is shown
+    /// only its own.
+    #[serde(skip)]
+    pub from: crate::threshing_floor::SeatId,
+    /// The machine, by its name in `machines.toml`: what `machine` takes.
+    pub machine: String,
+    /// The agent there: what `agent` takes, beside `machine`.
+    pub agent: String,
+    /// What a person there calls it. The name the line was drawn under when
+    /// that machine has not been heard from.
+    pub name: String,
+    /// `None`: that machine has not answered, so what its agent is doing is
+    /// not known. Not the same as idle.
+    pub state: Option<String>,
+    pub harness: Option<String>,
+    /// The least of this seat's line and what that machine allows this one.
+    pub reach: crate::threshing_floor::Reach,
+    /// Seconds since that machine was last heard from. `None`: never.
+    pub heard_s: Option<u64>,
 }
 
 /// An agent's rest, as `list_panes` reports it.
@@ -1245,6 +1272,7 @@ impl Snapshot {
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
             moved: vec![],
+            far: vec![],
         }
     }
 }
@@ -1393,16 +1421,54 @@ pub enum AskCall {
         caller_pane: u64,
         prompt_id: crate::threshing_floor::AskId,
     },
+    /// A call that crosses machines, in either direction (see `farfloor`).
+    Far(FarCall),
+}
+
+/// What crosses between two machines' Threshing Floors.
+///
+/// The first three arrive from another machine, over ssh, through this
+/// window's control socket: the caller is that machine, not a pane here. The
+/// last three leave: an agent in a pane here named an agent on another
+/// machine.
+#[derive(Clone, Debug, PartialEq)]
+pub enum FarCall {
+    /// Another machine asks which of this window's agents it may see.
+    Census { from: String },
+    /// Another machine hands over a prompt for an agent here. `target` is the
+    /// pane its word for that agent resolved to, by shell pid.
+    PromptIn {
+        target: u32,
+        prompt: crate::farfloor::PromptIn,
+    },
+    /// Another machine asks how a prompt it handed over is getting on.
+    PromptInStatus { from: String, prompt_id: u64 },
+    /// An agent here asks an agent on another machine.
+    AskOut {
+        caller_pane: u64,
+        machine: String,
+        to: String,
+    },
+    /// An agent here prompts an agent on another machine.
+    PromptOut {
+        caller_pane: u64,
+        machine: String,
+        to: String,
+        brief: String,
+        key: Option<String>,
+    },
 }
 
 /// The window's answer: the cheap answer, a copy's progress, a prompt's
-/// progress, or a refusal by name.
+/// progress, a refusal by name, or, for a call that crossed machines, the
+/// whole tool result as the window worded it.
 #[derive(Clone, Debug, PartialEq)]
 pub enum AskReply {
     Cheap(crate::threshing_floor::CheapAnswer),
     Copy(crate::threshing_floor::CopyStatus),
     Prompt(crate::prompt::PromptStatus),
     Refused(crate::threshing_floor::Refusal),
+    Far(Value),
 }
 
 /// The `ask` for a transport with no window behind it: every ask is refused.
@@ -1611,8 +1677,174 @@ where
         // separately reads the level (see `log_level_from`) to gate the push
         // feed — the dispatch stays pure and just confirms receipt.
         "logging/setLevel" => Ok(json!({})),
+        // The door another machine's Threshing Floor knocks on. Not a tool:
+        // it is never listed, and an agent inside a pane is refused at it.
+        crate::farfloor::M_CENSUS | crate::farfloor::M_PROMPT | crate::farfloor::M_STATUS => {
+            far_door(&req.method, &req.params, snap, ask)
+        }
         m => Err((-32601, format!("method not found: {m}"))),
     }
+}
+
+/// A call from another machine's Threshing Floor.
+///
+/// It arrives as that machine's person, over ssh, on this window's control
+/// socket, so the connection names no pane. A caller that does name one is an
+/// agent in a pane here, and is turned away: its way to another agent is a
+/// line a person drew, through `ask_agent` and `prompt_agent`, never this
+/// door. What the far machine may then do is the ceiling a person here set
+/// for it, which the window checks (`Workspace::far_bridge`).
+fn far_door<A>(
+    method: &str,
+    params: &Value,
+    snap: &Snapshot,
+    ask: &A,
+) -> Result<Value, (i64, String)>
+where
+    A: Fn(&AskCall) -> AskReply,
+{
+    if snap.caller.as_ref().is_some_and(|c| c.pane.is_some()) {
+        return Err((
+            -32002,
+            "this is the door another machine's Threshing Floor uses. From inside a pane, \
+             use ask_agent or prompt_agent along a line a person drew."
+                .into(),
+        ));
+    }
+    let from = params
+        .get("from")
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|f| !f.is_empty() && f.len() <= 64)
+        .ok_or((
+            -32602,
+            "the calling machine did not give its name".to_string(),
+        ))?
+        .to_string();
+    let call = match method {
+        crate::farfloor::M_CENSUS => FarCall::Census { from },
+        crate::farfloor::M_PROMPT => {
+            let mut p: crate::farfloor::PromptIn = serde_json::from_value(params.clone())
+                .map_err(|e| (-32602, format!("not a prompt this build reads: {e}")))?;
+            p.from = from;
+            // The far machine names the agent by its conversation or its seat,
+            // never by a pane number. Which pane that is now is read here,
+            // from the same listing every other verb reads.
+            let found = match crate::farfloor::FarAddr::parse(&p.to) {
+                Some(crate::farfloor::FarAddr::Conversation(c)) => snap
+                    .panes
+                    .iter()
+                    .find(|pane| pane.agent.as_deref() == Some(c.as_str())),
+                Some(crate::farfloor::FarAddr::Seat(seat)) => {
+                    snap.panes.iter().find(|pane| pane.seat == Some(seat))
+                }
+                None => None,
+            };
+            let Some(pane) = found else {
+                return Ok(tool_err(
+                    "no agent by that name is in this window now. Ask again for who is here.",
+                ));
+            };
+            FarCall::PromptIn {
+                target: pane.pid,
+                prompt: p,
+            }
+        }
+        _ => {
+            let prompt_id = params.get("prompt_id").and_then(Value::as_u64).ok_or((
+                -32602,
+                "prompt_status needs the prompt_id it was given".to_string(),
+            ))?;
+            FarCall::PromptInStatus { from, prompt_id }
+        }
+    };
+    let census = matches!(call, FarCall::Census { .. });
+    match ask(&AskCall::Far(call)) {
+        AskReply::Far(value) if census => Ok(far_census_named(value, snap)),
+        AskReply::Far(value) => Ok(value),
+        AskReply::Refused(r) => Ok(tool_err(r.why())),
+        _ => Ok(tool_err(
+            "this window has no Threshing Floor to answer from",
+        )),
+    }
+}
+
+/// Give each agent in a census the name another machine may call it by.
+///
+/// The window lists its agents by shell pid, the one handle it has for a pane
+/// on its own thread. Which conversation a pane holds is proven off that
+/// thread and stamped onto this listing, so the pid is traded here for the
+/// conversation, or for the seat a person gave the pane when no conversation
+/// is proven. An agent with neither cannot be named in a way that survives
+/// its next wake, so it is counted and left out.
+fn far_census_named(mut answer: Value, snap: &Snapshot) -> Value {
+    let mut unnamed = 0u64;
+    // The census is the structured half of the window's answer.
+    let Some(census) = answer.get_mut("structuredContent") else {
+        return answer;
+    };
+    if let Some(agents) = census.get_mut("agents").and_then(Value::as_array_mut) {
+        agents.retain_mut(|a| {
+            let pid = a
+                .get("addr")
+                .and_then(Value::as_str)
+                .and_then(|s| s.strip_prefix("pid:"))
+                .and_then(|n| n.parse::<u32>().ok());
+            let pane = pid.and_then(|pid| snap.panes.iter().find(|p| p.pid == pid));
+            let addr = pane.and_then(|p| {
+                p.agent
+                    .clone()
+                    .map(crate::farfloor::FarAddr::Conversation)
+                    .or(p.seat.map(crate::farfloor::FarAddr::Seat))
+            });
+            match addr {
+                Some(addr) => {
+                    a["addr"] = Value::String(addr.to_string());
+                    true
+                }
+                None => {
+                    unnamed += 1;
+                    false
+                }
+            }
+        });
+    }
+    census["unnamed"] = unnamed.into();
+    answer
+}
+
+/// `ask_agent` or `prompt_agent` given a `machine`: the agent named is on
+/// another machine. The window holds the far lines and what that machine last
+/// said about its agents, so the whole answer is the window's.
+fn far_out<A>(call: FarCall, ask: &A) -> Value
+where
+    A: Fn(&AskCall) -> AskReply,
+{
+    match ask(&AskCall::Far(call)) {
+        AskReply::Far(value) => value,
+        AskReply::Refused(r) => tool_err(r.why()),
+        _ => tool_err("this window has no Threshing Floor to answer from"),
+    }
+}
+
+/// The `machine` and far agent a call names, when it names a machine.
+fn far_target(args: &Value, verb: &str) -> Option<Result<(String, String), String>> {
+    let machine = args
+        .get("machine")
+        .and_then(Value::as_str)?
+        .trim()
+        .to_string();
+    Some(match args.get("agent").and_then(Value::as_str) {
+        _ if machine.is_empty() => Err(format!("{verb}: `machine` is empty")),
+        Some(to) if crate::farfloor::FarAddr::parse(to).is_some() => Ok((machine, to.to_string())),
+        Some(to) => Err(format!(
+            "{verb}: {to:?} does not name an agent on another machine. Give `agent` exactly as \
+             list_panes prints it under that machine (it starts with conv: or seat:)."
+        )),
+        None => Err(format!(
+            "{verb}: with `machine`, give `agent` as list_panes prints it under that machine."
+        )),
+    })
 }
 
 fn initialize_result(params: &Value) -> Value {
@@ -1849,6 +2081,7 @@ fn tool_defs() -> Value {
                 "properties": {
                     "agent": { "type": "string", "description": "The agent to ask, by its conversation id from list_panes `agent`. It names the agent wherever it is now, across sleep and wake; prefer it to pid." },
                     "pid": { "type": "integer", "description": "The pane to ask, from list_panes. A location: it changes when the agent sleeps and wakes. Give agent or pid, not both." },
+    "machine": { "type": "string", "description": "For an agent on ANOTHER machine: that machine's name, as list_panes prints it under `On other machines`. Then `agent` is the far agent's own word from that listing (it starts with conv: or seat:), and the answer comes from what that machine last reported. Omit for an agent in this window." },
                     "question": { "type": "string", "description": "What you want to know, up to 4,000 characters. Kept out of every record; only its length and fingerprint are written." },
                     "copy": { "type": "boolean", "description": "Ask a read-only copy of the agent instead: its own conversation, forked so it can only read files, asked your question once and then stopped. It answers what the cheap reads cannot, and costs what the agent's context costs to read again (the answer says how many tokens). A copy over the person's press limit, or of unknown size, waits for their Yes on the rail. Starts in the background: read the answer with ask_answer and the ask_id. One copy at a time; a bypass line spends one prompt per copy. Only for an agent that has named its own conversation." }
                 },
@@ -1877,6 +2110,7 @@ fn tool_defs() -> Value {
                 "properties": {
                     "agent": { "type": "string", "description": "The agent to prompt, by its conversation id from list_panes `agent`. It names the agent wherever it is now, across sleep and wake; prefer it to pid." },
                     "pid": { "type": "integer", "description": "The pane to prompt, from list_panes. A location: it changes when the agent sleeps and wakes. Give agent or pid, not both." },
+    "machine": { "type": "string", "description": "For an agent on ANOTHER machine: that machine's name, as list_panes prints it under `On other machines`. Then `agent` is the far agent's own word from that listing (it starts with conv: or seat:). The prompt travels to that machine's Terminal Delight, which types it there only if its person lets this machine prompt. Omit for an agent in this window." },
                     "prompt": { "type": "string", "description": "What you want the agent to do, up to 32,000 characters. Every control character but newline and tab is removed; the window presses Enter." },
                     "key": { "type": "string", "description": "Your own name for this one assignment, up to 64 characters. Reuse the same key to recover a lost response: it reports the original attempt and never types a second turn, even if that attempt failed. For a deliberate retry after failure or new work, choose a new key. Inspect the worker first if the attempt may have been pasted or sent." }
                 },
@@ -2709,7 +2943,46 @@ fn list_panes(snap: &Snapshot) -> Value {
     } else {
         text
     };
-    tool_ok(text, json!({ "panes": exposed, "hidden": hidden }))
+    // Agents on other machines this caller's own seat has a line to. They are
+    // not panes of this window, so they are listed apart, with the two words
+    // a verb needs to name one.
+    let mine = snap.caller_info().and_then(|p| p.seat);
+    let far: Vec<&FarSeen> = snap
+        .far
+        .iter()
+        .filter(|f| Some(f.from) == mine && f.reach >= crate::threshing_floor::Reach::Seen)
+        .collect();
+    let text = if far.is_empty() {
+        text
+    } else {
+        let rows = far
+            .iter()
+            .map(|f| {
+                let state = f.state.as_deref().unwrap_or("state unknown");
+                let heard = match f.heard_s {
+                    Some(s) => format!("heard {s}s ago"),
+                    None => "not heard from yet".to_string(),
+                };
+                format!(
+                    "{} — on {} · {} · {state} · you reach it: {:?} · {heard} · machine {:?} agent {:?}",
+                    f.name,
+                    f.machine,
+                    f.harness.as_deref().unwrap_or("agent"),
+                    f.reach,
+                    f.machine,
+                    f.agent
+                )
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        format!(
+            "{text}\n\nOn other machines (name one with `machine` and `agent` in ask_agent or prompt_agent):\n{rows}"
+        )
+    };
+    tool_ok(
+        text,
+        json!({ "panes": exposed, "hidden": hidden, "far_agents": far }),
+    )
 }
 
 /// `ask_agent`: an agent's question for another, answered cheapest first.
@@ -2725,6 +2998,35 @@ where
         return tool_err("MCP exposure is disabled.");
     }
     let copy = args.get("copy").and_then(Value::as_bool) == Some(true);
+    if let Some(far) = far_target(args, "ask_agent") {
+        let (machine, to) = match far {
+            Ok(t) => t,
+            Err(why) => return tool_err(&why),
+        };
+        if copy {
+            return tool_err(
+                "ask_agent: a copy is made on the machine the agent runs on, and is not \
+                 offered across machines. Ask without `copy`.",
+            );
+        }
+        let caller_pane = match snap.caller_pane("ask_agent").map(|p| p.pane_id) {
+            Ok(Some(pane)) => pane,
+            Ok(None) => {
+                return tool_err(
+                    "the pane you are calling from has no host pane id, so it has no seat",
+                )
+            }
+            Err(why) => return tool_err(&why),
+        };
+        return far_out(
+            FarCall::AskOut {
+                caller_pane,
+                machine,
+                to,
+            },
+            ask,
+        );
+    }
     let target = match snap.named_target(args, "ask_agent") {
         Ok(pid) => pid,
         Err(why) => return tool_err(&why),
@@ -2752,7 +3054,9 @@ where
         AskReply::Cheap(a) => a,
         AskReply::Copy(status) => return copy_status(&status),
         AskReply::Refused(refusal) => return refused(&refusal),
-        AskReply::Prompt(_) => return tool_err("ask_agent asks; a prompt answer came back"),
+        AskReply::Prompt(_) | AskReply::Far(_) => {
+            return tool_err("ask_agent asks; another kind of answer came back")
+        }
     };
     let recent = snap
         .panes
@@ -2870,7 +3174,7 @@ where
         AskReply::Copy(status) => copy_status(&status),
         AskReply::Refused(refusal) => refused(&refusal),
         AskReply::Cheap(_) => tool_err("ask_answer reads copies; a cheap answer was already given"),
-        AskReply::Prompt(_) => {
+        AskReply::Prompt(_) | AskReply::Far(_) => {
             tool_err("ask_answer reads copies; read a prompt with prompt_status")
         }
     }
@@ -2886,6 +3190,38 @@ where
 {
     if !snap.config.enabled {
         return tool_err("MCP exposure is disabled.");
+    }
+    if let Some(far) = far_target(args, "prompt_agent") {
+        let (machine, to) = match far {
+            Ok(t) => t,
+            Err(why) => return tool_err(&why),
+        };
+        let Some(brief) = args.get("prompt").and_then(Value::as_str) else {
+            return tool_err("prompt_agent requires `prompt`: what you want the agent to do.");
+        };
+        let key = match crate::prompt::key_of(args.get("key").and_then(Value::as_str)) {
+            Ok(k) => k,
+            Err(why) => return tool_err(why),
+        };
+        let caller_pane = match snap.caller_pane("prompt_agent").map(|p| p.pane_id) {
+            Ok(Some(pane)) => pane,
+            Ok(None) => {
+                return tool_err(
+                    "the pane you are calling from has no host pane id, so it has no seat",
+                )
+            }
+            Err(why) => return tool_err(&why),
+        };
+        return far_out(
+            FarCall::PromptOut {
+                caller_pane,
+                machine,
+                to,
+                brief: brief.to_string(),
+                key,
+            },
+            ask,
+        );
     }
     let target = match snap.named_target(args, "prompt_agent") {
         Ok(pid) => pid,
@@ -2957,6 +3293,8 @@ where
                 }
             }
             AskReply::Refused(refusal) => return prompt_refused(&refusal),
+            // A prompt that went to another machine: the window words it.
+            AskReply::Far(value) => return value,
             _ => return tool_err("prompt_status reads prompts; another answer came back"),
         }
         std::thread::sleep(PROMPT_WAIT_STEP);
@@ -2980,7 +3318,7 @@ fn prompt_refused(refusal: &crate::threshing_floor::Refusal) -> Value {
 }
 
 /// A prompt's progress, in one paragraph and as data.
-fn prompt_said(status: &crate::prompt::PromptStatus) -> Value {
+pub(crate) fn prompt_said(status: &crate::prompt::PromptStatus) -> Value {
     use crate::prompt::PromptStage;
     let id = status.prompt_id.0;
     let later = format!("Read it with prompt_status {{\"prompt_id\": {id}, \"wait_seconds\": 6}}.");
@@ -4018,11 +4356,11 @@ where
     }
 }
 
-fn tool_ok(text: String, structured: Value) -> Value {
+pub(crate) fn tool_ok(text: String, structured: Value) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "structuredContent": structured })
 }
 
-fn tool_err(text: &str) -> Value {
+pub(crate) fn tool_err(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": true })
 }
 
@@ -4046,8 +4384,16 @@ fn encode_err(id: Value, code: i64, msg: String) -> String {
 /// round-trip (and the handshake never blocks on the GUI being ready).
 pub fn requires_snapshot(line: &str) -> bool {
     parse_req(line)
-        .map(|r| r.method == "tools/call")
+        .map(|r| r.method == "tools/call" || is_far_method(&r.method))
         .unwrap_or(false)
+}
+
+/// The methods another machine's Threshing Floor calls (see [`far_door`]).
+fn is_far_method(method: &str) -> bool {
+    matches!(
+        method,
+        crate::farfloor::M_CENSUS | crate::farfloor::M_PROMPT | crate::farfloor::M_STATUS
+    )
 }
 
 /// Whether answering `line` needs each agent's conversation: `list_panes`,
@@ -4055,11 +4401,14 @@ pub fn requires_snapshot(line: &str) -> bool {
 /// conversations reads transcript files, so a call that needs neither skips it.
 pub fn names_agents(line: &str) -> bool {
     parse_req(line).is_some_and(|r| {
-        r.method == "tools/call"
-            && (r.params.get("name").and_then(Value::as_str) == Some("list_panes")
-                || r.params
-                    .get("arguments")
-                    .is_some_and(|a| a.get("agent").is_some()))
+        // Another machine names an agent by its conversation, and is told
+        // each agent's: both directions need the binding.
+        (is_far_method(&r.method) && r.method != crate::farfloor::M_STATUS)
+            || r.method == "tools/call"
+                && (r.params.get("name").and_then(Value::as_str) == Some("list_panes")
+                    || r.params
+                        .get("arguments")
+                        .is_some_and(|a| a.get("agent").is_some()))
     })
 }
 
@@ -4831,6 +5180,7 @@ mod tests {
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
             moved: vec![],
+            far: vec![],
         }
     }
 
@@ -5399,7 +5749,7 @@ mod tests {
                     cost_usd: Some(0.4),
                 },
                 AskCall::Answer { .. } => return AskReply::Refused(Refusal::NoSuchAsk),
-                AskCall::Prompt(_) | AskCall::PromptStatus { .. } => {
+                AskCall::Prompt(_) | AskCall::PromptStatus { .. } | AskCall::Far(_) => {
                     panic!("an ask, not a prompt: {call:?}")
                 }
             };
