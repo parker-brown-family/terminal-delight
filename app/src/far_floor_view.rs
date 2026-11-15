@@ -691,13 +691,18 @@ impl Workspace {
                         .unwrap_or_else(|| line.name.clone()),
                     state: found.map(|a| a.state.clone()),
                     harness: found.map(|a| a.harness.clone()),
-                    // A line to an agent its machine has not listed is still a
-                    // line: it is shown, at the line's own rung, with its
-                    // state unknown. The far machine has the last word when a
-                    // call is made.
-                    reach: match found {
-                        Some(a) => farfloor::outbound_reach(Some(rung), Some(a.reach)),
-                        None => threshing_floor::Reach::from(rung),
+                    // Two different silences. A machine that has not been
+                    // heard from says nothing about its agent, so the line is
+                    // shown at its own rung with the state unknown, and the
+                    // far machine has the last word when a call is made. A
+                    // machine that has just answered and does not list the
+                    // agent has said something: it is not shared now, and
+                    // showing "you reach it" would be this window's guess
+                    // against that machine's word.
+                    reach: match (found, view) {
+                        (Some(a), _) => farfloor::outbound_reach(Some(rung), Some(a.reach)),
+                        (None, Some(MachineView::Read { .. })) => threshing_floor::Reach::Hidden,
+                        (None, _) => threshing_floor::Reach::from(rung),
                     },
                     heard_s: view
                         .and_then(MachineView::heard)
