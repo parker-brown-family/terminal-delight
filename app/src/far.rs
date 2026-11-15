@@ -277,8 +277,7 @@ pub fn parse_probe(out: &str) -> Result<Probe, String> {
     if !done {
         return Err("the machine's answer was cut short".into());
     }
-    p.sessions
-        .sort_by(|a, b| natural(&a.key).cmp(&natural(&b.key)));
+    p.sessions.sort_by_key(|a| natural(&a.key));
     Ok(p)
 }
 
@@ -710,14 +709,6 @@ pub struct Forward {
     child: Mutex<Option<Child>>,
 }
 
-/// How the forward stands, for the window's own notice.
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum LinkState {
-    Up,
-    /// Down, with ssh's last word when it left one.
-    Down(Option<String>),
-}
-
 impl Forward {
     /// Start carrying `far_socket` to this machine. Returns once ssh is
     /// running; [`Forward::wait_ready`] says whether the socket answers.
@@ -786,8 +777,7 @@ impl Forward {
     /// ssh's last complaint, if it has left one.
     pub fn last_word(&self) -> Option<String> {
         let text = std::fs::read_to_string(&self.log).ok()?;
-        Some(trouble_words(&self.far.name, &self.far.dest, &text))
-            .filter(|_| !text.trim().is_empty())
+        (!text.trim().is_empty()).then(|| trouble_words(&self.far.name, &self.far.dest, &text))
     }
 
     /// Start ssh again if it has exited. Says whether it had to.
@@ -820,14 +810,6 @@ impl Forward {
                 ));
             }
             std::thread::sleep(Duration::from_millis(40));
-        }
-    }
-
-    pub fn state(&self) -> LinkState {
-        if self.running() && std::os::unix::net::UnixStream::connect(&self.local).is_ok() {
-            LinkState::Up
-        } else {
-            LinkState::Down(self.last_word())
         }
     }
 

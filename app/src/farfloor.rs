@@ -324,7 +324,7 @@ impl FarLines {
     }
 
     /// The lines out of one seat.
-    pub fn from_seat(&self, seat: SeatId) -> impl Iterator<Item = &FarLine> {
+    pub fn lines_of(&self, seat: SeatId) -> impl Iterator<Item = &FarLine> {
         self.lines.iter().filter(move |l| l.from == seat)
     }
 

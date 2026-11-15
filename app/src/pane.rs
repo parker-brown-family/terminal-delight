@@ -4214,6 +4214,12 @@ impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 pub struct AgentDone;
 impl gpui::EventEmitter<AgentDone> for TerminalView {}
 
+/// A person pressed Enter in a pane whose terminal is being shown in another
+/// window: bring it back to this one. The workspace does it, because taking a
+/// pane again is the host's business and the host is the workspace's.
+pub struct TakeBack;
+impl gpui::EventEmitter<TakeBack> for TerminalView {}
+
 /// A cached attention state flipped (either direction): "agent is working"
 /// (the 🤖 pulse) or "agent needs a human" (the ❓ pulse). The workspace
 /// listens so the mother bar repaints on the actual edge — the pulse
@@ -7978,6 +7984,17 @@ impl TerminalView {
         // re-arms the flag on the very next scan. What it cannot do is keep
         // asserting a question the person has already dealt with.
         self.ack_needs_input(cx);
+
+        // This terminal is being shown in another window, so nothing typed
+        // here reaches it. Enter is the one key that does something: it asks
+        // for the terminal back. Every other key is dropped where it used to
+        // be dropped, but no longer silently, since the header says where the
+        // terminal is.
+        if self.superseded && ks.key == "enter" && !ks.modifiers.modified() {
+            cx.emit(TakeBack);
+            cx.stop_propagation();
+            return;
+        }
 
         let k = keylayer_key(ks);
         let up = self.layers_up(cx);
@@ -12390,6 +12407,11 @@ impl Render for TerminalView {
             format!("✔ {}", ps.ph_done)
         } else if self.exited {
             ps.ph_exited.to_string()
+        } else if self.superseded {
+            // Not live here: another window is showing this terminal, and
+            // keys typed in this pane do not reach it. A pane in this state
+            // used to say "live" and swallow what was typed.
+            ps.far.elsewhere.to_string()
         } else {
             ps.ph_live.to_string()
         };

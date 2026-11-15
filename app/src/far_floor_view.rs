@@ -1205,7 +1205,7 @@ impl Workspace {
                 .map(|a| (a.addr.clone(), a.name.clone(), Some(a.clone())))
                 .collect();
             if let Some(from) = from {
-                for l in self.far_floor.lines.from_seat(from) {
+                for l in self.far_floor.lines.lines_of(from) {
                     if l.machine == m.name && !rows.iter().any(|(addr, _, _)| *addr == l.to) {
                         rows.push((l.to.clone(), l.name.clone(), None));
                     }
@@ -1670,7 +1670,14 @@ impl Workspace {
                     th,
                     sk,
                     s.st_sharing,
-                    Some(s.st_sharing_sub.to_string()),
+                    // The chips set a ceiling. With this window's own switch
+                    // off nothing reaches its agents whatever the ceiling is,
+                    // and a person who has just pressed "prompt" is owed that.
+                    Some(if self.mcp.enabled {
+                        s.st_sharing_sub.to_string()
+                    } else {
+                        format!("{}\n{}", s.st_sharing_sub, s.st_mcp_off)
+                    }),
                     Some(self.far_sharing_chips(th, sk, mi, host, cx).into()),
                 ),
                 None => Self::st_row(

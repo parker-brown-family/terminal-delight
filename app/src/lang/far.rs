@@ -19,8 +19,6 @@ pub struct Far {
     pub replaced_sub: &'static str,
     /// Tooltip on the chip that names the machine a far window shows. {machine} as written in machines.toml, {dest} is the ssh destination.
     pub chip_tip: &'static str,
-    /// On a pane that the far machine's own window is showing instead. {machine} in capitals. Keep the keycap.
-    pub taken: &'static str,
     /// Heading of the Threshing Floor's section for agents on other machines.
     pub floor_title: &'static str,
     /// When machines.toml lists no machine.
@@ -95,6 +93,10 @@ pub struct Far {
     pub st_none_sub: &'static str,
     /// Shown briefly after Open here is pressed. {machine} in capitals.
     pub st_opening: &'static str,
+    /// A pane header's state word when the terminal is being shown in another window. One short word, beside live / done / exited.
+    pub elsewhere: &'static str,
+    /// Under the sharing chips when this window's agent access switch is off, so nothing set there takes effect.
+    pub st_mcp_off: &'static str,
 }
 
 pub const EN: Far = Far {
@@ -104,7 +106,6 @@ pub const EN: Far = Far {
     replaced: "{machine} · its session was restarted",
     replaced_sub: "What this window shows is no longer running there. Close it and open the machine again.",
     chip_tip: "This window shows Terminal Delight on {machine} ({dest}). Its terminals run there.",
-    taken: "Shown on {machine}'s own window · ↵ brings it here",
     floor_title: "OTHER MACHINES",
     floor_none: "No other machines yet. Add one in Settings, under Machines.",
     floor_from: "Lines from",
@@ -142,6 +143,8 @@ pub const EN: Far = Far {
     st_none: "No other machines yet",
     st_none_sub: "Add one with the row above. It needs ssh access that asks for no password.",
     st_opening: "Opening {machine} in a new window…",
+    elsewhere: "elsewhere",
+    st_mcp_off: "Agent access is off in this window, so its agents are shared with nobody yet. Switch it on under Sharing & access.",
 };
 
 pub const ES: Far = Far {
@@ -151,7 +154,6 @@ pub const ES: Far = Far {
     replaced: "{machine} · su sesión se reinició",
     replaced_sub: "Lo que muestra esta ventana ya no se ejecuta allí. Ciérrala y abre la máquina de nuevo.",
     chip_tip: "Esta ventana muestra Terminal Delight en {machine} ({dest}). Sus terminales se ejecutan allí.",
-    taken: "Se muestra en la ventana de {machine} · ↵ lo trae aquí",
     floor_title: "OTRAS MÁQUINAS",
     floor_none: "Aún no hay otras máquinas. Añade una en Ajustes, en Máquinas.",
     floor_from: "Líneas desde",
@@ -189,6 +191,8 @@ pub const ES: Far = Far {
     st_none: "Aún no hay otras máquinas",
     st_none_sub: "Añade una con la fila de arriba. Necesita acceso ssh que no pida contraseña.",
     st_opening: "Abriendo {machine} en una ventana nueva…",
+    elsewhere: "en otra parte",
+    st_mcp_off: "El acceso de agentes está apagado en esta ventana, así que sus agentes aún no se comparten con nadie. Actívalo en Compartir y acceso.",
 };
 
 pub const DE: Far = Far {
@@ -198,7 +202,6 @@ pub const DE: Far = Far {
     replaced: "{machine} · die Sitzung dort wurde neu gestartet",
     replaced_sub: "Was dieses Fenster zeigt, läuft dort nicht mehr. Schließe es und öffne die Maschine erneut.",
     chip_tip: "Dieses Fenster zeigt Terminal Delight auf {machine} ({dest}). Die Terminals laufen dort.",
-    taken: "Wird im eigenen Fenster von {machine} gezeigt · ↵ holt es hierher",
     floor_title: "ANDERE MASCHINEN",
     floor_none: "Noch keine anderen Maschinen. Füge eine in den Einstellungen unter Maschinen hinzu.",
     floor_from: "Linien von",
@@ -236,6 +239,8 @@ pub const DE: Far = Far {
     st_none: "Noch keine anderen Maschinen",
     st_none_sub: "Füge eine über die Zeile oben hinzu. Sie braucht ssh-Zugang ohne Passwortabfrage.",
     st_opening: "{machine} wird in einem neuen Fenster geöffnet…",
+    elsewhere: "anderswo",
+    st_mcp_off: "Der Agentenzugriff ist in diesem Fenster aus, seine Agenten werden also noch mit niemandem geteilt. Schalte ihn unter Freigabe & Zugriff ein.",
 };
 
 pub const FR: Far = Far {
@@ -245,7 +250,6 @@ pub const FR: Far = Far {
     replaced: "{machine} · sa session a été redémarrée",
     replaced_sub: "Ce que montre cette fenêtre ne tourne plus là-bas. Fermez-la et rouvrez la machine.",
     chip_tip: "Cette fenêtre montre Terminal Delight sur {machine} ({dest}). Ses terminaux tournent là-bas.",
-    taken: "Affiché dans la fenêtre de {machine} · ↵ le ramène ici",
     floor_title: "AUTRES MACHINES",
     floor_none: "Pas encore d'autre machine. Ajoutez-en une dans Réglages, sous Machines.",
     floor_from: "Lignes depuis",
@@ -283,6 +287,8 @@ pub const FR: Far = Far {
     st_none: "Pas encore d'autre machine",
     st_none_sub: "Ajoutez-en une avec la ligne ci-dessus. Il faut un accès ssh qui ne demande pas de mot de passe.",
     st_opening: "Ouverture de {machine} dans une nouvelle fenêtre…",
+    elsewhere: "ailleurs",
+    st_mcp_off: "L'accès des agents est coupé dans cette fenêtre : ses agents ne sont encore partagés avec personne. Activez-le sous Partage et accès.",
 };
 
 pub const RU: Far = Far {
@@ -292,7 +298,6 @@ pub const RU: Far = Far {
     replaced: "{machine} · сеанс там был перезапущен",
     replaced_sub: "То, что показано в этом окне, там больше не работает. Закройте его и откройте машину снова.",
     chip_tip: "Это окно показывает Terminal Delight на {machine} ({dest}). Терминалы работают там.",
-    taken: "Показано в собственном окне {machine} · ↵ переносит сюда",
     floor_title: "ДРУГИЕ МАШИНЫ",
     floor_none: "Других машин пока нет. Добавьте одну в настройках, в разделе «Машины».",
     floor_from: "Линии от",
@@ -330,6 +335,8 @@ pub const RU: Far = Far {
     st_none: "Других машин пока нет",
     st_none_sub: "Добавьте одну строкой выше. Нужен доступ по ssh без запроса пароля.",
     st_opening: "{machine} открывается в новом окне…",
+    elsewhere: "в другом окне",
+    st_mcp_off: "Доступ агентов в этом окне выключен, поэтому его агенты пока ни с кем не делятся. Включите его в разделе «Общий доступ».",
 };
 
 pub const ZH: Far = Far {
@@ -339,7 +346,6 @@ pub const ZH: Far = Far {
     replaced: "{machine} · 那边的会话已重新启动",
     replaced_sub: "此窗口显示的内容已不在那边运行。请关闭它并重新打开该机器。",
     chip_tip: "此窗口显示 {machine}（{dest}）上的 Terminal Delight，终端在那边运行。",
-    taken: "正在 {machine} 自己的窗口中显示 · ↵ 移到这里",
     floor_title: "其他机器",
     floor_none: "还没有其他机器。请在设置的“机器”中添加。",
     floor_from: "线路起点",
@@ -377,6 +383,8 @@ pub const ZH: Far = Far {
     st_none: "还没有其他机器",
     st_none_sub: "用上面一行添加。需要无需密码的 ssh 访问。",
     st_opening: "正在新窗口中打开 {machine}…",
+    elsewhere: "在别处",
+    st_mcp_off: "此窗口的代理访问已关闭，因此它的代理尚未与任何机器共享。请在“共享与访问”中开启。",
 };
 
 pub const JA: Far = Far {
@@ -386,7 +394,6 @@ pub const JA: Far = Far {
     replaced: "{machine} · セッションが再起動されました",
     replaced_sub: "このウィンドウの内容はもう向こうでは動いていません。閉じてマシンを開き直してください。",
     chip_tip: "このウィンドウは {machine}（{dest}）の Terminal Delight を表示しています。端末は向こうで動いています。",
-    taken: "{machine} 側のウィンドウで表示中 · ↵ でここに戻す",
     floor_title: "ほかのマシン",
     floor_none: "ほかのマシンはまだありません。設定の「マシン」で追加してください。",
     floor_from: "線の出発点",
@@ -424,6 +431,8 @@ pub const JA: Far = Far {
     st_none: "ほかのマシンはまだありません",
     st_none_sub: "上の行から追加してください。パスワードを求めない ssh アクセスが必要です。",
     st_opening: "{machine} を新しいウィンドウで開いています…",
+    elsewhere: "別の場所",
+    st_mcp_off: "このウィンドウではエージェントのアクセスがオフのため、まだどこにも共有されていません。「共有とアクセス」でオンにしてください。",
 };
 
 pub const KO: Far = Far {
@@ -433,7 +442,6 @@ pub const KO: Far = Far {
     replaced: "{machine} · 세션이 다시 시작되었습니다",
     replaced_sub: "이 창에 보이는 것은 더 이상 그쪽에서 실행되지 않습니다. 창을 닫고 기기를 다시 여세요.",
     chip_tip: "이 창은 {machine}({dest})의 Terminal Delight를 보여 줍니다. 터미널은 그쪽에서 실행됩니다.",
-    taken: "{machine}의 창에서 표시 중 · ↵ 여기로 가져오기",
     floor_title: "다른 기기",
     floor_none: "아직 다른 기기가 없습니다. 설정의 기기에서 추가하세요.",
     floor_from: "선 시작",
@@ -471,6 +479,8 @@ pub const KO: Far = Far {
     st_none: "아직 다른 기기가 없습니다",
     st_none_sub: "위 행으로 추가하세요. 비밀번호를 묻지 않는 ssh 접근이 필요합니다.",
     st_opening: "{machine}을(를) 새 창에서 여는 중…",
+    elsewhere: "다른 곳",
+    st_mcp_off: "이 창의 에이전트 접근이 꺼져 있어 아직 아무와도 공유되지 않습니다. 공유 및 접근에서 켜세요.",
 };
 
 pub const HI: Far = Far {
@@ -480,7 +490,6 @@ pub const HI: Far = Far {
     replaced: "{machine} · उसका सत्र फिर से शुरू हुआ",
     replaced_sub: "इस विंडो में जो दिख रहा है वह अब वहाँ नहीं चल रहा। इसे बंद करें और मशीन फिर खोलें।",
     chip_tip: "यह विंडो {machine} ({dest}) का Terminal Delight दिखाती है। उसके टर्मिनल वहीं चलते हैं।",
-    taken: "{machine} की अपनी विंडो में दिख रहा है · ↵ इसे यहाँ लाता है",
     floor_title: "अन्य मशीनें",
     floor_none: "अभी कोई अन्य मशीन नहीं है। सेटिंग्स में मशीनें के तहत एक जोड़ें।",
     floor_from: "रेखाएँ यहाँ से",
@@ -518,4 +527,6 @@ pub const HI: Far = Far {
     st_none: "अभी कोई अन्य मशीन नहीं",
     st_none_sub: "ऊपर की पंक्ति से एक जोड़ें। इसके लिए बिना पासवर्ड वाली ssh पहुँच चाहिए।",
     st_opening: "{machine} नई विंडो में खुल रही है…",
+    elsewhere: "कहीं और",
+    st_mcp_off: "इस विंडो में एजेंट पहुँच बंद है, इसलिए इसके एजेंट अभी किसी से साझा नहीं हैं। इसे साझाकरण और पहुँच में चालू करें।",
 };

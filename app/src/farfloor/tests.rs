@@ -186,7 +186,7 @@ fn a_line_chip_cycles_through_the_rungs_and_back_to_nothing() {
     assert_eq!(lines.rung(SeatId(12), m, to), Some(Rung::See));
     assert_eq!(lines.rung(seat, m, "seat:21"), None);
     assert_eq!(lines.machines(), vec!["farbox", "other"]);
-    assert_eq!(lines.from_seat(seat).count(), 2);
+    assert_eq!(lines.lines_of(seat).count(), 2);
     lines.forget_seat(seat);
     assert_eq!(lines.saved().len(), 1);
     assert_eq!(lines.rung(SeatId(12), m, to), Some(Rung::See));

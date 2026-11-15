@@ -5706,6 +5706,23 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.agent_done(pane.clone(), window, cx);
     })
     .detach();
+    // Enter in a pane whose terminal another window is showing: take it back.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, _ev: &pane::TakeBack, window, cx| {
+            let view = pane.read(cx);
+            if let Some(id) = view.pane_id().filter(|_| view.superseded()) {
+                // A pane held through a dropped link comes back with the link,
+                // not by a press: there is nothing to take it from yet.
+                if !ws.far_lost.contains(&id) {
+                    eprintln!("terminal-delight: taking pane {id} back at a person's press");
+                    ws.reattach_pane(hostproto::PaneId(id), &pane.clone(), window, cx);
+                }
+            }
+        },
+    )
+    .detach();
     // The pane's working state flipped → repaint the mother bar so the tab's
     // 🤖 pulse starts/stops on the real edge.
     cx.subscribe(pane, |_ws, _pane, _ev: &AgentWorkingChanged, cx| {

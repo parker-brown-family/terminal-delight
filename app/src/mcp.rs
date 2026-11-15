@@ -5332,6 +5332,168 @@ mod tests {
     ///
     /// Mutation-tested: dropping the inbound list, or computing it from the
     /// caller's side (`reach_of`), fails this.
+    /// The door another machine's Floor knocks on: closed to a caller inside a
+    /// pane, never listed as a tool, and it trades a pane's pid for the name
+    /// that survives a wake before anything leaves this machine.
+    #[test]
+    fn the_far_door_is_shut_to_a_pane_and_names_agents_by_conversation_or_seat() {
+        use crate::threshing_floor::SeatId;
+        let mut proven = agent_pane(100, true);
+        proven.agent = Some("0199-conv".into());
+        proven.seat = Some(SeatId(7));
+        let mut seated = agent_pane(200, true);
+        seated.seat = Some(SeatId(8));
+        let bare = agent_pane(300, true);
+        let mut s = snap(true, true, vec![proven, seated, bare]);
+        let census = |machine: &str| {
+            json!({ "id": 1, "method": crate::farfloor::M_CENSUS, "params": { "from": machine } })
+                .to_string()
+        };
+        // The window answers with pids; three agents, one of them unnameable.
+        let window = |call: &AskCall| -> AskReply {
+            match call {
+                AskCall::Far(FarCall::Census { from }) => {
+                    assert_eq!(from, "legion");
+                    let agent = |pid: u32| json!({ "addr": format!("pid:{pid}"), "name": "x" });
+                    AskReply::Far(tool_ok(
+                        "x".into(),
+                        json!({ "machine": "here", "agents": [agent(100), agent(200), agent(300)] }),
+                    ))
+                }
+                other => panic!("only a census is asked here: {other:?}"),
+            }
+        };
+        let ask = |line: &str, s: &Snapshot| {
+            resp(
+                &handle_line_asking(line, s, no_tail, no_apply, no_search, no_open, window)
+                    .unwrap(),
+            )
+        };
+        let out = ask(&census("legion"), &s);
+        let data = &out["result"]["structuredContent"];
+        let addrs: Vec<&str> = data["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["addr"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            addrs,
+            vec!["conv:0199-conv", "seat:8"],
+            "a conversation first, then a seat"
+        );
+        assert_eq!(
+            data["unnamed"], 1,
+            "the third is counted, not named by its pid"
+        );
+        assert!(
+            !out.to_string().contains("pid:"),
+            "no pid leaves this machine"
+        );
+
+        // A machine that gives no name is turned away before the window is asked.
+        let nameless =
+            json!({ "id": 1, "method": crate::farfloor::M_CENSUS, "params": {} }).to_string();
+        assert!(ask(&nameless, &s)["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("did not give its name"));
+
+        // An agent inside a pane is refused at this door, whatever it claims.
+        s.caller = Some(Caller {
+            session: "s".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        let refused = ask(&census("legion"), &s);
+        assert!(
+            refused["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("another machine's Threshing Floor"),
+            "{refused}"
+        );
+
+        // And it is not a tool anyone is told about.
+        assert!(!tool_defs().to_string().contains("far/"));
+        assert!(
+            requires_snapshot(&census("legion")),
+            "it needs the live window"
+        );
+    }
+
+    /// A caller sees the far agents its OWN seat has a line to, apart from the
+    /// panes of this window, with the two words a verb needs to name one.
+    #[test]
+    fn list_panes_shows_a_caller_only_its_own_seats_far_agents() {
+        use crate::threshing_floor::{Reach, SeatId};
+        let mut me = agent_pane(100, true);
+        me.seat = Some(SeatId(1));
+        let mut other = agent_pane(200, true);
+        other.seat = Some(SeatId(2));
+        let mut s = snap(true, true, vec![me, other]);
+        s.caller = Some(Caller {
+            session: "s".into(),
+            pane: Some(u64::from(100u32 % 97)),
+        });
+        let far = |from: u64, agent: &str, reach: Reach, state: Option<&str>| FarSeen {
+            from: SeatId(from),
+            machine: "farbox".into(),
+            agent: agent.into(),
+            name: format!("far {agent}"),
+            state: state.map(str::to_string),
+            harness: Some("CLAUDE".into()),
+            reach,
+            heard_s: state.map(|_| 4),
+        };
+        s.far = vec![
+            far(1, "seat:22", Reach::Prompt, Some("idle")),
+            far(1, "seat:23", Reach::Seen, None),
+            far(2, "seat:24", Reach::Prompt, Some("idle")),
+            far(1, "seat:25", Reach::Hidden, Some("idle")),
+        ];
+        let r = call(&s, "list_panes", json!({}));
+        let listed: Vec<&str> = r["structuredContent"]["far_agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["agent"].as_str().unwrap())
+            .collect();
+        assert_eq!(
+            listed,
+            vec!["seat:22", "seat:23"],
+            "its own seat's, and only what it reaches"
+        );
+        let text = r.to_string();
+        assert!(text.contains("On other machines"));
+        assert!(
+            text.contains("state unknown"),
+            "a machine not heard from is not idle"
+        );
+        assert!(text.contains("not heard from yet"));
+        assert!(
+            !text.contains("seat:24"),
+            "another seat's line is not this caller's"
+        );
+        assert!(r["structuredContent"]["far_agents"][0]
+            .get("from")
+            .is_none());
+
+        // A call that names a machine must name the agent that machine's way.
+        let bad = call(
+            &s,
+            "prompt_agent",
+            json!({ "machine": "farbox", "agent": "200", "prompt": "x" }),
+        );
+        assert_eq!(bad["isError"], true);
+        assert!(bad.to_string().contains("conv: or seat:"));
+        let copy = call(
+            &s,
+            "ask_agent",
+            json!({ "machine": "farbox", "agent": "seat:22", "question": "x", "copy": true }),
+        );
+        assert!(copy.to_string().contains("not offered across machines"));
+    }
+
     #[test]
     fn floor_position_names_the_lines_out_and_in() {
         use crate::threshing_floor::{AgentAccess, Rung, SeatId};
