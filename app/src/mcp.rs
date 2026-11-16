@@ -45,10 +45,13 @@ pub struct McpConfig {
     /// Off by default — that escalation must be a deliberate choice, and the
     /// `TD_MCP_WRITE` env var or the Threshing Floor's "writes" switch sets it.
     pub writable: bool,
-    /// High trust agentic: an agent a person started may open a tab, start
-    /// other agents in it and hold a line to each (`start_team`, see
-    /// [`crate::team`]). Off by default, and off in every file written before
-    /// it existed. The one switch that lets an agent start an agent.
+    /// High trust agentic: with this on, a pane a person promoted to
+    /// orchestrator may open a tab, start other agents in it and hold a line
+    /// to each (`start_team`, see [`crate::team`]). Off by default, and off in
+    /// every file written before it existed. Saved only when on, so a file
+    /// whose person never turned it on reads as it did before this switch
+    /// existed, and a swap's comparison of saved settings sees no change.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
     pub team: bool,
 }
 
@@ -4878,6 +4881,29 @@ mod tests {
         assert!(!c.enabled, "MCP must ship disabled");
         assert_eq!(c.expose, Expose::AgentsOnly, "default policy = safest");
         assert!(c.events);
+    }
+
+    /// High trust agentic is saved only when a person turned it on. Saving
+    /// `team = false` for everyone who never touched it changed every
+    /// session file on the first save, and the live window swap, which
+    /// compares saved settings before and after, timed out on exactly that
+    /// difference (2026-11-16). A file from before the switch reads as off,
+    /// and one with it on keeps it.
+    #[test]
+    fn the_team_switch_is_saved_only_when_on_and_reads_off_when_absent() {
+        let off = toml::to_string(&McpConfig::default()).unwrap();
+        assert!(
+            !off.contains("team"),
+            "an untouched switch writes nothing: {off}"
+        );
+        let on = McpConfig {
+            team: true,
+            ..McpConfig::default()
+        };
+        let text = toml::to_string(&on).unwrap();
+        assert!(text.contains("team = true"), "{text}");
+        assert!(toml::from_str::<McpConfig>(&text).unwrap().team);
+        assert!(!toml::from_str::<McpConfig>("enabled = true").unwrap().team);
     }
 
     #[test]
