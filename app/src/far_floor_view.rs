@@ -122,11 +122,11 @@ pub(crate) fn is_far_sender(pane: u64) -> bool {
 }
 
 fn far_ok(text: String, structured: serde_json::Value) -> mcp::AskReply {
-    mcp::AskReply::Far(mcp::tool_ok(text, structured))
+    mcp::AskReply::Said(mcp::tool_ok(text, structured))
 }
 
 fn far_no(text: &str) -> mcp::AskReply {
-    mcp::AskReply::Far(mcp::tool_err(text))
+    mcp::AskReply::Said(mcp::tool_err(text))
 }
 
 /// A far stage in one sentence, for the agent that sent the prompt.
@@ -171,7 +171,7 @@ impl Workspace {
                     far_sender_pane(from),
                     crate::prompt::now_ms(),
                 ) {
-                    Some(status) => mcp::AskReply::Far(mcp::prompt_said(&status)),
+                    Some(status) => mcp::AskReply::Said(mcp::prompt_said(&status)),
                     None => far_no("no prompt by that number came from your machine."),
                 }
             }
@@ -284,7 +284,7 @@ impl Workspace {
         let sender_pane = far_sender_pane(&p.from);
         if let Some(key) = p.key.as_deref() {
             if let Some(status) = self.prompts.status_for_key(sender_pane, key, now) {
-                return mcp::AskReply::Far(mcp::prompt_said(&status));
+                return mcp::AskReply::Said(mcp::prompt_said(&status));
             }
         }
         let brief = crate::prompt::clean(&p.prompt);
@@ -372,10 +372,10 @@ impl Workspace {
                     id.0, p.from
                 );
                 cx.notify();
-                mcp::AskReply::Far(mcp::prompt_said(&status))
+                mcp::AskReply::Said(mcp::prompt_said(&status))
             }
             Ok(crate::prompt::Taken::Again(status)) => {
-                mcp::AskReply::Far(mcp::prompt_said(&status))
+                mcp::AskReply::Said(mcp::prompt_said(&status))
             }
             Err(r) => {
                 entry.refusal = serde_json::to_value(&r)
@@ -1042,7 +1042,17 @@ impl Workspace {
             for leaf in leaves {
                 let v = leaf.read(cx);
                 if let Some(seat) = v.seat.filter(|_| v.party().is_agent) {
-                    out.push((seat, self.pane_name(leaf, cx).full()));
+                    // The shortest word that tells this seat from its
+                    // neighbours: the pane's own name when it has one (a team
+                    // member's role), else its tab's. Two members of one team
+                    // share a tab, and both read as the team's name otherwise.
+                    let name = self.pane_name(leaf, cx);
+                    let label = v
+                        .name
+                        .clone()
+                        .filter(|n| !n.trim().is_empty())
+                        .unwrap_or(name.tab);
+                    out.push((seat, label));
                 }
             }
         }
@@ -1095,7 +1105,7 @@ impl Workspace {
             for (i, (seat, name)) in seats.iter().enumerate() {
                 let lit = Some(*seat) == from;
                 let seat = *seat;
-                let label = name.rsplit(" \u{b7} ").last().unwrap_or(name).to_string();
+                let label = name.clone();
                 row = row.child(
                     div()
                         .id(("far-from", i))

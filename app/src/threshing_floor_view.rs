@@ -1225,6 +1225,13 @@ impl Workspace {
                 threshing_floor::Role::Worker => ui.floor_role_worker,
                 threshing_floor::Role::Alone => ui.floor_role_alone,
             };
+            // A pane a person promoted wears a star before its role: the role
+            // word is what its lines make it, the star is what it may do.
+            let role = if self.team.orchestrators.contains(&seat) {
+                format!("\u{2605} {role}")
+            } else {
+                role.to_string()
+            };
             let second = model_line(
                 &f.program,
                 f.model.as_deref(),
@@ -2709,7 +2716,67 @@ impl Workspace {
                     })),
             );
         }
+        // Orchestrator: the one row that widens what the agent in this pane
+        // may do. Offered for an agent pane only, and it says when the
+        // window's own switch is off, since promotion alone starts nothing.
+        if leaf.read(cx).hosts_agent() {
+            let promoted = leaf
+                .read(cx)
+                .seat
+                .is_some_and(|s| self.team.orchestrators.contains(&s));
+            let t = self.lang.strings().team;
+            let label = format!(
+                "{} {}{}",
+                if promoted { "\u{25cf}" } else { "\u{25cb}" },
+                t.orch_row,
+                if self.mcp.team {
+                    String::new()
+                } else {
+                    format!(" \u{b7} {}", t.orch_needs_switch)
+                }
+            );
+            let leaf = leaf.clone();
+            menu = menu.child(
+                row(label)
+                    .id("floor-context-orchestrator")
+                    .debug_selector(|| "floor-context-orchestrator".to_string())
+                    .on_click(cx.listener(move |ws, _, _, cx| {
+                        cx.stop_propagation();
+                        ws.team_promote(&leaf, !promoted, cx);
+                        ws.floor_context = None;
+                    })),
+            );
+        }
         Some(deferred(anchored().position(*pos).snap_to_window().child(menu)).into_any_element())
+    }
+
+    /// A person promotes a pane to orchestrator, or takes that back. Only an
+    /// orchestrator may start a team, and only this gesture makes one: no
+    /// verb, no socket command and no agent reaches it. A pane nobody has
+    /// seated is given a seat, because the promotion is kept by seat so that
+    /// it survives the pane's number changing.
+    pub(super) fn team_promote(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        promote: bool,
+        cx: &mut Context<Self>,
+    ) {
+        let seat = match leaf.read(cx).seat {
+            Some(seat) => seat,
+            None if promote => {
+                let seat = threshing_floor::SeatId::mint();
+                leaf.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+                seat
+            }
+            None => return,
+        };
+        if promote {
+            self.team.orchestrators.insert(seat);
+        } else {
+            self.team.orchestrators.remove(&seat);
+        }
+        self.save(cx);
+        cx.notify();
     }
 
     /// Modal keyboard capture keeps all editing away from the underlying PTY.
@@ -3863,6 +3930,54 @@ impl Workspace {
         self.threshing_floor_set_org(org, cx);
     }
 
+    /// Seat the agents a coordinator's `start_team` started, and draw the
+    /// coordinator's line to each.
+    ///
+    /// **The one place an agent's request seats a pane or draws a line.**
+    /// Everywhere else on the Floor a seat and a line are a person's gesture.
+    /// This runs only for a team `team::decide` allowed, which means a person
+    /// switched High trust agentic on for this window, and it draws only
+    /// downward: from the coordinator to an agent it has just started, at the
+    /// rung it asked for. It draws no line back, none between members, and
+    /// none to any pane that was already here. Each line is marked as a team
+    /// line ([`threshing_floor::Line::team`]), so nobody mistakes it for one a
+    /// person drew.
+    ///
+    /// The members go in a new org named after the team. A coordinator with
+    /// no org of its own joins it, at the top; one a person already seated
+    /// somewhere stays where the person put it, and its lines cross.
+    pub(super) fn team_seat_and_line(
+        &mut self,
+        coordinator: &Entity<TerminalView>,
+        members: &[Entity<TerminalView>],
+        spec: &crate::team::Spec,
+        cx: &mut Context<Self>,
+    ) -> Vec<threshing_floor::SeatId> {
+        let Some(org) = self.floor_orgs.create(&spec.name) else {
+            return vec![];
+        };
+        let from = match coordinator.read(cx).seat {
+            Some(seat) => seat,
+            None => {
+                let seat = threshing_floor::SeatId::mint();
+                coordinator.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+                seat
+            }
+        };
+        if !self.floor_orgs.has_membership(from) {
+            self.floor_orgs.assign(from, org);
+        }
+        let mut seats = Vec::with_capacity(members.len());
+        for (pane, member) in members.iter().zip(&spec.members) {
+            let seat = threshing_floor::SeatId::mint();
+            pane.update(cx, |v, cx| v.set_seat(Some(seat), cx));
+            self.floor_orgs.assign(seat, org);
+            self.chart.draw_team(from, seat, member.line);
+            seats.push(seat);
+        }
+        seats
+    }
+
     /// A pane dropped on an org's region on the System Map. A pool agent
     /// (sleeping ones included) is seated in that org on the spot, and the map
     /// keeps its view and any builder draft, because the person is still
@@ -4081,7 +4196,7 @@ impl Workspace {
         levels
     }
 
-    fn threshing_floor_seat_leaf(
+    pub(super) fn threshing_floor_seat_leaf(
         &self,
         seat: threshing_floor::SeatId,
         cx: &App,
@@ -6143,6 +6258,7 @@ impl Workspace {
                 ),
             },
             mcp::AskCall::Far(call) => self.far_bridge(call, cx),
+            mcp::AskCall::Team { caller_pane, spec } => self.team_request(*caller_pane, spec, cx),
         }
     }
 
@@ -6210,7 +6326,17 @@ impl Workspace {
         // Its last message can be read back from a Claude or Codex
         // conversation; the header says only what will happen.
         let returns = askcopy::Program::of_mode(t.read(cx).mode.label()).is_some();
-        let header = crate::prompt::header(id, &sender, c.read(cx).shell_pid(), returns);
+        // A line a coordinator's `start_team` drew is not a line a person
+        // drew, and the worker is told which it is.
+        let team_line = from
+            .zip(to)
+            .and_then(|(f, t)| self.chart.line(f, t))
+            .is_some_and(|l| l.team);
+        let header = if team_line {
+            crate::prompt::header_team(id, &sender, c.read(cx).shell_pid(), returns)
+        } else {
+            crate::prompt::header(id, &sender, c.read(cx).shell_pid(), returns)
+        };
         let taken = self.prompts.send_durable(
             crate::prompt::NewPrompt {
                 id,
@@ -7025,9 +7151,14 @@ impl Workspace {
         self.floor_move = None;
         self.floor_drop = None;
         self.floor_context = None;
+        // An agent a team started is still one after it leaves the Floor:
+        // the mark moves from its seat to the pane, so it keeps counting
+        // under the window's limit while it runs.
+        let member = self.team.teams.is_member(seat);
         leaf.update(cx, |v, cx| {
             v.set_agent_access(threshing_floor::AgentAccess::OffLimits, cx);
             v.set_seat(None, cx);
+            v.team_member |= member;
         });
         self.floor_feedback = Some(lang::fill(
             self.lang.strings().ui.floor_removed,

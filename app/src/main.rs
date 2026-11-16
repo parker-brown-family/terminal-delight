@@ -139,6 +139,8 @@ mod slot;
 mod sticky;
 mod surface;
 mod surfacefeed;
+mod team;
+mod team_view;
 mod tenancy;
 mod term;
 mod terminal_state;
@@ -3021,6 +3023,16 @@ struct StateFile {
     /// reaches nothing.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     far_lines: Vec<farfloor::FarLine>,
+    /// The teams agents in this window started under High trust agentic (see
+    /// [`team`]): who started whom, by seat. Saved because it is what stops
+    /// an agent that was started by another from starting a team of its own
+    /// after a restart. Absent: no agent has started one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    teams: Vec<team::Record>,
+    /// The seats a person promoted to orchestrator, the only panes that may
+    /// start a team (see [`team`]). Absent: nobody is promoted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    orchestrators: Vec<threshing_floor::SeatId>,
     /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
     ///
     /// Saved under the key it had before the Threshing Floor was renamed, so a build
@@ -3148,6 +3160,8 @@ impl Default for StateFile {
             lines: vec![],
             org_lines: vec![],
             far_lines: vec![],
+            teams: vec![],
+            orchestrators: vec![],
             floor_orgs: None,
             floor_org: None,
             ask_press_tokens: None,
@@ -5555,6 +5569,9 @@ struct Workspace {
     /// their agents, what each machine last said about who is there, and the
     /// prompts sent across (see [`far_floor_view`]).
     far_floor: far_floor_view::FarFloor,
+    /// Teams that agents here have started, and those allowed and waiting
+    /// for a pass with a window (see [`team_view`]).
+    team: team_view::TeamState,
     /// What this window is saying about that road, when it has something to
     /// say. `None` on a local window, and on a far one whose link is up.
     far_notice: Option<FarNotice>,
@@ -5705,6 +5722,15 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     cx.subscribe_in(pane, window, |ws, pane, _ev: &AgentDone, window, cx| {
         ws.agent_done(pane.clone(), window, cx);
     })
+    .detach();
+    // The Orchestrator row on a pane's own menu: the window keeps the record.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, ev: &pane::PromoteOrchestrator, _window, cx| {
+            ws.team_promote(&pane.clone(), ev.0, cx);
+        },
+    )
     .detach();
     // Enter in a pane whose terminal another window is showing: take it back.
     cx.subscribe_in(
@@ -7198,6 +7224,10 @@ impl Workspace {
                 ..Default::default()
             },
             far_notice: None,
+            team: team_view::TeamState::from_saved(
+                saved.teams.clone(),
+                saved.orchestrators.clone(),
+            ),
             should_move: false,
             ghosts: Vec::new(),
             next_ghost_id: 0,
@@ -7342,6 +7372,7 @@ impl Workspace {
         if !scratch && !demo {
             ws.far_reload_machines();
             Self::watch_far_floor(window, cx);
+            Self::watch_teams(window, cx);
         }
         // The right-bar flyout's poll: the tab on screen is read again when
         // it is due, and nothing is read while the flyout is shut.
@@ -9451,6 +9482,8 @@ impl Workspace {
             lines: self.chart.saved().to_vec(),
             org_lines: self.chart.org_lines().to_vec(),
             far_lines: self.far_floor.lines.saved().to_vec(),
+            teams: self.team.teams.saved().to_vec(),
+            orchestrators: self.team.orchestrators.iter().copied().collect(),
             floor_orgs: Some(self.floor_orgs.saved().to_vec()),
             floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
@@ -32960,6 +32993,9 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
+        // What a pane's own menu shows of promotion, for the panes to read as
+        // they draw (see `team_view::publish`).
+        team_view::publish(self.mcp.team, &self.team.orchestrators);
         // The left bar follows UI CONFIG, which a design can move under it
         // (Clean asks for tabs across the top). Read once a frame, so the rest
         // of the pass — and the key handlers between passes — see one answer.
@@ -46450,9 +46486,78 @@ mod tests {
         );
     }
 
+    /// High trust agentic is the one way an agent's request seats a pane or
+    /// draws a line, and it is held to one function, one direction and one
+    /// switch. `team_seat_and_line` is the only caller of `draw_team`; only
+    /// `team_start` calls it; `team_start` runs only from `team_drain`, which
+    /// reads the switch again; and the request is decided by `team::decide`
+    /// with that switch. A second caller of any of these is a second door.
+    #[test]
+    fn an_agent_draws_a_line_only_to_an_agent_it_started_and_only_with_the_switch_on() {
+        let cut = |src: &'static str| -> &'static str {
+            &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+        };
+        let floor = cut(include_str!("threshing_floor_view.rs"));
+        let team = cut(include_str!("team_view.rs"));
+        let everything = [
+            shipped_src(),
+            floor,
+            team,
+            cut(include_str!("mcp.rs")),
+            cut(include_str!("mcp_transport.rs")),
+            cut(include_str!("ctl.rs")),
+            cut(include_str!("far_floor_view.rs")),
+            cut(include_str!("pane.rs")),
+        ];
+        let count = |needle: &str| -> usize {
+            everything
+                .iter()
+                .map(|src| {
+                    src.lines()
+                        .filter(|l| !l.trim_start().starts_with("//") && l.contains(needle))
+                        .count()
+                })
+                .sum()
+        };
+        assert_eq!(count(".chart.draw_team("), 1, "one place draws a team line");
+        assert!(floor.contains("self.chart.draw_team(from, seat, member.line)"));
+        assert_eq!(count(".team_seat_and_line("), 1, "one caller seats a team");
+        assert!(team.contains("self.team_seat_and_line(&coordinator, &panes, &spec, cx)"));
+        assert_eq!(count(".team_start("), 1, "one caller starts a team");
+        // The drain reads the switch again before it starts anything.
+        let drain = &team[team.find("fn team_drain(").expect("the drain")..];
+        let drain = &drain[..drain.find("\n    }\n").expect("its end")];
+        assert!(
+            drain.contains("if !self.mcp.team || !self.mcp.enabled {")
+                && drain.find("if !self.mcp.team").unwrap()
+                    < drain.find("self.team_start(").unwrap(),
+            "a team allowed a moment ago is not started once the switch is off"
+        );
+        // The request is decided by the rule, with the live switch.
+        let request = &team[team.find("fn team_request(").expect("the request")..];
+        let request = &request[..request.find("\n    }\n").expect("its end")];
+        assert!(request.contains("trusted: self.mcp.team,"));
+        assert!(request.contains("team::decide(&asker, spec.members.len())"));
+        // The line it draws is downward only: from the coordinator, to a seat
+        // minted in the same loop for a pane it was handed.
+        let seat = &floor[floor.find("fn team_seat_and_line(").expect("the function")..];
+        let seat = &seat[..seat.find("\n    }\n").expect("its end")];
+        assert_eq!(
+            seat.matches(".chart.").count(),
+            1,
+            "one chart call, the downward line"
+        );
+        assert!(!seat.contains(".chart.draw("), "never an unmarked line");
+    }
+
     /// Seats and lines are a person's: only the Threshing Floor panel seats a pane or
     /// draws, changes and erases a line. The control socket and MCP answer
     /// agents, and a chart an agent could redraw would be decoration.
+    ///
+    /// One exception, on purpose, and in the same file so this list still
+    /// holds: under High trust agentic a coordinator's `start_team` seats the
+    /// agents it started and draws its own line to each. That is pinned by
+    /// `an_agent_draws_a_line_only_to_an_agent_it_started_and_only_with_the_switch_on`.
     #[test]
     fn only_the_threshing_floor_and_the_rail_draw_lines() {
         let cut = |src: &'static str, marker: &str| -> &'static str {
@@ -46491,6 +46596,7 @@ mod tests {
                 }
                 for verb in [
                     ".chart.draw(",
+                    ".chart.draw_team(",
                     ".chart.cycle_direction(",
                     ".chart.erase(",
                     ".chart.forget_seat(",
@@ -46511,6 +46617,7 @@ mod tests {
                 "main.rs: .chart.grant_bypass(",
                 "threshing_floor_view.rs: .chart.cycle_direction(",
                 "threshing_floor_view.rs: .chart.draw(",
+                "threshing_floor_view.rs: .chart.draw_team(",
                 "threshing_floor_view.rs: .chart.erase(",
                 "threshing_floor_view.rs: .chart.forget_seat(",
                 "threshing_floor_view.rs: .set_seat(",

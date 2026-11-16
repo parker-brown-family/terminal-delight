@@ -2250,6 +2250,25 @@ impl Workspace {
                             ),
                         ),
                         row(s.r_expose, s.r_expose_sub, picker.into()),
+                        // High trust agentic: the one switch that lets an
+                        // agent start an agent (`team`). It sits with the
+                        // other switches about what agents may do here, and
+                        // it does nothing while the server above is off.
+                        row(
+                            t.team.st_title,
+                            t.team.st_sub,
+                            self.st_switch(
+                                th,
+                                sk1,
+                                "st-mcp-team",
+                                self.mcp.team,
+                                |ws, cx| {
+                                    ws.mcp.team = !ws.mcp.team;
+                                    ws.save(cx);
+                                },
+                                cx,
+                            ),
+                        ),
                         row(
                             s.r_events,
                             s.r_events_sub,

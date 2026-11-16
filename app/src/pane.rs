@@ -2953,6 +2953,10 @@ pub struct Presentation {
     /// back open to agents.
     seat: Option<crate::threshing_floor::SeatId>,
     agent_access: crate::threshing_floor::AgentAccess,
+    /// A team started this pane. A woken agent is still one a team started,
+    /// and still counts under the window's limit (cross-provider review,
+    /// round two: a wake used to clear it, and an unseat then freed room).
+    team_member: bool,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -3009,6 +3013,10 @@ pub struct TerminalView {
     /// and stops changing, which is what losing a steal is supposed to look
     /// like, and is emphatically not what a pane whose shell exited looks like.
     superseded: bool,
+    /// A team started this pane (`start_team`). Counted under the window's
+    /// limit of agent-started agents for as long as the pane lives, seated or
+    /// not. Not saved: after a restart the team's saved seats count instead.
+    pub(crate) team_member: bool,
     /// What this pane was built from: the directory and the command that would
     /// put it back. Kept because on an attached pane it is the only copy — the
     /// window is a process away from the terminal, and a reading that comes
@@ -4220,6 +4228,12 @@ impl gpui::EventEmitter<AgentDone> for TerminalView {}
 pub struct TakeBack;
 impl gpui::EventEmitter<TakeBack> for TerminalView {}
 
+/// A person chose the Orchestrator row on this pane's own menu: promote the
+/// pane (`true`) or take the promotion back. The workspace does it, because
+/// who is promoted is the window's record, kept by seat (`team_view`).
+pub struct PromoteOrchestrator(pub bool);
+impl gpui::EventEmitter<PromoteOrchestrator> for TerminalView {}
+
 /// A cached attention state flipped (either direction): "agent is working"
 /// (the 🤖 pulse) or "agent needs a human" (the ❓ pulse). The workspace
 /// listens so the mother bar repaints on the actual edge — the pulse
@@ -4850,6 +4864,7 @@ impl TerminalView {
             doc_opened_by: self.doc_opened_by,
             seat: self.seat,
             agent_access: self.agent_access,
+            team_member: self.team_member,
         }
     }
 
@@ -4890,6 +4905,7 @@ impl TerminalView {
         // A restore, not a decision: the person's own seat and mark, carried.
         self.seat = from.seat;
         self.agent_access = from.agent_access;
+        self.team_member = from.team_member;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -5751,6 +5767,7 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
+            team_member: false,
             agent_access: crate::threshing_floor::AgentAccess::Open,
             model_label: None,
             seat: None,
@@ -7985,17 +8002,6 @@ impl TerminalView {
         // asserting a question the person has already dealt with.
         self.ack_needs_input(cx);
 
-        // This terminal is being shown in another window, so nothing typed
-        // here reaches it. Enter is the one key that does something: it asks
-        // for the terminal back. Every other key is dropped where it used to
-        // be dropped, but no longer silently, since the header says where the
-        // terminal is.
-        if self.superseded && ks.key == "enter" && !ks.modifiers.modified() {
-            cx.emit(TakeBack);
-            cx.stop_propagation();
-            return;
-        }
-
         let k = keylayer_key(ks);
         let up = self.layers_up(cx);
         let handled = match crate::keylayer::route(&k, &up) {
@@ -8006,6 +8012,15 @@ impl TerminalView {
             // the outer bar's `?` button.
             crate::keylayer::Layer::Help => {
                 cx.emit(OpenHelp);
+                Handled::Consumed
+            }
+            // This terminal is being shown in another window, so nothing
+            // typed here reaches it. Enter is the one key that does
+            // something: it asks for the terminal back. Every other key is
+            // dropped where it used to be, but no longer silently, since the
+            // header says where the terminal is.
+            crate::keylayer::Layer::Elsewhere => {
+                cx.emit(TakeBack);
                 Handled::Consumed
             }
             // alt+k flips this pane between its two faces, from either side. It
@@ -8108,6 +8123,7 @@ impl TerminalView {
     pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
         let reading = self.reading_view(cx).is_some();
         crate::keylayer::Up {
+            elsewhere: self.superseded,
             ask: self.ask_outside.is_some(),
             reading,
             agent: self.mode.is_agent(),
@@ -11986,6 +12002,34 @@ impl Render for TerminalView {
                         )
                     })
                     .collect::<Vec<_>>()
+                })
+                // Orchestrator: whether the agent in this pane may start
+                // agents of its own. Here because the pane is the first place
+                // a person looks for it; the same row is on the pane's card
+                // on the Threshing Floor. A person's click, like the three
+                // rows above, and for an agent pane only.
+                .when(self.hosts_agent(), |menu| {
+                    let t = crate::lang::current().strings().team;
+                    let (switch_on, promoted) = crate::team_view::published(self.seat);
+                    let label = format!(
+                        "{} {}{}",
+                        if promoted { "\u{25cf}" } else { "\u{25cb}" },
+                        t.orch_row,
+                        if switch_on {
+                            String::new()
+                        } else {
+                            format!(" \u{b7} {}", t.orch_needs_switch)
+                        }
+                    );
+                    menu.child(row(&label, true).id("ctx-orchestrator").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _, _, cx| {
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.emit(PromoteOrchestrator(!promoted));
+                            cx.notify();
+                        }),
+                    ))
                 });
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });

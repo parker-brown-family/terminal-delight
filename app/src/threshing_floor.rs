@@ -318,6 +318,13 @@ pub struct Line {
     /// unlimited — absent here means "no count applies", never zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts_left: Option<u8>,
+    /// No person drew this one. A coordinator's `start_team` drew it to an
+    /// agent it started, in a window where a person had switched High trust
+    /// agentic on (see `team`). Kept on the line so that whoever it reaches
+    /// is told the truth about how it came to be, and so a person reading
+    /// the file can tell their own lines from an agent's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
 }
 
 impl Line {
@@ -487,6 +494,19 @@ impl Chart {
             to,
             rung: RungWord::Known(rung),
             prompts_left: None,
+            team: false,
+        });
+    }
+
+    /// The line a coordinator holds to an agent its `start_team` started.
+    /// Not a person's line, and marked so ([`Line::team`]).
+    pub fn draw_team(&mut self, from: SeatId, to: SeatId, rung: Rung) {
+        self.put(Line {
+            from,
+            to,
+            rung: RungWord::Known(rung),
+            prompts_left: None,
+            team: true,
         });
     }
 
@@ -527,6 +547,7 @@ impl Chart {
             to,
             rung: RungWord::Known(Rung::Ask),
             prompts_left: Some(prompts),
+            team: false,
         });
     }
 
@@ -1356,6 +1377,7 @@ mod tests {
                     to: b,
                     rung: rung.clone(),
                     prompts_left,
+                    team: false,
                 }],
                 vec![],
             );

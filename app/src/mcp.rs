@@ -45,6 +45,11 @@ pub struct McpConfig {
     /// Off by default — that escalation must be a deliberate choice, and the
     /// `TD_MCP_WRITE` env var or the Threshing Floor's "writes" switch sets it.
     pub writable: bool,
+    /// High trust agentic: an agent a person started may open a tab, start
+    /// other agents in it and hold a line to each (`start_team`, see
+    /// [`crate::team`]). Off by default, and off in every file written before
+    /// it existed. The one switch that lets an agent start an agent.
+    pub team: bool,
 }
 
 impl Default for McpConfig {
@@ -54,6 +59,7 @@ impl Default for McpConfig {
             expose: Expose::AgentsOnly,
             events: true,
             writable: false,
+            team: false,
         }
     }
 }
@@ -1423,6 +1429,11 @@ pub enum AskCall {
     },
     /// A call that crosses machines, in either direction (see `farfloor`).
     Far(FarCall),
+    /// An agent asks to start a team of its own (see `team`).
+    Team {
+        caller_pane: u64,
+        spec: crate::team::Spec,
+    },
 }
 
 /// What crosses between two machines' Threshing Floors.
@@ -1468,7 +1479,9 @@ pub enum AskReply {
     Copy(crate::threshing_floor::CopyStatus),
     Prompt(crate::prompt::PromptStatus),
     Refused(crate::threshing_floor::Refusal),
-    Far(Value),
+    /// The whole tool result, as the window worded it: for a call that
+    /// crossed machines, and for a team being started.
+    Said(Value),
 }
 
 /// The `ask` for a transport with no window behind it: every ask is refused.
@@ -1760,8 +1773,8 @@ where
     };
     let census = matches!(call, FarCall::Census { .. });
     match ask(&AskCall::Far(call)) {
-        AskReply::Far(value) if census => Ok(far_census_named(value, snap)),
-        AskReply::Far(value) => Ok(value),
+        AskReply::Said(value) if census => Ok(far_census_named(value, snap)),
+        AskReply::Said(value) => Ok(value),
         AskReply::Refused(r) => Ok(tool_err(r.why())),
         _ => Ok(tool_err(
             "this window has no Threshing Floor to answer from",
@@ -1821,7 +1834,7 @@ where
     A: Fn(&AskCall) -> AskReply,
 {
     match ask(&AskCall::Far(call)) {
-        AskReply::Far(value) => value,
+        AskReply::Said(value) => value,
         AskReply::Refused(r) => tool_err(r.why()),
         _ => tool_err("this window has no Threshing Floor to answer from"),
     }
@@ -1896,7 +1909,7 @@ fn initialize_result(params: &Value) -> Value {
 }
 
 fn tool_defs() -> Value {
-    json!([
+    let mut defs = json!([
         {
             "name": "list_panes",
             "description":
@@ -2319,7 +2332,50 @@ fn tool_defs() -> Value {
                 "additionalProperties": false
             }
         }
-    ])
+    ]);
+    // Kept out of the one literal above: it nests a list of objects, and the
+    // literal is already as deep as the macro that reads it will go.
+    if let Some(list) = defs.as_array_mut() {
+        list.push(start_team_def());
+    }
+    defs
+}
+
+/// `start_team`'s definition (see [`crate::team`]).
+fn start_team_def() -> Value {
+    json!({
+        "name": "start_team",
+        "description": "Start a team of your own: open a new tab and start up to four other agents in it, each a real terminal pane your person can watch, with the program, model, effort and first prompt you name. You are seated on the Threshing Floor if you were not, each agent you start is seated in a new org named after the team, and you get a line to each (prompt by default), so you can then use prompt_agent, ask_agent and prompt_status on them. ONLY when your person has switched on High trust agentic for this window (Settings, Sharing & access) AND promoted your pane to orchestrator on the Threshing Floor; otherwise this refuses and says which is missing, and you should ask your person. An agent started this way is not an orchestrator and cannot start a team unless a person promotes it. The team starts within a second or two of this answer; read list_panes for each agent's `agent` id before you prompt it.",
+        "inputSchema": {
+            "type": "object",
+            "properties": {
+                "name": { "type": "string", "description": "What to call the team, up to 40 characters. It names the new tab and the org." },
+                "project": { "type": "string", "description": "The folder every agent starts in, as an absolute path. Omit to use the folder your own pane is in." },
+                "agents": {
+                    "type": "array",
+                    "minItems": 1,
+                    "maxItems": 4,
+                    "description": "The agents to start, one pane each.",
+                    "items": {
+                        "type": "object",
+                        "properties": {
+                            "role": { "type": "string", "description": "What to call this agent, up to 40 characters: reviewer, research, ideas. Each role once." },
+                            "harness": { "type": "string", "description": "The agent program: claude, codex, or local (the person's own configured command)." },
+                            "model": { "type": "string", "description": "The model, in the word that program takes for it. Omit for the program's own default." },
+                            "effort": { "type": "string", "description": "The reasoning effort, in the word that program takes: low, medium, high, and so on. Omit for its default." },
+                            "prompt": { "type": "string", "description": "What this agent is told first, up to 32,000 characters. Omit to start it waiting at its prompt." },
+                            "line": { "type": "string", "enum": ["see", "read", "ask", "prompt"], "description": "How far your line to this agent reaches. Default prompt." },
+                            "permissions": { "type": "string", "enum": ["repo", "machine", "anywhere"], "description": "How far this agent may act without asking its person: repo (edits inside the project), machine (the program's middle setting), anywhere (whatever this machine's own configuration says). Default anywhere." }
+                        },
+                        "required": ["role", "harness"],
+                        "additionalProperties": false
+                    }
+                }
+            },
+            "required": ["name", "agents"],
+            "additionalProperties": false
+        }
+    })
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -2372,6 +2428,7 @@ where
         "ask_agent" => ask_agent(&args, snap, tail, ask),
         "ask_answer" => ask_answer(&args, snap, ask),
         "prompt_agent" => prompt_agent(&args, snap, ask),
+        "start_team" => start_team(&args, snap, ask),
         "prompt_status" => prompt_status(&args, snap, ask),
         "present_surface" => present_surface(&args, snap, apply),
         "surface_catalogue" => surface_catalogue(),
@@ -2437,6 +2494,8 @@ fn provenance(tool: &str) -> Option<Provenance> {
         // The window's own stages and numbers; the worker's state is a word
         // the window chose from its screen.
         "prompt_agent" => Own,
+        // What was asked for, as the window took it: the caller's own words.
+        "start_team" => Own,
         // Numbers and rungs the window computed. The org's name is the
         // person's, typed on the Floor; no program or agent writes one.
         "floor_position" => Own,
@@ -3054,7 +3113,7 @@ where
         AskReply::Cheap(a) => a,
         AskReply::Copy(status) => return copy_status(&status),
         AskReply::Refused(refusal) => return refused(&refusal),
-        AskReply::Prompt(_) | AskReply::Far(_) => {
+        AskReply::Prompt(_) | AskReply::Said(_) => {
             return tool_err("ask_agent asks; another kind of answer came back")
         }
     };
@@ -3174,7 +3233,7 @@ where
         AskReply::Copy(status) => copy_status(&status),
         AskReply::Refused(refusal) => refused(&refusal),
         AskReply::Cheap(_) => tool_err("ask_answer reads copies; a cheap answer was already given"),
-        AskReply::Prompt(_) | AskReply::Far(_) => {
+        AskReply::Prompt(_) | AskReply::Said(_) => {
             tool_err("ask_answer reads copies; read a prompt with prompt_status")
         }
     }
@@ -3253,6 +3312,53 @@ where
     }
 }
 
+/// `start_team`: an agent asks to start agents of its own. The window decides
+/// (`Workspace::team_request`): whether High trust agentic is on, whether the
+/// caller is an agent a person started, and whether there is room. This reads
+/// the request and says what the window said.
+fn start_team<A>(args: &Value, snap: &Snapshot, ask: &A) -> Value
+where
+    A: Fn(&AskCall) -> AskReply,
+{
+    if !snap.config.enabled {
+        return tool_err("MCP exposure is disabled.");
+    }
+    let me = match snap.caller_pane("start_team") {
+        Ok(p) => p,
+        Err(why) => return tool_err(&why),
+    };
+    let Some(caller_pane) = me.pane_id else {
+        return tool_err("the pane you are calling from has no host pane id, so it has no seat");
+    };
+    // Said before the request is read: an agent in a window where this is off
+    // is owed the one sentence that matters, not a note about its arguments.
+    if !snap.config.team {
+        return tool_err(
+            &crate::team::decide(
+                &crate::team::Asker {
+                    mcp: true,
+                    trusted: false,
+                    is_agent: true,
+                    promoted: false,
+                    is_member: false,
+                    live: 0,
+                },
+                0,
+            )
+            .unwrap_err(),
+        );
+    }
+    let spec = match crate::team::parse(args, me.cwd.as_deref().map(std::path::Path::new)) {
+        Ok(spec) => spec,
+        Err(why) => return tool_err(&why),
+    };
+    match ask(&AskCall::Team { caller_pane, spec }) {
+        AskReply::Said(value) => value,
+        AskReply::Refused(r) => tool_err(r.why()),
+        _ => tool_err("this window has no Threshing Floor to answer from"),
+    }
+}
+
 /// `prompt_status`: a prompt's progress, read by the pane that sent it,
 /// held up to `wait_seconds` for its end.
 fn prompt_status<A>(args: &Value, snap: &Snapshot, ask: &A) -> Value
@@ -3294,7 +3400,7 @@ where
             }
             AskReply::Refused(refusal) => return prompt_refused(&refusal),
             // A prompt that went to another machine: the window words it.
-            AskReply::Far(value) => return value,
+            AskReply::Said(value) => return value,
             _ => return tool_err("prompt_status reads prompts; another answer came back"),
         }
         std::thread::sleep(PROMPT_WAIT_STEP);
@@ -4614,6 +4720,7 @@ mod tests {
         let mut live = McpConfig {
             enabled: true,
             writable: true,
+            team: false,
             ..Default::default()
         };
         let note = ConfigPatch {
@@ -4787,6 +4894,7 @@ mod tests {
             expose: Expose::AgentsOnly,
             events: true,
             writable: false,
+            team: false,
         };
         assert!(should_expose(&c, true, false), "agent pane exposed");
         assert!(!should_expose(&c, false, false), "plain shell NOT exposed");
@@ -4799,6 +4907,7 @@ mod tests {
             expose: Expose::All,
             events: false,
             writable: false,
+            team: false,
         };
         assert!(should_expose(&c, true, false));
         assert!(should_expose(&c, false, false), "All exposes shells too");
@@ -4816,6 +4925,7 @@ mod tests {
                 expose,
                 events: true,
                 writable: true,
+                team: false,
             };
             assert!(!should_expose(&c, true, true), "{expose:?}: an agent pane");
             assert!(!should_expose(&c, false, true), "{expose:?}: a shell");
@@ -4836,6 +4946,7 @@ mod tests {
             expose: Expose::AgentsOnly,
             events: true,
             writable: true,
+            team: false,
         };
         assert!(!may_write(&on, true, true, false), "another agent's write");
         assert!(may_write(&on, true, true, true), "its own agent's write");
@@ -5006,6 +5117,7 @@ mod tests {
             expose: Expose::All,
             events: false,
             writable: true,
+            team: false,
         };
         let body = toml::to_string(&c).unwrap();
         // kebab-case on the enum: "all", not "All".
@@ -5164,6 +5276,7 @@ mod tests {
                 expose: Expose::AgentsOnly,
                 events,
                 writable: false,
+                team: false,
             },
             panes,
             outer_grade: GradeReport::default(),
@@ -5355,7 +5468,7 @@ mod tests {
                 AskCall::Far(FarCall::Census { from }) => {
                     assert_eq!(from, "legion");
                     let agent = |pid: u32| json!({ "addr": format!("pid:{pid}"), "name": "x" });
-                    AskReply::Far(tool_ok(
+                    AskReply::Said(tool_ok(
                         "x".into(),
                         json!({ "machine": "here", "agents": [agent(100), agent(200), agent(300)] }),
                     ))
@@ -5911,7 +6024,10 @@ mod tests {
                     cost_usd: Some(0.4),
                 },
                 AskCall::Answer { .. } => return AskReply::Refused(Refusal::NoSuchAsk),
-                AskCall::Prompt(_) | AskCall::PromptStatus { .. } | AskCall::Far(_) => {
+                AskCall::Prompt(_)
+                | AskCall::PromptStatus { .. }
+                | AskCall::Far(_)
+                | AskCall::Team { .. } => {
                     panic!("an ask, not a prompt: {call:?}")
                 }
             };
@@ -8843,12 +8959,13 @@ mod tests {
             "coordination_cluster",
             "coordination_changes",
         ];
-        const WRITES: [&str; 8] = [
+        const WRITES: [&str; 9] = [
             "set_pane_config",
             "leave_note",
             "declare_deliverable",
             "ask_agent",
             "prompt_agent",
+            "start_team",
             "request_access",
             "present_surface",
             "open_document",

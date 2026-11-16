@@ -3430,7 +3430,13 @@ pub const FLOOR_PARAGRAPH: &str = "THE THRESHING FLOOR. Agents in this window wo
      it falls short. After two or three tries on the same piece without it coming right, or \
      when it is using far more tokens than the job is worth, stop and tell your person. An \
      adversarial review is worth what it costs; ask an agent from a different provider than \
-     the one that built the work.";
+     the one that built the work.\n\
+     \n\
+     STARTING A TEAM. If your person has switched on High trust agentic for this window and \
+     promoted your pane to orchestrator, `start_team` opens a new tab and starts other agents in it, each a real pane your person \
+     can watch and stop, with the program, model, effort and first prompt you name, and gives \
+     you a line to each. If either is missing the verb says which; then ask your person. An \
+     agent started by a team is not an orchestrator.";
 
 /// The briefing's paragraph on briefs and judgement calls, naming the kit's
 /// `SKILL.md`.

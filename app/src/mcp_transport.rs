@@ -601,6 +601,7 @@ mod tests {
                 expose: mcp::Expose::AgentsOnly,
                 events: true,
                 writable: false,
+                team: false,
             },
             panes: vec![mcp::PaneInfo {
                 tab: 0,

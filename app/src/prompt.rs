@@ -1016,6 +1016,29 @@ pub fn header(id: AskId, sender: &str, sender_pid: Option<u32>, returns: bool) -
     )
 }
 
+/// The header for a prompt along a line no person drew: from a coordinator
+/// to an agent its `start_team` started.
+///
+/// [`header`] says "a person drew a prompt line", and here that would be
+/// false. What is true is said instead: the sender started this agent, and a
+/// person switched on the setting that let it.
+pub fn header_team(id: AskId, sender: &str, sender_pid: Option<u32>, returns: bool) -> String {
+    let who = match sender_pid {
+        Some(pid) => format!("{} (pid {pid})", one_line(sender, 80)),
+        None => one_line(sender, 80),
+    };
+    let back = if returns {
+        "Your last message this turn is returned to the sender."
+    } else {
+        "The sender is told when you finish."
+    };
+    format!(
+        "[{} from {who}: your coordinator, the agent that started you. A person switched on \
+         High trust agentic in this window, which lets it prompt the agents it starts. {back}]",
+        tag(id)
+    )
+}
+
 /// The header for a prompt that came from an agent on another machine.
 ///
 /// It says a different thing from [`header`], because a different thing is
