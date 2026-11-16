@@ -4839,6 +4839,29 @@ mod tests {
         }
     }
 
+    /// The briefing states what starting a team needs and does, and gives no
+    /// advice on how big a team should be or which model to spend on: the
+    /// window gives access, it does not tell agents how to work (Parker,
+    /// 2026-11-16). Nor does it offer a tool the window no longer has.
+    #[test]
+    fn the_briefing_says_what_a_team_needs_and_gives_no_advice() {
+        let text = launch_briefing("/run/td/7", Some(KIT));
+        let at = text.find("STARTING A TEAM.").expect("the team paragraph");
+        let team = &text[at..];
+        let team = &team[..team.find("\n\n").unwrap_or(team.len())];
+        assert!(team.contains("High trust agentic") && team.contains("promoted"));
+        for advice in [
+            "sparingly",
+            "small",
+            "fewer tokens",
+            "work order",
+            "loop_agent",
+        ] {
+            assert!(!team.contains(advice), "the team paragraph says {advice:?}");
+        }
+        assert!(!text.contains("loop_agent"), "anywhere in the briefing");
+    }
+
     /// Every launched agent is told to name panes the way a person does, and
     /// to leave its own pid out. Without that, the stale-pid failure after a
     /// wake is the agent's habit rather than a verb's requirement: the verb

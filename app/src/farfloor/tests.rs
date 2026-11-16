@@ -23,10 +23,7 @@ fn a_machine_names_itself_by_its_override_then_its_hostname() {
         machine_name_from(Some("legion-a"), Some("legion\n")),
         "legion-a"
     );
-    assert_eq!(
-        machine_name_from(None, Some("far-box\n")),
-        "far-box"
-    );
+    assert_eq!(machine_name_from(None, Some("far-box\n")), "far-box");
     assert_eq!(machine_name_from(Some("  "), Some("box")), "box");
     // Nothing a shell or a file name would read as something else survives.
     assert_eq!(machine_name_from(Some("a b;rm"), None), "abrm");

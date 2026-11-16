@@ -7140,7 +7140,11 @@ impl Workspace {
     }
 
     /// Both removal targets and the click alternative revoke the same authority.
-    fn threshing_floor_unseat(&mut self, leaf: &Entity<TerminalView>, cx: &mut Context<Self>) {
+    pub(super) fn threshing_floor_unseat(
+        &mut self,
+        leaf: &Entity<TerminalView>,
+        cx: &mut Context<Self>,
+    ) {
         let Some(seat) = leaf.read(cx).seat else {
             return;
         };
@@ -7619,6 +7623,13 @@ fn model_line(program: &str, model: Option<&str>, effort: Option<&str>, unknown:
     }
 }
 
+/// The Floor's test window, for the team tests beside it (`team_view`). A
+/// re-export rather than a public test module: source scanners elsewhere find
+/// this file's tests by `#[cfg(test)]` and `mod tests`, and a `pub(crate)`
+/// before `mod` hid the module from them.
+#[cfg(test)]
+pub(crate) use tests::fixture as floor_test_fixture;
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7783,7 +7794,7 @@ mod tests {
         );
     }
 
-    fn fixture(
+    pub(crate) fn fixture(
         cx: &mut gpui::TestAppContext,
     ) -> (
         Entity<Workspace>,

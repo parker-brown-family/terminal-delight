@@ -8743,6 +8743,45 @@ mod tests {
         resp(&handle_line_with(&line, &s, tail, no_apply, search).unwrap())["result"].clone()
     }
 
+    /// Terminal Delight gives access and shows what happened; it does not
+    /// judge an agent's work, drive it in repeat, or tell it how to spend.
+    /// Parker, 2026-11-16: "we are NOT building a judgement engine", and graph
+    /// work must "REALLY stay on observability and access". A window-run loop
+    /// with a done phrase, a check runner and a team budget were built and
+    /// removed for that; this keeps them from coming back by the tool list.
+    #[test]
+    fn no_tool_lets_the_window_judge_or_drive_an_agent_or_advise_it() {
+        let defs = tool_defs();
+        let tools = defs.as_array().unwrap();
+        for t in tools {
+            let name = t["name"].as_str().unwrap();
+            for word in ["loop", "judge", "verify", "budget", "route", "routing"] {
+                assert!(!name.contains(word), "a tool named {name}");
+            }
+        }
+        let team = tools
+            .iter()
+            .find(|t| t["name"] == "start_team")
+            .expect("start_team is offered");
+        let schema = &team["inputSchema"];
+        assert!(schema["properties"].get("budget").is_none(), "no budget");
+        assert_eq!(schema["required"], json!(["name", "agents"]));
+        let says = team["description"].as_str().unwrap().to_lowercase();
+        for advice in [
+            "sparingly",
+            "cost less",
+            "costs fewer",
+            "prefer this",
+            "keep a team small",
+            "work order",
+            "routing",
+        ] {
+            assert!(!says.contains(advice), "start_team advises: {advice:?}");
+        }
+        // What it does say is the access rule, so an agent knows to ask.
+        assert!(says.contains("high trust agentic") && says.contains("promoted"));
+    }
+
     /// Every tool says where its answer came from, and nothing is classified
     /// that is not a tool. A tool added to `tool_defs` without a line in
     /// `provenance` fails here instead of reaching an agent unlabelled.

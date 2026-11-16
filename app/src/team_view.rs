@@ -422,3 +422,220 @@ impl Workspace {
         .detach();
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::threshing_floor::SeatId;
+
+    /// The Floor's own fixture: a window with two seated agent panes, "Lead"
+    /// (seat 100, pane 10) and "Worker" (seat 101, pane 11).
+    fn window(
+        cx: &mut gpui::TestAppContext,
+    ) -> (Entity<Workspace>, &'static mut gpui::VisualTestContext) {
+        let (ws, vcx, _other) = crate::threshing_floor_view::floor_test_fixture(cx);
+        (ws, vcx)
+    }
+
+    fn leaf_of(ws: &Workspace, seat: SeatId, cx: &App) -> Entity<TerminalView> {
+        ws.threshing_floor_seat_leaf(seat, cx)
+            .expect("a seated pane")
+    }
+
+    fn spec(dir: &std::path::Path) -> team::Spec {
+        team::parse(
+            &serde_json::json!({
+                "name": "review crew",
+                "project": dir,
+                "agents": [{ "role": "review", "harness": "codex" }]
+            }),
+            None,
+        )
+        .expect("a well-formed team")
+    }
+
+    fn said_text(reply: &mcp::AskReply) -> (bool, String) {
+        let mcp::AskReply::Said(v) = reply else {
+            panic!("start_team answers in words")
+        };
+        let text = v["content"][0]["text"].as_str().unwrap_or("").to_string();
+        (v["isError"] == true, text)
+    }
+
+    /// The pane's own right-click row reaches the window as an event, and
+    /// the window keeps the promotion by seat. Taking it back removes it.
+    /// This is the wiring a person's click goes through, end to end short of
+    /// the pixel.
+    #[gpui::test]
+    fn the_pane_menus_row_promotes_and_demotes_the_pane_by_its_seat(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = window(cx);
+        let lead = ws.update(cx, |ws, cx| leaf_of(ws, SeatId(100), cx));
+        lead.update(cx, |_, cx| cx.emit(pane::PromoteOrchestrator(true)));
+        cx.run_until_parked();
+        ws.update(cx, |ws, _| {
+            assert!(ws.team.orchestrators.contains(&SeatId(100)));
+            assert!(
+                !ws.team.orchestrators.contains(&SeatId(101)),
+                "only the pane clicked"
+            );
+        });
+        lead.update(cx, |_, cx| cx.emit(pane::PromoteOrchestrator(false)));
+        cx.run_until_parked();
+        ws.update(cx, |ws, _| assert!(ws.team.orchestrators.is_empty()));
+    }
+
+    /// A pane nobody seated is given a seat when a person promotes it,
+    /// because a promotion is kept by seat and must outlive the pane's
+    /// number. Demoting a pane with no seat does nothing.
+    #[gpui::test]
+    fn promoting_an_unseated_pane_gives_it_a_seat_and_demoting_one_is_harmless(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = window(cx);
+        ws.update(cx, |ws, cx| {
+            let worker = leaf_of(ws, SeatId(101), cx);
+            worker.update(cx, |v, cx| v.set_seat(None, cx));
+            ws.team_promote(&worker, false, cx);
+            assert!(worker.read(cx).seat.is_none(), "a demotion seats nobody");
+            ws.team_promote(&worker, true, cx);
+            let seat = worker.read(cx).seat.expect("seated by the promotion");
+            assert!(ws.team.orchestrators.contains(&seat));
+        });
+    }
+
+    /// The two things a person grants, in the order the refusal names them:
+    /// the window's switch, then the pane's promotion. With both, the request
+    /// passes the decision and goes on to building launch lines.
+    #[gpui::test]
+    fn start_team_needs_the_switch_and_then_the_promotion(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = window(cx);
+        let dir = std::env::temp_dir();
+        ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.mcp.team = false;
+            let (err, text) = said_text(&ws.team_request(10, &spec(&dir), cx));
+            assert!(err && text.contains("High trust agentic is off"), "{text}");
+
+            ws.mcp.team = true;
+            let (err, text) = said_text(&ws.team_request(10, &spec(&dir), cx));
+            assert!(err && text.contains("not been promoted"), "{text}");
+
+            // The worker is promoted, not the lead: still the lead's refusal.
+            let worker = leaf_of(ws, SeatId(101), cx);
+            ws.team_promote(&worker, true, cx);
+            let (err, text) = said_text(&ws.team_request(10, &spec(&dir), cx));
+            assert!(err && text.contains("not been promoted"), "{text}");
+
+            // A pane that is not in the window is answered, not panicked on.
+            let (err, text) = said_text(&ws.team_request(999, &spec(&dir), cx));
+            assert!(err && text.contains("not in this window"), "{text}");
+        });
+    }
+
+    /// A team allowed and queued does not start if a person took the
+    /// promotion back before the window got to it (cross-provider review,
+    /// round one). And it does start, as the control, when they did not.
+    #[gpui::test]
+    fn a_queued_team_whose_coordinator_was_demoted_does_not_start(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = window(cx);
+        let dir = std::env::temp_dir();
+        let queue = |ws: &mut Workspace, cx: &mut Context<Workspace>| {
+            let lead = leaf_of(ws, SeatId(100), cx);
+            ws.team.pending.push(PendingTeam {
+                id: 1,
+                coordinator: lead.downgrade(),
+                spec: spec(&dir),
+                lines: vec!["exec /bin/cat".into()],
+            });
+        };
+        let tabs_before = ws.update(cx, |ws, cx| {
+            ws.mcp.enabled = true;
+            ws.mcp.team = true;
+            let lead = leaf_of(ws, SeatId(100), cx);
+            ws.team_promote(&lead, true, cx);
+            queue(ws, cx);
+            ws.team_promote(&lead, false, cx);
+            ws.tabs.len()
+        });
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.team_drain(w, cx)));
+        ws.update(cx, |ws, _| {
+            assert!(ws.team.pending.is_empty(), "taken off the queue");
+            assert_eq!(ws.tabs.len(), tabs_before, "and nothing started");
+        });
+        // The control: promoted all the way through, the same queue starts a tab.
+        ws.update(cx, |ws, cx| {
+            let lead = leaf_of(ws, SeatId(100), cx);
+            ws.team_promote(&lead, true, cx);
+            queue(ws, cx);
+        });
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.team_drain(w, cx)));
+        }
+        ws.update(cx, |ws, cx| {
+            assert_eq!(
+                ws.tabs.len(),
+                tabs_before + 1,
+                "the control started its tab"
+            );
+            assert_eq!(ws.team.teams.saved().len(), 1, "and recorded the team");
+            let member = ws.team.teams.saved()[0].members[0];
+            assert!(
+                ws.chart.line(SeatId(100), member).is_some_and(|l| l.team),
+                "with a marked line from the coordinator"
+            );
+        });
+    }
+
+    /// An agent a team started counts under the window's limit while it
+    /// runs, whatever a person does to its seat. Unseating it used to free
+    /// its room (cross-provider review, round one); a wake then lost the
+    /// mark again (round two).
+    #[gpui::test]
+    fn a_team_member_keeps_counting_after_an_unseat_and_through_a_wake(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = window(cx);
+        ws.update(cx, |ws, cx| {
+            assert_eq!(ws.team_live(cx), 0);
+            ws.team.teams.add(team::Record {
+                id: 7,
+                name: "crew".into(),
+                by: SeatId(100),
+                members: vec![SeatId(101)],
+                started_ms: 0,
+            });
+            assert_eq!(ws.team_live(cx), 1, "counted by its seat");
+            let worker = leaf_of(ws, SeatId(101), cx);
+            ws.threshing_floor_unseat(&worker, cx);
+            assert!(worker.read(cx).seat.is_none());
+            assert!(worker.read(cx).team_member, "the mark moved to the pane");
+            assert_eq!(ws.team_live(cx), 1, "and it still counts");
+
+            // A wake builds a fresh pane and hands it the old one's
+            // presentation: the mark must come across with it.
+            let lead = leaf_of(ws, SeatId(100), cx);
+            let carried = worker.read(cx).presentation();
+            lead.update(cx, |v, cx| {
+                v.team_member = false;
+                v.adopt_presentation(carried, cx);
+            });
+            assert!(lead.read(cx).team_member, "carried through the hand-over");
+        });
+    }
+}
