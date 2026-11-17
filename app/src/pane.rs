@@ -13040,6 +13040,7 @@ impl Render for TerminalView {
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
             let bench_th = graded_palette(&th);
             let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
+            let bench_th = bench_sk.chrome_theme(&bench_th);
             self.bench_el(
                 &bench_th,
                 &bench_sk,

@@ -144,7 +144,7 @@ boundary = "hairline"   # hairline | double | inset | none
 # one soft shadow over a 0.22 wash, and the wash is what made a lit row read as a
 # selected item in a web list rather than as a lit edge.
 emphasis = "glow"       # fill | underline | bracket | rail | glow | bar
-divider  = "line"       # line | double | none
+divider  = "line"       # line | double | dimension | none
 caps     = "off"        # off | upper | tracked
 shine    = "gradient"   # gradient | flat — whether a raised surface is lit
 gauge    = "rail"       # rail | pips — how a measured share is drawn
