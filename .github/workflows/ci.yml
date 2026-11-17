@@ -36,7 +36,7 @@ env:
   # store sat at its limit and evicted main's. A pull request restores from
   # its base branch, which is the cache it needs; only pushes to main and to
   # dev branches save.
-  CACHE_SAVE: ${{ github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/dev/')) }}
+  CACHE_SAVE: ${{ (github.event_name == 'push' && (github.ref == 'refs/heads/main' || startsWith(github.ref, 'refs/heads/dev/'))) || github.head_ref == 'astra/claude' }}
 
 jobs:
   # "Rust checks" is a required status check on main, so that name stays and
