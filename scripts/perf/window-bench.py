@@ -105,6 +105,19 @@ def summary(values):
     )
 
 
+def audit_draws(log_path, skin):
+    # The renderer can be writing the next record while the window is open.
+    # Only the part through the last newline is a complete observation.
+    complete, _, _ = log_path.read_text().rpartition("\n")
+    draws = [line for line in complete.splitlines() if line.startswith("td-frame ")]
+    if not draws:
+        raise RuntimeError(f"renderer audit missing: {log_path}")
+    if skin == "baremetal" and any(
+        line != "td-frame direct=true post=false shadows=0" for line in draws
+    ):
+        raise RuntimeError(f"optional draw with BAREMETAL: {log_path}")
+
+
 def run(a, display_env, probe, n, skin, repeat):
     with tempfile.TemporaryDirectory(prefix="td-window-") as temp:
         d = Path(temp)
@@ -287,20 +300,7 @@ def run(a, display_env, probe, n, skin, repeat):
                         "\n".join(lines) + "\n"
                     )
                     if a.audit:
-                        draws = [
-                            line
-                            for line in log_path.read_text().splitlines()
-                            if line.startswith("td-frame ")
-                        ]
-                        if not draws:
-                            raise RuntimeError(f"renderer audit missing: {log_path}")
-                        if skin == "baremetal" and any(
-                            line != "td-frame direct=true post=false shadows=0"
-                            for line in draws
-                        ):
-                            raise RuntimeError(
-                                f"optional draw with BAREMETAL: {log_path}"
-                            )
+                        audit_draws(log_path, skin)
                     return dict(
                         repeat=repeat,
                         skin=skin,
