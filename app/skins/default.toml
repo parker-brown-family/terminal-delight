@@ -151,6 +151,6 @@ gauge    = "rail"       # rail | pips — how a measured share is drawn
 title    = "plain"      # plain | chevron — how a heading name is framed
 focus    = "plain"      # plain | hatch — what marks the pane with the keyboard
 # material = "plain"    # plain | paper | grid
-# tube = "glass"        # glass | stock; omitted paper files retain stock
+# tube = "glass"        # glass | stock | direct (skip screen effects and shadows); paper defaults to stock
 ### Optional [note]: decoration = "plain" | "flower", stock = true | false.
 ### Absent note fields retain the existing material's note defaults.

@@ -67,6 +67,7 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 
 /// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
 const BUILTIN_SKINS: &[(&str, &str)] = &[
+    ("baremetal", include_str!("../skins/baremetal.toml")),
     ("chalk", include_str!("../skins/chalk.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
@@ -662,6 +663,8 @@ pub enum Tube {
     #[default]
     Glass,
     Stock,
+    /// Draw directly to the surface and omit decorative shadows.
+    Direct,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -927,7 +930,7 @@ impl Skin {
     /// Keep a popup sharp while gently diffusing the scene around it. The
     /// existing reader pass measures physical pixels and resets every frame.
     pub fn popup<E: Styled + ParentElement>(&self, d: E) -> E {
-        if !self.unboxed() {
+        if !self.unboxed() || self.shape.tube == Tube::Direct {
             return d;
         }
         d.child(
@@ -980,6 +983,13 @@ impl Skin {
     /// Resolve the default terminal field at the presentation edge. This is
     /// separate from program-authored cell backgrounds and the legacy grade.
     pub fn terminal_theme(&self, mut th: Theme) -> Theme {
+        if self.shape.tube == Tube::Direct {
+            crate::theme::hold_clean(&mut th);
+            th.crawl = false;
+            th.grade.inactive_blur = Some(0.);
+            th.grade.doc_brightness = None;
+            th.grade.doc_contrast = None;
+        }
         th.field_background = th
             .grade
             .field_colour
@@ -991,7 +1001,11 @@ impl Skin {
     /// Project the skin's native ink into legacy chrome. This value is local
     /// to a native renderer; never store it as a Design or pass it to a grid.
     pub fn chrome_theme(&self, th: &Theme) -> Theme {
-        let mut chrome = th.clone();
+        let mut chrome = if self.shape.tube == Tube::Direct {
+            self.terminal_theme(th.clone())
+        } else {
+            th.clone()
+        };
         if self.text_controls() {
             chrome.bg = self.ink.panel;
             chrome.surface = self.ink.panel_raised;
@@ -2801,7 +2815,11 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
         let u = &mut spec.unknown;
         spec.shape.tube = enum_of(
             sh.tube.as_ref(),
-            &[("glass", Tube::Glass), ("stock", Tube::Stock)],
+            &[
+                ("glass", Tube::Glass),
+                ("stock", Tube::Stock),
+                ("direct", Tube::Direct),
+            ],
             "shape.tube",
             u,
         );
@@ -3107,7 +3125,7 @@ pub fn open_tiling(cx: &App) -> bool {
 /// Design; projecting chrome never mutates the registry or a saved palette.
 pub fn native_theme(cx: &App, th: Arc<Theme>) -> Arc<Theme> {
     let spec = spec(cx);
-    if spec.shape.controls == Some(Controls::Text) {
+    if spec.shape.controls == Some(Controls::Text) || spec.shape.tube == Some(Tube::Direct) {
         Arc::new(spec.bake(&th, 1.).chrome_theme(&th))
     } else {
         th
@@ -3593,7 +3611,11 @@ mod tests {
             }
             let th = palette();
             let sk = parse(source).unwrap().bake(&th, 1.);
-            assert_eq!(sk.terminal_theme(th.clone()).field_background, None, "{id}");
+            assert_eq!(
+                sk.terminal_theme(th.clone()).field_background,
+                (*id == "baremetal").then_some(sk.ink.panel),
+                "{id}"
+            );
             let mut chosen = th;
             chosen.grade.set(theme::GradeKey::FieldColour, 1.);
             assert_eq!(
@@ -3912,6 +3934,32 @@ mod tests {
 
     fn palette() -> Theme {
         theme::parse(theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
+    }
+
+    #[test]
+    fn baremetal_holds_the_optional_effects_of_an_explicitly_lit_theme() {
+        let mut th = palette();
+        th.warp = 2.0;
+        th.crawl = true;
+        th.grade.image_glow = Some(0.8);
+        th.grade.inactive_image_glow = Some(0.6);
+        th.grade.inactive_blur = Some(1.);
+        th.grade.doc_brightness = Some(0.8);
+        let skin = parse(builtin_toml("baremetal").unwrap())
+            .unwrap()
+            .bake(&th, 1.);
+        assert_eq!(skin.shape.tube, Tube::Direct);
+        let projected = skin.terminal_theme(th.clone());
+        assert_eq!(projected.warp, 0.);
+        assert!(!projected.crawl && !projected.crt);
+        assert_eq!(projected.grade.image_glow, Some(0.));
+        assert_eq!(projected.grade.inactive_blur_at_edge(), 0.);
+        assert_eq!(projected.grade.doc_grade(), None);
+        assert_eq!(th.grade.image_glow, Some(0.8));
+        let stock = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&th, 1.);
+        assert_eq!(stock.terminal_theme(th.clone()).warp, 2.);
     }
 
     /// The gate on the whole layer. Every ink the shipped default skin resolves
