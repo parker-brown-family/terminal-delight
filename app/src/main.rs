@@ -842,6 +842,7 @@ impl<L: Clone> Tree<L> {
                     off_limits: s.access.to_saved().0,
                     agents: s.access.to_saved().1,
                     seat: s.seat,
+                    team: s.team,
                     mark: s.mark,
                 }
             }
@@ -887,6 +888,7 @@ impl Node {
                     .map(|(path, scroll)| SavedDocument { path, scroll }),
                 access: view.agent_access,
                 seat: view.seat,
+                team: view.team_member,
                 mark: view.mark,
             }
         })
@@ -907,6 +909,8 @@ struct LeafState {
     document: Option<SavedDocument>,
     access: threshing_floor::AgentAccess,
     seat: Option<threshing_floor::SeatId>,
+    /// `Pane::team_member`: a team started it, whether or not it is seated.
+    team: bool,
     mark: Option<u8>,
 }
 
@@ -1004,6 +1008,12 @@ enum SavedNode {
         /// the pane, because pane ids restart when the host does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seat: Option<threshing_floor::SeatId>,
+        /// A team started this pane, and a person has since taken it off the
+        /// Floor: it still counts under the window's limit of agent-started
+        /// agents, and its seat no longer says so. Written only when set;
+        /// absent reads back as not a team member, as every older file was.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        team: bool,
         /// The Alt+digit a person marked this pane with ([`navkeys`]). Absent
         /// in every file written before marks existed, which reads back as
         /// unmarked — what those panes were.
@@ -1051,6 +1061,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             #[serde(default)]
             seat: Option<threshing_floor::SeatId>,
             #[serde(default)]
+            team: bool,
+            #[serde(default)]
             mark: Option<u8>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
@@ -1089,6 +1101,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         off_limits: false,
                         agents: None,
                         seat: None,
+                        team: false,
                         mark: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
@@ -1117,6 +1130,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             off_limits: f.off_limits,
                             agents: f.agents.take(),
                             seat: f.seat.take(),
+                            team: f.team,
                             mark: f.mark.take().filter(|n| (1..=navkeys::MARKS).contains(n)),
                         })
                     }
@@ -6683,6 +6697,7 @@ fn build_node_attached(
             off_limits,
             agents,
             seat,
+            team,
             mark,
             ..
         } => {
@@ -6728,6 +6743,7 @@ fn build_node_attached(
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let team = *team;
             let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6736,6 +6752,7 @@ fn build_node_attached(
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.team_member = team;
                 view.mark = mark;
             });
             // The document it was showing, back on its face over whichever
@@ -6769,6 +6786,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             off_limits,
             agents,
             seat,
+            team,
             mark,
         } => {
             let pane = make_pane_window_owned(
@@ -6797,6 +6815,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let team = *team;
             let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6805,6 +6824,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.team_member = team;
                 view.mark = mark;
             });
             restore_document_on(&pane, document.as_ref(), cx);
@@ -46971,6 +46991,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
@@ -47803,6 +47824,7 @@ mod tests {
             off_limits: true,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&marked).expect("a leaf serialises");
@@ -47814,6 +47836,7 @@ mod tests {
                 off_limits: true,
                 agents: None,
                 seat: None,
+                team: false,
                 mark: None,
                 ..
             }
@@ -47831,6 +47854,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&plain).expect("a leaf serialises");
@@ -47849,6 +47873,7 @@ mod tests {
             off_limits: false,
             agents: Some(threshing_floor::READ_ONLY_WORD.into()),
             seat: Some(threshing_floor::SeatId(42)),
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&seated).expect("a leaf serialises");
@@ -47875,6 +47900,38 @@ mod tests {
         );
         assert_eq!(seat, Some(threshing_floor::SeatId(42)));
 
+        // A pane a team started, taken off the Floor: the mark is written,
+        // because nothing else says so after a restart.
+        let member = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: false,
+            agents: None,
+            seat: None,
+            team: true,
+            mark: None,
+        };
+        let text = toml::to_string(&member).expect("a leaf serialises");
+        assert!(text.contains("team = true"), "{text}");
+        assert!(matches!(
+            toml::from_str::<SavedNode>(&text).expect("reads back"),
+            SavedNode::Leaf {
+                team: true,
+                seat: None,
+                ..
+            }
+        ));
+        assert!(
+            !toml::to_string(&plain).unwrap().contains("team"),
+            "false is not written"
+        );
+
         // A leaf as every file before today wrote it.
         let old: SavedNode =
             toml::from_str("[Leaf]\ncwd = \"/work\"\npane_id = 7\n").expect("an old leaf reads");
@@ -47884,6 +47941,7 @@ mod tests {
                 off_limits: false,
                 agents: None,
                 seat: None,
+                team: false,
                 mark: None,
                 ..
             }
@@ -51012,6 +51070,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
@@ -51095,6 +51154,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
@@ -51165,6 +51225,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -51179,6 +51240,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -51252,6 +51314,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
@@ -51483,6 +51546,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -51652,6 +51716,7 @@ cwd = "/z"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -52175,6 +52240,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    team: false,
                     mark: None,
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
@@ -52233,6 +52299,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    team: false,
                     mark: None,
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
@@ -52272,6 +52339,7 @@ warp = 1.5
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -52863,6 +52931,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -53111,6 +53180,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,

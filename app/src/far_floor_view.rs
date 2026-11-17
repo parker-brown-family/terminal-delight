@@ -237,6 +237,7 @@ impl Workspace {
                     // Traded for a conversation or a seat by the MCP layer,
                     // which is where a conversation is proven.
                     addr: format!("pid:{pid}"),
+                    also: None,
                     name: self.pane_name(leaf, cx).full(),
                     harness: t.mode.label().to_string(),
                     // English: this is a message between machines, not a card.
@@ -429,13 +430,25 @@ impl Workspace {
         threshing_floor::Reach,
         Option<(&farfloor::Census, &FarAgent)>,
     ) {
-        let line = seat.and_then(|s| self.far_floor.lines.rung(s, machine, to));
         let found = self
             .far_floor
             .census
             .get(machine)
             .and_then(MachineView::census)
             .and_then(|c| c.find(to));
+        // The line may have been drawn to either of the agent's names: its
+        // seat, saved before its conversation was known, or its conversation.
+        let names = [
+            Some(to),
+            found.map(|(_, a)| a.addr.as_str()),
+            found.and_then(|(_, a)| a.also.as_deref()),
+        ];
+        let line = seat.and_then(|s| {
+            names
+                .into_iter()
+                .flatten()
+                .find_map(|n| self.far_floor.lines.rung(s, machine, n))
+        });
         (
             farfloor::outbound_reach(line, found.map(|(_, a)| a.reach)),
             found,
@@ -597,6 +610,10 @@ impl Workspace {
             stage: FarStage::Sending,
             misses: 0,
         });
+        // The far window keeps one key book per sending machine, so a key is
+        // made this agent's own before it leaves: two agents here that both
+        // say "review" are two assignments there, not one.
+        let key = key.map(|k| farfloor::scoped_key(seat, caller_pane, &k));
         let line = farfloor::request(
             farfloor::M_PROMPT,
             serde_json::json!({
@@ -727,79 +744,103 @@ impl Workspace {
             }) else {
                 break;
             };
-            for (name, dest) in asks {
-                let line = farfloor::request(
-                    farfloor::M_CENSUS,
-                    serde_json::json!({ "from": farfloor::machine_name() }),
-                );
-                let answer = cx
-                    .background_executor()
-                    .spawn({
-                        let dest = dest.clone();
-                        async move {
-                            far::ask_with(
-                                &dest,
-                                &farfloor::rpc_script(),
-                                &["all"],
-                                Some(line.as_bytes()),
-                                far::ASK_BUDGET,
-                            )
-                        }
-                    })
-                    .await;
-                let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                    ws.far_census_arrived(&name, &dest, answer);
-                    cx.notify();
-                });
-            }
-            let Ok(probes) = this.update(cx, |ws: &mut Workspace, _| ws.far_probes_due()) else {
-                break;
-            };
-            for machine in probes {
-                let asked = machine.clone();
-                let result = cx
-                    .background_executor()
-                    .spawn(async move { far::probe(&asked) })
-                    .await;
-                let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                    ws.far_probe_arrived(&machine.name, result);
-                    cx.notify();
-                });
-            }
+            // Every machine is asked at once, and each answer is applied when
+            // it lands: an unreachable machine costs its own wait, never the
+            // others'. Prompt statuses start with the censuses rather than
+            // behind them. The pass still ends when the last one is in, so a
+            // machine is never asked twice at once.
+            let mut statuses_in = Vec::new();
             for (id, dest, far_window, far_id) in statuses {
                 let line = farfloor::request(
                     farfloor::M_STATUS,
                     serde_json::json!({ "from": farfloor::machine_name(), "prompt_id": far_id }),
                 );
-                let answer = cx
-                    .background_executor()
-                    .spawn(async move {
+                let work = cx.background_executor().spawn(async move {
+                    far::ask_with(
+                        &dest,
+                        &farfloor::rpc_script(),
+                        &[&far_window.to_string()],
+                        Some(line.as_bytes()),
+                        far::ASK_BUDGET,
+                    )
+                });
+                let this = this.clone();
+                statuses_in.push(cx.spawn(async move |cx| {
+                    let answer = work.await;
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                        // The machine could not be reached at all: nothing is
+                        // known, so nothing changes, and the next pass asks again.
+                        let Ok(out) = answer else { return };
+                        let changed = match out.lines().find_map(farfloor::parse_reply_line) {
+                            Some((_, Ok(result))) => {
+                                let (_, stage) = farfloor::stage_of(&result);
+                                ws.far_floor.book.heard(id, stage)
+                            }
+                            // The machine answered and that window did not.
+                            Some((_, Err(why))) => ws.far_floor.book.window_missed(id, &why),
+                            None => ws.far_floor.book.window_missed(id, "no answer"),
+                        };
+                        if changed {
+                            cx.notify();
+                        }
+                    });
+                }));
+            }
+            let mut censuses = Vec::new();
+            for (name, dest) in asks {
+                let line = farfloor::request(
+                    farfloor::M_CENSUS,
+                    serde_json::json!({ "from": farfloor::machine_name() }),
+                );
+                let work = cx.background_executor().spawn({
+                    let dest = dest.clone();
+                    async move {
                         far::ask_with(
                             &dest,
                             &farfloor::rpc_script(),
-                            &[&far_window.to_string()],
+                            &["all"],
                             Some(line.as_bytes()),
                             far::ASK_BUDGET,
                         )
-                    })
-                    .await;
-                let _ = this.update(cx, |ws: &mut Workspace, cx| {
-                    // The machine could not be reached at all: nothing is
-                    // known, so nothing changes, and the next pass asks again.
-                    let Ok(out) = answer else { return };
-                    let changed = match out.lines().find_map(farfloor::parse_reply_line) {
-                        Some((_, Ok(result))) => {
-                            let (_, stage) = farfloor::stage_of(&result);
-                            ws.far_floor.book.heard(id, stage)
-                        }
-                        // The machine answered and that window did not.
-                        Some((_, Err(why))) => ws.far_floor.book.window_missed(id, &why),
-                        None => ws.far_floor.book.window_missed(id, "no answer"),
-                    };
-                    if changed {
-                        cx.notify();
                     }
                 });
+                let this = this.clone();
+                censuses.push(cx.spawn(async move |cx| {
+                    let answer = work.await;
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                        ws.far_census_arrived(&name, &dest, answer);
+                        cx.notify();
+                    });
+                }));
+            }
+            // Which machines' Settings to probe is read from what the
+            // censuses said, so the probes wait for them, and only them.
+            for c in censuses {
+                c.await;
+            }
+            let Ok(probes) = this.update(cx, |ws: &mut Workspace, _| ws.far_probes_due()) else {
+                break;
+            };
+            let mut probed = Vec::new();
+            for machine in probes {
+                let asked = machine.clone();
+                let work = cx
+                    .background_executor()
+                    .spawn(async move { far::probe(&asked) });
+                let this = this.clone();
+                probed.push(cx.spawn(async move |cx| {
+                    let result = work.await;
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                        ws.far_probe_arrived(&machine.name, result);
+                        cx.notify();
+                    });
+                }));
+            }
+            for p in probed {
+                p.await;
+            }
+            for s in statuses_in {
+                s.await;
             }
         })
         .detach();
@@ -1495,16 +1536,16 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) {
         let config = instance::config_dir();
-        // Read first: another window may have changed the file since this one
-        // last looked, and a save from a stale copy would undo it.
-        let mut sharing = farfloor::Sharing::load(&config).unwrap_or_default();
-        if sharing.set(host, reach) {
-            match sharing.save(&config) {
-                Ok(()) => self.far_floor.sharing_trouble = None,
-                Err(why) => self.far_floor.sharing_trouble = Some(why),
+        // Read, change and save under the one lock every window takes: a
+        // window holding an older copy must not write back a permission
+        // another window has just revoked.
+        match farfloor::Sharing::update(&config, host, reach) {
+            Ok(sharing) => {
+                self.far_floor.sharing_trouble = None;
+                self.far_floor.sharing = sharing;
             }
+            Err(why) => self.far_floor.sharing_trouble = Some(why),
         }
-        self.far_floor.sharing = sharing;
         self.far_floor
             .knocked
             .retain(|k| !k.eq_ignore_ascii_case(host) || reach.is_none());

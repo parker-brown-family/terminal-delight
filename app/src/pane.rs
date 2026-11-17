@@ -3015,7 +3015,8 @@ pub struct TerminalView {
     superseded: bool,
     /// A team started this pane (`start_team`). Counted under the window's
     /// limit of agent-started agents for as long as the pane lives, seated or
-    /// not. Not saved: after a restart the team's saved seats count instead.
+    /// not, and saved with the pane: a person may take it off the Floor, and
+    /// then its seat no longer says so, but a restart must keep counting it.
     pub(crate) team_member: bool,
     /// What this pane was built from: the directory and the command that would
     /// put it back. Kept because on an attached pane it is the only copy — the

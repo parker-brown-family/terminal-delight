@@ -130,12 +130,68 @@ impl Sharing {
         format!("{SHARING_HEADER}\n{body}")
     }
 
+    /// Write the file whole. The temporary file it is written to first is
+    /// this process's own, named by pid and a counter and created new, so two
+    /// windows saving at once never write into one another's copy. A change
+    /// a person makes goes through [`Sharing::update`], which holds the lock
+    /// around the read as well; this is the write alone.
     pub fn save(&self, config: &Path) -> Result<(), String> {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static SEQ: AtomicU64 = AtomicU64::new(0);
         std::fs::create_dir_all(config).map_err(|e| e.to_string())?;
         let path = sharing_path(config);
-        let tmp = path.with_extension("toml.tmp");
-        std::fs::write(&tmp, self.to_toml()).map_err(|e| e.to_string())?;
-        std::fs::rename(&tmp, &path).map_err(|e| e.to_string())
+        let tmp = config.join(format!(
+            ".sharing.toml.{}.{}.tmp",
+            std::process::id(),
+            SEQ.fetch_add(1, Ordering::Relaxed)
+        ));
+        let written = std::fs::OpenOptions::new()
+            .write(true)
+            .create_new(true)
+            .open(&tmp)
+            .and_then(|mut f| f.write_all(self.to_toml().as_bytes()));
+        if let Err(e) = written {
+            let _ = std::fs::remove_file(&tmp);
+            return Err(e.to_string());
+        }
+        std::fs::rename(&tmp, &path).map_err(|e| {
+            let _ = std::fs::remove_file(&tmp);
+            e.to_string()
+        })
+    }
+
+    /// Change one machine's ceiling in the file, read and written under one
+    /// lock (`sharing.toml.lock`, beside it) that every window on this
+    /// machine takes, so a window holding an older copy cannot write back a
+    /// permission another window has just revoked. Returns the file as it now
+    /// stands. A file that cannot be read is an error and is left as it is,
+    /// rather than replaced by the one change made over an empty list.
+    pub fn update(config: &Path, host: &str, reach: Option<Rung>) -> Result<Sharing, String> {
+        use std::os::fd::AsRawFd;
+        std::fs::create_dir_all(config).map_err(|e| e.to_string())?;
+        let lock = std::fs::OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .write(true)
+            .open(config.join("sharing.toml.lock"))
+            .map_err(|e| e.to_string())?;
+        loop {
+            // SAFETY: flock on a descriptor this function owns; it is
+            // released when `lock` is dropped at the end of the function.
+            if unsafe { libc::flock(lock.as_raw_fd(), libc::LOCK_EX) } == 0 {
+                break;
+            }
+            let err = std::io::Error::last_os_error();
+            if err.kind() != std::io::ErrorKind::Interrupted {
+                return Err(err.to_string());
+            }
+        }
+        let mut sharing = Sharing::load(config)?;
+        if sharing.set(host, reach) {
+            sharing.save(config)?;
+        }
+        Ok(sharing)
     }
 
     /// The most `host`'s agents may do here. `None`: nothing, whether the
@@ -370,6 +426,12 @@ pub fn outbound_reach(line: Option<Rung>, far_allows: Option<Reach>) -> Reach {
 pub struct FarAgent {
     /// How to name it in a later call ([`FarAddr`], as text).
     pub addr: String,
+    /// The seat it also answers to, when `addr` names its conversation and a
+    /// person has seated it too. A line saved before its conversation was
+    /// known names the seat, and still reaches it by this. `None`: no second
+    /// name was given (not seated, or a build that does not send one).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub also: Option<String>,
     /// What a person there calls it: where its tab sits, then its header.
     pub name: String,
     /// The program: `CLAUDE`, `CODEX`.
@@ -424,6 +486,17 @@ pub struct PromptIn {
     pub prompt: String,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub key: Option<String>,
+}
+
+/// A prompt key as it leaves for another machine: the sending agent's own.
+/// The far window sees every agent on this machine as one sender, so the key
+/// carries which agent chose it: its seat, which survives a wake, or, for an
+/// agent with no seat, its pane.
+pub fn scoped_key(seat: Option<SeatId>, caller_pane: u64, key: &str) -> String {
+    match seat {
+        Some(s) => format!("seat{}/{key}", s.0),
+        None => format!("pane{caller_pane}/{key}"),
+    }
 }
 
 /// A JSON-RPC line for `method` with `params`.
@@ -518,8 +591,11 @@ impl MachineCensus {
             .flat_map(|w| w.agents.iter().map(move |a| (w, a)))
     }
 
+    /// The agent `addr` names: by the name the census gives it, or by the
+    /// seat it also answers to.
     pub fn find(&self, addr: &str) -> Option<(&Census, &FarAgent)> {
-        self.agents().find(|(_, a)| a.addr == addr)
+        self.agents()
+            .find(|(_, a)| a.addr == addr || a.also.as_deref() == Some(addr))
     }
 
     /// Whether any window there has been told to share with this machine.

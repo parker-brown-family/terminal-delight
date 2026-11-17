@@ -518,14 +518,20 @@ impl Chart {
         if a == b {
             return false;
         }
+        // A direction a person turned a line to is a line a person drew: a
+        // coordinator's `start_team` drew only the way it was drawn, so the
+        // turned copy is not a team line, and a worker prompting back is not
+        // announced to its coordinator as "the agent that started you".
         match (self.line(a, b).cloned(), self.line(b, a).cloned()) {
             (Some(mut line), None) => {
                 self.erase(a, b);
                 std::mem::swap(&mut line.from, &mut line.to);
+                line.team = false;
                 self.put(line);
             }
             (None, Some(mut line)) => {
                 std::mem::swap(&mut line.from, &mut line.to);
+                line.team = false;
                 self.put(line);
             }
             (Some(_), Some(_)) => self.erase(b, a),
@@ -1404,6 +1410,54 @@ mod tests {
         chart.cycle_direction(a, b);
         assert_eq!(chart.line(a, b).unwrap().rung.known(), Some(Rung::See));
         assert!(chart.line(b, a).is_none());
+    }
+
+    /// A coordinator's team line turned by a person is the person's line: the
+    /// worker prompting back is not told to its coordinator as "the agent
+    /// that started you", and the line the coordinator drew keeps its mark
+    /// while it stands.
+    ///
+    /// Mutation-tested: keeping `team` on the turned line fails the first
+    /// assertion.
+    #[test]
+    fn a_turned_team_line_is_a_persons_line() {
+        let (lead, worker) = (SeatId(1), SeatId(2));
+        let mut chart = Chart::from_saved(
+            vec![Line {
+                from: lead,
+                to: worker,
+                rung: RungWord::Known(Rung::Prompt),
+                prompts_left: None,
+                team: true,
+            }],
+            vec![],
+        );
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(chart.line(lead, worker).is_none());
+        assert!(
+            !chart.line(worker, lead).unwrap().team,
+            "reversed: a person's line"
+        );
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(!chart.line(worker, lead).unwrap().team);
+        assert!(
+            !chart.line(lead, worker).unwrap().team,
+            "both ways: both are the person's"
+        );
+        let mut chart = Chart::from_saved(
+            vec![Line {
+                from: worker,
+                to: lead,
+                rung: RungWord::Known(Rung::Prompt),
+                prompts_left: None,
+                team: true,
+            }],
+            vec![],
+        );
+        // Turned to both ways: the copy is the person's, the original keeps its mark.
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(chart.line(worker, lead).unwrap().team);
+        assert!(!chart.line(lead, worker).unwrap().team);
     }
 
     #[test]

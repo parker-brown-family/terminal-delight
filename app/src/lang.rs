@@ -3279,6 +3279,8 @@ mod tests {
         // German says UPDATES too, and French spells STABLE the same way.
         "chrome.cfg_updates",
         "chrome.upd_stable",
+        // de: Teams is the ordinary German word for working teams.
+        "settings.s_team",
         // Names, not words: the UI CONFIG section, and the face chips, which
         // read TERM | BENCH in every language.
         "chrome.cfg_ui",

@@ -1813,9 +1813,19 @@ fn far_census_named(mut answer: Value, snap: &Snapshot) -> Value {
                     .map(crate::farfloor::FarAddr::Conversation)
                     .or(p.seat.map(crate::farfloor::FarAddr::Seat))
             });
+            // Named by its conversation, a seated agent keeps its seat as a
+            // second name: a line saved while the seat was all that was known
+            // still reaches it once the conversation is proven.
+            let also = pane
+                .filter(|p| p.agent.is_some())
+                .and_then(|p| p.seat)
+                .map(|s| crate::farfloor::FarAddr::Seat(s).to_string());
             match addr {
                 Some(addr) => {
                     a["addr"] = Value::String(addr.to_string());
+                    if let Some(also) = also {
+                        a["also"] = Value::String(also);
+                    }
                     true
                 }
                 None => {
@@ -5520,6 +5530,17 @@ mod tests {
             addrs,
             vec!["conv:0199-conv", "seat:8"],
             "a conversation first, then a seat"
+        );
+        let also: Vec<Option<&str>> = data["agents"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|a| a["also"].as_str())
+            .collect();
+        assert_eq!(
+            also,
+            vec![Some("seat:7"), None],
+            "a seated agent named by its conversation keeps its seat as a second name"
         );
         assert_eq!(
             data["unnamed"], 1,

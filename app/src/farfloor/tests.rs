@@ -383,3 +383,87 @@ fn the_far_script_carries_the_line_on_stdin_and_refuses_a_window_that_is_not_a_n
     assert_eq!(run("all").trim(), "no-terminal-delight");
     assert_eq!(run("12; rm -rf x").trim(), "no-terminal-delight");
 }
+
+/// Two windows changing the sharing file at once: a change read from a copy
+/// taken before another window's save must not write that save away. While
+/// one holder has the lock, `update` waits, and when it runs it reads the
+/// file as the holder left it, so a revocation made under the lock stands.
+///
+/// Mutation-tested: dropping the `flock` lets the update read the file
+/// before the holder's revocation and restore `far-a`.
+#[test]
+fn a_change_waits_for_the_lock_and_never_restores_a_revocation() {
+    use std::os::fd::AsRawFd;
+    let dir = std::env::temp_dir().join(format!("td-sharing-lock-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let mut start = Sharing::default();
+    start.set("far-a", Some(Rung::Prompt));
+    start.save(&dir).unwrap();
+    // Another window takes the lock first.
+    let held = std::fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .write(true)
+        .open(dir.join("sharing.toml.lock"))
+        .unwrap();
+    assert_eq!(unsafe { libc::flock(held.as_raw_fd(), libc::LOCK_EX) }, 0);
+    let d = dir.clone();
+    let other = std::thread::spawn(move || Sharing::update(&d, "far-b", Some(Rung::See)));
+    std::thread::sleep(std::time::Duration::from_millis(150));
+    assert!(!other.is_finished(), "the change waits for the lock");
+    // Under the lock, that window revokes far-a and saves.
+    let mut revoked = Sharing::load(&dir).unwrap();
+    assert!(revoked.set("far-a", None));
+    revoked.save(&dir).unwrap();
+    drop(held);
+    let after = other.join().unwrap().unwrap();
+    assert_eq!(after.ceiling("far-a"), None, "the revocation stands");
+    assert_eq!(after.ceiling("far-b"), Some(Rung::See));
+    let on_disk = Sharing::load(&dir).unwrap();
+    assert_eq!(on_disk.ceiling("far-a"), None);
+    assert_eq!(on_disk.ceiling("far-b"), Some(Rung::See));
+    let strays: Vec<_> = std::fs::read_dir(&dir)
+        .unwrap()
+        .filter_map(|e| e.ok())
+        .map(|e| e.file_name().to_string_lossy().into_owned())
+        .filter(|n| n.ends_with(".tmp"))
+        .collect();
+    assert!(strays.is_empty(), "no temporary file is left: {strays:?}");
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// A line saved while a far agent was known only by its seat still reaches it
+/// once its conversation is proven and the census names it by that.
+#[test]
+fn a_far_agent_is_found_by_its_seat_after_its_conversation_is_known() {
+    let agent = "{\"addr\":\"conv:0199\",\"also\":\"seat:22\",\"name\":\"fixer\",\"harness\":\"CLAUDE\",\"state\":\"idle\",\"reach\":\"prompt\"}";
+    let c = parse_census(&census_line(100, agent, "\"prompt\"")).unwrap();
+    assert_eq!(
+        c.find("conv:0199").map(|(_, a)| a.addr.as_str()),
+        Some("conv:0199")
+    );
+    assert_eq!(
+        c.find("seat:22").map(|(_, a)| a.addr.as_str()),
+        Some("conv:0199"),
+        "the seat it also answers to"
+    );
+    assert!(c.find("seat:21").is_none());
+}
+
+/// Two agents on one machine that both say `key: "review"` are two
+/// assignments on the far machine, which keeps one key book per machine.
+#[test]
+fn a_far_prompt_key_is_the_sending_agents_own() {
+    let a = scoped_key(Some(SeatId(3)), 11, "review");
+    let b = scoped_key(Some(SeatId(4)), 12, "review");
+    assert_ne!(a, b);
+    assert_eq!(
+        a,
+        scoped_key(Some(SeatId(3)), 99, "review"),
+        "a seat survives a wake"
+    );
+    assert_ne!(
+        scoped_key(None, 11, "review"),
+        scoped_key(None, 12, "review")
+    );
+}
