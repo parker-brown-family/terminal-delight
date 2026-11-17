@@ -1057,19 +1057,9 @@ fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> D
                 th,
             )
         })),
-        Kind::Decision(d) => list.children(d.options.iter().map(|o| {
-            micro(
-                format!("{} {}", if o.recommended { "◉" } else { "○" }, o.name),
-                Step::Small,
-                if o.recommended {
-                    th.text
-                } else {
-                    sk.ink.ink_faint
-                },
-                sk,
-                th,
-            )
-        })),
+        // The proposal keeps its verbs at this width. Keep the evidence a
+        // reader needs before approving or rejecting it, too.
+        Kind::Decision(d) => decision(d, sk, th),
         // A question's options are the BUTTONS underneath, and listing
         // them here printed every one of them twice — six labels as text
         // directly above the same six as chips. Parker, on the second

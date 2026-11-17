@@ -12451,7 +12451,7 @@ mod tests {
         let script = format!(
             "printf '\\033[?2004h\\033[2J\\033[H{first}\\n'; \
              while IFS= read -r l; do printf '%s\\n' \"$l\" >> '{log}'; \
-             case \"$l\" in *GO*) printf '\\033[2J\\033[Hesc to interrupt\\n'; sleep 1; \
+             case \"$l\" in *GO*) printf '\\033[2J\\033[Hesc to interrupt\\n'; if [ -e '{log}.hold' ]; then while [ -e '{log}.hold' ]; do sleep 0.05; done; else sleep 1; fi; \
              printf '\\033[2J\\033[HFAKE_DONE\\n? for shortcuts\\n';; esac; done",
             log = log.display()
         );
@@ -12702,6 +12702,10 @@ mod tests {
         let (ws, cx, _) = fixture(cx);
         let dir = prompt_scratch("road");
         let log = dir.join("worker.log");
+        // The real worker can run for hours. Keep this stand-in busy until
+        // the window actually observes it, even on a heavily loaded machine.
+        let hold = log.with_extension("log.hold");
+        std::fs::write(&hold, b"").unwrap();
         let worker = prompt_worker(&ws, cx, &log, "? for shortcuts");
         // An ask line is not a prompt line.
         ws.update(cx, |ws, _| {
@@ -12735,7 +12739,15 @@ mod tests {
         );
         let id = status.prompt_id;
         let mut seen = Vec::new();
-        let stage = prompt_ticks_until(&ws, cx, id, 15, |s| !s.is_open());
+        let working = prompt_ticks_until(&ws, cx, id, 45, |s| {
+            matches!(s, crate::prompt::PromptStage::Working { .. }) || !s.is_open()
+        });
+        std::fs::remove_file(hold).unwrap();
+        assert!(
+            matches!(working, crate::prompt::PromptStage::Working { .. }),
+            "worker was never observed taking the prompt: {working:?}"
+        );
+        let stage = prompt_ticks_until(&ws, cx, id, 45, |s| !s.is_open());
         ws.read_with(cx, |ws, _| {
             seen.push(ws.prompts.get(id).unwrap().stage.word())
         });
