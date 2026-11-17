@@ -1062,8 +1062,7 @@ impl Workspace {
             .flex()
             .flex_row()
             .flex_wrap()
-            .justify_end()
-            .max_w(px(640.))
+            .w_full()
             .gap_1()
             .children(lang::Lang::ALL.iter().copied().map(|l| {
                 let id = SharedString::from(format!("st-lang-{}", l.code()));
@@ -1763,7 +1762,11 @@ impl Workspace {
                         s.r_language,
                         s.r_language_sub,
                         self.st_languages(th, sk, cx),
-                    )],
+                    )
+                    // All nine names wrap within the available page width.
+                    .flex_col()
+                    .items_stretch()
+                    .gap_1()],
                 ),
                 Self::st_section(
                     th,
@@ -3102,6 +3105,43 @@ mod tests {
         for _ in 0..2 {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn language_choices_fit_the_settings_column_on_tiled_windows(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| skin::select(cx, "baremetal").unwrap());
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        for width in [900., 600.] {
+            cx.simulate_resize(size(px(width), px(600.)));
+            redraw(cx);
+            let section = cx.debug_bounds("st-sec-language").unwrap();
+            let viewport = cx.debug_bounds("st-page").unwrap();
+            for lang in [
+                "st-lang-en",
+                "st-lang-es",
+                "st-lang-de",
+                "st-lang-fr",
+                "st-lang-ru",
+                "st-lang-zh",
+                "st-lang-ja",
+                "st-lang-ko",
+                "st-lang-hi",
+            ] {
+                let chip = cx.debug_bounds(lang).unwrap();
+                assert!(
+                    chip.left() >= viewport.left() && chip.right() <= viewport.right(),
+                    "{width}px: {lang:?} at {chip:?} outside {viewport:?}"
+                );
+            }
+            assert!(
+                section.size.height < px(180.),
+                "{width}px: language section {section:?}"
+            );
         }
     }
 

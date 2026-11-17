@@ -134,7 +134,7 @@ def run(a, display_env, probe, n, skin, repeat):
         sessions = d / ".config/terminal-delight/sessions"
         sessions.mkdir(parents=True)
         os.mkfifo(d / "go")
-        layout = f"active = 0\npanes = {n}\nwin = [0,0,900,600]\n"
+        layout = f"active = 0\npanes = {n}\nwin = [0,0,{a.width},600]\n"
         for i in range(n):
             cmd = shlex.join(
                 [
@@ -179,7 +179,7 @@ def run(a, display_env, probe, n, skin, repeat):
                         env=env,
                         text=True,
                     ).splitlines()[0]
-                    for width in [899, 900]:
+                    for width in [a.width - 1, a.width]:
                         sp.run(
                             ["xdotool", "windowsize", "--sync", xid, str(width), "600"],
                             env=env,
@@ -361,7 +361,10 @@ def main():
         type=Path,
         help="override the one named skin, for a matched control",
     )
+    p.add_argument("--width", type=int, default=900, help="window width on the private 1000px display")
     a = p.parse_args()
+    if not 320 <= a.width <= 1000:
+        p.error("--width must be between 320 and 1000")
     if a.skin_file:
         if len(a.skins) != 1:
             p.error("--skin-file needs exactly one named skin")
