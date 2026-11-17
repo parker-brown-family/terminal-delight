@@ -41557,7 +41557,7 @@ impl Render for Workspace {
         let bug_overlay = self.host_or_root(H::Bug, bug_overlay, &mut hosted);
         let plugins_overlay = self.host_or_root(H::Plugins, plugins_overlay, &mut hosted);
         let dead_overlay = self.host_or_root(H::Recover, dead_overlay, &mut hosted);
-        let settings_overlay = self.render_settings(&th, hosted, cx);
+        let settings_overlay = self.render_settings(&th, hosted, window, cx);
         let root = div()
             .size_full()
             .relative()
