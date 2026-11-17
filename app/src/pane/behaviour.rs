@@ -5681,6 +5681,29 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
                 .collect::<Vec<_>>()
                 .join(" ")
         });
+        pane.read(|v| {
+            let atoms = v.wb_atoms.borrow();
+            let option = |name: &str| {
+                atoms
+                    .0
+                    .iter()
+                    .find(|atom| atom.text == name)
+                    .expect("drawn option")
+            };
+            let first = option("In the pane");
+            let second = option("In the window");
+            if width > 1000. {
+                assert!(
+                    (first.y - second.y).abs() < 4. && second.x > first.x + 200.,
+                    "wide options should be side by side"
+                );
+            } else {
+                assert!(
+                    second.y > first.y + 15.,
+                    "tiled options should read down the page"
+                );
+            }
+        });
         for phrase in [
             "Does the artifact rail belong",
             "Scoped to one conversation",
@@ -5704,4 +5727,204 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
             )))
         );
     }
+}
+
+fn open_bench_fixture(pane: &mut Pane, doc: &serde_json::Value) {
+    pane.view.update(pane.cx, |v, cx| {
+        let post = crate::surface::parse_lenient(doc, 1, "Fixture");
+        let id = post.id.clone();
+        v.bench.apply(post);
+        v.bench.select(&id);
+        v.set_face(Face::Workbench, cx);
+    });
+    pane.redraw();
+    pane.redraw();
+}
+
+#[gpui::test]
+fn workbench_evidence_survives_the_tiled_layout(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    let mut docs = crate::surfacefeed::demo_surfaces();
+    docs.push((
+        "markdown",
+        serde_json::json!({
+            "td":"0.4", "kind":"markdown", "id":"long-doc", "title":"Review",
+            "model":{"body":"# Evidence\n\none\n\ntwo\n\nthree\n\nEnd of handoff"}
+        }),
+    ));
+    for width in [600., 1600.] {
+        pane.cx.simulate_resize(gpui::size(px(width), px(950.)));
+        for (name, needle) in [
+            ("02-architecture", "one JSON document"),
+            ("03-changeset", "(0.0, 0.0)"),
+            ("04-report", "Eleven figures"),
+            ("05-table", "what it needs"),
+            ("06-unclassified", "spin"),
+            ("07-response", "the effort row"),
+            ("markdown", "End of handoff"),
+        ] {
+            open_bench_fixture(
+                &mut pane,
+                &docs.iter().find(|(id, _)| *id == name).unwrap().1,
+            );
+            let text = pane.read(|v| {
+                v.wb_atoms
+                    .borrow()
+                    .0
+                    .iter()
+                    .map(|a| a.text.clone())
+                    .collect::<Vec<_>>()
+                    .join(" ")
+            });
+            assert!(
+                text.to_lowercase().contains(&needle.to_lowercase()),
+                "{name} at {width}: {text}"
+            );
+        }
+    }
+}
+
+#[gpui::test]
+fn workbench_keys_review_the_named_hunk_and_open_evidence(cx: &mut TestAppContext) {
+    use crate::workbench::Hit;
+    let mut pane = Pane::running(cx, "exec cat");
+    pane.cx.simulate_resize(gpui::size(px(600.), px(950.)));
+    let docs = crate::surfacefeed::demo_surfaces();
+    for name in ["03-changeset", "07-response"] {
+        open_bench_fixture(
+            &mut pane,
+            &docs.iter().find(|(id, _)| *id == name).unwrap().1,
+        );
+        for _ in 0..70 {
+            pane.keys("right");
+            pane.redraw();
+            let wanted = pane.read(|v| match &v.wb_key_focus {
+                Some(Hit::Verb {
+                    action: crate::surface::Action::RejectPart,
+                    target: Some(id),
+                }) => id == "pane.rs#body",
+                Some(Hit::PickTab {
+                    group: crate::surface::Group::Evidence,
+                    ..
+                }) => true,
+                _ => false,
+            });
+            if wanted {
+                break;
+            }
+        }
+        assert!(
+            pane.read(|v| matches!(v.wb_key_focus, Some(Hit::Verb { .. } | Hit::PickTab { .. }))),
+            "no target on {name}"
+        );
+        pane.keys("enter");
+        pane.redraw();
+        pane.read(|v| {
+            let surface = v.bench.selected().unwrap();
+            match &surface.kind {
+                crate::surface::Kind::Changeset(c) => {
+                    assert_eq!(c.hunks[0].verdict, crate::surface::Verdict::Undecided);
+                    assert_eq!(c.hunks[1].verdict, crate::surface::Verdict::Rejected);
+                }
+                crate::surface::Kind::Response(_) => assert_eq!(
+                    v.bench.picked_tab(&surface.id),
+                    Some(crate::surface::Group::Evidence)
+                ),
+                _ => unreachable!(),
+            }
+        });
+    }
+}
+
+#[gpui::test]
+fn workbench_twenty_replies_and_a_long_document_can_be_read_by_key(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    pane.cx.simulate_resize(gpui::size(px(600.), px(740.)));
+    for i in 0..20 {
+        let doc = serde_json::json!({
+            "td":"0.4","kind":"response","id":format!("turn-{i}"),"title":format!("Review {i}"),
+            "model":{"layman":format!("The reviewer finished check {i} and recorded the result.")}
+        });
+        pane.view.update(pane.cx, |v, _| {
+            v.bench.apply(crate::surface::parse(&doc, i + 1).unwrap());
+        });
+    }
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Workbench, cx));
+    pane.redraw();
+    for _ in 0..19 {
+        pane.keys("down");
+    }
+    pane.redraw();
+    pane.redraw();
+    pane.read(|v| {
+        let selected = &v.bench.selected().expect("oldest reply").id;
+        assert_eq!(selected.0, "turn-0");
+        assert!(
+            v.wb_zones.borrow().iter().any(|z| z.hit
+                == crate::workbench::Hit::OpenRow(selected.clone())
+                && z.w > 0.
+                && z.h > 0.),
+            "the selected reply must remain visible in the shelf"
+        );
+    });
+    let body = (0..150)
+        .map(|i| format!("Paragraph {i}."))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    open_bench_fixture(
+        &mut pane,
+        &serde_json::json!({
+            "td":"0.4","kind":"markdown","id":"long","title":"Report","model":{"body":body}
+        }),
+    );
+    pane.keys("pagedown");
+    pane.redraw();
+    assert!(pane.read(|v| f32::from(v.wb_card_scroll.offset().y) < 0.));
+    pane.keys("pageup");
+    pane.redraw();
+    assert_eq!(pane.read(|v| f32::from(v.wb_card_scroll.offset().y)), 0.);
+}
+
+#[gpui::test]
+fn workbench_comment_draft_stays_with_its_card(cx: &mut TestAppContext) {
+    use crate::surface::Action;
+    use crate::workbench::Hit;
+    let mut pane = Pane::running(cx, "exec cat");
+    let docs = crate::surfacefeed::demo_surfaces();
+    let mut doc = docs
+        .iter()
+        .find(|(key, _)| *key == "01-decision")
+        .unwrap()
+        .1
+        .clone();
+    doc["actions"] = serde_json::json!(["comment"]);
+    open_bench_fixture(&mut pane, &doc);
+    for _ in 0..60 {
+        pane.keys("right");
+        pane.redraw();
+        if pane.read(|v| {
+            matches!(
+                v.wb_key_focus,
+                Some(Hit::Verb {
+                    action: Action::Comment,
+                    ..
+                })
+            )
+        }) {
+            break;
+        }
+    }
+    pane.keys("enter");
+    assert!(pane.read(|v| v
+        .wb_draft_verb
+        .as_ref()
+        .is_some_and(|(_, a)| a == &Action::Comment)));
+    pane.keys("x");
+    pane.view.update(pane.cx, |v, _| {
+        v.bench.close_card();
+    });
+    pane.keys("enter");
+    pane.keys("enter");
+    assert!(pane.read(|v| v.wb_compose.as_ref().is_some_and(|line| line.text() == "x")));
 }

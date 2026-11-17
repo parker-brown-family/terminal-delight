@@ -1359,6 +1359,8 @@ pub enum Pointer {
 /// What a wheel turn over the bench moves.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum Wheel {
+    /// Browse the replies without changing the card.
+    Rail,
     Dial,
     /// The composer's draft, by the delta.
     Composer,
@@ -1396,6 +1398,7 @@ pub enum Wheel {
 /// changed: the thing a person is reading beats the debug flag.
 pub fn wheel_target(over: Option<&Hit>, card: bool, mirror: bool) -> Wheel {
     match over {
+        Some(Hit::OpenRow(_)) => Wheel::Rail,
         Some(Hit::DialPick(..)) => Wheel::Dial,
         Some(Hit::Composer) => Wheel::Composer,
         _ if card => Wheel::Card,
