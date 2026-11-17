@@ -54,6 +54,7 @@
 #                             rather than forcing it to 1, so a pane's opacity
 #                             gauges show the desktop through the CRT. Identical
 #                             wherever the screen is opaque.
+#   0015-constant-filter-taps — fixed blur offsets and interior glow sampling.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -77,7 +78,8 @@ patch_doc_grade="$repo_root/docs/patches/0013-doc-grade.patch"
 patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha"; do
+patch_filter="$repo_root/docs/patches/0015-constant-filter-taps.patch"
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -174,3 +176,6 @@ apply_patch "$patch_doc_grade" "doc-grade" \
 
 apply_patch "$patch_tube_alpha" "tube-alpha" \
     'grep -qF "td-tube-alpha" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_filter" "constant-filter-taps" \
+    'grep -qF "fn disk_sample" crates/gpui_wgpu/src/crt_pass.wgsl'

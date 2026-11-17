@@ -1,0 +1,210 @@
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -63,10 +63,7 @@
+ // texture already exists for CRT; no history or additional blur target is held.
+ // Sampling in source space makes the halo bend with the letters. Out-of-pane
+ // samples are black rather than clamped, so a neighbour cannot light this pane.
+-fn glow_emission(p: vec2<f32>, r: vec4<f32>) -> vec3<f32> {
+-    if (any(p < r.xy + vec2<f32>(0.5)) || any(p >= r.xy + r.zw - vec2<f32>(0.5))) {
+-        return vec3<f32>(0.0);
+-    }
++fn glow_sample(p: vec2<f32>) -> vec3<f32> {
+     let dims = vec2<f32>(textureDimensions(screen_tex));
+     let sample = textureSampleLevel(screen_tex, screen_samp, p / dims, 0.0);
+     let peak = max(sample.r, max(sample.g, sample.b));
+@@ -74,49 +71,143 @@
+     return sample.rgb * bright * sample.a;
+ }
+ 
++fn glow_emission(p: vec2<f32>, r: vec4<f32>) -> vec3<f32> {
++    if (any(p < r.xy + vec2<f32>(0.5)) || any(p >= r.xy + r.zw - vec2<f32>(0.5))) {
++        return vec3<f32>(0.0);
++    }
++    return glow_sample(p);
++}
++
+ // td-tube-blur: soften one tube's own picture. The same golden-angle disk as
+ // the FOCUS backdrop, but every tap is held inside the tube, so a neighbour's
+ // edge never bleeds in and the blur stops where the pane does.
++// Vogel disk at half-step radii, with normalized Gaussian weights.
++const DISK = array<vec3<f32>, 32>(
++    vec3<f32>(0.045296863, 0.116504052, 0.065529108),
++    vec3<f32>(-0.194159181, -0.095797769, 0.061944848),
++    vec3<f32>(0.268368568, -0.078123696, 0.058556637),
++    vec3<f32>(-0.171702175, 0.282654140, 0.055353752),
++    vec3<f32>(-0.072934630, -0.367839013, 0.052326056),
++    vec3<f32>(0.334151513, 0.245393085, 0.049463966),
++    vec3<f32>(-0.448058171, 0.048671092, 0.046758424),
++    vec3<f32>(0.319574094, -0.363658354, 0.044200869),
++    vec3<f32>(0.010649764, 0.515278160, 0.041783204),
++    vec3<f32>(-0.376272562, -0.394073545, 0.039497779),
++    vec3<f32>(0.571541634, 0.038277419, 0.037337360),
++    vec3<f32>(-0.468108362, 0.374499081, 0.035295111),
++    vec3<f32>(0.096123087, -0.617564047, 0.033364566),
++    vec3<f32>(0.359865109, 0.540714438, 0.031539617),
++    vec3<f32>(-0.653539075, -0.161281360, 0.029814488),
++    vec3<f32>(0.610877608, -0.333471960, 0.028183718),
++    vec3<f32>(-0.232335550, 0.679444768, 0.026642147),
++    vec3<f32>(-0.296229556, -0.677586194, 0.025184896),
++    vec3<f32>(0.695183099, 0.307969899, 0.023807352),
++    vec3<f32>(-0.739857413, 0.248969895, 0.022505156),
++    vec3<f32>(0.386926272, -0.700651882, 0.021274187),
++    vec3<f32>(0.192506374, 0.796753598, 0.020110548),
++    vec3<f32>(-0.695785164, -0.467982912, 0.019010557),
++    vec3<f32>(0.847393892, -0.127665940, 0.017970732),
++    vec3<f32>(-0.549945052, 0.680577285, 0.016987783),
++    vec3<f32>(-0.055306293, -0.890963643, 0.016058599),
++    vec3<f32>(0.655097645, 0.631642364, 0.015180238),
++    vec3<f32>(-0.926722428, -0.023675748, 0.014349921),
++    vec3<f32>(0.711930533, -0.619499730, 0.013565020),
++    vec3<f32>(-0.108341463, 0.954011073, 0.012823051),
++    vec3<f32>(-0.574026313, -0.789695380, 0.012121666),
++    vec3<f32>(0.972257837, 0.197711147, 0.011458645),
++);
++
++fn disk_sample(p: vec2<f32>, lo: vec2<f32>, hi: vec2<f32>, dims: vec2<f32>,
++               rotation: mat2x2<f32>, tap: vec3<f32>) -> vec3<f32> {
++    let q = clamp(p + rotation * tap.xy, lo, hi);
++    return textureSampleLevel(screen_tex, screen_samp, q / dims, 0.0).rgb * tap.z;
++}
++
+ fn tube_blur(p: vec2<f32>, r: vec4<f32>, radius: f32) -> vec3<f32> {
+     let dims = vec2<f32>(textureDimensions(screen_tex));
+     let lo = r.xy + vec2<f32>(0.5);
+     let hi = r.xy + r.zw - vec2<f32>(0.5);
+     let ign = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+     let rot = ign * 6.2831853;
++    let axis = vec2<f32>(cos(rot), sin(rot)) * radius;
++    let rotation = mat2x2<f32>(axis, vec2<f32>(-axis.y, axis.x));
+     var acc = vec3<f32>(0.0);
+-    var wsum = 0.0;
+-    for (var t = 0; t < 32; t = t + 1) {
+-        let ft = f32(t) + 0.5;
+-        let rr = sqrt(ft / 32.0);
+-        let ang = ft * 2.3999632 + rot;
+-        let q = clamp(p + vec2<f32>(cos(ang), sin(ang)) * rr * radius, lo, hi);
+-        let w = exp(-rr * rr * 1.8);
+-        acc = acc + textureSampleLevel(screen_tex, screen_samp, q / dims, 0.0).rgb * w;
+-        wsum = wsum + w;
+-    }
+-    return acc / max(wsum, 1e-4);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[0]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[1]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[2]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[3]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[4]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[5]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[6]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[7]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[8]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[9]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[10]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[11]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[12]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[13]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[14]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[15]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[16]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[17]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[18]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[19]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[20]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[21]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[22]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[23]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[24]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[25]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[26]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[27]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[28]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[29]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[30]);
++    acc += disk_sample(p, lo, hi, dims, rotation, DISK[31]);
++    return acc;
+ }
+ 
+ fn image_bloom(base: vec3<f32>, p: vec2<f32>, r: vec4<f32>, strength: f32) -> vec3<f32> {
+     if (strength <= 0.0) { return base; }
+     // Explicit taps preserve the kernel and avoid per-fragment dynamic array indexing.
+     var halo = vec3<f32>(0.0);
+-    halo += glow_emission(p + vec2<f32>(-3.0, -3.0) * 1.6, r) * (1.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-1.0, -3.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(1.0, -3.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(3.0, -3.0) * 1.6, r) * (1.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-3.0, -1.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-1.0, -1.0) * 1.6, r) * (9.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(1.0, -1.0) * 1.6, r) * (9.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(3.0, -1.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-3.0, 1.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-1.0, 1.0) * 1.6, r) * (9.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(1.0, 1.0) * 1.6, r) * (9.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(3.0, 1.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-3.0, 3.0) * 1.6, r) * (1.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(-1.0, 3.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(1.0, 3.0) * 1.6, r) * (3.0 / 64.0);
+-    halo += glow_emission(p + vec2<f32>(3.0, 3.0) * 1.6, r) * (1.0 / 64.0);
++    // All sixteen footprints are inside for interior pixels. Only the
++    // five-pixel perimeter needs a per-tap neighbour check.
++    if (all(p >= r.xy + vec2<f32>(5.31)) && all(p < r.xy + r.zw - vec2<f32>(5.31))) {
++        halo += glow_sample(p + vec2<f32>(-3.0, -3.0) * 1.6) * (1.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-1.0, -3.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(1.0, -3.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(3.0, -3.0) * 1.6) * (1.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-3.0, -1.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-1.0, -1.0) * 1.6) * (9.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(1.0, -1.0) * 1.6) * (9.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(3.0, -1.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-3.0, 1.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-1.0, 1.0) * 1.6) * (9.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(1.0, 1.0) * 1.6) * (9.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(3.0, 1.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-3.0, 3.0) * 1.6) * (1.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(-1.0, 3.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(1.0, 3.0) * 1.6) * (3.0 / 64.0);
++        halo += glow_sample(p + vec2<f32>(3.0, 3.0) * 1.6) * (1.0 / 64.0);
++    } else {
++        halo += glow_emission(p + vec2<f32>(-3.0, -3.0) * 1.6, r) * (1.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-1.0, -3.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(1.0, -3.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(3.0, -3.0) * 1.6, r) * (1.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-3.0, -1.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-1.0, -1.0) * 1.6, r) * (9.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(1.0, -1.0) * 1.6, r) * (9.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(3.0, -1.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-3.0, 1.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-1.0, 1.0) * 1.6, r) * (9.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(1.0, 1.0) * 1.6, r) * (9.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(3.0, 1.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-3.0, 3.0) * 1.6, r) * (1.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(-1.0, 3.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(1.0, 3.0) * 1.6, r) * (3.0 / 64.0);
++        halo += glow_emission(p + vec2<f32>(3.0, 3.0) * 1.6, r) * (1.0 / 64.0);
++    }
+     // Screen blend preserves the sharp core and each colour channel's hue.
+     return base + halo * strength * 1.8 * (vec3<f32>(1.0) - base);
+ }
+@@ -304,23 +395,7 @@
+         // spiral spreads samples evenly; rotating per pixel trades banding for
+         // fine dithered noise that the dim backdrop swallows — reads as smooth,
+         // creamy frosted glass rather than a cheap N-tap disk.
+-        let TAPS = 32;
+-        let GOLDEN = 2.3999632;
+-        let ign = fract(52.9829189 * fract(dot(p, vec2<f32>(0.06711056, 0.00583715))));
+-        let rot = ign * 6.2831853;
+-        var acc = vec3<f32>(0.0);
+-        var wsum = 0.0;
+-        for (var t = 0; t < TAPS; t = t + 1) {
+-            let ft = f32(t) + 0.5;
+-            let rr = sqrt(ft / f32(TAPS));               // denser toward the centre
+-            let ang = ft * GOLDEN + rot;
+-            let off = vec2<f32>(cos(ang), sin(ang)) * rr * fb_radius;
+-            let suv = clamp((p + off) / dims, vec2<f32>(0.0), vec2<f32>(1.0));
+-            let w = exp(-rr * rr * 1.8);                 // gaussian-ish falloff
+-            acc = acc + textureSampleLevel(screen_tex, screen_samp, suv, 0.0).rgb * w;
+-            wsum = wsum + w;
+-        }
+-        var frost = acc / max(wsum, 1e-4);
++        var frost = tube_blur(p, vec4<f32>(0.0, 0.0, dims), fb_radius);
+         // Frosted glass: a faint cool-white lift + a touch of extra depth-darken,
+         // both scaled by the tint knob, so the backdrop reads as glass, not just
+         // an out-of-focus photo.
