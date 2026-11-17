@@ -5503,7 +5503,11 @@ impl TerminalView {
                         }
                     }
                     let th = theme::theme(cx);
-                    if view.fx.tick(&th) {
+                    let direct =
+                        crate::skin::spec(cx).shape.tube == Some(crate::skin::Tube::Direct);
+                    if direct {
+                        view.fx.clear_active();
+                    } else if view.fx.tick(&th) {
                         view.repaint(cx);
                     }
                     view.flush_offscreen(cx);
@@ -13581,7 +13585,11 @@ impl Render for TerminalView {
             header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
         }
 
-        let jiggle = self.fx.jiggle_px;
+        let jiggle = if sk.shape.tube == crate::skin::Tube::Direct {
+            0.
+        } else {
+            self.fx.jiggle_px
+        };
         let shake_y = jiggle;
         // The frame the grid sits in: a 2%/4px breathing border plus a
         // curvature-proportional inset so the bottom prompt clears the barrel
@@ -13955,6 +13963,7 @@ impl Render for TerminalView {
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
+                        let draw_tube = sk.shape.tube != crate::skin::Tube::Direct;
                         div().absolute().inset_0().child(
                             canvas(
                                 move |bounds, window, cx| {
@@ -13985,35 +13994,37 @@ impl Render for TerminalView {
                                     // the bench does its own hit-testing
                                     // through the warp's inverse since — see
                                     // `bench_hit_at` — so the reason is gone.
-                                    let (k1, k2) = crate::theme::warp_coeffs(th.warp);
-                                    // Per-pane crawl: this tube recedes by THIS
-                                    // pane's own crawl perspective (grade.crawl →
-                                    // th.crawl/angle/depth). Identity when off, so
-                                    // a crawling pane and a plain pane coexist.
-                                    let crawl = if th.crawl && on_terminal {
-                                        let (a, d) = crate::theme::crawl_coeffs(
-                                            th.crawl_angle,
-                                            th.crawl_depth,
+                                    if draw_tube {
+                                        let (k1, k2) = crate::theme::warp_coeffs(th.warp);
+                                        // Per-pane crawl: this tube recedes by THIS
+                                        // pane's own crawl perspective (grade.crawl →
+                                        // th.crawl/angle/depth). Identity when off, so
+                                        // a crawling pane and a plain pane coexist.
+                                        let crawl = if th.crawl && on_terminal {
+                                            let (a, d) = crate::theme::crawl_coeffs(
+                                                th.crawl_angle,
+                                                th.crawl_depth,
+                                            );
+                                            [1.0, a, d]
+                                        } else {
+                                            [0.0, 1.0, 1.0]
+                                        };
+                                        crate::warp::register_tube(
+                                            [
+                                                f32::from(bounds.origin.x) * sf,
+                                                f32::from(bounds.origin.y) * sf,
+                                                f32::from(bounds.size.width) * sf,
+                                                f32::from(bounds.size.height) * sf,
+                                            ],
+                                            th.screen_glare,
+                                            k1,
+                                            k2,
+                                            crawl,
+                                            tube_bezel,
+                                            if on_terminal { letter_glow } else { 0.0 },
+                                            if on_terminal { inactive_blur * sf } else { 0.0 },
                                         );
-                                        [1.0, a, d]
-                                    } else {
-                                        [0.0, 1.0, 1.0]
-                                    };
-                                    crate::warp::register_tube(
-                                        [
-                                            f32::from(bounds.origin.x) * sf,
-                                            f32::from(bounds.origin.y) * sf,
-                                            f32::from(bounds.size.width) * sf,
-                                            f32::from(bounds.size.height) * sf,
-                                        ],
-                                        th.screen_glare,
-                                        k1,
-                                        k2,
-                                        crawl,
-                                        tube_bezel,
-                                        if on_terminal { letter_glow } else { 0.0 },
-                                        if on_terminal { inactive_blur * sf } else { 0.0 },
-                                    );
+                                    }
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
                                         let changed = slot.is_none_or(|b| b != bounds);
@@ -14170,15 +14181,18 @@ impl Render for TerminalView {
                         ))
                     }),
             )
-            .when(std::env::var("TD_NOGLASS").is_err(), |el| {
-                // The bench is not in the tube. It keeps the scanlines, the
-                // bloom and the bend, and loses the edge fade that put the
-                // composer — the bench's bottom-most element — in the darkest
-                // band of the pane. See [`crate::workbench::vignette_on`].
-                let mut glass_th = th.clone();
-                glass_th.vignette = crate::workbench::vignette_on(face_now, th.vignette);
-                el.child(crt::glass(&glass_th, &self.fx))
-            })
+            .when(
+                sk.shape.tube != crate::skin::Tube::Direct && std::env::var("TD_NOGLASS").is_err(),
+                |el| {
+                    // The bench is not in the tube. It keeps the scanlines, the
+                    // bloom and the bend, and loses the edge fade that put the
+                    // composer — the bench's bottom-most element — in the darkest
+                    // band of the pane. See [`crate::workbench::vignette_on`].
+                    let mut glass_th = th.clone();
+                    glass_th.vignette = crate::workbench::vignette_on(face_now, th.vignette);
+                    el.child(crt::glass(&glass_th, &self.fx))
+                },
+            )
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))

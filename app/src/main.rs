@@ -33162,6 +33162,8 @@ impl Render for Workspace {
             tab.root.leaves(&mut leaves);
             leaves.iter().any(|p| p.read(cx).popup_open())
         });
+        #[cfg(target_os = "linux")]
+        gpui_wgpu::set_direct_rendering(skin::spec(cx).shape.tube == Some(skin::Tube::Direct));
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
@@ -34880,6 +34882,7 @@ impl Render for Workspace {
                     "clean" => t.ui.pal_skin_clean,
                     "custom" if sk.text_controls() => t.parts.ctl_custom_file,
                     "custom" => t.ui.pal_skin_custom,
+                    "baremetal" => "BAREMETAL",
                     "terminimalist" => "TERMINIMALIST",
                     other => other,
                 };
@@ -34899,6 +34902,7 @@ impl Render for Workspace {
                                     "chalk" => t.ui.pal_help_skin_chalk,
                                     "ops" => t.ui.pal_help_skin_ops,
                                     "clean" => t.ui.pal_help_skin_clean,
+                                    "baremetal" => t.ui.pal_help_skin_baremetal,
                                     _ => t.ui.pal_help_skin_custom,
                                 },
                                 None,

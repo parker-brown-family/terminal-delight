@@ -36,6 +36,12 @@ def worker(directory, index, history, size):
     tty.setraw(0)
     for n in range(history):
         os.write(1, f"pane {index} history {n:05d} 0123456789abcdef\r\n".encode())
+    if index == 0 and os.getenv("TD_BENCH_CAPTURE"):
+        # Populate the photograph with the checkout's actual release work.
+        rows = sp.check_output(["git", "-C", str(ROOT), "log", "-4", "--format=%h  %s"])
+        os.write(
+            1, b"\033[2J\033[H$ git log -4 --oneline\r\n" + rows.replace(b"\n", b"\r\n")
+        )
     Path(directory, f"ready-{index}").touch()
     if index == 0:
         with open(Path(directory, "go"), "rb") as trigger:
@@ -103,11 +109,19 @@ def run(a, display_env, probe, n, skin, repeat):
             HOME=temp,
             TD_BENCH_RUN=temp,
             TD_SESSION="bench",
-            TD_SKIN=str(ROOT / "app/skins" / f"{skin}.toml"),
+            TD_SKIN=str(a.skin_file or ROOT / "app/skins" / f"{skin}.toml"),
             SHELL="/bin/bash",
             TD_HOST_SHELL="/bin/bash",
             LP_NUM_THREADS=str(a.threads),
         )
+        if a.capture:
+            env["TD_BENCH_CAPTURE"] = "1"
+        if a.audit:
+            env["TD_FRAME_AUDIT"] = "1"
+        if a.scene == "floor":
+            env["TD_THRESHING_FLOOR_DEMO"] = "1"
+        elif a.scene:
+            env["TD_SKIN_SCENE"] = a.scene
         for key, sub in [
             ("XDG_CONFIG_HOME", ".config"),
             ("XDG_RUNTIME_DIR", "run"),
@@ -196,6 +210,18 @@ def run(a, display_env, probe, n, skin, repeat):
                         "restored PTYs",
                     )
                     time.sleep(a.quiet)
+                    if a.capture:
+                        sp.run(
+                            [
+                                "import",
+                                "-window",
+                                xid,
+                                str(a.out / f"{skin}-{n}-{repeat}.png"),
+                            ],
+                            env=env,
+                            check=True,
+                            timeout=20,
+                        )
                     host = [
                         p
                         for p in tagged(temp)
@@ -256,6 +282,21 @@ def run(a, display_env, probe, n, skin, repeat):
                     (a.out / f"{skin}-{n}-{repeat}.frames").write_text(
                         "\n".join(lines) + "\n"
                     )
+                    if a.audit:
+                        draws = [
+                            line
+                            for line in log_path.read_text().splitlines()
+                            if line.startswith("td-frame ")
+                        ]
+                        if not draws:
+                            raise RuntimeError(f"renderer audit missing: {log_path}")
+                        if skin == "baremetal" and any(
+                            line != "td-frame direct=true post=false shadows=0"
+                            for line in draws
+                        ):
+                            raise RuntimeError(
+                                f"optional draw with BAREMETAL: {log_path}"
+                            )
                     return dict(
                         repeat=repeat,
                         skin=skin,
@@ -302,7 +343,29 @@ def main():
         action="store_true",
         help="permit debug binary for rig qualification only",
     )
+    p.add_argument(
+        "--audit", action="store_true", help="verify actual optional draw submissions"
+    )
+    p.add_argument(
+        "--capture",
+        action="store_true",
+        help="save the settled native window before streaming",
+    )
+    p.add_argument(
+        "--scene",
+        choices=["settings", "help", "floor"],
+        help="show a native built-in capture fixture",
+    )
+    p.add_argument(
+        "--skin-file",
+        type=Path,
+        help="override the one named skin, for a matched control",
+    )
     a = p.parse_args()
+    if a.skin_file:
+        if len(a.skins) != 1:
+            p.error("--skin-file needs exactly one named skin")
+        a.skin_file = a.skin_file.resolve(strict=True)
     a.binary = a.binary.resolve(strict=True)
     a.icd = a.icd.resolve(strict=True)
     a.out = a.out.resolve()
