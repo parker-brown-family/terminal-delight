@@ -50,9 +50,15 @@ dst = dev.create_texture(
     format="rgba8unorm",
     usage=usage.RENDER_ATTACHMENT | usage.COPY_SRC,
 )
-row = bytes((x * 43 ^ x // 4) & 255 for x in range(WIDTH * 4))
+# A pattern that varies along both axes, so a readback (`--images`) can
+# expose a blur that moves its samples vertically as well as horizontally.
+source = bytes(
+    (x * 43 ^ y * 29 ^ (x + y) // 4) & 255
+    for y in range(HEIGHT)
+    for x in range(WIDTH * 4)
+)
 dev.queue.write_texture(
-    {"texture": src}, row * HEIGHT, {"bytes_per_row": WIDTH * 4}, (WIDTH, HEIGHT, 1)
+    {"texture": src}, source, {"bytes_per_row": WIDTH * 4}, (WIDTH, HEIGHT, 1)
 )
 uniform = dev.create_buffer(
     size=3120, usage=wgpu.BufferUsage.UNIFORM | wgpu.BufferUsage.COPY_DST
