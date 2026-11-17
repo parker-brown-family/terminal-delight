@@ -1,0 +1,267 @@
+name: Deep verification
+
+# The checks too slow for every pull request, which a public repository's free
+# minutes can afford once a week: fuzzing the parsers that read words from
+# outside the process, mutation testing of the functions that decide who may
+# reach whom, the keystroke-latency benchmark with its numbers kept, and an
+# AddressSanitizer pass. None of it gates a merge. A failure here is a finding
+# to read, and every job says what it found in the run summary.
+#
+# Weekly, Sunday 03:23 UTC, by hand, and on a pull request that edits this
+# file, so a change to the workflow is proven by running it (with shorter
+# budgets) before it merges.
+
+on:
+  schedule:
+    - cron: "23 3 * * 0"
+  workflow_dispatch:
+    inputs:
+      fuzz_seconds:
+        description: Seconds of fuzzing
+        default: "1200"
+      fuzz_seed:
+        description: Fuzz seed (empty for the clock)
+        default: ""
+  pull_request:
+    paths:
+      - .github/workflows/deep-verify.yml
+
+permissions:
+  contents: read
+
+concurrency:
+  group: deep-verify-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  # Equal to ci.yml's, so the jobs below restore the cache CI saves under
+  # the key `rust` (rust-cache hashes every RUST* and CARGO* variable).
+  RUST_TOOLCHAIN: "1.99.1"
+  CARGO_PROFILE_DEV_DEBUG: line-tables-only
+  CARGO_PROFILE_TEST_DEBUG: line-tables-only
+  # A pull request runs each job briefly: enough to prove the job works.
+  SHORT: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  fuzz:
+    name: Fuzz the parsers
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Prepare patched gpui
+        run: ../scripts/prepare-gpui.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: rust
+          save-if: false
+      # src/fuzz.rs: a seeded generator mutates real inputs (JSON-RPC lines,
+      # far-door messages and replies, sharing.toml, machines.toml, a
+      # start_team call) and checks each parser stays up and keeps its
+      # property. A failure names the seed and the input.
+      - name: Fuzz
+        env:
+          TD_FUZZ_SECS: ${{ env.SHORT == 'true' && '60' || inputs.fuzz_seconds || '1200' }}
+          TD_FUZZ_SEED: ${{ inputs.fuzz_seed }}
+        run: |
+          cargo test --locked --bin terminal-delight fuzz::deep -- --ignored --nocapture 2>&1 | tee fuzz.log
+          grep -h '^fuzz:' fuzz.log >> "$GITHUB_STEP_SUMMARY"
+
+  # cargo-mutants on the functions that decide who reaches whom: the
+  # Threshing Floor's rules, the far door and the sharing ceilings, caller
+  # verification on the control socket, and team starts. 174 mutants on
+  # 2026-11-17, about four minutes each to rebuild and test, so eight shards.
+  # A mutant no test catches is a hole in the tests, listed in the summary.
+  mutants:
+    name: Mutants, shard ${{ matrix.shard }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 240
+    strategy:
+      fail-fast: false
+      matrix:
+        shard: [0, 1, 2, 3, 4, 5, 6, 7]
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config jq
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Prepare patched gpui
+        run: ../scripts/prepare-gpui.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          shared-key: rust
+          save-if: false
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        with:
+          tool: cargo-mutants@27
+      # --in-place: the checkout is thrown away, and building in it keeps the
+      # restored cache warm (a copied tree would build gpui cold per shard).
+      # The tests run are the modules that own these rules; a mutant only a
+      # far-off test would catch is reported missed, which is worth knowing.
+      # Exit 2 means mutants were missed: a finding, reported, not a failure.
+      - name: Mutate the reach rules
+        run: |
+          re='\b(reach|decide_ask|decide_prompt|anonymous_reach|visible_to_some_agent|may_write|may_write_live|policy_admits|ceiling|inbound_reach|outbound_reach|verify_caller|descends_from|is_person_acting|far_door|caller_pane|decide|key_ok|set|parse|is_callers|reach_of|reachable|far_census_named)\b'
+          shard="${{ matrix.shard }}/8"
+          extra=()
+          if [ "$SHORT" = true ]; then extra=(--re 'policy_admits'); fi
+          set +e
+          cargo mutants --in-place --no-shuffle --shard "$shard" \
+            -f src/mcp.rs -f src/farfloor.rs -f src/threshing_floor.rs -f src/ctl.rs -f src/team.rs \
+            --re "$re" "${extra[@]}" --timeout 300 --build-timeout 1500 \
+            -- --bin terminal-delight -- mcp farfloor far_ threshing_floor ctl team prompt
+          code=$?
+          set -e
+          {
+            echo "### Mutants, shard $shard (exit $code)"
+            for f in caught missed timeout unviable; do
+              n=$(wc -l < mutants.out/$f.txt 2>/dev/null || echo unmeasured)
+              echo "- $f: $n"
+            done
+            if [ -s mutants.out/missed.txt ]; then echo; echo '```'; cat mutants.out/missed.txt; echo '```'; fi
+          } >> "$GITHUB_STEP_SUMMARY"
+          case $code in
+            0) ;;
+            2) echo "::warning::shard $shard: mutants no test caught (listed in the summary)" ;;
+            *) exit "$code" ;;
+          esac
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: mutants-shard-${{ matrix.shard }}
+          path: app/mutants.out
+          retention-days: 30
+
+  # The keystroke-echo benchmark (scripts/td-echo-bench.sh), release build,
+  # with its numbers kept as an artifact and compared to the last scheduled
+  # run on main. A shared runner is noisy, so a change is flagged only past
+  # 30 % and 200 µs together, and never fails the job. The flood conditions
+  # are the control: the same instrument must see eight busy panes cost
+  # something, or its numbers mean nothing.
+  bench:
+    name: Echo latency benchmark
+    runs-on: ubuntu-latest
+    timeout-minutes: 75
+    steps:
+      - uses: actions/checkout@v5
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config jq
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+      - name: Prepare patched gpui
+        run: ./scripts/prepare-gpui.sh
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          key: bench
+          save-if: ${{ github.event_name == 'schedule' }}
+      - name: Measure
+        run: |
+          samples=$([ "$SHORT" = true ] && echo 100 || echo 1000)
+          set +e
+          bash scripts/td-echo-bench.sh --samples "$samples" > bench.out
+          code=$?
+          set -e
+          cat bench.out
+          grep '^{"mode"' bench.out > bench.jsonl || true
+          [ -s bench.jsonl ] || { echo "::error::the benchmark produced no measurement (exit $code)"; exit 1; }
+          [ "$code" = 1 ] && echo "::warning::the attached path is over the 1 ms gate at some load"
+          {
+            echo "### Echo latency (µs), $samples samples, ${{ github.sha }}"
+            echo "| mode | flood | load | p50 | p99 |"
+            echo "|---|---|---|---|---|"
+            jq -r '"| \(.mode) | \(.flood) | \(.load) | \(.p50_us // "unmeasured") | \(.p99_us // "unmeasured") |"' bench.jsonl
+          } >> "$GITHUB_STEP_SUMMARY"
+      - name: Compare with the last scheduled run
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prev=$(gh run list --workflow deep-verify.yml --branch main --event schedule --status success -L 1 --json databaseId --jq '.[0].databaseId // empty')
+          if [ -z "$prev" ] || ! gh run download "$prev" -n echo-bench -D prev 2>/dev/null; then
+            echo "No earlier scheduled run to compare with: this run is the first number." >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          jq -s -r --slurpfile old prev/bench.jsonl '
+            .[] as $n
+            | ($old | map(select(.mode == $n.mode and .flood == $n.flood and .load == $n.load)) | .[0]) as $o
+            | select($o != null)
+            | ["p50_us", "p99_us"][] as $k
+            | select(($n[$k] != null) and ($o[$k] != null))
+            | select($n[$k] > $o[$k] * 1.3 and ($n[$k] - $o[$k]) > 200)
+            | "::warning::echo latency \($n.mode) flood \($n.flood) \($n.load): \($k) \($o[$k]) -> \($n[$k]) µs (run '"$prev"')"
+          ' bench.jsonl | tee regressions.txt
+          [ -s regressions.txt ] || echo "No change past 30 % and 200 µs since run $prev." >> "$GITHUB_STEP_SUMMARY"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: echo-bench
+          path: |
+            bench.jsonl
+            bench.out
+          retention-days: 90
+
+  # AddressSanitizer over the fuzzer and the far-door and prompt tests, on
+  # nightly with the standard library rebuilt sanitized. Experimental: the
+  # pinned gpui tree is built with stable, and whether nightly builds it is
+  # itself the first thing this job finds out. Miri is not attempted: the
+  # crate is one binary over gpui, libc and /proc, which Miri cannot run.
+  asan:
+    name: AddressSanitizer (experimental)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    continue-on-error: true
+    defaults:
+      run:
+        working-directory: app
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+      - name: Install Linux build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libasound2-dev libfontconfig1-dev libwayland-dev \
+            libx11-dev libxcb1-dev libxkbcommon-dev libxkbcommon-x11-dev pkg-config
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11
+        with:
+          toolchain: nightly
+          components: rust-src
+      - name: Prepare patched gpui
+        run: ../scripts/prepare-gpui.sh
+      - name: Test under AddressSanitizer
+        env:
+          RUSTFLAGS: -Zsanitizer=address
+          RUSTDOCFLAGS: -Zsanitizer=address
+          ASAN_OPTIONS: detect_leaks=0
+          TD_FUZZ_SECS: ${{ env.SHORT == 'true' && '30' || '300' }}
+        run: |
+          cargo +nightly test -Zbuild-std --target x86_64-unknown-linux-gnu --bin terminal-delight \
+            -- fuzz farfloor far_ prompt --include-ignored 2>&1 | tail -40
