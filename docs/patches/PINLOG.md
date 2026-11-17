@@ -1,21 +1,21 @@
 # PINLOG — the zed_rev pin, managed
 
 `app/Cargo.toml` pins gpui to one Zed commit (`zed_rev`), prepared as a sibling
-`zed-upstream/` checkout by `scripts/prepare-gpui.sh`, carrying the five-patch
+`zed-upstream/` checkout by `scripts/prepare-gpui.sh`, carrying the patch
 stack in this directory. This file is the pin's ledger: every bump gets an
 entry, and the cadence/trigger policy lives here so the pin always has an
 owner. Background: the 2026-08-29 foundation interrogation
 (`docs/2026-08-29-foundation-interrogation-zed-gpui-quickshell.md`, §2/§4) and
 issue #179.
 
-## Why a bump is not scary
+## Bump Procedure
 
-A bump is one rebase in a throwaway worktree, gated before it ships:
+Evaluate each bump in a throwaway worktree, gated before it ships:
 
-1. `git -C zed-upstream fetch && git checkout <candidate-rev>` (a sibling
-   checkout — the working build's checkout is untouched).
-2. Re-apply the five patches; rebase whichever ones conflict (the CRT pass is
-   the likely one — it lives in `gpui_wgpu`, where upstream moves).
+1. Fetch the candidate revision and create an isolated Zed worktree beside an
+   isolated TD worktree. Keep the working build's checkout untouched.
+2. Re-apply the full stack listed in `scripts/prepare-gpui.sh`; port whichever
+   patches conflict. The CRT pass lives in `gpui_wgpu`, where upstream moves.
 3. `cargo test` + `scripts/release-smoke.sh` (fmt, clippy, tests, deny,
    AppImage). Red anywhere → stay on the old pin, file what broke, no harm
    done. Green → update `zed_rev`, commit, PR.
@@ -29,6 +29,9 @@ driver workaround) has to cross a year of drift at the worst moment.
 - **Scheduled:** quarterly, or sooner when the drift watcher
   (`.github/workflows/zed-pin-watch.yml`, weekly) reports more than
   16 weeks / raises its issue.
+- **Notifications:** one open issue tracks overdue maintenance. Weekly drift
+  readings go in the Actions summary; an existing issue gets no repeat comment.
+  Keep an incompatible bump open with its failure evidence.
 - **Off-cycle triggers:** a gpui/wgpu security advisory · a renderer or driver
   fix TD needs · an `alacritty_terminal` release TD wants that needs newer
   gpui · Zed publishing `gpui_platform` + a post-process seam to crates.io
@@ -36,6 +39,29 @@ driver workaround) has to cross a year of drift at the worst moment.
   interrogation's §4 option C).
 
 ## Ledger
+
+### 2026-11-16 Candidate Evaluation
+
+Zed `v1.28.1` (`e8bc16acee5ae1937600d571d441c4b5d7b0d288`)
+failed the first patch's apply check in an isolated checkout. The failing files
+are `crates/gpui_wgpu/src/gpui_wgpu.rs` and
+`crates/gpui_wgpu/src/wgpu_renderer.rs`. No candidate patches were applied.
+
+The renderer now routes `WgpuRenderer::draw` through
+`WgpuRendererCore::render_frame`. The Zed workspace uses taffy `=0.15.0` and a
+new wgpu git revision. The CRT insertion
+points need a deliberate port before the remaining patches can be evaluated.
+The June pin is retained; candidate compilation, tests and rendering are
+**unverified**. Track the migration in
+[the overdue pin issue](https://github.com/parker-brown-family/terminal-delight/issues/916).
+
+Reproduce from a clean checkout of that candidate:
+
+```bash
+git apply --check /path/to/terminal-delight/docs/patches/0001-td-crt-pass.patch
+```
+
+### Applied Pins
 
 | Date | zed_rev | Zed state at pin | Patches | Notes |
 |---|---|---|---|---|
