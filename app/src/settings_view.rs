@@ -38,7 +38,9 @@ thread_local! {
 fn row_shown(title: &str) -> bool {
     ROW_FILTER.with_borrow_mut(|f| match f {
         None => true,
-        Some(f) if f.titles.contains(title) => {
+        // Compared as the search compares them: a page draws some titles in
+        // sentence case (`sentence`) that its index holds as written.
+        Some(f) if f.titles.contains(&settings::norm(title)) => {
             f.section += 1;
             f.page += 1;
             true
@@ -2682,7 +2684,7 @@ impl Workspace {
             let titles = hits
                 .iter()
                 .filter(|h| h.page == page && !h.secondary)
-                .map(|h| h.title.clone())
+                .map(|h| settings::norm(&h.title))
                 .collect();
             ROW_FILTER.set(Some(RowFilter {
                 titles,
@@ -3310,6 +3312,20 @@ mod tests {
         assert!(
             ws.read_with(cx, |ws, _| ws.settings.is_none()),
             "then closes"
+        );
+        // A row whose page draws its title in sentence case ("Tab and pane
+        // counts") is found by the index's own words and stays drawn.
+        ws.update(cx, |ws, cx| {
+            ws.open_settings(Some(Page::General), cx);
+            for k in ["c->c", "o->o", "u->u", "n->n", "t->t", "s->s"] {
+                assert!(ws.settings_key(&gpui::Keystroke::parse(k).unwrap(), cx));
+            }
+        });
+        redraw(cx);
+        assert!(has(cx, "st-found-interface"), "the page is named");
+        assert!(
+            has(cx, "st-ui-counts-row"),
+            "the row drawn in sentence case is kept"
         );
     }
 

@@ -292,6 +292,11 @@ impl Workspace {
         // one on screen: an agent starting agents does not move anybody.
         let home = self.tab_with_leaf(coordinator.entity_id());
         let place = home.map(|i| self.place_of(i));
+        // Making a pane gives it the keyboard. Whatever the person was typing
+        // into (the composer, a pane) gets it back below, and again after the
+        // panes' own deferred work, so a team starting behind them never
+        // closes what they are writing.
+        let held = window.focused(cx);
         let mut panes: Vec<Entity<TerminalView>> = Vec::with_capacity(spec.members.len());
         for (member, line) in spec.members.iter().zip(lines) {
             let pane = self.make_pane_in_mode(
@@ -399,6 +404,10 @@ impl Workspace {
             ),
             Instant::now(),
         ));
+        if let Some(h) = held {
+            window.focus(&h, cx);
+            window.defer(cx, move |w, cx| w.focus(&h, cx));
+        }
         self.save(cx);
         cx.notify();
     }
@@ -580,10 +589,18 @@ mod tests {
             ws.team_promote(&lead, true, cx);
             queue(ws, cx);
         });
+        // The person is typing in the lead's pane while the team starts.
+        let lead_focus = ws.update(cx, |ws, cx| leaf_of(ws, SeatId(100), cx).focus_handle(cx));
+        cx.update(|w, cx| w.focus(&lead_focus, cx));
         {
             let _fork = crate::testsync::forks_and_locks();
             cx.update(|w, cx| ws.update(cx, |ws, cx| ws.team_drain(w, cx)));
         }
+        cx.run_until_parked();
+        assert!(
+            cx.update(|w, _| lead_focus.is_focused(w)),
+            "a team starting behind the person leaves their keyboard where it was"
+        );
         ws.update(cx, |ws, cx| {
             assert_eq!(
                 ws.tabs.len(),

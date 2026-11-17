@@ -285,6 +285,7 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         // Filled in by the transport that has a caller to name; the ticker
         // serves every transport and knows nothing about who asked.
         caller: None,
+        peer_in_pane: false,
         engineering: if ws.coordination_full_scope() {
             ws.eng_reports()
         } else {
@@ -354,6 +355,11 @@ pub(crate) fn respond_as(
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
         Ok(mut snap) => {
+            snap.peer_in_pane = peer_pid.is_some_and(|pid| {
+                snap.panes
+                    .iter()
+                    .any(|p| p.pid > 1 && crate::ctl::descends_from(pid, p.pid))
+            });
             snap.caller = caller.map(|c| {
                 let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
                     snap.panes
@@ -629,6 +635,7 @@ mod tests {
                 build: Some("td-test".into()),
             }),
             caller: None,
+            peer_in_pane: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: false,

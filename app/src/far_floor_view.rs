@@ -576,6 +576,22 @@ impl Workspace {
             return far_no(&why);
         };
         let far_window = census.window;
+        // A retry with a key this agent already used is answered with the
+        // first attempt, before anything else: the answer that carried its
+        // number may be what was lost, and `busy` would only point back at it.
+        let key = key.map(|k| farfloor::scoped_key(seat, caller_pane, &k));
+        if let Some(first) = key
+            .as_deref()
+            .and_then(|k| self.far_floor.book.by_key(machine, k))
+        {
+            let mut data = serde_json::to_value(&first.stage).unwrap_or_default();
+            data["prompt_id"] = first.id.into();
+            data["machine"] = first.machine.clone().into();
+            return far_ok(
+                far_stage_words(first.id, &first.machine, &first.stage),
+                data,
+            );
+        }
         if self.far_floor.book.busy(caller_pane, machine, to) {
             return far_no(
                 "an earlier prompt from you to that agent has not finished. Read it with \
@@ -609,11 +625,11 @@ impl Workspace {
             sent_ms: now,
             stage: FarStage::Sending,
             misses: 0,
+            key: key.clone(),
         });
         // The far window keeps one key book per sending machine, so a key is
         // made this agent's own before it leaves: two agents here that both
         // say "review" are two assignments there, not one.
-        let key = key.map(|k| farfloor::scoped_key(seat, caller_pane, &k));
         let line = farfloor::request(
             farfloor::M_PROMPT,
             serde_json::json!({

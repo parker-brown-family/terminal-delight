@@ -672,6 +672,10 @@ pub struct FarSent {
     /// How many times in a row the far window that took it could not be
     /// asked, while its machine could. Not a count of anything else.
     pub misses: u8,
+    /// The sender's key, as it left ([`scoped_key`]). A retry that carries
+    /// it is answered with this prompt, so a lost first answer is not a lost
+    /// prompt. `None`: sent without one.
+    pub key: Option<String>,
 }
 
 /// How many such misses end a prompt. The far window has closed, and what
@@ -701,6 +705,16 @@ impl FarBook {
         self.sent
             .iter()
             .find(|s| s.id == id && s.sender_pane == sender_pane)
+    }
+
+    /// The prompt this window already sent to `machine` under `key`, open
+    /// or ended. The key carries the sending agent ([`scoped_key`]), so this
+    /// is that agent's own earlier attempt.
+    pub fn by_key(&self, machine: &str, key: &str) -> Option<&FarSent> {
+        self.sent
+            .iter()
+            .rev()
+            .find(|s| s.machine == machine && s.key.as_deref() == Some(key))
     }
 
     pub fn get_mut(&mut self, id: u64) -> Option<&mut FarSent> {

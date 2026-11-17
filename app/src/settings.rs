@@ -171,7 +171,7 @@ pub struct Item {
     pub secondary: bool,
 }
 
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })

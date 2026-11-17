@@ -325,8 +325,22 @@ fn a_prompt_whose_far_window_closed_ends_as_not_known_rather_than_holding_its_se
             far: "working".into(),
         },
         misses: 0,
+        key: Some(scoped_key(Some(SeatId(11)), 4, "review")),
     });
     assert!(book.busy(4, "farbox", "seat:22"));
+    // The first attempt is found again by its key, by the same agent only.
+    assert_eq!(
+        book.by_key("farbox", &scoped_key(Some(SeatId(11)), 7, "review"))
+            .map(|s| s.id),
+        Some(1),
+        "a retry after a wake finds it"
+    );
+    assert!(book
+        .by_key("farbox", &scoped_key(Some(SeatId(12)), 4, "review"))
+        .is_none());
+    assert!(book
+        .by_key("elsewhere", &scoped_key(Some(SeatId(11)), 4, "review"))
+        .is_none());
     assert!(
         !book.busy(5, "farbox", "seat:22"),
         "another sender is not held up"

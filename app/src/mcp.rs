@@ -801,6 +801,12 @@ pub struct Snapshot {
     /// which is why it lives on the snapshot: the snapshot is the live data ONE
     /// request is answered from.
     pub caller: Option<Caller>,
+    /// The process on the other end of the connection runs inside one of
+    /// this window's panes, by the kernel's word (its peer pid descends from
+    /// a pane's shell), whatever the request claimed about itself. A request
+    /// that names no caller is not thereby from outside: an agent can call
+    /// `ctl mcp rpc` bare. `false` when the transport had no peer to check.
+    pub peer_in_pane: bool,
     /// The engineering state of every project the rail has read — checkouts,
     /// drift, what it would take to land everything. The `engineering_state`
     /// tool's whole answer; empty until the rail's first scan lands.
@@ -1274,6 +1280,7 @@ impl Snapshot {
             outer_grade: GradeReport::default(),
             instance: None,
             caller: None,
+            peer_in_pane: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: true,
@@ -1719,7 +1726,10 @@ fn far_door<A>(
 where
     A: Fn(&AskCall) -> AskReply,
 {
-    if snap.caller.as_ref().is_some_and(|c| c.pane.is_some()) {
+    // Refused on either word: the pane the caller named, or the kernel's
+    // account of where the connection came from. A bare `ctl mcp rpc` names
+    // no pane, and from inside a pane it must still be turned away.
+    if snap.peer_in_pane || snap.caller.as_ref().is_some_and(|c| c.pane.is_some()) {
         return Err((
             -32002,
             "this is the door another machine's Threshing Floor uses. From inside a pane, \
@@ -5322,6 +5332,7 @@ mod tests {
                 build: Some("td-abc1234-under-test".into()),
             }),
             caller: None,
+            peer_in_pane: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: true,
@@ -5558,6 +5569,19 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("did not give its name"));
+
+        // A bare `ctl mcp rpc` from inside a pane names no caller; the
+        // kernel's word that its process is in a pane still shuts the door.
+        s.caller = None;
+        s.peer_in_pane = true;
+        let bare = ask(&census("legion"), &s);
+        assert!(
+            bare["error"]["message"]
+                .as_str()
+                .is_some_and(|m| m.contains("another machine's Threshing Floor")),
+            "an unnamed caller inside a pane: {bare}"
+        );
+        s.peer_in_pane = false;
 
         // An agent inside a pane is refused at this door, whatever it claims.
         s.caller = Some(Caller {
