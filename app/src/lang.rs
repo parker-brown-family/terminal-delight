@@ -15,17 +15,21 @@ use serde::{Deserialize, Serialize};
 mod chrome;
 mod coord;
 mod entry;
+mod far;
 mod flyout;
 mod help;
 mod parts;
 mod settings;
+mod team;
 pub use chrome::Chrome;
 pub use coord::Coord;
 pub use entry::Entry;
+pub use far::Far;
 pub use flyout::Flyout;
 pub use help::Help;
 pub use parts::Parts;
 pub use settings::Settings;
+pub use team::Team;
 
 /// A UI language. Serialised lowercase into `state.toml` (`lang = "zh"`); an
 /// unknown value falls back to English so old/foreign files always load.
@@ -473,6 +477,11 @@ pub struct Strings {
     /// Settings: the book that holds every setting, laid out as T3 Code
     /// lays out its own.
     pub settings: &'static Settings,
+    /// Other machines: the window that shows another machine's Terminal
+    /// Delight, the Machines page, and far agents on the Threshing Floor.
+    pub far: &'static Far,
+    /// High trust agentic: the setting and the banner.
+    pub team: &'static Team,
 }
 
 /// A counted phrase in every form a language can need, by CLDR plural
@@ -833,6 +842,8 @@ pub const EN: Strings = Strings {
     entry: &entry::EN,
     flyout: &flyout::EN,
     settings: &settings::EN,
+    far: &far::EN,
+    team: &team::EN,
 };
 
 /// Español.
@@ -1113,6 +1124,8 @@ pub const ES: Strings = Strings {
     entry: &entry::ES,
     flyout: &flyout::ES,
     settings: &settings::ES,
+    far: &far::ES,
+    team: &team::ES,
 };
 
 /// Deutsch.
@@ -1393,6 +1406,8 @@ pub const DE: Strings = Strings {
     entry: &entry::DE,
     flyout: &flyout::DE,
     settings: &settings::DE,
+    far: &far::DE,
+    team: &team::DE,
 };
 
 /// 中文 (简体).
@@ -1673,6 +1688,8 @@ pub const ZH: Strings = Strings {
     entry: &entry::ZH,
     flyout: &flyout::ZH,
     settings: &settings::ZH,
+    far: &far::ZH,
+    team: &team::ZH,
 };
 
 /// Français.
@@ -1953,6 +1970,8 @@ pub const FR: Strings = Strings {
     entry: &entry::FR,
     flyout: &flyout::FR,
     settings: &settings::FR,
+    far: &far::FR,
+    team: &team::FR,
 };
 
 /// Русский.
@@ -2233,6 +2252,8 @@ pub const RU: Strings = Strings {
     entry: &entry::RU,
     flyout: &flyout::RU,
     settings: &settings::RU,
+    far: &far::RU,
+    team: &team::RU,
 };
 
 /// 日本語.
@@ -2513,6 +2534,8 @@ pub const JA: Strings = Strings {
     entry: &entry::JA,
     flyout: &flyout::JA,
     settings: &settings::JA,
+    far: &far::JA,
+    team: &team::JA,
 };
 
 /// 한국어.
@@ -2793,6 +2816,8 @@ pub const KO: Strings = Strings {
     entry: &entry::KO,
     flyout: &flyout::KO,
     settings: &settings::KO,
+    far: &far::KO,
+    team: &team::KO,
 };
 
 /// हिन्दी.
@@ -3074,6 +3099,8 @@ pub const HI: Strings = Strings {
     entry: &entry::HI,
     flyout: &flyout::HI,
     settings: &settings::HI,
+    far: &far::HI,
+    team: &team::HI,
 };
 
 #[cfg(test)]
@@ -3252,6 +3279,8 @@ mod tests {
         // German says UPDATES too, and French spells STABLE the same way.
         "chrome.cfg_updates",
         "chrome.upd_stable",
+        // de: Teams is the ordinary German word for working teams.
+        "settings.s_team",
         // Names, not words: the UI CONFIG section, and the face chips, which
         // read TERM | BENCH in every language.
         "chrome.cfg_ui",
@@ -3391,6 +3420,10 @@ mod tests {
         "settings.s_interface", // fr: interface is the standard French word for a user interface.
         // A product surface's name, kept as the window draws it.
         "settings.r_floor",
+        // A product name and a version number.
+        "far.st_td",
+        // French says Session for a session.
+        "far.st_session",
     ];
 
     /// Every `name: "literal",` line of each `pub const XX` table in `src`,
@@ -3439,6 +3472,8 @@ mod tests {
             ("entry", include_str!("lang/entry.rs")),
             ("flyout", include_str!("lang/flyout.rs")),
             ("settings", include_str!("lang/settings.rs")),
+            ("far", include_str!("lang/far.rs")),
+            ("team", include_str!("lang/team.rs")),
         ];
         let mut found = Vec::new();
         for (table, src) in sources {

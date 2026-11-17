@@ -67,6 +67,9 @@ mod engstate;
 mod entry;
 use drag::Drag;
 mod entry_view;
+mod far;
+mod far_floor_view;
+mod farfloor;
 mod fav;
 mod feedback;
 mod flyout;
@@ -136,6 +139,8 @@ mod slot;
 mod sticky;
 mod surface;
 mod surfacefeed;
+mod team;
+mod team_view;
 mod tenancy;
 mod term;
 mod terminal_state;
@@ -837,6 +842,7 @@ impl<L: Clone> Tree<L> {
                     off_limits: s.access.to_saved().0,
                     agents: s.access.to_saved().1,
                     seat: s.seat,
+                    team: s.team,
                     mark: s.mark,
                 }
             }
@@ -882,6 +888,7 @@ impl Node {
                     .map(|(path, scroll)| SavedDocument { path, scroll }),
                 access: view.agent_access,
                 seat: view.seat,
+                team: view.team_member,
                 mark: view.mark,
             }
         })
@@ -902,6 +909,8 @@ struct LeafState {
     document: Option<SavedDocument>,
     access: threshing_floor::AgentAccess,
     seat: Option<threshing_floor::SeatId>,
+    /// `Pane::team_member`: a team started it, whether or not it is seated.
+    team: bool,
     mark: Option<u8>,
 }
 
@@ -999,6 +1008,12 @@ enum SavedNode {
         /// the pane, because pane ids restart when the host does.
         #[serde(default, skip_serializing_if = "Option::is_none")]
         seat: Option<threshing_floor::SeatId>,
+        /// A team started this pane, and a person has since taken it off the
+        /// Floor: it still counts under the window's limit of agent-started
+        /// agents, and its seat no longer says so. Written only when set;
+        /// absent reads back as not a team member, as every older file was.
+        #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+        team: bool,
         /// The Alt+digit a person marked this pane with ([`navkeys`]). Absent
         /// in every file written before marks existed, which reads back as
         /// unmarked — what those panes were.
@@ -1046,6 +1061,8 @@ impl<'de> Deserialize<'de> for SavedNode {
             #[serde(default)]
             seat: Option<threshing_floor::SeatId>,
             #[serde(default)]
+            team: bool,
+            #[serde(default)]
             mark: Option<u8>,
         }
         // A leaf's appearance: the new per-group form if present, else migrate a
@@ -1084,6 +1101,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                         off_limits: false,
                         agents: None,
                         seat: None,
+                        team: false,
                         mark: None,
                     }),
                     other => Err(E::custom(format!("unknown node: {other}"))),
@@ -1112,6 +1130,7 @@ impl<'de> Deserialize<'de> for SavedNode {
                             off_limits: f.off_limits,
                             agents: f.agents.take(),
                             seat: f.seat.take(),
+                            team: f.team,
                             mark: f.mark.take().filter(|n| (1..=navkeys::MARKS).contains(n)),
                         })
                     }
@@ -3012,6 +3031,22 @@ struct StateFile {
     /// it. Written only beside `floor_orgs`, so a legacy chart never grows one.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     org_lines: Vec<threshing_floor::OrgLine>,
+    /// Lines a person drew from a seat here to an agent on another machine
+    /// (see [`farfloor`]). Absent on every file from before machines could be
+    /// reached, and on any window nobody has drawn one in: no far lines, which
+    /// reaches nothing.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    far_lines: Vec<farfloor::FarLine>,
+    /// The teams agents in this window started under High trust agentic (see
+    /// [`team`]): who started whom, by seat. Saved because it is what stops
+    /// an agent that was started by another from starting a team of its own
+    /// after a restart. Absent: no agent has started one.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    teams: Vec<team::Record>,
+    /// The seats a person promoted to orchestrator, the only panes that may
+    /// start a team (see [`team`]). Absent: nobody is promoted.
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    orchestrators: Vec<threshing_floor::SeatId>,
     /// Absent means a legacy unnamed chart; Some([]) means explicitly no orgs.
     ///
     /// Saved under the key it had before the Threshing Floor was renamed, so a build
@@ -3138,6 +3173,9 @@ impl Default for StateFile {
             mcp: None,
             lines: vec![],
             org_lines: vec![],
+            far_lines: vec![],
+            teams: vec![],
+            orchestrators: vec![],
             floor_orgs: None,
             floor_org: None,
             ask_press_tokens: None,
@@ -5532,6 +5570,25 @@ struct Workspace {
     /// `None` is the ordinary window that owns its own terminals — still the
     /// default, and untouched by any of this until the numbers say otherwise.
     attach: Option<AttachCtx>,
+    /// One surviving window may reclaim streams abandoned by a later window.
+    /// Held until this process exits, so two older windows cannot trade them back
+    /// and forth after the newer window closes.
+    reclaim_lock: Option<std::fs::File>,
+    /// The panes of another machine's session that froze because the road to
+    /// that machine dropped, by pane number. Not the same as panes the far
+    /// machine's own window took back: those stay with it, and these are taken
+    /// again the moment the road returns.
+    far_lost: std::collections::HashSet<u64>,
+    /// Other machines on the Threshing Floor: the lines a person drew to
+    /// their agents, what each machine last said about who is there, and the
+    /// prompts sent across (see [`far_floor_view`]).
+    far_floor: far_floor_view::FarFloor,
+    /// Teams that agents here have started, and those allowed and waiting
+    /// for a pass with a window (see [`team_view`]).
+    team: team_view::TeamState,
+    /// What this window is saying about that road, when it has something to
+    /// say. `None` on a local window, and on a far one whose link is up.
+    far_notice: Option<FarNotice>,
     /// Frameless drag latch: a mousedown on the mother bar arms it; the first
     /// mouse-move while armed hands off to the compositor's window-move (so a
     /// plain click on the bar doesn't get eaten). Cleared on mouse-up.
@@ -5680,6 +5737,32 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
         ws.agent_done(pane.clone(), window, cx);
     })
     .detach();
+    // The Orchestrator row on a pane's own menu: the window keeps the record.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, ev: &pane::PromoteOrchestrator, _window, cx| {
+            ws.team_promote(&pane.clone(), ev.0, cx);
+        },
+    )
+    .detach();
+    // Enter in a pane whose terminal another window is showing: take it back.
+    cx.subscribe_in(
+        pane,
+        window,
+        |ws, pane, _ev: &pane::TakeBack, window, cx| {
+            let view = pane.read(cx);
+            if let Some(id) = view.pane_id().filter(|_| view.superseded()) {
+                // A pane held through a dropped link comes back with the link,
+                // not by a press: there is nothing to take it from yet.
+                if !ws.far_lost.contains(&id) {
+                    eprintln!("terminal-delight: taking pane {id} back at a person's press");
+                    ws.reattach_pane(hostproto::PaneId(id), &pane.clone(), window, cx);
+                }
+            }
+        },
+    )
+    .detach();
     // The pane's working state flipped → repaint the mother bar so the tab's
     // 🤖 pulse starts/stops on the real edge.
     cx.subscribe(pane, |_ws, _pane, _ev: &AgentWorkingChanged, cx| {
@@ -5827,6 +5910,59 @@ fn wire_pane(pane: &Entity<TerminalView>, window: &mut Window, cx: &mut Context<
     })
     .detach();
     window.focus(&pane.focus_handle(cx), cx);
+}
+
+/// The pid a host reported for a pane's shell, as far as this window may use
+/// it.
+///
+/// On this machine it is an attribute worth having: where the pane's memory
+/// group is made, what `/proc` is read for. From another machine it is a
+/// number that names nothing here, or names a stranger, so a far window drops
+/// it at the door and everything keyed on a pid reads unknown.
+fn host_pid(info: &hostproto::PaneInfo) -> Option<u32> {
+    far::current().is_none().then_some(info.shell_pid)
+}
+
+/// What a far window is saying about the road to its machine.
+#[derive(Debug, Clone, PartialEq)]
+enum FarNotice {
+    /// The link is down and being retried. `why` is ssh's last word, when it
+    /// left one.
+    Down { since: Instant, why: Option<String> },
+    /// A different session host answers where this window's was: the far
+    /// machine restarted it. This window's panes describe terminals that no
+    /// longer exist.
+    Replaced,
+}
+
+/// What one pass at reaching the far machine again came to.
+enum FarRelink {
+    Same,
+    Another,
+    Failed(Option<String>),
+}
+
+/// Start the forward again if it stopped, wait for the host to answer through
+/// it, and open the control connection again. Off the main thread: every step
+/// here can wait on a network that is not there.
+fn far_relink(link: &hostctl::HostLink) -> FarRelink {
+    let Some(fwd) = far::forward() else {
+        return FarRelink::Failed(None);
+    };
+    if let Err(why) = fwd.revive() {
+        return FarRelink::Failed(Some(why));
+    }
+    if let Err(why) = fwd.wait_ready(Duration::from_secs(12)) {
+        return FarRelink::Failed(Some(why));
+    }
+    match link.reconnect() {
+        Ok(hostctl::Reopened::SameHost) => FarRelink::Same,
+        Ok(hostctl::Reopened::AnotherHost) => FarRelink::Another,
+        Err(err) => FarRelink::Failed(Some(format!(
+            "{}: its session host did not answer ({err})",
+            fwd.far().name
+        ))),
+    }
 }
 
 /// Everything a window needs while it is attached to a session host.
@@ -6159,6 +6295,14 @@ fn ending_of(pane: u64, live: &[hostproto::PaneInfo]) -> Ending {
     }
 }
 
+/// A stream taken by another window can be reclaimed once that window is gone.
+/// An absent or unreadable owner is unknown, not permission to steal a live pane.
+fn may_reclaim_stream(owner: Option<u32>, our_pid: u32) -> bool {
+    owner.is_some_and(|pid| {
+        pid == our_pid || !std::path::Path::new(&format!("/proc/{pid}")).exists()
+    })
+}
+
 /// Every leaf of a saved tree, in the order [`build_node`] builds them.
 fn collect_saved_leaves<'a>(node: &'a SavedNode, out: &mut Vec<&'a SavedNode>) {
     match node {
@@ -6398,7 +6542,7 @@ fn make_pane_attached(
     let (session, guard) = term::attach_in(
         grid.with_cell(geom.cell_width, geom.cell_height),
         streams,
-        Some(info.shell_pid),
+        host_pid(info),
     )?;
     // The host's cell as well as its grid: a pane that believed the cell were
     // anything else would re-announce the size on its first frame and wake
@@ -6421,8 +6565,12 @@ fn make_pane_attached(
     wire_pane(&pane, window, cx);
     // Give the pane its own memory group now rather than at the next rest
     // tick: a woken agent's script waits for it, so the agent is born there.
-    if agentrest::enabled_by_env() {
-        let (pane_no, shell) = (pane_id.0, info.shell_pid as i32);
+    //
+    // Only for a shell on this machine. Moving a pid into a group is done to
+    // whatever process has that pid here, and a far pane's pid is some other
+    // machine's.
+    if let (true, Some(shell)) = (agentrest::enabled_by_env(), host_pid(info)) {
+        let (pane_no, shell) = (pane_id.0, shell as i32);
         let session = crate::instance::key().to_owned();
         cx.background_executor()
             .spawn(async move {
@@ -6549,6 +6697,7 @@ fn build_node_attached(
             off_limits,
             agents,
             seat,
+            team,
             mark,
             ..
         } => {
@@ -6594,6 +6743,7 @@ fn build_node_attached(
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let team = *team;
             let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6602,6 +6752,7 @@ fn build_node_attached(
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.team_member = team;
                 view.mark = mark;
             });
             // The document it was showing, back on its face over whichever
@@ -6635,6 +6786,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             off_limits,
             agents,
             seat,
+            team,
             mark,
         } => {
             let pane = make_pane_window_owned(
@@ -6663,6 +6815,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
             let name = name.clone();
             let access = threshing_floor::AgentAccess::from_saved(*off_limits, agents.as_deref());
             let seat = *seat;
+            let team = *team;
             let mark = *mark;
             pane.update(cx, |view, _| {
                 view.appearance = appearance;
@@ -6671,6 +6824,7 @@ fn build_node(saved: &SavedNode, window: &mut Window, cx: &mut Context<Workspace
                 }
                 view.agent_access = access;
                 view.seat = seat;
+                view.team_member = team;
                 view.mark = mark;
             });
             restore_document_on(&pane, document.as_ref(), cx);
@@ -7083,6 +7237,17 @@ impl Workspace {
             #[cfg(test)]
             spine_in_scratch: false,
             attach,
+            reclaim_lock: None,
+            far_lost: Default::default(),
+            far_floor: far_floor_view::FarFloor {
+                lines: farfloor::FarLines::from_saved(saved.far_lines.clone()),
+                ..Default::default()
+            },
+            far_notice: None,
+            team: team_view::TeamState::from_saved(
+                saved.teams.clone(),
+                saved.orchestrators.clone(),
+            ),
             should_move: false,
             ghosts: Vec::new(),
             next_ghost_id: 0,
@@ -7222,6 +7387,13 @@ impl Workspace {
             }
         })
         .detach();
+        // Other machines: asked only while the Floor is open on them, a line
+        // to one of their agents is drawn, or a prompt sent across is open.
+        if !scratch && !demo {
+            ws.far_reload_machines();
+            Self::watch_far_floor(window, cx);
+            Self::watch_teams(window, cx);
+        }
         // The right-bar flyout's poll: the tab on screen is read again when
         // it is due, and nothing is read while the flyout is shut.
         cx.spawn(async move |this, cx| loop {
@@ -7818,10 +7990,23 @@ impl Workspace {
         // failure adoption exists to prevent, arriving thirty seconds early.
         self.save(cx);
         Self::watch_for_divergence(ctx.clone(), window, cx);
+        Self::watch_for_abandoned_streams(window, cx);
+        if far::current().is_some() {
+            Self::watch_the_far_link(window, cx);
+        }
         self.listen_to_the_host(ctx.clone(), cx);
         Self::reconcile_modes(ctx.clone(), cx);
         Self::rest_idle_agents(cx);
-        Self::watch_the_save(cx);
+        // Not for a far window. This check reads the session file from this
+        // machine's disk, and a far session's file is on the far machine,
+        // written by the host there. The copy here is what the window was
+        // opened from and is never written again, so the check would find it
+        // stale on every pass, save again each time, and end by raising an
+        // alarm about a file that is right where it belongs. What a far
+        // window has instead is the far host's own answer to each save.
+        if far::current().is_none() {
+            Self::watch_the_save(cx);
+        }
     }
 
     /// Check, on a clock, that the session file says what this window shows.
@@ -8512,9 +8697,10 @@ impl Workspace {
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let view = leaf.read(cx);
-                if view.superseded() {
-                    // Its terminal is somebody else's now; there is nothing for
-                    // this window's copy to agree or disagree with.
+                if view.exited || view.superseded() {
+                    // A closed stream has no valid offset to compare. It may
+                    // belong to another window even before reap classifies it;
+                    // the grid guard must not steal it back while hidden.
                     continue;
                 }
                 if let Some(pane) = view.pane_id() {
@@ -8807,17 +8993,326 @@ impl Workspace {
             return;
         }
         let Ok(live) = ctx.link.list_panes() else {
+            if let Some(far) = far::current() {
+                // Another machine's host, and what stopped answering is the
+                // road to it. Its terminals are still running there, so these
+                // panes are held as they stand and taken again when the road
+                // is back (`watch_the_far_link`). Reading this as an ending
+                // would close every tab of work that never stopped.
+                eprintln!(
+                    "terminal-delight: lost the connection to {}; holding {} pane(s)",
+                    far.name,
+                    unexplained.len()
+                );
+                for (leaf, pane) in unexplained {
+                    self.far_lost.insert(pane);
+                    leaf.update(cx, |view, cx| view.mark_superseded(cx));
+                }
+                if self.far_notice.is_none() {
+                    self.far_notice = Some(FarNotice::Down {
+                        since: Instant::now(),
+                        why: None,
+                    });
+                }
+                cx.notify();
+                return;
+            }
             // The host is gone. Everything it was holding is gone with it, and
             // the endings already reported are the truth.
             return;
         };
         for (leaf, pane) in unexplained {
+            if far::current().is_some() {
+                eprintln!(
+                    "terminal-delight: far pane {pane} stopped; the host says {:?} of {:?}",
+                    ending_of(pane, &live),
+                    live.iter().map(|p| (p.pane.0, p.ended)).collect::<Vec<_>>()
+                );
+            }
             if ending_of(pane, &live) == Ending::Superseded {
                 eprintln!(
-                    "terminal-delight: pane {pane} is being shown by another window; \
-                     this one keeps what it last drew and stops there"
+                    "terminal-delight: pane {pane} was taken by another window; \
+                     waiting to reconnect if that window exits"
                 );
                 leaf.update(cx, |view, cx| view.mark_superseded(cx));
+            }
+        }
+    }
+
+    /// Keep a far window's road to its machine up.
+    ///
+    /// Every two seconds: classify any pane that has stopped, and if the link
+    /// is down, try to bring it back. The trying happens off the main thread,
+    /// because each step can wait on a network that is not there, and one try
+    /// runs at a time.
+    fn watch_the_far_link(window: &Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            let Ok(link) = this.update(cx, |ws: &mut Workspace, cx| {
+                // A hidden window does not render, so nothing else has asked
+                // what its stopped panes meant.
+                ws.explain_endings(cx);
+                ws.far_adopt_stranded(cx);
+                ws.far_link_wanted()
+            }) else {
+                break;
+            };
+            let Some(link) = link else {
+                // The road is up. Ask the host where its panes are now: a far
+                // pane has no pid here to read that from, and what the window
+                // learned when it attached goes stale at the first `cd`.
+                let Ok(Some(link)) = this.update(cx, |ws: &mut Workspace, _| {
+                    ws.attach.as_ref().map(|ctx| ctx.link.clone())
+                }) else {
+                    continue;
+                };
+                let panes = cx
+                    .background_executor()
+                    .spawn(async move { link.list_panes() })
+                    .await;
+                if let Ok(panes) = panes {
+                    let _ = this.update(cx, |ws: &mut Workspace, cx| ws.far_facts(&panes, cx));
+                }
+                continue;
+            };
+            let outcome = cx
+                .background_executor()
+                .spawn(async move { far_relink(&link) })
+                .await;
+            if this
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.far_relinked(outcome, window, cx);
+                })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    /// Panes that stopped just before the road was seen to be gone.
+    ///
+    /// A dropped link closes every stream it carried, and not at one instant.
+    /// A pane whose stream closed while the control connection still answered
+    /// was told "the host still has it", which reads as another window having
+    /// taken it. Once the forward itself is known to be down that reading is
+    /// wrong for every held pane: nothing took them, and they come back with
+    /// the road.
+    fn far_adopt_stranded(&mut self, cx: &mut Context<Self>) {
+        if far::forward().is_none_or(|fwd| fwd.running()) {
+            return;
+        }
+        let mut found = false;
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if let Some(pane) = view.pane_id().filter(|_| view.superseded()) {
+                    found |= self.far_lost.insert(pane);
+                }
+            }
+        }
+        if found && self.far_notice.is_none() {
+            self.far_notice = Some(FarNotice::Down {
+                since: Instant::now(),
+                why: None,
+            });
+            cx.notify();
+        }
+    }
+
+    /// What the far host says each pane's folder and agent are, put where the
+    /// pane reads them.
+    fn far_facts(&mut self, panes: &[hostproto::PaneInfo], cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            let mut leaves = vec![];
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let Some(id) = leaf.read(cx).pane_id() else {
+                    continue;
+                };
+                if let Some(info) = panes.iter().find(|p| p.pane.0 == id) {
+                    let (cwd, resume) = (info.cwd.clone(), info.resume.clone());
+                    leaf.update(cx, |view, cx| view.set_host_facts(cwd, resume, cx));
+                }
+            }
+        }
+    }
+
+    /// The link to open again, when this window has lost its far machine and
+    /// has not been told the host there was replaced.
+    fn far_link_wanted(&self) -> Option<Arc<hostctl::HostLink>> {
+        if self.far_notice == Some(FarNotice::Replaced) {
+            return None;
+        }
+        let link = &self.attach.as_ref()?.link;
+        (link.lost() || !self.far_lost.is_empty()).then(|| link.clone())
+    }
+
+    /// What a try at the far machine came to, applied.
+    fn far_relinked(&mut self, outcome: FarRelink, window: &mut Window, cx: &mut Context<Self>) {
+        match outcome {
+            FarRelink::Failed(why) => {
+                let since = match &self.far_notice {
+                    Some(FarNotice::Down { since, .. }) => *since,
+                    _ => Instant::now(),
+                };
+                self.far_notice = Some(FarNotice::Down { since, why });
+            }
+            FarRelink::Another => {
+                // The far machine started a new session host. Its panes are
+                // numbered from 1 again, so nothing held here may be taken
+                // again by number. Say so and stop trying; opening the session
+                // again reads the layout that host has.
+                self.far_notice = Some(FarNotice::Replaced);
+            }
+            FarRelink::Same => {
+                let Some(ctx) = self.attach.clone() else {
+                    return;
+                };
+                let Ok(live) = ctx.link.list_panes() else {
+                    return; // down again already; the next pass tries again
+                };
+                let lost = std::mem::take(&mut self.far_lost);
+                let mut held = vec![];
+                for tab in &self.tabs {
+                    let mut leaves = vec![];
+                    tab.root.leaves(&mut leaves);
+                    for leaf in leaves {
+                        let view = leaf.read(cx);
+                        if let Some(pane) = view.pane_id().filter(|p| lost.contains(p)) {
+                            if view.superseded() {
+                                held.push((pane, (*leaf).clone()));
+                            }
+                        }
+                    }
+                }
+                let back = held.len();
+                for (pane, leaf) in held {
+                    if ending_of(pane, &live) == Ending::Superseded {
+                        self.reattach_pane(hostproto::PaneId(pane), &leaf, window, cx);
+                    } else {
+                        // It finished while the road was down. Now it is over.
+                        leaf.update(cx, |view, cx| view.mark_ended(cx));
+                    }
+                }
+                // The listener's connection died with the old road.
+                self.listen_to_the_host(ctx, cx);
+                self.far_notice = None;
+                if let Some(far) = far::current() {
+                    eprintln!(
+                        "terminal-delight: connection to {} is back; took {back} pane(s) again",
+                        far.name
+                    );
+                    self.marquee_says = Some((
+                        lang::current()
+                            .strings()
+                            .far
+                            .back
+                            .replace("{machine}", &far.badge()),
+                        Instant::now(),
+                    ));
+                }
+            }
+        }
+        cx.notify();
+    }
+
+    /// A later window may take a pane, then disappear. The stream stays closed
+    /// and its last screen looks normal, but every key sent to it is lost. Keep
+    /// checking only while panes are superseded; the host's window record names
+    /// the last taker, and its death lets one surviving window take them back.
+    fn watch_for_abandoned_streams(window: &Window, cx: &mut Context<Self>) {
+        cx.spawn_in(window, async move |this, cx| loop {
+            cx.background_executor().timer(Duration::from_secs(2)).await;
+            if this
+                .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    ws.reclaim_abandoned_streams(window, cx);
+                })
+                .is_err()
+            {
+                break;
+            }
+        })
+        .detach();
+    }
+
+    fn reclaim_abandoned_streams(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if instance::released() {
+            return;
+        }
+        // A hidden window may not render, so reap may not yet have classified
+        // its closed streams. Do that here before looking for abandoned panes.
+        self.explain_endings(cx);
+        // A far window does not take panes back on its own. The record it
+        // would consult is its own copy here, which always names itself, while
+        // the far machine's window consults the far one, which names it: each
+        // would see permission, and the two would trade every pane every two
+        // seconds. A pane the far machine's window took stays with it; panes
+        // lost to a dropped link come back through `watch_the_far_link`.
+        if far::current().is_some() {
+            return;
+        }
+        let Some(ctx) = self.attach.clone() else {
+            return;
+        };
+        let mut abandoned = Vec::new();
+        for tab in &self.tabs {
+            let mut leaves = Vec::new();
+            tab.root.leaves(&mut leaves);
+            for leaf in leaves {
+                let view = leaf.read(cx);
+                if view.superseded() {
+                    if let Some(pane) = view.pane_id() {
+                        abandoned.push((pane, (*leaf).clone()));
+                    }
+                }
+            }
+        }
+        if abandoned.is_empty() {
+            return;
+        }
+        let owner_path = hostproto::window_pid_beside(ctx.link.socket(), ctx.link.session());
+        let owner = std::fs::read_to_string(&owner_path)
+            .ok()
+            .and_then(|s| s.trim().parse::<u32>().ok());
+        if !may_reclaim_stream(owner, std::process::id()) {
+            return;
+        }
+        if self.reclaim_lock.is_none() {
+            use std::os::fd::AsRawFd;
+            use std::os::unix::fs::OpenOptionsExt;
+            let lock_path = owner_path.with_extension("reclaim.lock");
+            let Ok(file) = std::fs::OpenOptions::new()
+                .write(true)
+                .create(true)
+                .truncate(false)
+                .mode(0o600)
+                .open(&lock_path)
+            else {
+                return;
+            };
+            if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX | libc::LOCK_NB) } != 0 {
+                return;
+            }
+            self.reclaim_lock = Some(file);
+        }
+        let Ok(live) = ctx.link.list_panes() else {
+            return;
+        };
+        // The old window's dead pid also strands MCP relays from hosted agent
+        // panes. Once this window has the recovery lease, make it discoverable.
+        hostproto::write_window_pid_beside(
+            ctx.link.socket(),
+            ctx.link.session(),
+            std::process::id(),
+        );
+        for (pane, leaf) in abandoned {
+            if ending_of(pane, &live) == Ending::Superseded && leaf.read(cx).superseded() {
+                eprintln!("terminal-delight: reconnecting abandoned pane {pane}");
+                self.reattach_pane(hostproto::PaneId(pane), &leaf, window, cx);
             }
         }
     }
@@ -9006,6 +9501,9 @@ impl Workspace {
             mcp: Some(self.mcp.clone()),
             lines: self.chart.saved().to_vec(),
             org_lines: self.chart.org_lines().to_vec(),
+            far_lines: self.far_floor.lines.saved().to_vec(),
+            teams: self.team.teams.saved().to_vec(),
+            orchestrators: self.team.orchestrators.iter().copied().collect(),
             floor_orgs: Some(self.floor_orgs.saved().to_vec()),
             floor_org: self.floor_org,
             ask_press_tokens: self.ask_press_tokens,
@@ -10185,6 +10683,13 @@ impl Workspace {
     /// One request per live agent pane, carrying the stamp of what the card is
     /// already showing so an unchanged transcript is never re-parsed.
     fn vitals_requests(&self, cx: &App) -> Vec<vitals::PaneReq> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut out = Vec::new();
         for tab in self.tabs.iter() {
             let mut leaves = Vec::new();
@@ -10608,6 +11113,13 @@ impl Workspace {
     /// per-pane facts only. The reading — project directories, transcript
     /// edges — happens off this thread, against the whole set at once.
     fn pane_facts(&self, cx: &App) -> Vec<paneident::PaneFacts> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut facts = Vec::new();
         for tab in self.tabs.iter() {
             let mut leaves = Vec::new();
@@ -15766,7 +16278,15 @@ impl Workspace {
         let mut others = Vec::new();
         let mut unlocated = Vec::new();
         let full_scope = self.coordination_full_scope();
-        for (i, tab) in self.tabs.iter().enumerate() {
+        // No participants from a far window: git would be run in this
+        // machine's folder of the same name, and its branches reported as the
+        // far machine's (see `vitals_requests`).
+        let scanned = if far::current().is_some() {
+            &self.tabs[..0]
+        } else {
+            &self.tabs[..]
+        };
+        for (i, tab) in scanned.iter().enumerate() {
             let place = self.place_of(i);
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
@@ -16566,6 +17086,13 @@ impl Workspace {
     /// model dial, which a user who turned the tool glyphs off still sees. The
     /// gate is applied where the face is, in [`Self::apply_tool_faces`].
     fn tool_probe_requests(&self, cx: &App) -> Vec<toolprop::ToolProbeReq> {
+        // A far window's panes are on another machine, and this reads files
+        // on this one. A folder of the same name here is a different folder:
+        // reading it would report this machine's work as that machine's. So a
+        // far window asks nothing, and what it would have shown reads unknown.
+        if far::current().is_some() {
+            return Vec::new();
+        }
         let mut out = vec![];
         for tab in &self.tabs {
             let mut leaves = vec![];
@@ -30648,6 +31175,114 @@ impl Workspace {
         )
     }
 
+    /// The chip that names the machine a far window shows. `None` on a window
+    /// showing this machine, which is every window but those `remote` opens.
+    fn far_badge(&self, pt: f32, cx: &mut Context<Self>) -> Option<gpui::Stateful<gpui::Div>> {
+        let far = far::current()?;
+        let th = skin::native_theme(cx, theme::theme(cx));
+        let s = theme::outer_choice(cx).grade.scale;
+        let sk = skin::skin(cx, s);
+        // The link's own colour: the accent while it is up, the warning ink
+        // while it is being retried, danger once the host there was replaced.
+        let ink = match &self.far_notice {
+            None => th.accent,
+            Some(FarNotice::Down { .. }) => sk.ink.warn,
+            Some(FarNotice::Replaced) => sk.ink.danger,
+        };
+        let tip = lang::current()
+            .strings()
+            .far
+            .chip_tip
+            .replace("{machine}", &far.name)
+            .replace("{dest}", &far.dest);
+        Some(with_tip(
+            sk.bezel(false, s)
+                .flex_none()
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_1()
+                .text_size(sk.text_px(pt * 0.8))
+                .font_weight(gpui::FontWeight::SEMIBOLD)
+                .map(|d| sk.heading(d))
+                .text_color(ink)
+                .border_color(ink.alpha(0.7))
+                .child("\u{21c4}")
+                .child(sk.heading_text(&far.badge()))
+                .id("far-badge"),
+            vec![far.badge(), tip],
+        ))
+    }
+
+    /// What a far window says across its top while the road to its machine is
+    /// down, or once the host there has been replaced. It stays until the road
+    /// is back; the terminals under it are held, not ended, and it says so.
+    fn render_far_notice(&self, th: &theme::Theme, sk: &skin::Skin) -> Option<gpui::Div> {
+        let far = far::current()?;
+        let notice = self.far_notice.as_ref()?;
+        let s = lang::current().strings().far;
+        let (head, sub, why, ink) = match notice {
+            FarNotice::Down { why, .. } => (
+                s.down.replace("{machine}", &far.badge()),
+                s.down_held,
+                why.clone(),
+                sk.ink.warn,
+            ),
+            FarNotice::Replaced => (
+                s.replaced.replace("{machine}", &far.badge()),
+                s.replaced_sub,
+                None,
+                sk.ink.danger,
+            ),
+        };
+        Some(
+            div()
+                .absolute()
+                .top(px(8.))
+                .left_0()
+                .right_0()
+                .flex()
+                .flex_row()
+                .justify_center()
+                .child(
+                    div()
+                        .debug_selector(|| "far-notice".into())
+                        .flex()
+                        .flex_col()
+                        .items_center()
+                        .gap_0p5()
+                        .max_w(px(760.))
+                        .px_4()
+                        .py_1p5()
+                        .rounded(sk.radius_lg())
+                        .border(sk.box_border(1.))
+                        .border_color(ink.alpha(0.85))
+                        .bg(th.bg.alpha(0.94))
+                        .shadow(float_shadows(ink, th.grade.phosphor))
+                        .map(|d| sk.finish(d))
+                        .child(
+                            div()
+                                .text_size(px(12.))
+                                .font_weight(gpui::FontWeight::EXTRA_BOLD)
+                                .text_color(ink)
+                                .child(SharedString::from(head)),
+                        )
+                        .child(
+                            div()
+                                .text_size(px(11.))
+                                .text_color(th.text)
+                                .child(SharedString::from(sub)),
+                        )
+                        .children(why.map(|why| {
+                            div()
+                                .text_size(px(10.))
+                                .text_color(sk.ink.ink_faint)
+                                .child(SharedString::from(why))
+                        })),
+                ),
+        )
+    }
+
     /// Open or close the checkouts table. Opening takes the keyboard the way
     /// a menu does, so esc reaches it; closing hands the keyboard back to the
     /// terminal that had it.
@@ -32188,6 +32823,12 @@ impl Workspace {
         self.ui_changed(cx);
     }
 
+    fn pick_ui_yours(&mut self, cx: &mut Context<Self>) {
+        if uiconfig::restore_yours(cx) {
+            self.ui_changed(cx);
+        }
+    }
+
     /// "use this window": a new window will open wearing this one's design,
     /// grade, palette, pinned skin and UI CONFIG.
     fn save_new_window(&mut self, cx: &mut Context<Self>) {
@@ -32372,6 +33013,9 @@ impl Render for Workspace {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
         self.rail_frame = self.rail_frame.wrapping_add(1);
+        // What a pane's own menu shows of promotion, for the panes to read as
+        // they draw (see `team_view::publish`).
+        team_view::publish(self.mcp.team, &self.team.orchestrators);
         // The left bar follows UI CONFIG, which a design can move under it
         // (Clean asks for tabs across the top). Read once a frame, so the rest
         // of the pass — and the key handlers between passes — see one answer.
@@ -33980,7 +34624,12 @@ impl Render for Workspace {
                                 .h(px(18. * scale)),
                         )
                     })
-                    .when(ui_notice, |d| d.child(self.eng_badge(13. * scale, cx))),
+                    .when(ui_notice, |d| d.child(self.eng_badge(13. * scale, cx)))
+                    // Which machine this window is showing, when it is not
+                    // this one. Never put away by UI CONFIG: a person about
+                    // to type into a terminal has to be able to see where it
+                    // runs.
+                    .children(self.far_badge(13. * scale, cx)),
             )
             // the void: no control, no rule, no handle. What makes the strip
             // read as belonging to the screen rather than to the tree.
@@ -34072,6 +34721,7 @@ impl Render for Workspace {
         // ---- theme breakout: icon grid + seed swatches, per scope ----
         let menu_overlay = self.theme_menu.clone().map(|scope| {
             let is_pane = matches!(scope, MenuScope::Pane(_));
+            let hosted = self.hosting() == Some(settings::Host::Palette);
             let cur = self.menu_choice(cx);
             let t = self.lang.strings();
             let help_owner = cx.entity().downgrade();
@@ -34933,14 +35583,17 @@ impl Render for Workspace {
                 );
             }
             // ---- UI CONFIG: what chrome the window draws (see `uiconfig`) ----
+            // The book has dedicated Interface, Window chrome and Pane parts pages. Keep this
+            // area in the quick tray, but do not stack it under the palette in
+            // Settings: that made the page require scrolling.
             // A fourth area, on the OUTER tray only: "EACH INDIVIDUAL PANE IS
             // NOT IN CHARGE OF ITS OWN CONFIG", so a pane's 🎨 card has no UI
             // CONFIG, the way it has no SKIN. Two pages, OUTER and PANES, the
             // second being one config for every pane at once.
-            let ui_area = (!is_pane).then(|| {
+            let ui_area = (!is_pane && !hosted).then(|| {
                 use uiconfig::Key as K;
                 let ui_choice = uiconfig::choice(cx);
-                let following = ui_choice.set.is_none();
+                let following = !ui_choice.has_flips() && ui_choice.set.is_none();
                 let active_set = uiconfig::active_set(cx);
                 let on_panes = self.ui_cfg_panes;
                 let switch =
@@ -34975,16 +35628,7 @@ impl Render for Workspace {
                     .items_center()
                     .gap_1()
                     .child(page(t.scope_outer, false, "ui-page-outer", cx))
-                    .child(page(t.ui.ui_panes, true, "ui-page-panes", cx))
-                    .when(ui_choice.has_flips(), |d| {
-                        d.child(
-                            div()
-                                .ml_1()
-                                .text_size(sk.text_px(9.))
-                                .text_color(th.text.alpha(0.6))
-                                .child(format!("\u{b7} {}", t.ui.ui_yours)),
-                        )
-                    });
+                    .child(page(t.ui.ui_panes, true, "ui-page-panes", cx));
                 // Follow the active appearance preference, or pick a set.
                 let follow_label = if sk.unboxed() {
                     "skin"
@@ -35003,7 +35647,7 @@ impl Render for Workspace {
                         ),
                 );
                 for set in uiconfig::sets(cx) {
-                    let lit = !following && set.id == active_set;
+                    let lit = !ui_choice.has_flips() && !following && set.id == active_set;
                     let id = set.id.clone();
                     let caption = if set.id == uiconfig::CLEAN {
                         t.thm_clean.to_string()
@@ -35018,6 +35662,19 @@ impl Render for Workspace {
                                 cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
                                     cx.stop_propagation();
                                     ws.pick_ui_set(Some(id.clone()), cx);
+                                }),
+                            ),
+                    );
+                }
+                if ui_choice.has_yours() {
+                    set_row = set_row.child(
+                        theme_icon_btn(&th, &sk, "\u{2726}", t.ui.ui_yours, ui_choice.has_flips())
+                            .id("ui-set-yours")
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    ws.pick_ui_yours(cx);
                                 }),
                             ),
                     );
@@ -35288,9 +35945,7 @@ impl Render for Workspace {
                 panel_w
             };
             let panel_h_est = tray_panel_h_est();
-            // Shown in place on Settings' Appearance page: no anchor to the
-            // footer, no cap to the band, the page scrolls it.
-            let hosted = self.hosting() == Some(settings::Host::Palette);
+            // Shown in place on Settings' Appearance page: no footer anchor.
             let mut panel = sk
                 .sheet()
                 .id("theme-panel")
@@ -35559,12 +36214,42 @@ impl Render for Workspace {
                     ],
                 ),
             ];
-            // Shown in Settings, every group is open and is a section of the
-            // page, with a picture of what its gauges do beside its sliders.
-            // Parker, 2026-11-10: *"we are no longer concerned about space, so
-            // gauges should be UNCOLLAPSED"*. In the window's tray they fold,
-            // and an open group shows its picture over its sliders.
+            // In Settings each gauge group is its own menu. The selected group
+            // is fully open beside its picture; the others are reached by one
+            // click above it. The window's quick tray keeps its folding groups.
             let hosted = self.hosting() == Some(settings::Host::Gauges);
+            let hosted_page = self
+                .settings
+                .as_ref()
+                .map(|book| book.gauges_page)
+                .unwrap_or(0)
+                .min(groups.len() + 2);
+            let tabs = hosted.then(|| {
+                let mut tabs = div().flex().flex_row().flex_wrap().gap_2();
+                for (gi, heading) in groups
+                    .iter()
+                    .map(|(heading, _)| *heading)
+                    .chain([t.d_crawl_hdr, t.d_crt_hdr, t.d_trail_hdr])
+                    .enumerate()
+                {
+                    tabs = tabs.child(
+                        Self::bezel_btn_s(&sk, heading, hosted_page == gi, 0.85)
+                            .id(SharedString::from(format!("osd-page-{gi}")))
+                            .debug_selector(move || format!("osd-page-{gi}"))
+                            .on_mouse_down(
+                                MouseButton::Left,
+                                cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                                    cx.stop_propagation();
+                                    if let Some(book) = ws.settings.as_mut() {
+                                        book.gauges_page = gi;
+                                    }
+                                    cx.notify();
+                                }),
+                            ),
+                    );
+                }
+                tabs
+            });
             let look = theme::resolve(cx, &cur);
             let samples = [
                 settings_preview::Gauge::Type,
@@ -35636,6 +36321,9 @@ impl Render for Workspace {
             };
             let mut lingers_shown = false;
             for (gi, (heading, controls)) in groups.into_iter().enumerate() {
+                if hosted && gi != hosted_page {
+                    continue;
+                }
                 let open = hosted || self.osd_groups.get(gi).copied().unwrap_or(false);
                 let acc = th.accent;
                 let mut section = div().flex().flex_col().gap_1();
@@ -35752,6 +36440,7 @@ impl Render for Workspace {
             let mut panel = sk
                 .sheet()
                 .id("osd-panel")
+                .debug_selector(|| "osd-panel".to_string())
                 .when(!hosted, |d| d.absolute())
                 .map(|d| if hosted { d.w_full() } else { d.w(px(panel_w)) });
             let tray_top = match self.osd_at {
@@ -35827,6 +36516,7 @@ impl Render for Workspace {
                             )))
                             .child(div().flex_shrink_0().child(reset)),
                     )
+                    .children(tabs)
                     .child(rows)
             } else {
                 panel
@@ -35873,7 +36563,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.crawl {
+            if (hosted && hosted_page == 5) || (!hosted && self.osd_eggs.crawl) {
                 let crawl_on = grade.crawl;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -35942,7 +36632,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.crt {
+            if (hosted && hosted_page == 6) || (!hosted && self.osd_eggs.crt) {
                 let crt_on = grade.crt;
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -36058,7 +36748,7 @@ impl Render for Workspace {
                     ),
                 )
             };
-            if hosted || self.osd_eggs.trail {
+            if (hosted && hosted_page == 7) || (!hosted && self.osd_eggs.trail) {
                 let trail = grade.cursor_trail.filter(|t| t.on);
                 let mut block = div().flex().flex_col().gap_1().child(
                     Self::bezel_btn(
@@ -36189,6 +36879,7 @@ impl Render for Workspace {
         if marquee.is_some() {
             window.request_animation_frame();
         }
+        let far_notice = self.render_far_notice(&th, &sk);
         let savings_overlay = self.render_savings_overlay(&th, chrome_vw, cx);
         let threshing_floor_overlay = self.render_threshing_floor(&th, cx);
 
@@ -41016,6 +41707,7 @@ impl Render for Workspace {
                     .children(update_overlay)
                     .children(settings_overlay)
                     .children(marquee)
+                    .children(far_notice)
                     .children(savings_overlay)
                     .children(confirm_overlay)
                     .children(delete_overlay)
@@ -41240,6 +41932,85 @@ mod tests {
     /// frame used to stay drawn over a pane that now took the typing. Focus
     /// moving to another pane puts the frame and the document away; focus
     /// landing on the read pane first, as the frame opens, does not.
+    /// A stream that closes says so more than once, and the reports are not
+    /// atomic with the frame that asks the host what the first one meant. A
+    /// pane already classified as held (its terminal still running, shown
+    /// elsewhere or behind a dropped link) used to take the second report as a
+    /// fresh ending: the next reap removed it, and when it was the last pane
+    /// the window quit. Seen on 2026-11-15 as a far window that closed
+    /// silently, exit status 0, a moment after its link was cut.
+    #[gpui::test]
+    fn a_held_pane_is_not_reaped_by_a_late_report_that_its_stream_closed(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(1200.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| ws.update(cx, |ws, cx| ws.split(SplitDir::Col, w, cx)));
+        }
+        cx.run_until_parked();
+        let panes = ws.read_with(cx, |ws, _| ws.every_view());
+        assert_eq!(panes.len(), 2);
+        for p in &panes {
+            let stop = p.read_with(cx, |v, _| v.fixture_shutdown());
+            cx.on_quit(stop);
+        }
+        let (held, plain) = (panes[0].clone(), panes[1].clone());
+
+        // The held pane: classified, then told again that its stream closed.
+        held.update(cx, |v, cx| {
+            v.mark_superseded(cx);
+            v.stream_closed_for_test(cx);
+        });
+        assert!(
+            !held.read_with(cx, |v, _| v.exited),
+            "a late report must not turn a held pane into an ended one"
+        );
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.reap(w, cx)));
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.every_view().len()),
+            2,
+            "the held pane is still in its tab"
+        );
+
+        // The control: the same report on a pane nobody is holding is an
+        // ending, and the reap takes it. Without this leg the test would pass
+        // on a reap that removed nothing at all.
+        plain.update(cx, |v, cx| v.stream_closed_for_test(cx));
+        assert!(plain.read_with(cx, |v, _| v.exited));
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.reap(w, cx)));
+        let left = ws.read_with(cx, |ws, _| ws.every_view());
+        assert_eq!(left.len(), 1, "the ended pane is gone");
+        assert_eq!(
+            left[0].entity_id(),
+            held.entity_id(),
+            "and the held one stayed"
+        );
+
+        // A pane that finished while it was held is ended on purpose.
+        held.update(cx, |v, cx| v.mark_ended(cx));
+        assert!(held.read_with(cx, |v, _| v.exited && !v.superseded()));
+    }
+
     #[gpui::test]
     fn focus_moving_to_another_pane_puts_the_reading_frame_away(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
@@ -45735,9 +46506,78 @@ mod tests {
         );
     }
 
+    /// High trust agentic is the one way an agent's request seats a pane or
+    /// draws a line, and it is held to one function, one direction and one
+    /// switch. `team_seat_and_line` is the only caller of `draw_team`; only
+    /// `team_start` calls it; `team_start` runs only from `team_drain`, which
+    /// reads the switch again; and the request is decided by `team::decide`
+    /// with that switch. A second caller of any of these is a second door.
+    #[test]
+    fn an_agent_draws_a_line_only_to_an_agent_it_started_and_only_with_the_switch_on() {
+        let cut = |src: &'static str| -> &'static str {
+            &src[..src.find("\n#[cfg(test)]").unwrap_or(src.len())]
+        };
+        let floor = cut(include_str!("threshing_floor_view.rs"));
+        let team = cut(include_str!("team_view.rs"));
+        let everything = [
+            shipped_src(),
+            floor,
+            team,
+            cut(include_str!("mcp.rs")),
+            cut(include_str!("mcp_transport.rs")),
+            cut(include_str!("ctl.rs")),
+            cut(include_str!("far_floor_view.rs")),
+            cut(include_str!("pane.rs")),
+        ];
+        let count = |needle: &str| -> usize {
+            everything
+                .iter()
+                .map(|src| {
+                    src.lines()
+                        .filter(|l| !l.trim_start().starts_with("//") && l.contains(needle))
+                        .count()
+                })
+                .sum()
+        };
+        assert_eq!(count(".chart.draw_team("), 1, "one place draws a team line");
+        assert!(floor.contains("self.chart.draw_team(from, seat, member.line)"));
+        assert_eq!(count(".team_seat_and_line("), 1, "one caller seats a team");
+        assert!(team.contains("self.team_seat_and_line(&coordinator, &panes, &spec, cx)"));
+        assert_eq!(count(".team_start("), 1, "one caller starts a team");
+        // The drain reads the switch again before it starts anything.
+        let drain = &team[team.find("fn team_drain(").expect("the drain")..];
+        let drain = &drain[..drain.find("\n    }\n").expect("its end")];
+        assert!(
+            drain.contains("if !self.mcp.team || !self.mcp.enabled {")
+                && drain.find("if !self.mcp.team").unwrap()
+                    < drain.find("self.team_start(").unwrap(),
+            "a team allowed a moment ago is not started once the switch is off"
+        );
+        // The request is decided by the rule, with the live switch.
+        let request = &team[team.find("fn team_request(").expect("the request")..];
+        let request = &request[..request.find("\n    }\n").expect("its end")];
+        assert!(request.contains("trusted: self.mcp.team,"));
+        assert!(request.contains("team::decide(&asker, spec.members.len())"));
+        // The line it draws is downward only: from the coordinator, to a seat
+        // minted in the same loop for a pane it was handed.
+        let seat = &floor[floor.find("fn team_seat_and_line(").expect("the function")..];
+        let seat = &seat[..seat.find("\n    }\n").expect("its end")];
+        assert_eq!(
+            seat.matches(".chart.").count(),
+            1,
+            "one chart call, the downward line"
+        );
+        assert!(!seat.contains(".chart.draw("), "never an unmarked line");
+    }
+
     /// Seats and lines are a person's: only the Threshing Floor panel seats a pane or
     /// draws, changes and erases a line. The control socket and MCP answer
     /// agents, and a chart an agent could redraw would be decoration.
+    ///
+    /// One exception, on purpose, and in the same file so this list still
+    /// holds: under High trust agentic a coordinator's `start_team` seats the
+    /// agents it started and draws its own line to each. That is pinned by
+    /// `an_agent_draws_a_line_only_to_an_agent_it_started_and_only_with_the_switch_on`.
     #[test]
     fn only_the_threshing_floor_and_the_rail_draw_lines() {
         let cut = |src: &'static str, marker: &str| -> &'static str {
@@ -45776,6 +46616,8 @@ mod tests {
                 }
                 for verb in [
                     ".chart.draw(",
+                    ".chart.draw_team(",
+                    ".chart.cycle_direction(",
                     ".chart.erase(",
                     ".chart.forget_seat(",
                     ".chart.grant_bypass(",
@@ -45793,7 +46635,9 @@ mod tests {
             calls,
             vec![
                 "main.rs: .chart.grant_bypass(",
+                "threshing_floor_view.rs: .chart.cycle_direction(",
                 "threshing_floor_view.rs: .chart.draw(",
+                "threshing_floor_view.rs: .chart.draw_team(",
                 "threshing_floor_view.rs: .chart.erase(",
                 "threshing_floor_view.rs: .chart.forget_seat(",
                 "threshing_floor_view.rs: .set_seat(",
@@ -46147,6 +46991,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
@@ -46979,6 +47824,7 @@ mod tests {
             off_limits: true,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&marked).expect("a leaf serialises");
@@ -46990,6 +47836,7 @@ mod tests {
                 off_limits: true,
                 agents: None,
                 seat: None,
+                team: false,
                 mark: None,
                 ..
             }
@@ -47007,6 +47854,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&plain).expect("a leaf serialises");
@@ -47025,6 +47873,7 @@ mod tests {
             off_limits: false,
             agents: Some(threshing_floor::READ_ONLY_WORD.into()),
             seat: Some(threshing_floor::SeatId(42)),
+            team: false,
             mark: None,
         };
         let text = toml::to_string(&seated).expect("a leaf serialises");
@@ -47051,6 +47900,38 @@ mod tests {
         );
         assert_eq!(seat, Some(threshing_floor::SeatId(42)));
 
+        // A pane a team started, taken off the Floor: the mark is written,
+        // because nothing else says so after a restart.
+        let member = SavedNode::Leaf {
+            appearance: PaneTheme::default(),
+            cwd: Some("/work".into()),
+            resume: None,
+            name: None,
+            logo: None,
+            note: None,
+            pane_id: Some(7),
+            document: None,
+            off_limits: false,
+            agents: None,
+            seat: None,
+            team: true,
+            mark: None,
+        };
+        let text = toml::to_string(&member).expect("a leaf serialises");
+        assert!(text.contains("team = true"), "{text}");
+        assert!(matches!(
+            toml::from_str::<SavedNode>(&text).expect("reads back"),
+            SavedNode::Leaf {
+                team: true,
+                seat: None,
+                ..
+            }
+        ));
+        assert!(
+            !toml::to_string(&plain).unwrap().contains("team"),
+            "false is not written"
+        );
+
         // A leaf as every file before today wrote it.
         let old: SavedNode =
             toml::from_str("[Leaf]\ncwd = \"/work\"\npane_id = 7\n").expect("an old leaf reads");
@@ -47060,6 +47941,7 @@ mod tests {
                 off_limits: false,
                 agents: None,
                 seat: None,
+                team: false,
                 mark: None,
                 ..
             }
@@ -47783,6 +48665,15 @@ mod tests {
         // shown somewhere else, so there is nothing to hesitate about.
         assert_eq!(ending_of(4, &[]), Ending::Exited);
         assert_eq!(ending_of(4, &[running(9, false)]), Ending::Exited);
+    }
+
+    #[test]
+    fn a_surviving_window_reclaims_only_after_the_last_taker_is_gone() {
+        let us = std::process::id();
+        assert!(may_reclaim_stream(Some(us), us));
+        assert!(may_reclaim_stream(Some(u32::MAX), us));
+        assert!(!may_reclaim_stream(None, us));
+        assert!(!may_reclaim_stream(Some(1), us));
     }
 
     #[test]
@@ -50179,6 +51070,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
@@ -50262,6 +51154,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some("/home/me".into()),
@@ -50332,6 +51225,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -50346,6 +51240,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -50419,6 +51314,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: Some(cwd.into()),
@@ -50650,6 +51546,7 @@ mod tests {
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -50819,6 +51716,7 @@ cwd = "/z"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -51342,6 +52240,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    team: false,
                     mark: None,
                     appearance: PaneTheme::from_legacy(ThemeChoice {
                         id: "hacker".into(),
@@ -51400,6 +52299,7 @@ warp = 1.5
                     off_limits: false,
                     agents: None,
                     seat: None,
+                    team: false,
                     mark: None,
                     appearance: PaneTheme::default(),
                     cwd: Some("/home/user/proj".into()),
@@ -51439,6 +52339,7 @@ warp = 1.5
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -52030,6 +52931,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -52278,6 +53180,7 @@ node = "Leaf"
             off_limits: false,
             agents: None,
             seat: None,
+            team: false,
             mark: None,
             appearance: PaneTheme::default(),
             cwd: None,
@@ -52836,6 +53739,12 @@ Usage:
   terminal-delight admin export|builds|guard|protect
                                  export settings, list or prune old builds, and
                                  protect this machine from uninstall
+  terminal-delight machines [--json]
+                                 the other machines in machines.toml, and the
+                                 Terminal Delight sessions running on each
+  terminal-delight remote <machine> [session]
+                                 open a window here on another machine's session,
+                                 over ssh; its terminals keep running there
   terminal-delight ctl <cmd>     drive a RUNNING instance over its control socket
   terminal-delight mcp           relay MCP over stdio into a RUNNING instance
   terminal-delight restricted    explicitly run an offline command with limited access (help)
@@ -53141,6 +54050,11 @@ enum Verb {
     WireReplay,
     /// CONFIG › ADMIN from a terminal: export, old builds, machine protection.
     Admin,
+    /// The other machines in `machines.toml`, and what each says it is
+    /// running (see [`far`]).
+    Machines,
+    /// Open a window here on another machine's session, over ssh.
+    Remote,
 }
 
 /// Whether the broken-pipe gate in `tests/broken_pipe.rs` can run a verb — and
@@ -53188,6 +54102,22 @@ const VERBS: &[VerbSpec] = &[
         verb: Verb::Uninstall,
         typed: true,
         piping: Piping::Streams(&["help"]),
+    },
+    VerbSpec {
+        word: "machines",
+        verb: Verb::Machines,
+        typed: true,
+        piping: Piping::Ungated(
+            "asks every machine in the person's machines.toml over ssh; fixtures exercise it with a stand-in ssh",
+        ),
+    },
+    VerbSpec {
+        word: "remote",
+        verb: Verb::Remote,
+        typed: true,
+        piping: Piping::Ungated(
+            "opens a window on another machine's session; with no machine named it refuses on stderr",
+        ),
     },
     VerbSpec {
         word: "update",
@@ -53477,6 +54407,8 @@ fn main() {
                 Verb::Update => update::run_cli(&argv[2..]),
                 Verb::WireReplay => wirecheck::run_cli(&argv[2..]),
                 Verb::Admin => uninstall::admin_cli(&argv[2..]),
+                Verb::Machines => far::run_machines_cli(&argv[2..]),
+                Verb::Remote => far::run_remote_cli(&argv[2..]),
             };
             std::process::exit(code);
         }
@@ -53491,6 +54423,19 @@ fn main() {
         Launch::Window { open_here } => (open_here, None),
         Launch::Contract(c) => (None, Some(c)),
     };
+
+    // A far window reaches its session before it becomes a window at all, and
+    // while stderr is still the terminal `remote` was typed in: a machine that
+    // does not answer is said there, in ssh's own words, rather than into a
+    // log behind a window that opened on nothing.
+    let far_socket = far::current().map(|far| match far::open(far) {
+        Ok(socket) => socket,
+        Err(why) => {
+            eprintln!("terminal-delight: {why}");
+            far::tell_desktop(&format!("{} did not open", far.badge()), &why);
+            std::process::exit(1);
+        }
+    });
 
     // The window's diagnostics go to a log a person can find, and a panic on
     // any thread leaves a record, before anything that could fail runs. A
@@ -53546,7 +54491,39 @@ fn main() {
     // split. An explicitly-scratch launch never hosts either way.
     let hosted = !std::env::var("TD_NO_SESSIOND")
         .is_ok_and(|v| matches!(v.trim(), "1" | "on" | "true" | "yes"));
-    let (key, claim, host) = if explicit_scratch || !hosted {
+    let (key, claim, host) = if let (Some(far), Some(socket)) = (far::current(), &far_socket) {
+        // Another machine's session. The host is the far one, reached through
+        // the socket ssh carries here, and nothing else will do: there is no
+        // falling back to a window that owns its own terminals, because the
+        // layout this window is about to read describes the far machine's
+        // work, and running it here would start its agents on this one.
+        match hostctl::HostLink::attach_at(socket) {
+            Ok(link) => {
+                eprintln!(
+                    "terminal-delight: attached to {}'s session '{}' over ssh",
+                    far.name,
+                    link.session()
+                );
+                (
+                    far.local_key(),
+                    instance::Claim {
+                        owned: true,
+                        lock: None,
+                    },
+                    Some(link),
+                )
+            }
+            Err(err) => {
+                let why = format!(
+                    "{}: its session host did not take this window ({err})",
+                    far.name
+                );
+                eprintln!("terminal-delight: {why}");
+                far::tell_desktop(&format!("{} did not open", far.badge()), &why);
+                std::process::exit(1);
+            }
+        }
+    } else if explicit_scratch || !hosted {
         let (key, claim) = if explicit_scratch {
             (
                 instance::resolve_key(),
@@ -53660,6 +54637,10 @@ fn main() {
         t
     } else if demo {
         "terminal-delight".to_string()
+    } else if let Some(far) = far::current() {
+        // The machine first: it is what tells this window from the others in
+        // a window list.
+        format!("{} \u{2014} terminal-delight", far.badge())
     } else {
         window_title(scratch, &key)
     };

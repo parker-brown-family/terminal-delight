@@ -2953,6 +2953,10 @@ pub struct Presentation {
     /// back open to agents.
     seat: Option<crate::threshing_floor::SeatId>,
     agent_access: crate::threshing_floor::AgentAccess,
+    /// A team started this pane. A woken agent is still one a team started,
+    /// and still counts under the window's limit (cross-provider review,
+    /// round two: a wake used to clear it, and an unseat then freed room).
+    team_member: bool,
 }
 
 /// A document view on its way from a pane being replaced to its replacement.
@@ -3009,6 +3013,11 @@ pub struct TerminalView {
     /// and stops changing, which is what losing a steal is supposed to look
     /// like, and is emphatically not what a pane whose shell exited looks like.
     superseded: bool,
+    /// A team started this pane (`start_team`). Counted under the window's
+    /// limit of agent-started agents for as long as the pane lives, seated or
+    /// not, and saved with the pane: a person may take it off the Floor, and
+    /// then its seat no longer says so, but a restart must keep counting it.
+    pub(crate) team_member: bool,
     /// What this pane was built from: the directory and the command that would
     /// put it back. Kept because on an attached pane it is the only copy — the
     /// window is a process away from the terminal, and a reading that comes
@@ -4214,6 +4223,18 @@ impl gpui::EventEmitter<CloseFocusRead> for TerminalView {}
 pub struct AgentDone;
 impl gpui::EventEmitter<AgentDone> for TerminalView {}
 
+/// A person pressed Enter in a pane whose terminal is being shown in another
+/// window: bring it back to this one. The workspace does it, because taking a
+/// pane again is the host's business and the host is the workspace's.
+pub struct TakeBack;
+impl gpui::EventEmitter<TakeBack> for TerminalView {}
+
+/// A person chose the Orchestrator row on this pane's own menu: promote the
+/// pane (`true`) or take the promotion back. The workspace does it, because
+/// who is promoted is the window's record, kept by seat (`team_view`).
+pub struct PromoteOrchestrator(pub bool);
+impl gpui::EventEmitter<PromoteOrchestrator> for TerminalView {}
+
 /// A cached attention state flipped (either direction): "agent is working"
 /// (the 🤖 pulse) or "agent needs a human" (the ❓ pulse). The workspace
 /// listens so the mother bar repaints on the actual edge — the pulse
@@ -4779,6 +4800,11 @@ impl TerminalView {
     /// The pane's live cwd, cheaply (no agent-session scan) — polled by the
     /// workspace's dir-logo sweep and read at picker-open / pick time.
     pub fn current_cwd(&self) -> Option<String> {
+        if crate::far::current().is_some() {
+            // Another machine's pane: no pid here to ask, so it is what that
+            // machine's host last said (`set_host_facts`).
+            return self.staged.cwd.clone();
+        }
         let pid = self.session.shell_pid?;
         match &self.session.master {
             Some(master) => crate::session::capture_cwd(Some(master.file()?.as_ref()), pid),
@@ -4839,6 +4865,7 @@ impl TerminalView {
             doc_opened_by: self.doc_opened_by,
             seat: self.seat,
             agent_access: self.agent_access,
+            team_member: self.team_member,
         }
     }
 
@@ -4879,6 +4906,7 @@ impl TerminalView {
         // A restore, not a decision: the person's own seat and mark, carried.
         self.seat = from.seat;
         self.agent_access = from.agent_access;
+        self.team_member = from.team_member;
     }
 
     /// Whether this pane has reported an ending that has not been explained yet.
@@ -4901,6 +4929,46 @@ impl TerminalView {
     pub fn mark_superseded(&mut self, cx: &mut Context<Self>) {
         self.exited = false;
         self.superseded = true;
+        cx.notify();
+    }
+
+    /// Where a far host says this pane is, and what would resume its agent.
+    ///
+    /// A reading the host did not take is `None`, and leaves what is known
+    /// alone: a host that could not see where a pane is has not said the pane
+    /// is nowhere.
+    pub fn set_host_facts(
+        &mut self,
+        cwd: Option<String>,
+        resume: Option<String>,
+        cx: &mut Context<Self>,
+    ) {
+        let mut changed = false;
+        if cwd.is_some() && cwd != self.staged.cwd {
+            self.staged.cwd = cwd;
+            changed = true;
+        }
+        if resume.is_some() && resume != self.staged.resume {
+            self.staged.resume = resume;
+            changed = true;
+        }
+        if changed {
+            cx.notify();
+        }
+    }
+
+    /// One more report that this pane's stream closed, delivered the way the
+    /// terminal's own loop delivers it.
+    #[cfg(test)]
+    pub(crate) fn stream_closed_for_test(&mut self, cx: &mut Context<Self>) {
+        self.handle_term_event(TermEvent::Exit, cx);
+    }
+
+    /// A pane held through a dropped link turned out to have finished while
+    /// the link was down. It is over, and the next reap takes it.
+    pub fn mark_ended(&mut self, cx: &mut Context<Self>) {
+        self.superseded = false;
+        self.exited = true;
         cx.notify();
     }
 
@@ -5700,6 +5768,7 @@ impl TerminalView {
             pane_id,
             guard,
             superseded: false,
+            team_member: false,
             agent_access: crate::threshing_floor::AgentAccess::Open,
             model_label: None,
             seat: None,
@@ -6654,7 +6723,16 @@ impl TerminalView {
                 cx.notify();
             }
             TermEvent::Exit | TermEvent::ChildExit(_) => {
-                self.exited = true;
+                // A stream that closes reports it more than once, and the
+                // reports are not atomic with the frame that asks the host what
+                // the first one meant. A pane already known to be held — its
+                // terminal still running, shown elsewhere or behind a dropped
+                // link — stays held: taking a late report as a fresh ending
+                // would reap a pane whose work never stopped, and with it the
+                // last tab and the window.
+                if !self.superseded {
+                    self.exited = true;
+                }
                 cx.notify();
                 return false;
             }
@@ -7937,6 +8015,15 @@ impl TerminalView {
                 cx.emit(OpenHelp);
                 Handled::Consumed
             }
+            // This terminal is being shown in another window, so nothing
+            // typed here reaches it. Enter is the one key that does
+            // something: it asks for the terminal back. Every other key is
+            // dropped where it used to be, but no longer silently, since the
+            // header says where the terminal is.
+            crate::keylayer::Layer::Elsewhere => {
+                cx.emit(TakeBack);
+                Handled::Consumed
+            }
             // alt+k flips this pane between its two faces, from either side. It
             // was alt+w for one day, and alt+w was already taken: it is the
             // middle rung of the close ladder (ctrl+w the document box,
@@ -8037,6 +8124,7 @@ impl TerminalView {
     pub(crate) fn layers_up(&self, cx: &mut Context<Self>) -> crate::keylayer::Up {
         let reading = self.reading_view(cx).is_some();
         crate::keylayer::Up {
+            elsewhere: self.superseded,
             ask: self.ask_outside.is_some(),
             reading,
             agent: self.mode.is_agent(),
@@ -11915,6 +12003,34 @@ impl Render for TerminalView {
                         )
                     })
                     .collect::<Vec<_>>()
+                })
+                // Orchestrator: whether the agent in this pane may start
+                // agents of its own. Here because the pane is the first place
+                // a person looks for it; the same row is on the pane's card
+                // on the Threshing Floor. A person's click, like the three
+                // rows above, and for an agent pane only.
+                .when(self.hosts_agent(), |menu| {
+                    let t = crate::lang::current().strings().team;
+                    let (switch_on, promoted) = crate::team_view::published(self.seat);
+                    let label = format!(
+                        "{} {}{}",
+                        if promoted { "\u{25cf}" } else { "\u{25cb}" },
+                        t.orch_row,
+                        if switch_on {
+                            String::new()
+                        } else {
+                            format!(" \u{b7} {}", t.orch_needs_switch)
+                        }
+                    );
+                    menu.child(row(&label, true).id("ctx-orchestrator").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |v, _, _, cx| {
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.emit(PromoteOrchestrator(!promoted));
+                            cx.notify();
+                        }),
+                    ))
                 });
             deferred(anchored().position(pos).snap_to_window().child(menu))
         });
@@ -12336,6 +12452,11 @@ impl Render for TerminalView {
             format!("✔ {}", ps.ph_done)
         } else if self.exited {
             ps.ph_exited.to_string()
+        } else if self.superseded {
+            // Not live here: another window is showing this terminal, and
+            // keys typed in this pane do not reach it. A pane in this state
+            // used to say "live" and swallow what was typed.
+            ps.far.elsewhere.to_string()
         } else {
             ps.ph_live.to_string()
         };

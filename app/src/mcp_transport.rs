@@ -285,6 +285,7 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         // Filled in by the transport that has a caller to name; the ticker
         // serves every transport and knows nothing about who asked.
         caller: None,
+        peer_in_pane: false,
         engineering: if ws.coordination_full_scope() {
             ws.eng_reports()
         } else {
@@ -296,6 +297,7 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         chart: ws.chart.clone(),
         orgs: ws.floor_orgs.clone(),
         moved: ws.mcp_moves(cx),
+        far: ws.far_seen(cx),
     }
 }
 
@@ -353,6 +355,11 @@ pub(crate) fn respond_as(
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
         Ok(mut snap) => {
+            snap.peer_in_pane = peer_pid.is_some_and(|pid| {
+                snap.panes
+                    .iter()
+                    .any(|p| p.pid > 1 && crate::ctl::descends_from(pid, p.pid))
+            });
             snap.caller = caller.map(|c| {
                 let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
                     snap.panes
@@ -600,6 +607,7 @@ mod tests {
                 expose: mcp::Expose::AgentsOnly,
                 events: true,
                 writable: false,
+                team: false,
             },
             panes: vec![mcp::PaneInfo {
                 tab: 0,
@@ -627,6 +635,7 @@ mod tests {
                 build: Some("td-test".into()),
             }),
             caller: None,
+            peer_in_pane: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: false,
@@ -634,6 +643,7 @@ mod tests {
             chart: crate::threshing_floor::Chart::default(),
             orgs: crate::threshing_floor::Orgs::default(),
             moved: vec![],
+            far: vec![],
         }
     }
 

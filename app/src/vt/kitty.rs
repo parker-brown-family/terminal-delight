@@ -33,6 +33,14 @@
 //! protocol gives that key a meaning only when reading a file, so a piece
 //! loses nothing by it.
 //!
+//! **rio-vt 0.5.31 closes all three itself** (advisory GHSA-gpqv-v5wv-3frf,
+//! reported from this review): an APC stops at 64 MiB, a `t=t` path must sit
+//! in a temporary directory after canonicalising, one chunked upload is in
+//! flight at a time, and `S=` reserves nothing. The guard stays, for two
+//! reasons. Its limits are tighter (an APC stops at 4 MiB here, not 64), and
+//! a window from this build attaches to a session
+//! host still running the core it started with, which may predate the fix.
+//!
 //! Everything else passes through as it arrived, and in the chunks it arrived
 //! in. The guard holds back only a picture command's control data, never more
 //! than [`MAX_CONTROL`] bytes, until its `;` says what the command is.

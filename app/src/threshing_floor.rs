@@ -318,6 +318,13 @@ pub struct Line {
     /// unlimited — absent here means "no count applies", never zero.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub prompts_left: Option<u8>,
+    /// No person drew this one. A coordinator's `start_team` drew it to an
+    /// agent it started, in a window where a person had switched High trust
+    /// agentic on (see `team`). Kept on the line so that whoever it reaches
+    /// is told the truth about how it came to be, and so a person reading
+    /// the file can tell their own lines from an agent's.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub team: bool,
 }
 
 impl Line {
@@ -487,7 +494,50 @@ impl Chart {
             to,
             rung: RungWord::Known(rung),
             prompts_left: None,
+            team: false,
         });
+    }
+
+    /// The line a coordinator holds to an agent its `start_team` started.
+    /// Not a person's line, and marked so ([`Line::team`]).
+    pub fn draw_team(&mut self, from: SeatId, to: SeatId, rung: Rung) {
+        self.put(Line {
+            from,
+            to,
+            rung: RungWord::Known(rung),
+            prompts_left: None,
+            team: true,
+        });
+    }
+
+    /// Cycle a pair in stable seat order: forward, reverse, both, forward.
+    /// Moving a line carries its full grant, including unknown words and limits.
+    /// No line means no action: a stale click cannot create a relationship.
+    pub fn cycle_direction(&mut self, a: SeatId, b: SeatId) -> bool {
+        let (a, b) = if a.0 < b.0 { (a, b) } else { (b, a) };
+        if a == b {
+            return false;
+        }
+        // A direction a person turned a line to is a line a person drew: a
+        // coordinator's `start_team` drew only the way it was drawn, so the
+        // turned copy is not a team line, and a worker prompting back is not
+        // announced to its coordinator as "the agent that started you".
+        match (self.line(a, b).cloned(), self.line(b, a).cloned()) {
+            (Some(mut line), None) => {
+                self.erase(a, b);
+                std::mem::swap(&mut line.from, &mut line.to);
+                line.team = false;
+                self.put(line);
+            }
+            (None, Some(mut line)) => {
+                std::mem::swap(&mut line.from, &mut line.to);
+                line.team = false;
+                self.put(line);
+            }
+            (Some(_), Some(_)) => self.erase(b, a),
+            (None, None) => return false,
+        }
+        true
     }
 
     /// A person pressed Yes on a bypass ask. Callers: the rail only. A bypass
@@ -503,6 +553,7 @@ impl Chart {
             to,
             rung: RungWord::Known(Rung::Ask),
             prompts_left: Some(prompts),
+            team: false,
         });
     }
 
@@ -1317,6 +1368,97 @@ impl AskBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn direction_cycle_keeps_grants_and_round_trips() {
+        let (a, b) = (SeatId(1), SeatId(2));
+        for (rung, prompts_left) in [
+            (RungWord::Known(Rung::Prompt), None),
+            (RungWord::Known(Rung::Ask), Some(3)),
+            (RungWord::Unknown("future-rung".into()), None),
+        ] {
+            let mut chart = Chart::from_saved(
+                vec![Line {
+                    from: a,
+                    to: b,
+                    rung: rung.clone(),
+                    prompts_left,
+                    team: false,
+                }],
+                vec![],
+            );
+            for expected in [(false, true), (true, true), (true, false)] {
+                // Endpoint order must not reset the cycle after an arrow reverses.
+                assert!(chart.cycle_direction(b, a));
+                assert_eq!(
+                    (chart.line(a, b).is_some(), chart.line(b, a).is_some()),
+                    expected
+                );
+                for line in chart.saved() {
+                    assert_eq!(line.rung, rung);
+                    assert_eq!(line.prompts_left, prompts_left);
+                }
+                let json = serde_json::to_string(chart.saved()).unwrap();
+                chart = Chart::from_saved(serde_json::from_str(&json).unwrap(), vec![]);
+            }
+        }
+        let mut chart = Chart::default();
+        assert!(!chart.cycle_direction(a, b));
+        assert!(!chart.cycle_direction(a, a));
+        chart.draw(a, b, Rung::See);
+        chart.draw(b, a, Rung::Prompt);
+        chart.cycle_direction(a, b);
+        assert_eq!(chart.line(a, b).unwrap().rung.known(), Some(Rung::See));
+        assert!(chart.line(b, a).is_none());
+    }
+
+    /// A coordinator's team line turned by a person is the person's line: the
+    /// worker prompting back is not told to its coordinator as "the agent
+    /// that started you", and the line the coordinator drew keeps its mark
+    /// while it stands.
+    ///
+    /// Mutation-tested: keeping `team` on the turned line fails the first
+    /// assertion.
+    #[test]
+    fn a_turned_team_line_is_a_persons_line() {
+        let (lead, worker) = (SeatId(1), SeatId(2));
+        let mut chart = Chart::from_saved(
+            vec![Line {
+                from: lead,
+                to: worker,
+                rung: RungWord::Known(Rung::Prompt),
+                prompts_left: None,
+                team: true,
+            }],
+            vec![],
+        );
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(chart.line(lead, worker).is_none());
+        assert!(
+            !chart.line(worker, lead).unwrap().team,
+            "reversed: a person's line"
+        );
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(!chart.line(worker, lead).unwrap().team);
+        assert!(
+            !chart.line(lead, worker).unwrap().team,
+            "both ways: both are the person's"
+        );
+        let mut chart = Chart::from_saved(
+            vec![Line {
+                from: worker,
+                to: lead,
+                rung: RungWord::Known(Rung::Prompt),
+                prompts_left: None,
+                team: true,
+            }],
+            vec![],
+        );
+        // Turned to both ways: the copy is the person's, the original keeps its mark.
+        assert!(chart.cycle_direction(lead, worker));
+        assert!(chart.line(worker, lead).unwrap().team);
+        assert!(!chart.line(lead, worker).unwrap().team);
+    }
 
     #[test]
     fn legacy_org_migration_keeps_labels_unknown_and_seats_stable() {

@@ -7,6 +7,65 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Upgrading from 0.5.3
+
+- **Restart once, the session host included.** The terminal core inside the
+  session host moves to rio-vt 0.5.32, and a host keeps the core it started
+  with until it is restarted. The steps are the same as for 0.5.3: quit every
+  window, end the host with `pkill -f '[t]erminal-delight.* serve --session'`
+  (or restart the computer), and start again.
+- **Sharing & access moved under Agents** in Settings, beside Providers and
+  Threads. Nothing you set there changed.
+
+### Settings
+
+- **A filter at the top of Settings**, the same box as the help sheet's. Type a
+  word and every page narrows to the rows that match, with their own switches,
+  so a setting can be found and changed in one place. ↑ ↓ pick a page, Enter
+  opens it, and Esc clears, then closes.
+- **Every agent setting is under Agents.** Sharing & access sits beside
+  Providers and Threads, and High trust agentic has its own section there,
+  Teams, with the Threshing Floor.
+- Appearance now gives interface, window chrome and pane controls their own Settings pages. Theme choices no longer bury UI Config below the visible page; presets and new-window defaults remain with the interface controls. Gauges have one menu per group, with each selected group fully open.
+
+### Agents across machines
+
+- **Open another machine's Terminal Delight in a window here**, over ssh.
+  Settings › Environments lists each machine's sessions and opens one.
+- **The Threshing Floor reaches agents on other machines.** An agent here can
+  see, ask and prompt an agent there, as far as that machine allows. Each
+  machine sets how far another reaches into it, with a row of chips in
+  Settings › Environments. A machine not listed reaches nothing.
+- A pane being shown in another window says "elsewhere", and Enter brings it
+  back.
+
+### High trust agentic
+
+- **A promoted agent can start a team.** With High trust agentic on (Settings ›
+  Agents › Sharing & access › Teams) and the MCP server on, an agent you promote
+  to orchestrator, from its card on the Threshing Floor or its pane's
+  right-click menu, may open a tab, start agents in visible panes there and
+  prompt them. At most eight agents started this way run at once. Off, only you
+  start agents.
+
+### Fixes
+
+- The terminal core is rio-vt 0.5.32. It caps an XTGETTCAP request, stops
+  storing OSC 1337 user variables, and ignores an OSC 8 link over 2,047 bytes,
+  so a program can no longer make a pane hold memory in proportion to what it
+  sent through those.
+- Windows reclaim abandoned pane streams after a later window exits.
+- Interface keeps each corner button independently switchable, and Settings
+  keeps each menu within a visible page.
+- Personal UI choices stay available while you try a set.
+- Two windows changing who may reach this machine at the same time can no
+  longer undo each other's change.
+- A team member taken off the Floor still counts toward the limit after a
+  restart.
+- The docs site says how Terminal Delight is verified, with numbers anyone
+  can measure again.
+- Click a Threshing Floor line’s arrow to cycle through either direction or both. Matching two-way permissions share one label; clicking the permission text still opens its editor.
+
 ## [0.5.3] — 2026-11-11
 
 ### Upgrading from 0.5.2
@@ -14,10 +73,16 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - **CONFIG is now Settings.** The corner keeps one door, ⚙, and Ctrl+, opens
   it too. Everything CONFIG held is in the book: its pages follow T3 Code's
   layout, and a panel opened from it (the palette, the gauges) shows inside it.
-- **Restart Terminal Delight once.** The skills bridge lives in the session
-  host, so after updating, quit every window, start again and open a new Bash
-  terminal before starting an agent. Until then a new shell starts cleanly
-  without the bridge.
+- **Restart Terminal Delight once, the session host included.** The skills
+  bridge lives in the session host, and the host outlives its windows: with
+  every window closed it keeps your terminals running for about twelve hours,
+  so closing and reopening is not enough. After updating, quit every window,
+  end the host with `pkill -f '[t]erminal-delight.* serve --session'` (or
+  restart the computer), start again and open a new Bash terminal before
+  starting an agent. Tabs come back from the saved session and agents are
+  resumed; scrollback and other running programs are not. Until then a new
+  shell starts cleanly without the bridge. (Corrected after release: the
+  first wording said quitting every window was enough, and it is not.)
 - **The left spine is the INBOX.** What used to be the agent list is now
   shelves of what wants you, and the composer that starts an agent opens from it.
 
@@ -117,8 +182,9 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
   preserves personal skills, exclusions and provider configuration. Each pane's
   TD Skills indicator reports confirmed, partial, absent or unknown attachment;
   availability does not mean the agent followed an instruction. The command
-  bridge lives in the session host, so after updating, restart everything once
-  and open a new Bash terminal before starting the agent. Until then a new shell
+  bridge lives in the session host, so after updating, restart the host once
+  (see Upgrading above: closing every window does not end it) and open a new
+  Bash terminal before starting the agent. Until then a new shell
   starts cleanly without the bridge. Existing running agents keep their original
   selection.
 

@@ -13,8 +13,9 @@
 //! shows them in, each page's glyph, and the search. The names, groups and
 //! order follow T3's `SETTINGS_NAV_GROUPS` (pingdotgg/t3code, MIT,
 //! `apps/web/src/components/settings/settingsSearch.ts`), keeping only the
-//! pages Terminal Delight has something to put on. The glyphs are the nearest
-//! single characters to T3's lucide icons. The view is `settings_view.rs`;
+//! pages Terminal Delight has something to put on, with Interface, Window
+//! chrome and Pane parts split from Appearance so each page fits without scrolling. The glyphs
+//! are the nearest single characters to T3's lucide icons. The view is `settings_view.rs`;
 //! the words are `lang/settings.rs`.
 
 /// One page of the book.
@@ -22,6 +23,9 @@
 pub enum Page {
     General,
     Appearance,
+    Interface,
+    WindowChrome,
+    PaneParts,
     Notifications,
     Keybindings,
     Providers,
@@ -53,19 +57,26 @@ pub const GROUPS: &[(Option<Heading>, &[Page])] = &[
         &[
             Page::General,
             Page::Appearance,
+            Page::Interface,
+            Page::WindowChrome,
+            Page::PaneParts,
             Page::Notifications,
             Page::Keybindings,
         ],
     ),
-    (Some(Heading::Agents), &[Page::Providers, Page::Threads]),
+    // Everything about what agents are and may do lives under Agents: which
+    // ones launch, how they rest, and what they may reach (Sharing & access,
+    // with High trust agentic). Parker, 2026-11-17: *"that is where all the
+    // agent config need to live"*, after looking for that switch here.
+    (
+        Some(Heading::Agents),
+        &[Page::Providers, Page::Threads, Page::Access],
+    ),
     (
         Some(Heading::Code),
         &[Page::Projects, Page::SourceControl, Page::Worktrees],
     ),
-    (
-        Some(Heading::Connections),
-        &[Page::Environments, Page::Access],
-    ),
+    (Some(Heading::Connections), &[Page::Environments]),
     (
         None,
         &[Page::Maintenance, Page::Labs, Page::About, Page::Archive],
@@ -83,6 +94,9 @@ impl Page {
         match self {
             Page::General => "general",
             Page::Appearance => "appearance",
+            Page::Interface => "interface",
+            Page::WindowChrome => "window-chrome",
+            Page::PaneParts => "pane-parts",
             Page::Notifications => "notifications",
             Page::Keybindings => "keybindings",
             Page::Providers => "providers",
@@ -111,6 +125,9 @@ impl Page {
         match self {
             Page::General => "\u{2699}",        // ⚙
             Page::Appearance => "\u{1f3a8}",    // 🎨
+            Page::Interface => "\u{25a3}",      // ▣
+            Page::WindowChrome => "\u{25a7}",   // ▧
+            Page::PaneParts => "\u{25a4}",      // ▤
             Page::Notifications => "\u{1f514}", // 🔔
             Page::Keybindings => "\u{2328}",    // ⌨
             Page::Providers => "\u{1f916}",     // 🤖
@@ -154,7 +171,7 @@ pub struct Item {
     pub secondary: bool,
 }
 
-fn norm(s: &str) -> String {
+pub(crate) fn norm(s: &str) -> String {
     s.to_lowercase()
         .chars()
         .map(|c| if c.is_alphanumeric() { c } else { ' ' })
@@ -211,7 +228,7 @@ pub fn search(query: &str, items: &[Item]) -> Vec<usize> {
 /// the fconfig being explored"*.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum Host {
-    /// The surface config: theme, style, rules, UI CONFIG.
+    /// The surface config: theme, style, and rules. UI CONFIG has book pages.
     Palette,
     Gauges,
     Updates,
@@ -235,6 +252,8 @@ pub struct Book {
     pub query: String,
     /// The lit result while searching.
     pub pick: usize,
+    /// The gauge group selected in Appearance's Gauges menu.
+    pub gauges_page: usize,
 }
 
 impl Book {
@@ -244,6 +263,7 @@ impl Book {
             host: None,
             query: String::new(),
             pick: 0,
+            gauges_page: 0,
         }
     }
 
@@ -281,6 +301,14 @@ mod tests {
         }
         assert_eq!(Page::General.step(false), Page::General, "stops at the top");
         assert_eq!(Page::Archive.step(true), Page::Archive, "and at the bottom");
+        let agents = GROUPS
+            .iter()
+            .find(|(h, _)| *h == Some(Heading::Agents))
+            .map(|(_, pages)| *pages);
+        assert!(
+            agents.is_some_and(|p| p.contains(&Page::Access)),
+            "agent access, High trust agentic with it, sits under Agents"
+        );
         assert_eq!(
             Page::Keybindings.step(true),
             Page::Providers,

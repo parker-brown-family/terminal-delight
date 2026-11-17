@@ -455,6 +455,29 @@ pub struct HostLink {
     /// while its panes go on working. Tabs opened after that are missing from
     /// the file, and the next window adopts them bare, out of their projects.
     lost: AtomicBool,
+    /// The pid the host gave for itself when this link was opened, or `0` from
+    /// a host built before it said. It is how a link that has to be opened
+    /// again tells the same host from a new one under the same session name:
+    /// a new host numbers its panes from 1 again, and a pane number carried
+    /// across that would name a stranger.
+    host_pid: std::sync::atomic::AtomicU32,
+}
+
+/// What opening a link again found on the other end.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Reopened {
+    /// The host this link was talking to before. Its panes are the same panes.
+    SameHost,
+    /// A different host answers under this session's name, or one that does
+    /// not say which it is. Nothing this window holds describes its panes.
+    AnotherHost,
+}
+
+/// Whether a host answering with `now` is the one that answered with `before`.
+/// Unknown on either side is not the same host: a host that will not say
+/// which it is cannot be shown to be the one whose panes this window holds.
+pub fn same_host(before: u32, now: u32) -> bool {
+    before != 0 && before == now
 }
 
 /// Does this error mean the host is gone, rather than slow or saying no?
@@ -479,15 +502,20 @@ impl HostLink {
     pub fn attach_at(path: &Path) -> std::io::Result<Arc<Self>> {
         let stream = UnixStream::connect(path)?;
         let mut conn = Conn::over(stream, EXCHANGE_TIMEOUT)?;
-        let session = match conn.hello(ClientKind::Window)? {
-            Reply::Hello { proto, session, .. } => {
+        let (session, host_pid) = match conn.hello(ClientKind::Window)? {
+            Reply::Hello {
+                proto,
+                session,
+                host,
+                ..
+            } => {
                 // The one compatibility fact. A build number never gates:
                 // adjacent builds must keep talking or every update becomes a
                 // forced restart of everything running.
                 if let Err(msg) = crate::hostproto::version_check(proto) {
                     return Err(std::io::Error::other(msg));
                 }
-                session
+                (session, host)
             }
             other => return Err(std::io::Error::other(format!("odd greeting: {other:?}"))),
         };
@@ -504,7 +532,52 @@ impl HostLink {
             session,
             socket: path.to_path_buf(),
             lost: AtomicBool::new(false),
+            host_pid: std::sync::atomic::AtomicU32::new(host_pid),
         }))
+    }
+
+    /// Open the control connection again, on the socket this link was opened
+    /// at, and say whether the same host answered.
+    ///
+    /// For a window whose road to its host can drop while the host carries on:
+    /// another machine's session, reached through a forwarded socket. Every
+    /// holder of this link keeps the one it has, so a pane's resize
+    /// announcements and the divergence guard pick up where they stopped.
+    ///
+    /// `lost` is cleared only for the same host. The rule that flag keeps is
+    /// that a window which no longer knows what its session contains stops
+    /// handing over layouts; a window that has found the same host again does
+    /// know, and one that has found a different host does not.
+    pub fn reconnect(&self) -> std::io::Result<Reopened> {
+        let stream = UnixStream::connect(&self.socket)?;
+        let mut conn = Conn::over(stream, EXCHANGE_TIMEOUT)?;
+        let host = match conn.hello(ClientKind::Window)? {
+            Reply::Hello {
+                proto,
+                session,
+                host,
+                ..
+            } => {
+                if let Err(msg) = crate::hostproto::version_check(proto) {
+                    return Err(std::io::Error::other(msg));
+                }
+                if session != self.session {
+                    return Err(std::io::Error::other(format!(
+                        "session '{session}' answers where '{}' was",
+                        self.session
+                    )));
+                }
+                host
+            }
+            other => return Err(std::io::Error::other(format!("odd greeting: {other:?}"))),
+        };
+        let before = self.host_pid.load(Ordering::SeqCst);
+        if !same_host(before, host) {
+            return Ok(Reopened::AnotherHost);
+        }
+        *self.conn.lock().unwrap_or_else(|p| p.into_inner()) = conn;
+        self.lost.store(false, Ordering::SeqCst);
+        Ok(Reopened::SameHost)
     }
 
     pub fn session(&self) -> &str {

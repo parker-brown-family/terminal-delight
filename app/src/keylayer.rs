@@ -164,6 +164,12 @@ pub enum Layer {
     /// face is showing; what the bench then does with the key is its own ladder,
     /// and it may decline.
     Bench,
+    /// This pane's terminal is being shown in another window, so nothing
+    /// typed here reaches it. A plain Enter asks for it back. Below a note
+    /// being written, a rename box, a document and the bench, which keep
+    /// their Enter; above scroll mode, which would swallow it with nothing to
+    /// scroll (cross-provider review, 2026-11-16).
+    Elsewhere,
     /// Scroll mode (Alt+[) on the terminal face: every plain key moves the
     /// view instead of reaching the program, until `q` or Escape. Ctrl and Alt
     /// chords pass under it, so Ctrl+C still reaches a running agent and the
@@ -246,6 +252,8 @@ pub struct Up {
     /// The pane is asking whether to open an artifact in the browser
     /// ([`Layer::Ask`]).
     pub ask: bool,
+    /// Another window is showing this pane's terminal ([`Layer::Elsewhere`]).
+    pub elsewhere: bool,
 }
 
 /// A note is being written in a document this pane shows, on either seat: the
@@ -320,7 +328,7 @@ type Rung = (Layer, fn(&Key, &Up) -> bool);
 /// Written as a list of pairs rather than a chain of early returns so that the
 /// order is one readable column and adding a surface cannot accidentally be
 /// written in the middle of an unrelated branch.
-const LADDER: [Rung; 16] = [
+const LADDER: [Rung; 17] = [
     (Layer::Help, |k, _| k.key == "f1"),
     (Layer::Face, |k, _| k.alt && !k.control && k.key == "k"),
     (Layer::Window, |k, u| {
@@ -359,6 +367,11 @@ const LADDER: [Rung; 16] = [
     }),
     (Layer::Document, |_, u| u.document),
     (Layer::Bench, |_, u| u.bench),
+    (Layer::Elsewhere, |k, u| {
+        u.elsewhere
+            && k.key == "enter"
+            && !(k.alt || k.control || k.shift || k.platform || k.function)
+    }),
     (Layer::Scroll, |k, u| {
         u.scroll && !k.control && !k.alt && !k.platform
     }),
@@ -955,6 +968,92 @@ mod tests {
     }
 
     #[test]
+    fn a_plain_enter_takes_back_a_pane_shown_elsewhere_and_nothing_above_it_loses_its_enter() {
+        let enter = Key {
+            key: "enter",
+            ..Key::default()
+        };
+        let held = Up {
+            elsewhere: true,
+            ..Up::default()
+        };
+        assert_eq!(route(&enter, &held), Layer::Elsewhere);
+        assert_eq!(
+            route(&enter, &Up::default()),
+            Layer::Terminal,
+            "only a held pane"
+        );
+        // Every other key in a held pane falls to the terminal, where it is dropped.
+        let a = Key {
+            key: "a",
+            types_char: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&a, &held), Layer::Terminal);
+        // A chord is not the gesture.
+        for chord in [
+            Key {
+                shift: true,
+                ..enter
+            },
+            Key {
+                control: true,
+                ..enter
+            },
+            Key { alt: true, ..enter },
+        ] {
+            assert_ne!(route(&chord, &held), Layer::Elsewhere, "{chord:?}");
+        }
+        // A note being written, a rename box and the bench keep their Enter.
+        for (up, layer) in [
+            (
+                Up {
+                    sticky: true,
+                    ..held
+                },
+                Layer::Sticky,
+            ),
+            (
+                Up {
+                    rename: true,
+                    ..held
+                },
+                Layer::Rename,
+            ),
+            (
+                Up {
+                    bench: true,
+                    ..held
+                },
+                Layer::Bench,
+            ),
+            (
+                Up {
+                    document: true,
+                    ..held
+                },
+                Layer::Document,
+            ),
+        ] {
+            assert_eq!(route(&enter, &up), layer);
+        }
+        // Scroll mode would swallow it with nothing to scroll: Enter still
+        // takes the pane back (cross-provider review).
+        let scrolling = Up {
+            scroll: true,
+            ..held
+        };
+        assert_eq!(route(&enter, &scrolling), Layer::Elsewhere);
+        // F1 and the window's chords still work from a held pane.
+        let f1 = Key {
+            key: "f1",
+            function: true,
+            ..Key::default()
+        };
+        assert_eq!(route(&f1, &held), Layer::Help);
+    }
+
+    #[test]
     fn human_turn_arrows_belong_only_to_agent_terminals() {
         for key in ["up", "down"] {
             let agent = Up {
@@ -1071,6 +1170,7 @@ mod tests {
         ];
         for bits in 0u32..131072 {
             let up = Up {
+                elsewhere: false,
                 agent: bits & 8192 != 0,
                 paint: bits & 1 != 0,
                 ctx_menu: bits & 2 != 0,
@@ -2267,6 +2367,7 @@ mod tests {
     #[test]
     fn the_help_modal_is_reachable_from_under_everything() {
         let everything = Up {
+            elsewhere: true,
             agent: true,
             paint: true,
             ctx_menu: true,

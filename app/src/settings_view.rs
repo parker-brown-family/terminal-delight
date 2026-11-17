@@ -16,6 +16,50 @@ use std::collections::BTreeSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
+/// While the book is filtered, which rows a page being drawn may show: the
+/// titles the search found on that page, and how many of them have been
+/// drawn so far (in the section being built, and on the whole page). The row
+/// and section builders are associated functions with no `self` and are
+/// shared with other surfaces, so the filter reaches them from here, set only
+/// around one page's build in `settings_results` and absent everywhere else.
+struct RowFilter {
+    titles: std::collections::HashSet<String>,
+    section: usize,
+    page: usize,
+}
+
+thread_local! {
+    static ROW_FILTER: std::cell::RefCell<Option<RowFilter>> =
+        const { std::cell::RefCell::new(None) };
+}
+
+/// Whether a row titled `title` is drawn: always, unless the book is being
+/// filtered and the search did not find it.
+fn row_shown(title: &str) -> bool {
+    ROW_FILTER.with_borrow_mut(|f| match f {
+        None => true,
+        // Compared as the search compares them: a page draws some titles in
+        // sentence case (`sentence`) that its index holds as written.
+        Some(f) if f.titles.contains(&settings::norm(title)) => {
+            f.section += 1;
+            f.page += 1;
+            true
+        }
+        Some(_) => false,
+    })
+}
+
+/// Whether the section whose rows were just built is drawn: always, unless
+/// the book is being filtered and none of them matched. Its rows are built
+/// as its arguments, just before it, so the count is theirs; reading it
+/// starts the next section's count.
+fn section_shown() -> bool {
+    ROW_FILTER.with_borrow_mut(|f| match f {
+        None => true,
+        Some(f) => std::mem::take(&mut f.section) > 0,
+    })
+}
+
 /// The Worktrees page's review: what the last look found, and whether the
 /// remove button has been pressed once.
 #[derive(Default)]
@@ -464,7 +508,7 @@ impl Workspace {
         if key == "escape" {
             return self.settings_escape(cx);
         }
-        let hits = self.settings_hits();
+        let pages = self.settings_hit_pages();
         if key == "," && m.control {
             self.close_settings(cx);
             return true;
@@ -480,7 +524,7 @@ impl Workspace {
             }
             "down" | "up" if b.searching() => {
                 b.pick = if key == "down" {
-                    (b.pick + 1).min(hits.len().saturating_sub(1))
+                    (b.pick + 1).min(pages.len().saturating_sub(1))
                 } else {
                     b.pick.saturating_sub(1)
                 };
@@ -490,11 +534,11 @@ impl Workspace {
                 self.settings_last = Some(b.page);
             }
             "enter" if b.searching() => {
-                if let Some(item) = hits.get(b.pick) {
-                    b.page = item.page;
+                if let Some(page) = pages.get(b.pick).copied() {
+                    b.page = page;
                     b.query.clear();
                     b.pick = 0;
-                    self.settings_last = Some(item.page);
+                    self.settings_last = Some(page);
                 }
             }
             _ if m.control || m.alt || m.platform || m.function => return false,
@@ -533,6 +577,15 @@ impl Workspace {
         settings_items_in(self.lang)
     }
 
+    /// The pages the filter found something on, in nav order: the ones the
+    /// filtered book shows, and the ones ↑ ↓ pick between and Enter opens.
+    fn settings_hit_pages(&self) -> Vec<Page> {
+        let hits = self.settings_hits();
+        Page::all()
+            .filter(|p| hits.iter().any(|h| h.page == *p))
+            .collect()
+    }
+
     fn settings_hits(&self) -> Vec<Item> {
         let Some(b) = self.settings.as_ref() else {
             return Vec::new();
@@ -551,6 +604,9 @@ fn page_name_in(l: lang::Lang, p: Page) -> &'static str {
     match p {
         Page::General => s.p_general,
         Page::Appearance => s.p_appearance,
+        Page::Interface => s.s_interface,
+        Page::WindowChrome => s.p_window_chrome,
+        Page::PaneParts => s.s_pane_parts,
         Page::Notifications => s.p_notifications,
         Page::Keybindings => s.p_keybindings,
         Page::Providers => s.p_providers,
@@ -594,7 +650,7 @@ fn scale_step(at: f32, by: f32) -> f32 {
     (next / 10.).clamp(SCALE_MIN, SCALE_MAX)
 }
 
-/// UI CONFIG's switches as Appearance rows: what the window's own chrome
+/// UI CONFIG's switches: what the window's own chrome
 /// shows, then what every pane shows. One table, read by the page that draws
 /// the rows and by the search that finds them. Each row flips its keys
 /// together, as the surface config's switch for it does.
@@ -617,6 +673,14 @@ const UI_INTERFACE: &[UiRow] = &[
         |t| t.ui.ui_splits,
         &[uiconfig::Key::SplitButtons],
     ),
+    (
+        "st-ui-rows",
+        |t| t.ui.ui_option_rows,
+        &[uiconfig::Key::OptionRows],
+    ),
+];
+
+const UI_WINDOW_CHROME: &[UiRow] = &[
     (
         "st-ui-mark",
         |t| t.ui.ui_app_mark,
@@ -643,11 +707,6 @@ const UI_INTERFACE: &[UiRow] = &[
         "st-ui-allowance",
         |t| t.ui.ui_allowance,
         &[uiconfig::Key::Allowance],
-    ),
-    (
-        "st-ui-rows",
-        |t| t.ui.ui_option_rows,
-        &[uiconfig::Key::OptionRows],
     ),
 ];
 
@@ -692,8 +751,9 @@ const UI_PANE_PARTS: &[UiRow] = &[
 /// Kept beside the pages that draw the rows; the test
 /// `every_page_has_rows_the_search_can_find` holds the two together.
 fn settings_items_in(l: lang::Lang) -> Vec<Item> {
-    let s = l.strings().settings;
-    let ui = l.strings().ui;
+    let t = l.strings();
+    let s = t.settings;
+    let ui = t.ui;
     let rows: &[(Page, &str, &str, &str)] = &[
         (Page::General, s.s_language, s.r_language, s.r_language_sub),
         (Page::General, s.s_window, s.r_scale, s.r_scale_sub),
@@ -702,6 +762,8 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::Appearance, s.s_look, s.r_palette, s.r_palette_sub),
         (Page::Appearance, s.s_look, s.r_gauges, s.r_gauges_sub),
         (Page::Appearance, s.s_agent_panes, s.r_tint, s.r_tint_sub),
+        (Page::Interface, ui.ui_hdr, ui.ui_set_design, ""),
+        (Page::Interface, ui.ui_hdr, ui.ui_new_windows, ""),
         (
             Page::Notifications,
             s.s_notices,
@@ -778,7 +840,8 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::Access, s.s_access, s.r_events, s.r_events_sub),
         (Page::Access, s.s_access, s.r_writes, s.r_writes_sub),
         (Page::Access, s.s_access, s.r_images, s.r_images_sub),
-        (Page::Access, s.s_access, s.r_floor, s.r_floor_sub),
+        (Page::Access, s.s_team, t.team.st_title, t.team.st_sub),
+        (Page::Access, s.s_team, s.r_floor, s.r_floor_sub),
         (Page::Maintenance, s.s_usage, s.r_savings, s.r_savings_sub),
         (Page::Maintenance, s.s_usage, s.r_bug, s.r_bug_sub),
         (Page::Labs, s.s_plugins, s.r_plugins, s.r_plugins_sub),
@@ -790,11 +853,19 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
     ];
     let ui_rows = UI_INTERFACE
         .iter()
-        .map(|(_, title, _)| (Page::Appearance, s.s_interface, title(l.strings()), ""))
+        .map(|(_, title, _)| (Page::Interface, s.s_interface, title(l.strings()), ""))
+        .chain(UI_WINDOW_CHROME.iter().map(|(_, title, _)| {
+            (
+                Page::WindowChrome,
+                s.p_window_chrome,
+                title(l.strings()),
+                "",
+            )
+        }))
         .chain(
             UI_PANE_PARTS
                 .iter()
-                .map(|(_, title, _)| (Page::Appearance, s.s_pane_parts, title(l.strings()), "")),
+                .map(|(_, title, _)| (Page::PaneParts, s.s_pane_parts, title(l.strings()), "")),
         )
         .collect::<Vec<_>>();
     let mut items: Vec<Item> = rows
@@ -824,7 +895,7 @@ impl Workspace {
     // ---- pieces --------------------------------------------------------
 
     /// A row: its title and plain line on the left, its control on the right.
-    fn st_row(
+    pub(super) fn st_row(
         th: &theme::Theme,
         sk: &skin::Skin,
         title: &str,
@@ -850,6 +921,7 @@ impl Workspace {
             Some(c) => (Some(c.el), c.press, c.id),
             None => (None, None, None),
         };
+        let shown = row_shown(title);
         div()
             .group(ROW)
             .when_some(id, |d, id| d.debug_selector(move || format!("{id}-row")))
@@ -895,17 +967,29 @@ impl Workspace {
             )
             .children(sample)
             .children(control)
+            // Last, so it outranks the `flex` above: a filtered-out row is
+            // not drawn, and its section leaves it out of the rules.
+            .when(!shown, |d| d.hidden())
     }
 
     /// A section: its title in sentence case over a rounded group of rows
     /// with a hairline between each.
-    fn st_section(
+    pub(super) fn st_section(
         th: &theme::Theme,
         sk: &skin::Skin,
         id: &'static str,
         title: &str,
         rows: Vec<gpui::Div>,
     ) -> AnyElement {
+        if !section_shown() {
+            return div().id(id).hidden().into_any_element();
+        }
+        // A row the filter hid is dropped here rather than drawn hidden, so
+        // the hairline between rows is counted among the rows left.
+        let rows: Vec<gpui::Div> = rows
+            .into_iter()
+            .filter_map(|mut r| (r.style().display != Some(gpui::Display::None)).then_some(r))
+            .collect();
         let rule = px(sk.m.hairline.max(1.));
         div()
             .id(id)
@@ -1134,6 +1218,42 @@ impl Workspace {
         }
     }
 
+    /// The combined Menu glyphs switch is convenient, but each corner button
+    /// must remain independently configurable in Settings as it was in the
+    /// hosted palette. A chip stops the row's combined-switch press.
+    fn st_ui_glyphs(sk: &skin::Skin, cx: &mut Context<Self>) -> AnyElement {
+        use uiconfig::Key as K;
+        let mut chips = div().flex().flex_row().flex_wrap().gap_1();
+        for (glyph, key, id) in [
+            ("\u{1f4dc}", K::Artifacts, "st-ui-g-artifacts"),
+            ("\u{1f3a8}", K::Surfaces, "st-ui-g-surfaces"),
+            ("\u{1f4ca}", K::Sliders, "st-ui-g-sliders"),
+            ("\u{1f916}", K::Agents, "st-ui-g-agents"),
+            ("\u{1faa6}", K::Graveyard, "st-ui-g-graveyard"),
+            ("\u{1f514}", K::Notifications, "st-ui-g-notifications"),
+            ("\u{1f41e}", K::BugReport, "st-ui-g-bug"),
+            ("\u{1f9e9}", K::Plugins, "st-ui-g-plugins"),
+        ] {
+            let on = uiconfig::shown(cx, key);
+            chips = chips.child(
+                sk.chip(on)
+                    .id(id)
+                    .debug_selector(move || id.into())
+                    .cursor_pointer()
+                    .when(!on, |d| d.opacity(0.35))
+                    .child(sk.control_text(glyph))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.flip_ui(&[key], !on, cx);
+                        }),
+                    ),
+            );
+        }
+        chips.into_any_element()
+    }
+
     /// The button on a row whose setting still has a panel of its own. With a
     /// `host` the panel opens in place, on this page of the book; without one
     /// (the composer, the Threshing Floor, which are whole surfaces) the book
@@ -1197,6 +1317,105 @@ impl Workspace {
             press: Some(press(cx)),
             id: Some(id),
         }
+    }
+
+    /// The UI set belongs with the Interface switches in the book, rather
+    /// than at the foot of the theme palette.
+    fn st_ui_sets(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let ui = self.lang.strings().ui;
+        let choice = uiconfig::choice(cx);
+        let active = uiconfig::active_set(cx);
+        let mut buttons = div().flex().flex_row().flex_wrap().items_center().gap_2();
+        buttons = buttons.child(
+            Self::bezel_btn_s(
+                sk,
+                ui.ui_set_design,
+                !choice.has_flips() && choice.set.is_none(),
+                0.85,
+            )
+            .id("st-ui-set-design")
+            .on_mouse_down(
+                MouseButton::Left,
+                cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                    cx.stop_propagation();
+                    ws.pick_ui_set(None, cx);
+                }),
+            ),
+        );
+        for set in uiconfig::sets(cx) {
+            let lit = !choice.has_flips() && choice.set.is_some() && set.id == active;
+            let id = set.id.clone();
+            let caption = if set.id == uiconfig::CLEAN {
+                self.lang.strings().thm_clean.to_string()
+            } else {
+                set.name.clone()
+            };
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, &caption, lit, 0.85)
+                    .id(SharedString::from(format!("st-ui-set-{id}")))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pick_ui_set(Some(id.clone()), cx);
+                        }),
+                    ),
+            );
+        }
+        if choice.has_yours() {
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, ui.ui_yours, choice.has_flips(), 0.85)
+                    .id("st-ui-set-yours")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.pick_ui_yours(cx);
+                        }),
+                    ),
+            );
+        }
+        buttons.into_any_element().into()
+    }
+
+    fn st_new_windows(&self, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
+        let ui = self.lang.strings().ui;
+        let mut buttons = div()
+            .flex()
+            .flex_row()
+            .flex_wrap()
+            .items_center()
+            .gap_2()
+            .child(if self.new_window_saved {
+                ui.ui_saved
+            } else {
+                ui.pal_thm_deco
+            })
+            .child(
+                Self::bezel_btn_s(sk, ui.ui_use_this, false, 0.85)
+                    .id("st-ui-use-window")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.save_new_window(cx);
+                        }),
+                    ),
+            );
+        if self.new_window_saved {
+            buttons = buttons.child(
+                Self::bezel_btn_s(sk, ui.pal_thm_deco, false, 0.85)
+                    .id("st-ui-reset-window")
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.clear_new_window(cx);
+                        }),
+                    ),
+            );
+        }
+        buttons.into_any_element().into()
     }
 
     /// A button that acts inside the book.
@@ -1651,6 +1870,18 @@ impl Workspace {
                         ),
                     )],
                 ),
+            ],
+            Page::Interface => vec![
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-ui-sets",
+                    ui.ui_hdr,
+                    vec![
+                        row(&sentence(ui.ui_set_design), "", self.st_ui_sets(sk, cx)),
+                        row(ui.ui_new_windows, "", self.st_new_windows(sk, cx)),
+                    ],
+                ),
                 Self::st_section(
                     th,
                     sk,
@@ -1659,41 +1890,56 @@ impl Workspace {
                     UI_INTERFACE
                         .iter()
                         .map(|(id, title, keys)| {
-                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
                             Self::st_row_shown(
                                 th,
                                 sk,
                                 &sentence(title(t)),
                                 None,
-                                settings_preview::Spot::of(keys)
-                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
-                                Some(self.st_ui_switch(th, sk1, id, keys, cx)),
-                            )
-                        })
-                        .collect(),
-                ),
-                Self::st_section(
-                    th,
-                    sk,
-                    "st-sec-pane-parts",
-                    s.s_pane_parts,
-                    UI_PANE_PARTS
-                        .iter()
-                        .map(|(id, title, keys)| {
-                            let on = keys.iter().all(|k| uiconfig::shown(cx, *k));
-                            Self::st_row_shown(
-                                th,
-                                sk,
-                                &sentence(title(t)),
-                                None,
-                                settings_preview::Spot::of(keys)
-                                    .map(|spot| settings_preview::interface(th, sk, spot, on)),
+                                (*id == "st-ui-glyphs").then(|| Self::st_ui_glyphs(sk, cx)),
                                 Some(self.st_ui_switch(th, sk1, id, keys, cx)),
                             )
                         })
                         .collect(),
                 ),
             ],
+            Page::WindowChrome => vec![Self::st_section(
+                th,
+                sk,
+                "st-sec-window-chrome",
+                s.p_window_chrome,
+                UI_WINDOW_CHROME
+                    .iter()
+                    .map(|(id, title, keys)| {
+                        Self::st_row_shown(
+                            th,
+                            sk,
+                            &sentence(title(t)),
+                            None,
+                            None,
+                            Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                        )
+                    })
+                    .collect(),
+            )],
+            Page::PaneParts => vec![Self::st_section(
+                th,
+                sk,
+                "st-sec-pane-parts",
+                s.s_pane_parts,
+                UI_PANE_PARTS
+                    .iter()
+                    .map(|(id, title, keys)| {
+                        Self::st_row_shown(
+                            th,
+                            sk,
+                            &sentence(title(t)),
+                            None,
+                            None,
+                            Some(self.st_ui_switch(th, sk1, id, keys, cx)),
+                        )
+                    })
+                    .collect(),
+            )],
             Page::Notifications => vec![Self::st_section(
                 th,
                 sk,
@@ -1974,30 +2220,38 @@ impl Workspace {
                     Ok(m) => m.len().to_string(),
                     Err(e) => e,
                 };
-                vec![Self::st_section(
+                // Each machine in the list: what it runs, its sessions with
+                // a way to open one here, and how far its agents may reach
+                // into this machine. Then this machine's own name.
+                let (machines, more) = self.far_machines_page(th, sk, cx);
+                let mut rows = vec![row(
+                    s.r_machines,
+                    &lang::fill(
+                        s.r_machines_sub,
+                        &[("n", &n), ("path", &path.display().to_string())],
+                    ),
+                    self.st_open(
+                        th,
+                        sk,
+                        "st-open-machines",
+                        None,
+                        |ws, w, cx| {
+                            ws.open_composer(w, cx);
+                            ws.add_project_open(cx);
+                        },
+                        cx,
+                    ),
+                )];
+                rows.extend(machines);
+                let mut sections = vec![Self::st_section(
                     th,
                     sk,
                     "st-sec-machines",
                     s.s_machines,
-                    vec![row(
-                        s.r_machines,
-                        &lang::fill(
-                            s.r_machines_sub,
-                            &[("n", &n), ("path", &path.display().to_string())],
-                        ),
-                        self.st_open(
-                            th,
-                            sk,
-                            "st-open-machines",
-                            None,
-                            |ws, w, cx| {
-                                ws.open_composer(w, cx);
-                                ws.add_project_open(cx);
-                            },
-                            cx,
-                        ),
-                    )],
-                )]
+                    rows,
+                )];
+                sections.extend(more);
+                sections
             }
             Page::Access => {
                 let expose = self.mcp.expose;
@@ -2042,7 +2296,7 @@ impl Workspace {
                         mcp::Expose::All,
                     ))
                     .into_any_element();
-                vec![Self::st_section(
+                let access = Self::st_section(
                     th,
                     sk,
                     "st-sec-access",
@@ -2106,6 +2360,35 @@ impl Workspace {
                                 cx,
                             ),
                         ),
+                    ],
+                );
+                // High trust agentic has a section of its own, titled for what
+                // it is about, beside the Floor where a person promotes the
+                // orchestrator it lets start agents. It is the one switch that
+                // lets an agent start an agent (`team`), and it does nothing
+                // while the server above is off. Parker, 2026-11-17, could not
+                // find it as the third row of the access list.
+                let team = Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-team",
+                    s.s_team,
+                    vec![
+                        row(
+                            t.team.st_title,
+                            t.team.st_sub,
+                            self.st_switch(
+                                th,
+                                sk1,
+                                "st-mcp-team",
+                                self.mcp.team,
+                                |ws, cx| {
+                                    ws.mcp.team = !ws.mcp.team;
+                                    ws.save(cx);
+                                },
+                                cx,
+                            ),
+                        ),
                         row(
                             s.r_floor,
                             s.r_floor_sub,
@@ -2124,7 +2407,8 @@ impl Workspace {
                             ),
                         ),
                     ],
-                )]
+                );
+                vec![access, team]
             }
             Page::Maintenance => vec![Self::st_section(
                 th,
@@ -2253,7 +2537,6 @@ impl Workspace {
         sk: &skin::Skin,
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
-        let s = self.lang.strings().settings;
         let acc = th.accent;
         let item = |id: SharedString,
                     glyph: &'static str,
@@ -2303,90 +2586,46 @@ impl Workspace {
                     }),
                 )
         };
-        let search = div()
-            .id("st-search")
-            .debug_selector(|| "st-search".into())
-            .flex()
-            .items_center()
-            .gap_2()
-            .px_2()
-            .py_1()
-            .mb_2()
-            .rounded(sk.radius())
-            .border(sk.box_border(1.))
-            .border_color(if b.searching() {
-                acc.alpha(0.7)
-            } else {
-                th.text.alpha(0.16)
-            })
-            .text_size(sk.text_px(10.))
-            .child(div().text_color(th.text.alpha(0.5)).child("\u{2315}"))
-            .child(if b.searching() {
-                div()
-                    .flex_1()
-                    .text_color(th.text)
-                    .child(SharedString::from(format!("{}\u{258f}", b.query)))
-            } else {
-                div()
-                    .flex_1()
-                    .text_color(th.text.alpha(0.45))
-                    .child(SharedString::from(s.search.to_string()))
-            });
+        // While the book is filtered the nav keeps its pages, and says which
+        // of them the filter found something on: those stay lit enough to
+        // read, the rest fade, and ↑ ↓ walk the found ones.
+        let found = if b.searching() {
+            Some(self.settings_hit_pages())
+        } else {
+            None
+        };
+        let lit_page = match &found {
+            Some(pages) => pages.get(b.pick).copied(),
+            None => Some(b.page),
+        };
         let mut list = div().flex().flex_col().gap_0p5();
-        if b.searching() {
-            let hits = self.settings_hits();
-            if hits.is_empty() {
+        for (gi, (heading, pages)) in settings::GROUPS.iter().enumerate() {
+            if gi > 0 {
+                list = list.child(div().h(px(10.)));
+            }
+            if let Some(h) = heading {
                 list = list.child(
                     div()
                         .px_2()
-                        .py_2()
-                        .text_size(sk.text_px(9.))
+                        .pb_1()
+                        .text_size(sk.text_px(8.5))
                         .text_color(th.text.alpha(0.5))
-                        .child(SharedString::from(s.no_match.to_string())),
+                        .child(SharedString::from(self.heading_name(*h).to_string())),
                 );
             }
-            for (i, hit) in hits.iter().enumerate().take(40) {
-                let lit = i == b.pick;
-                let page = hit.page;
-                let label = if hit.secondary {
-                    hit.title.clone()
-                } else {
-                    format!("{} \u{203a} {}", self.page_name(page), hit.title)
-                };
-                list = list.child(item(
-                    SharedString::from(format!("st-hit-{i}")),
-                    page.glyph(),
-                    self.page_name(page),
-                    &label,
-                    lit,
-                    page,
-                ));
-            }
-        } else {
-            for (gi, (heading, pages)) in settings::GROUPS.iter().enumerate() {
-                if gi > 0 {
-                    list = list.child(div().h(px(10.)));
-                }
-                if let Some(h) = heading {
-                    list = list.child(
-                        div()
-                            .px_2()
-                            .pb_1()
-                            .text_size(sk.text_px(8.5))
-                            .text_color(th.text.alpha(0.5))
-                            .child(SharedString::from(self.heading_name(*h).to_string())),
-                    );
-                }
-                for p in pages.iter() {
-                    list = list.child(item(
+            for p in pages.iter() {
+                let faded = found.as_ref().is_some_and(|f| !f.contains(p));
+                list = list.child(
+                    item(
                         SharedString::from(format!("st-nav-{}", p.id())),
                         p.glyph(),
                         self.page_name(*p),
                         self.page_name(*p),
-                        *p == b.page,
+                        Some(*p) == lit_page,
                         *p,
-                    ));
-                }
+                    )
+                    .when(faded, |d| d.opacity(0.35)),
+                );
             }
         }
         div()
@@ -2401,8 +2640,98 @@ impl Workspace {
             .overflow_y_scroll()
             .border_r(px(sk.m.hairline.max(1.)))
             .border_color(sk.ink.rule)
-            .child(search)
             .child(list)
+    }
+
+    /// The filtered book's right page: every page the filter found something
+    /// on, in nav order, under its name, with only the rows it found. They
+    /// are the pages' own rows with their own controls, so a setting found
+    /// is a setting changed right there. Also the number of rows drawn, for
+    /// the count in the filter box.
+    fn settings_results(
+        &self,
+        b: &Book,
+        th: &theme::Theme,
+        sk: &skin::Skin,
+        sk1: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> (Vec<AnyElement>, usize) {
+        let hits = self.settings_hits();
+        let pages = self.settings_hit_pages();
+        if pages.is_empty() {
+            let s = self.lang.strings().settings;
+            let none = div()
+                .id("st-no-match")
+                .debug_selector(|| "st-no-match".into())
+                .w_full()
+                .py_6()
+                .flex()
+                .justify_center()
+                .text_size(sk.text_px(11.5))
+                .text_color(th.text.alpha(0.55))
+                .child(format!(
+                    "{} · \u{201c}{}\u{201d}",
+                    s.no_match,
+                    b.query.trim()
+                ))
+                .into_any_element();
+            return (vec![none], 0);
+        }
+        let acc = th.accent;
+        let mut out = Vec::new();
+        let mut total = 0;
+        for (i, page) in pages.into_iter().enumerate() {
+            let titles = hits
+                .iter()
+                .filter(|h| h.page == page && !h.secondary)
+                .map(|h| settings::norm(&h.title))
+                .collect();
+            ROW_FILTER.set(Some(RowFilter {
+                titles,
+                section: 0,
+                page: 0,
+            }));
+            let sections = self.settings_page(page, th, sk, sk1, cx);
+            let shown = ROW_FILTER.take().map_or(0, |f| f.page);
+            total += shown;
+            let lit = i == b.pick;
+            let id = SharedString::from(format!("st-found-{}", page.id()));
+            // The page's name over what was found on it; a press opens the
+            // page. A page found only by its name says so by having no rows.
+            out.push(
+                div()
+                    .id(id.clone())
+                    .debug_selector(move || id.to_string())
+                    .flex()
+                    .flex_row()
+                    .items_center()
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded(sk.radius())
+                    .border_l(px(2.))
+                    .border_color(if lit { acc } else { th.text.alpha(0.0) })
+                    .when(lit, |d| d.bg(acc.alpha(0.12)))
+                    .cursor_pointer()
+                    .hover(move |st| st.bg(acc.alpha(0.10)))
+                    .text_size(sk.text_px(12.))
+                    .font_weight(gpui::FontWeight::BOLD)
+                    .when(!sk.text_controls(), |d| d.child(page.glyph()))
+                    .child(SharedString::from(self.page_name(page).to_string()))
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _: &MouseDownEvent, _w, cx| {
+                            cx.stop_propagation();
+                            ws.settings_go(page, cx);
+                        }),
+                    )
+                    .into_any_element(),
+            );
+            if shown > 0 {
+                out.extend(sections);
+            }
+        }
+        (out, total)
     }
 
     pub(crate) fn render_settings(
@@ -2425,6 +2754,20 @@ impl Workspace {
         let h = (vh - 64.).max(300.);
         let host = self.hosting();
         let acc = th.accent;
+        // The three bands of the book take definite heights, so the nav and
+        // the page between them keep the full height their panels measure
+        // against: the filter box's band, and the footer's line.
+        let top_h = f32::from(sk.text_px(12.5)) * 1.6 + 26.;
+        let foot_h = f32::from(sk.text_px(9.)) * 1.6 + 10.;
+        let mid_h = (h - top_h - foot_h).max(120.);
+        // A panel shown in place takes the keys, so the filter is the book's
+        // only while no panel is open.
+        let searching = b.searching() && host.is_none();
+        let (results, found) = if searching {
+            self.settings_results(&b, th, &sk, &sk1, cx)
+        } else {
+            (Vec::new(), 0)
+        };
         let header = div().flex().flex_row().items_center().pb_3().child(
             div()
                 .flex()
@@ -2477,6 +2820,53 @@ impl Workspace {
                         )
                 }),
         );
+        // The filter box at the top centre, drawn as the help sheet draws its
+        // own (Parker, 2026-11-17: *"a search bar EXACTLY like the hlep
+        // menu"*): its words, its glass, and the count of what it found.
+        // There is nothing to click; typing goes here (`settings_key`).
+        let entry = {
+            let hint = self.lang.strings().hs.filter_hint;
+            let eb = render_edit_buffer(
+                &EditBuffer::at_end(&b.query),
+                1.0,
+                th.text,
+                acc,
+                acc.alpha(0.3),
+            );
+            let eb = if b.query.is_empty() {
+                eb.child(div().text_color(th.text.alpha(0.35)).child(hint))
+            } else {
+                eb
+            };
+            div()
+                .id("st-search")
+                .debug_selector(|| "st-search".into())
+                .flex()
+                .flex_row()
+                .items_center()
+                .gap_2()
+                .w(px(340.))
+                .max_w_full()
+                .px_2()
+                .py_1()
+                .rounded(sk.radius())
+                .bg(th.bg.alpha(0.55))
+                .border(sk.box_border(1.))
+                .border_color(acc.alpha(if searching { 0.85 } else { 0.4 }))
+                .text_size(sk.text_px(12.5))
+                .child(div().text_color(acc.alpha(0.8)).child("\u{1f50d}"))
+                .child(div().flex_1().min_w(px(0.)).overflow_hidden().child(eb))
+                .when(searching, |d| {
+                    d.child(
+                        div()
+                            .id("st-search-count")
+                            .debug_selector(|| "st-search-count".into())
+                            .text_size(sk.text_px(9.5))
+                            .text_color(th.text.alpha(0.5))
+                            .child(found.to_string()),
+                    )
+                })
+        };
         // Close sits in the book's corner, where a dialog keeps it, not at
         // the end of the column.
         let close = div().absolute().top(px(10.)).right(px(12.)).child(
@@ -2519,7 +2909,7 @@ impl Workspace {
             .flex()
             .flex_col()
             .gap_5()
-            .child(header)
+            .when(!searching, |d| d.child(header))
             .map(|d| match hosted {
                 // The panel fills the column under the breadcrumb and scrolls
                 // there itself.
@@ -2533,6 +2923,7 @@ impl Workspace {
                         .min_h(px(0.))
                         .child(el),
                 ),
+                None if searching => d.children(results),
                 None => d.children(self.settings_page(b.page, th, &sk, &sk1, cx)),
             });
         let body = div()
@@ -2540,7 +2931,7 @@ impl Workspace {
             .debug_selector(|| "st-page".into())
             .flex_1()
             .min_w(px(0.))
-            .h_full()
+            .h(px(mid_h))
             .px_8()
             .pt_3()
             .pb_8()
@@ -2558,7 +2949,7 @@ impl Workspace {
             .bg(darken(th.surface, 0.6))
             .shadow(float_shadows(acc, th.grade.phosphor))
             .flex()
-            .flex_row()
+            .flex_col()
             .text_color(th.text)
             .map(|d| sk.chrome(sk.popup(sk.finish(d))))
             .on_mouse_down(
@@ -2566,8 +2957,43 @@ impl Workspace {
                 cx.listener(|_, _: &MouseDownEvent, _, cx| cx.stop_propagation()),
             )
             .relative()
-            .child(self.settings_nav(&b, th, &sk, cx))
-            .child(body)
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(top_h))
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .border_b(px(sk.m.hairline.max(1.)))
+                    .border_color(sk.ink.rule)
+                    .child(entry),
+            )
+            .child(
+                div()
+                    .flex_none()
+                    .h(px(mid_h))
+                    .flex()
+                    .flex_row()
+                    .child(self.settings_nav(&b, th, &sk, cx))
+                    .child(body),
+            )
+            .child(
+                div()
+                    .id("st-footer")
+                    .debug_selector(|| "st-footer".into())
+                    .flex_none()
+                    .h(px(foot_h))
+                    .px_3()
+                    .flex()
+                    .items_center()
+                    .justify_center()
+                    .overflow_hidden()
+                    .border_t(px(sk.m.hairline.max(1.)))
+                    .border_color(sk.ink.rule)
+                    .text_size(sk.text_px(9.))
+                    .text_color(th.text.alpha(0.5))
+                    .child(SharedString::from(s.footer.to_string())),
+            )
             .child(close)
             // Everything behind the book is frosted while it is open, and the
             // book itself stays sharp: the same post-pass the FOCUS reader
@@ -2625,6 +3051,22 @@ mod tests {
         );
         let hit = settings::search("sleep", &en);
         assert_eq!(en[hit[0]].page, Page::Threads);
+        // Parker typed nothing and looked for this one on 2026-11-17; the
+        // filter is what finds it now, in every language by its own name.
+        let hit = settings::search("trust", &en);
+        assert_eq!(
+            (en[hit[0]].page, en[hit[0]].title.as_str()),
+            (Page::Access, "High trust agentic")
+        );
+        for l in lang::Lang::ALL.iter() {
+            let items = settings_items_in(*l);
+            let name = l.strings().team.st_title;
+            let hit = settings::search(name, &items);
+            assert!(
+                hit.first().is_some_and(|&i| items[i].title == name),
+                "{l:?}: {name:?} is not found by its own name"
+            );
+        }
     }
 
     fn book_window(
@@ -2660,6 +3102,51 @@ mod tests {
         for _ in 0..2 {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn settings_pages_fit_without_scrolling_at_desktop_size(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        for page in Page::all() {
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("page viewport");
+            let content = cx.debug_bounds("st-column").expect("page content");
+            assert!(
+                content.bottom() <= viewport.bottom() + px(2.),
+                "{page:?} exceeds the viewport: content {content:?}, viewport {viewport:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn settings_pages_fit_without_scrolling_in_terminimalist(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| {
+            skin::select(cx, "terminimalist").unwrap();
+            uiconfig::flip(cx, uiconfig::Key::Artifacts, true);
+        });
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        for page in Page::all() {
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("page viewport");
+            let content = cx.debug_bounds("st-column").expect("page content");
+            assert!(
+                content.bottom() <= viewport.bottom() + px(2.),
+                "{page:?} exceeds the Terminimalist viewport: content {content:?}, viewport {viewport:?}"
+            );
         }
     }
 
@@ -2726,8 +3213,8 @@ mod tests {
             "typing searches"
         );
         assert!(
-            cx.debug_bounds("st-hit-0").is_some(),
-            "and lists what it found"
+            cx.debug_bounds("st-found-threads").is_some(),
+            "and shows the page it found"
         );
         assert!(
             !screen_has(cx, "sleep", 40),
@@ -2745,12 +3232,12 @@ mod tests {
             "the Threads page is drawn"
         );
         cx.simulate_keystrokes("down");
-        assert_eq!(page(cx).map(|p| p.0), Some(Page::Projects), "down walks on");
+        assert_eq!(page(cx).map(|p| p.0), Some(Page::Access), "down walks on");
         cx.simulate_keystrokes("x");
         cx.simulate_keystrokes("escape");
         assert_eq!(
             page(cx),
-            Some((Page::Projects, String::new())),
+            Some((Page::Access, String::new())),
             "Esc clears first"
         );
         cx.simulate_keystrokes("escape");
@@ -2760,8 +3247,85 @@ mod tests {
         redraw(cx);
         assert_eq!(
             page(cx).map(|p| p.0),
-            Some(Page::Projects),
+            Some(Page::Access),
             "and reopens where it was"
+        );
+    }
+
+    /// The filter at the top of the book works as the help sheet's does: a
+    /// word typed anywhere in the book shows the rows it matches, on every
+    /// page, as the pages' own rows with their controls, and hides the rest;
+    /// the box counts them; Esc clears, then closes. "trust" from General
+    /// lands on High trust agentic, which sits under Agents.
+    ///
+    /// Mutation-tested: making `row_shown` keep every row draws the
+    /// Threshing Floor's row beside the one found; dropping the
+    /// `section_shown` check draws the access section with no rows in it.
+    #[gpui::test]
+    fn typing_trust_filters_the_book_down_to_high_trust_agentic(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        redraw(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        redraw(cx);
+        assert!(
+            cx.debug_bounds("st-search").is_some(),
+            "the filter box is drawn"
+        );
+        assert!(cx.debug_bounds("st-footer").is_some(), "with the footer");
+        assert!(
+            cx.debug_bounds("st-sec-language").is_some(),
+            "General is shown unfiltered"
+        );
+        let has =
+            |cx: &mut gpui::VisualTestContext, id: &'static str| cx.debug_bounds(id).is_some();
+        ws.update(cx, |ws, cx| {
+            for k in ["t->t", "r->r", "u->u", "s->s", "t->t"] {
+                let ks = gpui::Keystroke::parse(k).unwrap();
+                assert!(ws.settings_key(&ks, cx));
+            }
+        });
+        redraw(cx);
+        assert!(has(cx, "st-found-access"), "the page it is on is named");
+        assert!(has(cx, "st-mcp-team-row"), "High trust agentic is drawn");
+        assert!(has(cx, "st-mcp-team"), "with its switch");
+        assert!(has(cx, "st-sec-team"), "in its own section");
+        assert!(
+            !has(cx, "st-open-floor-row"),
+            "a row in the same section that does not match is hidden"
+        );
+        assert!(
+            !has(cx, "st-sec-access"),
+            "a section on the page with nothing found is not drawn"
+        );
+        assert!(!has(cx, "st-mcp-server-row"));
+        assert!(!has(cx, "st-sec-language"), "General's rows are not drawn");
+        assert!(!has(cx, "st-found-general"), "nor is General named");
+        assert!(has(cx, "st-search-count"), "the box counts what it found");
+        ws.update(cx, |ws, cx| assert!(ws.settings_escape(cx)));
+        redraw(cx);
+        assert!(has(cx, "st-sec-language"), "Esc clears, back to General");
+        assert!(!has(cx, "st-mcp-team-row"));
+        ws.update(cx, |ws, cx| assert!(ws.settings_escape(cx)));
+        assert!(
+            ws.read_with(cx, |ws, _| ws.settings.is_none()),
+            "then closes"
+        );
+        // A row whose page draws its title in sentence case ("Tab and pane
+        // counts") is found by the index's own words and stays drawn.
+        ws.update(cx, |ws, cx| {
+            ws.open_settings(Some(Page::General), cx);
+            for k in ["c->c", "o->o", "u->u", "n->n", "t->t", "s->s"] {
+                assert!(ws.settings_key(&gpui::Keystroke::parse(k).unwrap(), cx));
+            }
+        });
+        redraw(cx);
+        assert!(has(cx, "st-found-interface"), "the page is named");
+        assert!(
+            has(cx, "st-ui-counts-row"),
+            "the row drawn in sentence case is kept"
         );
     }
 
@@ -2917,49 +3481,36 @@ mod tests {
         redraw(cx);
     }
 
-    /// UI CONFIG's switches are Appearance rows: a press flips what the
+    /// UI CONFIG's switches are on their own pages: a press flips what the
     /// window shows, and the search finds them by their titles. The menu
     /// glyphs row flips every corner glyph together.
     ///
     /// Mutation-tested: flipping to `on` instead of `!on` leaves the switch
     /// where it was.
     #[gpui::test]
-    fn ui_config_switches_are_appearance_rows_the_search_finds(cx: &mut gpui::TestAppContext) {
+    fn ui_config_switches_have_pages_the_search_finds(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
         let (ws, cx) = book_window(cx);
         redraw(cx);
-        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Interface), cx));
         redraw(cx);
         let shown = |cx: &mut gpui::VisualTestContext, k| cx.update(|_, cx| uiconfig::shown(cx, k));
-        // The page is taller than the window: wheel it until a row is in view.
-        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
-            for _ in 0..20 {
-                let page = cx.debug_bounds("st-page").expect("the page");
-                let row = cx.debug_bounds(id).expect("the row's switch is drawn");
-                if row.bottom() <= page.bottom() && row.top() >= page.top() {
-                    return;
-                }
-                let down = row.top() > page.top();
-                cx.simulate_event(gpui::ScrollWheelEvent {
-                    position: page.center(),
-                    delta: gpui::ScrollDelta::Pixels(point(
-                        px(0.),
-                        px(if down { -120. } else { 120. }),
-                    )),
-                    ..Default::default()
-                });
-                redraw(cx);
-            }
-            panic!("{id} never came into view");
-        };
-        for (id, key) in [
-            ("st-ui-counts", uiconfig::Key::Counts),
-            ("st-ui-p-close", uiconfig::Key::PaneClose),
+        for (page, id, key) in [
+            (Page::Interface, "st-ui-counts", uiconfig::Key::Counts),
+            (Page::WindowChrome, "st-ui-notice", uiconfig::Key::GitNotice),
+            (Page::PaneParts, "st-ui-p-close", uiconfig::Key::PaneClose),
         ] {
-            into_view(cx, id);
+            ws.update(cx, |ws, cx| ws.settings_go(page, cx));
+            redraw(cx);
+            let viewport = cx.debug_bounds("st-page").expect("the page");
+            let visible = cx.debug_bounds(id).expect("the switch is drawn");
+            assert!(
+                visible.top() >= viewport.top() && visible.bottom() <= viewport.bottom(),
+                "{id} fits without scrolling"
+            );
             let before = shown(cx, key);
             let at = cx.debug_bounds(id).expect("the row's switch is drawn");
             cx.simulate_click(at.center(), gpui::Modifiers::none());
@@ -2970,7 +3521,8 @@ mod tests {
             redraw(cx);
             assert_eq!(shown(cx, key), before, "and back");
         }
-        into_view(cx, "st-ui-glyphs");
+        ws.update(cx, |ws, cx| ws.settings_go(Page::Interface, cx));
+        redraw(cx);
         let at = cx.debug_bounds("st-ui-glyphs").expect("the glyphs row");
         cx.simulate_click(at.center(), gpui::Modifiers::none());
         redraw(cx);
@@ -2984,20 +3536,39 @@ mod tests {
             hidden == 0 || hidden == uiconfig::Key::MENU_GLYPHS.len(),
             "the glyphs flip together: {hidden} hidden"
         );
+        let plugins_before = shown(cx, uiconfig::Key::Plugins);
+        let notices_before = shown(cx, uiconfig::Key::Notifications);
+        let plugin_chip = cx
+            .debug_bounds("st-ui-g-plugins")
+            .expect("Plugins has its own glyph switch");
+        cx.simulate_click(plugin_chip.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(shown(cx, uiconfig::Key::Plugins), !plugins_before);
+        assert_eq!(
+            shown(cx, uiconfig::Key::Notifications),
+            notices_before,
+            "one glyph switch leaves the others alone"
+        );
         let en = settings_items_in(lang::Lang::En);
         let title = lang::Lang::En.strings().ui.ui_counts;
         let hit = settings::search(title, &en);
-        assert_eq!(en[hit[0]].page, Page::Appearance, "{title:?} is found");
+        assert_eq!(en[hit[0]].page, Page::Interface, "{title:?} is found");
+        let title = lang::Lang::En.strings().ui.ui_git_notice;
+        let hit = settings::search(title, &en);
+        assert_eq!(en[hit[0]].page, Page::WindowChrome, "{title:?} is found");
+        let title = lang::Lang::En.strings().ui.ui_close;
+        let hit = settings::search(title, &en);
+        assert_eq!(en[hit[0]].page, Page::PaneParts, "{title:?} is found");
     }
 
     /// A press anywhere on a row does what the row's control does: on a
     /// switch row's words it flips the switch, and on the Gauges row's words
-    /// it shows the gauges in place, every group open, with nothing shut by
+    /// it shows the gauges in place, each group open on its own page, with nothing shut by
     /// a press on the page's margin. Parker, 2026-11-10: *"click ANYWHERE on
     /// the card should open"* and *"gauges should be UNCOLLAPSED"*.
     ///
     /// Mutation-tested: dropping the row's press fails "the words flip it";
-    /// reading the fold in the book again fails "group 4 is open".
+    /// folding the selected group in the book fails "group 4 is open".
     #[gpui::test]
     fn a_press_anywhere_on_a_row_does_what_its_control_does(cx: &mut gpui::TestAppContext) {
         let _warp = crate::warp::WARP_SERIAL
@@ -3006,30 +3577,9 @@ mod tests {
         cx.update(|cx| uiconfig::init(cx, uiconfig::UiChoice::default()));
         let (ws, cx) = book_window(cx);
         redraw(cx);
-        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Interface), cx));
         redraw(cx);
-        let into_view = |cx: &mut gpui::VisualTestContext, id: &'static str| {
-            for _ in 0..20 {
-                let page = cx.debug_bounds("st-page").expect("the page");
-                let row = cx.debug_bounds(id).expect("the row is drawn");
-                if row.bottom() <= page.bottom() && row.top() >= page.top() {
-                    return;
-                }
-                let down = row.top() > page.top();
-                cx.simulate_event(gpui::ScrollWheelEvent {
-                    position: page.center(),
-                    delta: gpui::ScrollDelta::Pixels(point(
-                        px(0.),
-                        px(if down { -120. } else { 120. }),
-                    )),
-                    ..Default::default()
-                });
-                redraw(cx);
-            }
-            panic!("{id} never came into view");
-        };
         // The words of a switch row, well clear of its switch.
-        into_view(cx, "st-ui-counts-row");
         let shown = |cx: &mut gpui::VisualTestContext| {
             cx.update(|_, cx| uiconfig::shown(cx, uiconfig::Key::Counts))
         };
@@ -3047,7 +3597,8 @@ mod tests {
         redraw(cx);
         assert_eq!(shown(cx), before, "the switch flips it once");
         // The words of the Gauges row open the gauges in place.
-        into_view(cx, "st-open-gauges-row");
+        ws.update(cx, |ws, cx| ws.settings_go(Page::Appearance, cx));
+        redraw(cx);
         let row = cx.debug_bounds("st-open-gauges-row").unwrap();
         cx.simulate_click(
             point(row.left() + px(24.), row.center().y),
@@ -3059,17 +3610,41 @@ mod tests {
             Some(Host::Gauges),
             "the gauges are shown in place"
         );
-        for id in [
-            "osd-group-0",
-            "osd-group-1",
-            "osd-group-2",
-            "osd-group-3",
-            "osd-group-4",
-        ] {
-            assert!(cx.debug_bounds(id).is_some(), "{id} is drawn");
+        for (gi, (tab_id, group_id)) in [
+            ("osd-page-0", Some("osd-group-0")),
+            ("osd-page-1", Some("osd-group-1")),
+            ("osd-page-2", Some("osd-group-2")),
+            ("osd-page-3", Some("osd-group-3")),
+            ("osd-page-4", Some("osd-group-4")),
+            ("osd-page-5", None),
+            ("osd-page-6", None),
+            ("osd-page-7", None),
+        ]
+        .into_iter()
+        .enumerate()
+        {
+            let tab = cx
+                .debug_bounds(tab_id)
+                .expect("each gauge group has a menu choice");
+            cx.simulate_click(tab.center(), gpui::Modifiers::none());
+            redraw(cx);
+            let panel = cx.debug_bounds("osd-panel").expect("the gauges panel");
+            let viewport = cx.debug_bounds("st-page").unwrap();
+            assert!(
+                panel.bottom() <= viewport.bottom(),
+                "gauge menu {gi} fits without scrolling: {panel:?} in {viewport:?}"
+            );
+            if let Some(group_id) = group_id {
+                assert!(
+                    cx.debug_bounds(group_id).is_some(),
+                    "the selected group {gi} is drawn"
+                );
+            }
         }
-        // Every group open: the inactive terminals' sliders are drawn
-        // though nobody pressed their heading.
+        // The inactive terminals' sliders are drawn without opening a fold.
+        let tab = cx.debug_bounds("osd-page-4").unwrap();
+        cx.simulate_click(tab.center(), gpui::Modifiers::none());
+        redraw(cx);
         assert!(
             ws.read_with(cx, |ws, _| ws.osd_groups.get(4).copied() != Some(true)),
             "nobody opened group 4"
@@ -3184,6 +3759,15 @@ mod tests {
         assert!(
             page.contains(&tray.origin),
             "the tray is drawn on the page, not over the window: {tray:?} in {page:?}"
+        );
+        assert!(
+            cx.debug_bounds("ui-config-area").is_none(),
+            "UI Config has its own Settings pages"
+        );
+        let viewport = cx.debug_bounds("st-page").unwrap();
+        assert!(
+            tray.bottom() <= viewport.bottom(),
+            "theme fits without scrolling"
         );
         assert!(
             cx.debug_bounds("st-crumb-host").is_some(),

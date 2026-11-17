@@ -3430,7 +3430,13 @@ pub const FLOOR_PARAGRAPH: &str = "THE THRESHING FLOOR. Agents in this window wo
      it falls short. After two or three tries on the same piece without it coming right, or \
      when it is using far more tokens than the job is worth, stop and tell your person. An \
      adversarial review is worth what it costs; ask an agent from a different provider than \
-     the one that built the work.";
+     the one that built the work.\n\
+     \n\
+     STARTING A TEAM. If your person has switched on High trust agentic for this window and \
+     promoted your pane to orchestrator, `start_team` opens a new tab and starts other agents in it, each a real pane your person \
+     can watch and stop, with the program, model, effort and first prompt you name, and gives \
+     you a line to each. If either is missing the verb says which; then ask your person. An \
+     agent started by a team is not an orchestrator.";
 
 /// The briefing's paragraph on briefs and judgement calls, naming the kit's
 /// `SKILL.md`.
@@ -4831,6 +4837,29 @@ mod tests {
                 "the briefing still asks for {dead:?}, which this build no longer draws"
             );
         }
+    }
+
+    /// The briefing states what starting a team needs and does, and gives no
+    /// advice on how big a team should be or which model to spend on: the
+    /// window gives access, it does not tell agents how to work (Parker,
+    /// 2026-11-16). Nor does it offer a tool the window no longer has.
+    #[test]
+    fn the_briefing_says_what_a_team_needs_and_gives_no_advice() {
+        let text = launch_briefing("/run/td/7", Some(KIT));
+        let at = text.find("STARTING A TEAM.").expect("the team paragraph");
+        let team = &text[at..];
+        let team = &team[..team.find("\n\n").unwrap_or(team.len())];
+        assert!(team.contains("High trust agentic") && team.contains("promoted"));
+        for advice in [
+            "sparingly",
+            "small",
+            "fewer tokens",
+            "work order",
+            "loop_agent",
+        ] {
+            assert!(!team.contains(advice), "the team paragraph says {advice:?}");
+        }
+        assert!(!text.contains("loop_agent"), "anywhere in the briefing");
     }
 
     /// Every launched agent is told to name panes the way a person does, and

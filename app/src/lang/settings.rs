@@ -11,8 +11,9 @@
 pub struct Settings {
     /// The book's name, first in the breadcrumb.
     pub title: &'static str,
-    /// The search box's placeholder.
-    pub search: &'static str,
+    /// The book's footer: how it is driven from the keyboard, in the shape
+    /// of the help sheet's footer (whose filter box this one copies).
+    pub footer: &'static str,
     /// Under the search box when nothing matches.
     pub no_match: &'static str,
     /// The ✕'s tooltip.
@@ -26,6 +27,7 @@ pub struct Settings {
     /// Page names, as T3 names them.
     pub p_general: &'static str,
     pub p_appearance: &'static str,
+    pub p_window_chrome: &'static str,
     pub p_notifications: &'static str,
     pub p_keybindings: &'static str,
     pub p_providers: &'static str,
@@ -55,9 +57,9 @@ pub struct Settings {
     pub r_gauges: &'static str,
     pub r_gauges_sub: &'static str,
     pub s_agent_panes: &'static str,
-    /// Appearance › what the window's own chrome shows (UI CONFIG's switches).
+    /// Interface › what the window shows (UI CONFIG's switches).
     pub s_interface: &'static str,
-    /// Appearance › what every pane's header and edges show.
+    /// Pane parts › what every pane's header and edges show.
     pub s_pane_parts: &'static str,
     pub r_tint: &'static str,
     pub r_tint_sub: &'static str,
@@ -94,6 +96,9 @@ pub struct Settings {
     pub r_machines_sub: &'static str,
     // ── Sharing & access ──
     pub s_access: &'static str,
+    /// Section on Sharing & access holding High trust agentic and the
+    /// Threshing Floor: agents that start and prompt other agents.
+    pub s_team: &'static str,
     pub r_server: &'static str,
     pub r_server_sub: &'static str,
     pub r_expose: &'static str,
@@ -201,7 +206,7 @@ pub struct Settings {
 
 pub const EN: Settings = Settings {
     title: "Settings",
-    search: "Search",
+    footer: "Type to filter · ↑ ↓ Tab change page · Enter opens the lit page · Esc clears, then closes",
     no_match: "No setting matches",
     close: "Close settings",
     open: "Open",
@@ -210,6 +215,7 @@ pub const EN: Settings = Settings {
     h_connections: "Connections",
     p_general: "General",
     p_appearance: "Appearance",
+    p_window_chrome: "Window chrome",
     p_notifications: "Notifications",
     p_keybindings: "Keybindings",
     p_providers: "Providers",
@@ -266,6 +272,7 @@ pub const EN: Settings = Settings {
     r_machines: "Far machines",
     r_machines_sub: "{n} reached over ssh, listed in {path}.",
     s_access: "Agent access",
+    s_team: "Teams",
     r_server: "MCP server",
     r_server_sub: "Lets the agents in your panes see this window through Terminal Delight's MCP server.",
     r_expose: "Panes agents can see",
@@ -344,7 +351,7 @@ pub const EN: Settings = Settings {
 
 pub const ES: Settings = Settings {
     title: "Ajustes",
-    search: "Buscar",
+    footer: "Escribe para filtrar · ↑ ↓ Tab cambian de página · Enter abre la página resaltada · Esc borra y luego cierra",
     no_match: "Ningún ajuste coincide",
     close: "Cerrar ajustes",
     open: "Abrir",
@@ -353,6 +360,7 @@ pub const ES: Settings = Settings {
     h_connections: "Conexiones",
     p_general: "General",
     p_appearance: "Apariencia",
+    p_window_chrome: "Marco de la ventana",
     p_notifications: "Notificaciones",
     p_keybindings: "Atajos de teclado",
     p_providers: "Proveedores",
@@ -409,6 +417,7 @@ pub const ES: Settings = Settings {
     r_machines: "Máquinas remotas",
     r_machines_sub: "{n} alcanzadas por ssh, listadas en {path}.",
     s_access: "Acceso de agentes",
+    s_team: "Equipos",
     r_server: "Servidor MCP",
     r_server_sub: "Permite que los agentes de tus paneles vean esta ventana a través del servidor MCP de Terminal Delight.",
     r_expose: "Paneles que ven los agentes",
@@ -487,7 +496,7 @@ pub const ES: Settings = Settings {
 
 pub const DE: Settings = Settings {
     title: "Einstellungen",
-    search: "Suchen",
+    footer: "Tippen zum Filtern · ↑ ↓ Tab: Seite wechseln · Enter: markierte Seite öffnen · Esc: leeren, dann schließen",
     no_match: "Keine Einstellung passt",
     close: "Einstellungen schließen",
     open: "Öffnen",
@@ -496,6 +505,7 @@ pub const DE: Settings = Settings {
     h_connections: "Verbindungen",
     p_general: "Allgemein",
     p_appearance: "Darstellung",
+    p_window_chrome: "Fensteroberfläche",
     p_notifications: "Benachrichtigungen",
     p_keybindings: "Tastenkürzel",
     p_providers: "Anbieter",
@@ -552,6 +562,7 @@ pub const DE: Settings = Settings {
     r_machines: "Entfernte Maschinen",
     r_machines_sub: "{n} über ssh erreichbar, aufgeführt in {path}.",
     s_access: "Agentenzugriff",
+    s_team: "Teams",
     r_server: "MCP-Server",
     r_server_sub: "Lässt die Agenten in deinen Panels dieses Fenster über den MCP-Server von Terminal Delight sehen.",
     r_expose: "Panels, die Agenten sehen",
@@ -630,7 +641,7 @@ pub const DE: Settings = Settings {
 
 pub const FR: Settings = Settings {
     title: "Réglages",
-    search: "Rechercher",
+    footer: "Tapez pour filtrer · ↑ ↓ Tab : changer de page · Entrée ouvre la page en surbrillance · Esc efface, puis ferme",
     no_match: "Aucun réglage ne correspond",
     close: "Fermer les réglages",
     open: "Ouvrir",
@@ -639,6 +650,7 @@ pub const FR: Settings = Settings {
     h_connections: "Connexions",
     p_general: "Général",
     p_appearance: "Apparence",
+    p_window_chrome: "Habillage de la fenêtre",
     p_notifications: "Notifications",
     p_keybindings: "Raccourcis clavier",
     p_providers: "Fournisseurs",
@@ -695,6 +707,7 @@ pub const FR: Settings = Settings {
     r_machines: "Machines distantes",
     r_machines_sub: "{n} joignables par ssh, listées dans {path}.",
     s_access: "Accès des agents",
+    s_team: "Équipes",
     r_server: "Serveur MCP",
     r_server_sub: "Permet aux agents de vos panneaux de voir cette fenêtre via le serveur MCP de Terminal Delight.",
     r_expose: "Panneaux visibles par les agents",
@@ -773,7 +786,7 @@ pub const FR: Settings = Settings {
 
 pub const RU: Settings = Settings {
     title: "Настройки",
-    search: "Поиск",
+    footer: "Фильтр при вводе · ↑ ↓ Tab — смена страницы · Enter открывает выделенную · Esc очищает, затем закрывает",
     no_match: "Нет подходящих настроек",
     close: "Закрыть настройки",
     open: "Открыть",
@@ -782,6 +795,7 @@ pub const RU: Settings = Settings {
     h_connections: "Подключения",
     p_general: "Общие",
     p_appearance: "Внешний вид",
+    p_window_chrome: "Оформление окна",
     p_notifications: "Уведомления",
     p_keybindings: "Сочетания клавиш",
     p_providers: "Провайдеры",
@@ -838,6 +852,7 @@ pub const RU: Settings = Settings {
     r_machines: "Удалённые машины",
     r_machines_sub: "{n} доступны по ssh, перечислены в {path}.",
     s_access: "Доступ агентов",
+    s_team: "Команды",
     r_server: "Сервер MCP",
     r_server_sub: "Позволяет агентам в ваших панелях видеть это окно через сервер MCP Terminal Delight.",
     r_expose: "Панели, видимые агентам",
@@ -916,7 +931,7 @@ pub const RU: Settings = Settings {
 
 pub const ZH: Settings = Settings {
     title: "设置",
-    search: "搜索",
+    footer: "输入以筛选 · ↑ ↓ Tab 切换页面 · Enter 打开高亮的页面 · Esc 先清空，再关闭",
     no_match: "没有匹配的设置",
     close: "关闭设置",
     open: "打开",
@@ -925,6 +940,7 @@ pub const ZH: Settings = Settings {
     h_connections: "连接",
     p_general: "通用",
     p_appearance: "外观",
+    p_window_chrome: "窗口外观",
     p_notifications: "通知",
     p_keybindings: "快捷键",
     p_providers: "提供方",
@@ -981,6 +997,7 @@ pub const ZH: Settings = Settings {
     r_machines: "远程机器",
     r_machines_sub: "{n} 台可通过 ssh 访问，列在 {path} 中。",
     s_access: "智能体访问",
+    s_team: "团队",
     r_server: "MCP 服务器",
     r_server_sub: "让你面板中的智能体通过 Terminal Delight 的 MCP 服务器看到此窗口。",
     r_expose: "智能体可见的面板",
@@ -1059,7 +1076,7 @@ pub const ZH: Settings = Settings {
 
 pub const JA: Settings = Settings {
     title: "設定",
-    search: "検索",
+    footer: "入力で絞り込み · ↑ ↓ Tab: ページ切替 · Enter: 選択中のページを開く · Esc: 消去、次に閉じる",
     no_match: "一致する設定はありません",
     close: "設定を閉じる",
     open: "開く",
@@ -1068,6 +1085,7 @@ pub const JA: Settings = Settings {
     h_connections: "接続",
     p_general: "一般",
     p_appearance: "外観",
+    p_window_chrome: "ウィンドウの外観",
     p_notifications: "通知",
     p_keybindings: "キーボードショートカット",
     p_providers: "プロバイダー",
@@ -1124,6 +1142,7 @@ pub const JA: Settings = Settings {
     r_machines: "離れたマシン",
     r_machines_sub: "ssh で届く {n} 台、{path} に記載。",
     s_access: "エージェントのアクセス",
+    s_team: "チーム",
     r_server: "MCP サーバー",
     r_server_sub: "ペインのエージェントが Terminal Delight の MCP サーバーを通してこのウィンドウを見られるようにします。",
     r_expose: "エージェントに見えるペイン",
@@ -1202,7 +1221,7 @@ pub const JA: Settings = Settings {
 
 pub const KO: Settings = Settings {
     title: "설정",
-    search: "검색",
+    footer: "입력하여 필터링 · ↑ ↓ Tab: 페이지 이동 · Enter: 강조된 페이지 열기 · Esc: 지우기, 그다음 닫기",
     no_match: "일치하는 설정이 없습니다",
     close: "설정 닫기",
     open: "열기",
@@ -1211,6 +1230,7 @@ pub const KO: Settings = Settings {
     h_connections: "연결",
     p_general: "일반",
     p_appearance: "모양",
+    p_window_chrome: "창 외관",
     p_notifications: "알림",
     p_keybindings: "단축키",
     p_providers: "제공자",
@@ -1267,6 +1287,7 @@ pub const KO: Settings = Settings {
     r_machines: "원격 머신",
     r_machines_sub: "ssh로 닿는 {n}대, {path}에 기록됨.",
     s_access: "에이전트 접근",
+    s_team: "팀",
     r_server: "MCP 서버",
     r_server_sub: "창의 에이전트가 Terminal Delight의 MCP 서버를 통해 이 창을 볼 수 있게 합니다.",
     r_expose: "에이전트가 보는 창",
@@ -1345,7 +1366,8 @@ pub const KO: Settings = Settings {
 
 pub const HI: Settings = Settings {
     title: "सेटिंग्स",
-    search: "खोजें",
+    footer:
+        "फ़िल्टर करने के लिए टाइप करें · ↑ ↓ Tab: पेज बदलें · Enter: चुना हुआ पेज खोलें · Esc: साफ़ करें, फिर बंद करें",
     no_match: "कोई सेटिंग मेल नहीं खाती",
     close: "सेटिंग्स बंद करें",
     open: "खोलें",
@@ -1354,6 +1376,7 @@ pub const HI: Settings = Settings {
     h_connections: "कनेक्शन",
     p_general: "सामान्य",
     p_appearance: "रूप",
+    p_window_chrome: "विंडो का रूप",
     p_notifications: "सूचनाएँ",
     p_keybindings: "कीबोर्ड शॉर्टकट",
     p_providers: "प्रदाता",
@@ -1410,6 +1433,7 @@ pub const HI: Settings = Settings {
     r_machines: "दूर की मशीनें",
     r_machines_sub: "ssh से पहुँचने वाली {n}, {path} में सूचीबद्ध।",
     s_access: "एजेंट पहुँच",
+    s_team: "टीमें",
     r_server: "MCP सर्वर",
     r_server_sub: "आपके पेन के एजेंटों को Terminal Delight के MCP सर्वर से यह विंडो देखने देता है।",
     r_expose: "एजेंटों को दिखने वाले पेन",

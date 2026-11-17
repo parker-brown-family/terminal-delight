@@ -14,7 +14,9 @@
 //! character is a mark goes nowhere. Grapheme clustering (DEC 2027) joins whole
 //! characters onto a cell the same way, so a request to turn it on goes nowhere
 //! either — which also keeps a window agreeing, cell for cell, with a session
-//! host that cannot cluster.
+//! host that cannot cluster. rio-vt 0.5.31 caps a cell at 64 marks itself;
+//! this cap is lower, so a cell is the same under either core, and a window
+//! agrees with a host started on an older one.
 //!
 //! **A synchronized update starts where the program starts it.** An update's
 //! bytes are held back (`vt/hold.rs`) only from the next read, so a read that
@@ -24,7 +26,7 @@
 //! the hold honours too.
 //!
 //! **Setting origin mode homes the cursor.** Setting DECOM moves the cursor to
-//! the top of the scrolling region; rio-vt (0.5.29 too) leaves it where it was, so a
+//! the top of the scrolling region; rio-vt (0.5.31 too) leaves it where it was, so a
 //! cursor position follows the sequence (the Terminal Lab found it,
 //! `scripts/lab/`). Resetting it is left alone, for the reason at the code.
 //!
@@ -402,7 +404,7 @@ impl TextGuard {
         let kept: Vec<u16> = modes.iter().copied().filter(|&mode| mode != 2027).collect();
         // Setting origin mode (DECOM, 6) homes the cursor to the top of the
         // scrolling region (DEC STD 070; xterm, tmux and alacritty all do).
-        // rio-vt (0.5.29 too) only sets the mode, so the next text lands wherever the
+        // rio-vt (0.5.31 too) only sets the mode, so the next text lands wherever the
         // cursor happened to be. A cursor position with no parameters is that
         // home, so it follows the sequence.
         //

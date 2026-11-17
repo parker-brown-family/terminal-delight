@@ -155,6 +155,9 @@ pub(crate) enum McpPolicy {
     Writes(bool),
     /// `true` = expose every pane, `false` = agent panes only (the safe default).
     ExposeAll(bool),
+    /// High trust agentic (`mcp.team`): an agent a person started may start
+    /// other agents.
+    Team(bool),
 }
 
 impl McpPolicy {
@@ -167,6 +170,8 @@ impl McpPolicy {
             Self::Writes(false) => "mcp writes off",
             Self::ExposeAll(true) => "mcp expose all",
             Self::ExposeAll(false) => "mcp expose agents",
+            Self::Team(true) => "mcp team on",
+            Self::Team(false) => "mcp team off",
         };
         format!("err {verb}: nothing changed. Global MCP policy is a person's choice in the Threshing Floor (the agent counter, top right). An agent can propose wider access with request_access when MCP is on; it cannot change global switches, including disabling other workloads. Operator scripts must launch their own window with TD_MCP_SCRIPTED=1.")
     }
@@ -690,6 +695,8 @@ fn parse_line(s: &str) -> Result<Cmd, String> {
         ["mcp", "writes", "off"] => Ok(Cmd::McpPolicy(McpPolicy::Writes(false))),
         ["mcp", "expose", "all"] => Ok(Cmd::McpPolicy(McpPolicy::ExposeAll(true))),
         ["mcp", "expose", "agents"] => Ok(Cmd::McpPolicy(McpPolicy::ExposeAll(false))),
+        ["mcp", "team", "on"] => Ok(Cmd::McpPolicy(McpPolicy::Team(true))),
+        ["mcp", "team", "off"] => Ok(Cmd::McpPolicy(McpPolicy::Team(false))),
         _ => Err(format!("unknown command {s:?} — try: {USAGE}")),
     }
 }
@@ -1222,6 +1229,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                         match p {
                             McpPolicy::Enabled(v) => ws.mcp.enabled = v,
                             McpPolicy::Writes(v) => ws.mcp.writable = v,
+                            McpPolicy::Team(v) => ws.mcp.team = v,
                             McpPolicy::ExposeAll(v) => {
                                 ws.mcp.expose = if v {
                                     mcp::Expose::All
