@@ -515,3 +515,16 @@ fn a_far_prompt_key_is_the_sending_agents_own() {
         scoped_key(None, 12, "review")
     );
 }
+
+/// The number a far machine's prompts are filed under is written to the
+/// prompt-key ledger, so a retry after an upgrade is matched only if every
+/// build computes the same number. Pinned to the value SHA-256 gives; a
+/// hasher with no promise across Rust releases fails this.
+#[test]
+fn a_far_senders_number_is_the_same_in_every_build() {
+    use crate::far_floor_view::{far_sender_pane, is_far_sender};
+    assert_eq!(far_sender_pane("legion"), 0x4000_ceee_c50a_9336);
+    assert_eq!(far_sender_pane("LEGION"), far_sender_pane("legion"));
+    assert_ne!(far_sender_pane("legion"), far_sender_pane("farbox"));
+    assert!(is_far_sender(far_sender_pane("farbox")));
+}

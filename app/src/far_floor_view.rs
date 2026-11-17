@@ -99,11 +99,17 @@ const STATUS_SECS: u64 = 3;
 /// book, which keys every sender by a pane. Far above any pane a session host
 /// mints, and one per machine, so "one prompt at a time from this sender to
 /// that worker" holds per machine as it holds per pane.
+///
+/// The number is written to the prompt-key ledger on disk, so it must come
+/// out the same from every build: a retry that arrives after an upgrade is
+/// matched by it. std's `DefaultHasher` promises no such thing across Rust
+/// releases, so this is the first eight bytes of a SHA-256.
 pub(crate) fn far_sender_pane(host: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    host.to_ascii_lowercase().hash(&mut h);
-    FAR_SENDER_BASE | (h.finish() & 0x0000_ffff_ffff_ffff)
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(host.to_ascii_lowercase().as_bytes());
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    FAR_SENDER_BASE | (u64::from_be_bytes(first) & 0x0000_ffff_ffff_ffff)
 }
 
 pub(crate) const FAR_SENDER_BASE: u64 = 1 << 62;
