@@ -128,12 +128,13 @@ jobs:
         run: |
           re='\b(reach|decide_ask|decide_prompt|anonymous_reach|visible_to_some_agent|may_write|may_write_live|policy_admits|ceiling|inbound_reach|outbound_reach|verify_caller|descends_from|is_person_acting|far_door|caller_pane|decide|key_ok|set|parse|is_callers|reach_of|reachable|far_census_named)\b'
           shard="${{ matrix.shard }}/8"
-          extra=()
-          if [ "$SHORT" = true ]; then extra=(--re 'policy_admits'); fi
+          # A pull request mutates one function: enough to prove the job.
+          # (Two --re flags are OR'd by cargo-mutants, so it replaces the list.)
+          if [ "$SHORT" = true ]; then re='\bpolicy_admits\b'; fi
           set +e
           cargo mutants --in-place --no-shuffle --shard "$shard" \
             -f src/mcp.rs -f src/farfloor.rs -f src/threshing_floor.rs -f src/ctl.rs -f src/team.rs \
-            --re "$re" "${extra[@]}" --timeout 300 --build-timeout 1500 \
+            --re "$re" --timeout 300 --build-timeout 1500 \
             -- --bin terminal-delight -- mcp farfloor far_ threshing_floor ctl team prompt
           code=$?
           set -e
