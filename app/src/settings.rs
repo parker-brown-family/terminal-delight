@@ -64,15 +64,19 @@ pub const GROUPS: &[(Option<Heading>, &[Page])] = &[
             Page::Keybindings,
         ],
     ),
-    (Some(Heading::Agents), &[Page::Providers, Page::Threads]),
+    // Everything about what agents are and may do lives under Agents: which
+    // ones launch, how they rest, and what they may reach (Sharing & access,
+    // with High trust agentic). Parker, 2026-11-17: *"that is where all the
+    // agent config need to live"*, after looking for that switch here.
+    (
+        Some(Heading::Agents),
+        &[Page::Providers, Page::Threads, Page::Access],
+    ),
     (
         Some(Heading::Code),
         &[Page::Projects, Page::SourceControl, Page::Worktrees],
     ),
-    (
-        Some(Heading::Connections),
-        &[Page::Environments, Page::Access],
-    ),
+    (Some(Heading::Connections), &[Page::Environments]),
     (
         None,
         &[Page::Maintenance, Page::Labs, Page::About, Page::Archive],
@@ -297,6 +301,14 @@ mod tests {
         }
         assert_eq!(Page::General.step(false), Page::General, "stops at the top");
         assert_eq!(Page::Archive.step(true), Page::Archive, "and at the bottom");
+        let agents = GROUPS
+            .iter()
+            .find(|(h, _)| *h == Some(Heading::Agents))
+            .map(|(_, pages)| *pages);
+        assert!(
+            agents.is_some_and(|p| p.contains(&Page::Access)),
+            "agent access, High trust agentic with it, sits under Agents"
+        );
         assert_eq!(
             Page::Keybindings.step(true),
             Page::Providers,
