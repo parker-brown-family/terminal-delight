@@ -1062,8 +1062,7 @@ impl Workspace {
             .flex()
             .flex_row()
             .flex_wrap()
-            .justify_end()
-            .max_w(px(640.))
+            .w_full()
             .gap_1()
             .children(lang::Lang::ALL.iter().copied().map(|l| {
                 let id = SharedString::from(format!("st-lang-{}", l.code()));
@@ -1763,7 +1762,11 @@ impl Workspace {
                         s.r_language,
                         s.r_language_sub,
                         self.st_languages(th, sk, cx),
-                    )],
+                    )
+                    // All nine names wrap within the available page width.
+                    .flex_col()
+                    .items_stretch()
+                    .gap_1()],
                 ),
                 Self::st_section(
                     th,
@@ -2738,6 +2741,7 @@ impl Workspace {
         &self,
         th: &theme::Theme,
         hosted: Option<AnyElement>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         let b = self.settings.clone()?;
@@ -2754,11 +2758,30 @@ impl Workspace {
         let h = (vh - 64.).max(300.);
         let host = self.hosting();
         let acc = th.accent;
-        // The three bands of the book take definite heights, so the nav and
-        // the page between them keep the full height their panels measure
-        // against: the filter box's band, and the footer's line.
+        // The navigation and page share the space between the filter and
+        // the footer, whose translated shortcuts can wrap in a narrow tile.
         let top_h = f32::from(sk.text_px(12.5)) * 1.6 + 26.;
-        let foot_h = f32::from(sk.text_px(9.)) * 1.6 + 10.;
+        let footer = SharedString::from(s.footer);
+        let font_size = sk.text_px(9.);
+        let mut run = window.text_style().to_run(footer.len());
+        run.font = gpui::font(sk.font_family.clone());
+        let rows = window
+            .text_system()
+            .shape_text(
+                footer.clone(),
+                font_size,
+                &[run],
+                Some(px(w - 24. - 2. * f32::from(sk.box_border(2.)))),
+                None,
+            )
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.wrap_boundaries().len() + 1)
+                    .sum::<usize>()
+            })
+            .unwrap_or(2);
+        let foot_h = f32::from(font_size) * 1.6 * rows as f32 + 10.;
         let mid_h = (h - top_h - foot_h).max(120.);
         // A panel shown in place takes the keys, so the filter is the book's
         // only while no panel is open.
@@ -2984,15 +3007,22 @@ impl Workspace {
                     .flex_none()
                     .h(px(foot_h))
                     .px_3()
+                    .py_1()
                     .flex()
-                    .items_center()
+                    .flex_col()
                     .justify_center()
                     .overflow_hidden()
                     .border_t(px(sk.m.hairline.max(1.)))
                     .border_color(sk.ink.rule)
                     .text_size(sk.text_px(9.))
                     .text_color(th.text.alpha(0.5))
-                    .child(SharedString::from(s.footer.to_string())),
+                    .child(
+                        div()
+                            .w_full()
+                            .text_center()
+                            .whitespace_normal()
+                            .child(footer),
+                    ),
             )
             .child(close)
             // Everything behind the book is frosted while it is open, and the
@@ -3103,6 +3133,64 @@ mod tests {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
         }
+    }
+
+    #[gpui::test]
+    fn language_choices_fit_the_settings_column_on_tiled_windows(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| skin::select(cx, "baremetal").unwrap());
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        for width in [900., 600.] {
+            cx.simulate_resize(size(px(width), px(600.)));
+            redraw(cx);
+            let section = cx.debug_bounds("st-sec-language").unwrap();
+            let viewport = cx.debug_bounds("st-page").unwrap();
+            for lang in [
+                "st-lang-en",
+                "st-lang-es",
+                "st-lang-de",
+                "st-lang-fr",
+                "st-lang-ru",
+                "st-lang-zh",
+                "st-lang-ja",
+                "st-lang-ko",
+                "st-lang-hi",
+            ] {
+                let chip = cx.debug_bounds(lang).unwrap();
+                assert!(
+                    chip.left() >= viewport.left() && chip.right() <= viewport.right(),
+                    "{width}px: {lang:?} at {chip:?} outside {viewport:?}"
+                );
+            }
+            assert!(
+                section.size.height < px(180.),
+                "{width}px: language section {section:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn the_narrow_settings_footer_gives_its_shortcuts_a_second_line(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| skin::select(cx, "baremetal").unwrap());
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        cx.simulate_resize(size(px(900.), px(600.)));
+        redraw(cx);
+        let wide = cx.debug_bounds("st-footer").unwrap();
+        cx.simulate_resize(size(px(600.), px(600.)));
+        redraw(cx);
+        let narrow = cx.debug_bounds("st-footer").unwrap();
+        assert!(
+            narrow.size.height >= wide.size.height + px(8.),
+            "footer {wide:?} → {narrow:?}"
+        );
+        assert!(narrow.bottom() <= px(600.));
     }
 
     #[gpui::test]
