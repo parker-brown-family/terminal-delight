@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.5.4] — 2026-11-17
+
 ### Upgrading from 0.5.3
 
 - **Restart once, the session host included.** The terminal core inside the
