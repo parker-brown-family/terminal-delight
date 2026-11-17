@@ -53,7 +53,11 @@ def worker(directory, index, history, size):
         response = b""
         while not response.endswith(b"R"):
             response += os.read(0, 64)
-        Path(directory, "done").write_text(json.dumps([start, CLOCK(), sent]))
+        # Written whole, then renamed: the parent polls for `done` and must
+        # never read it half written.
+        partial = Path(directory, "done.partial")
+        partial.write_text(json.dumps([start, CLOCK(), sent]))
+        os.replace(partial, Path(directory, "done"))
     signal.pause()
 
 
