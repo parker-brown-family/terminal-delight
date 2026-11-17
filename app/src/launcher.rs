@@ -423,13 +423,19 @@ impl Recipe {
             }
             Harness::Local => unreachable!("local launches use command_line_with_adapter"),
         }
+        // `--` ends the program's options before the first prompt, which is
+        // somebody's words: quoting stops the shell reading it, and only this
+        // stops `claude` or `codex` reading `--dangerously-skip-permissions`,
+        // or a Markdown bullet, as one of their own flags.
         if self.harness == Harness::Codex {
             if let Some(path) = briefing {
+                parts.push("--".into());
                 parts.push(context_argument(path, self.opener.as_deref()));
                 return parts.join(" ");
             }
         }
         if let Some(opener) = self.opener.as_ref().filter(|o| !o.trim().is_empty()) {
+            parts.push("--".into());
             parts.push(shell_quote(opener));
         }
         parts.join(" ")
@@ -892,7 +898,7 @@ mod tests {
         let last = String::from_utf8(argv.last().unwrap().to_vec()).unwrap();
         assert!(last.starts_with(&body));
         assert!(last.ends_with(r.opener.as_deref().unwrap()));
-        assert_eq!(argv.len(), 4, "codex + effort pair + one prompt");
+        assert_eq!(argv.len(), 5, "codex + effort pair + `--` + one prompt");
         assert!(
             !line.contains("developer_instructions"),
             "existing rules stay configured"
@@ -1104,6 +1110,48 @@ mod tests {
             600. - PANEL_MARGIN * 2.,
             "capped to the window"
         );
+    }
+
+    /// A first prompt is the person's or a coordinator's words, and words
+    /// can start with a dash: a Markdown bullet, or `--dangerously-skip-permissions`
+    /// from a `start_team` call. Quoting keeps the shell from reading it; only
+    /// `--` keeps the agent program from reading it as one of its own options.
+    /// Without it, `claude '--x'` fails with "unknown option" and a real flag
+    /// is obeyed (checked against claude and codex on 2026-11-17).
+    #[test]
+    fn an_opener_that_starts_with_a_dash_is_never_read_as_an_option() {
+        let dir = std::env::temp_dir().join(format!("td-opener-dash-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let briefing = dir.join("briefing.txt");
+        std::fs::write(&briefing, "Terminal Delight\n").unwrap();
+        for harness in [Harness::Claude, Harness::Codex] {
+            for briefing in [None, Some(briefing.as_path())] {
+                for opener in ["--dangerously-skip-permissions", "- review the diff"] {
+                    let mut r = recipe(harness, "high");
+                    r.opener = Some(opener.into());
+                    let line = r.command_line(briefing);
+                    let output = std::process::Command::new("sh")
+                        .args(["-c", &format!("set -- {line}; printf '%s\\0' \"$@\"")])
+                        .output()
+                        .unwrap();
+                    assert!(output.status.success());
+                    let argv: Vec<String> = output
+                        .stdout
+                        .split(|b| *b == 0)
+                        .filter(|a| !a.is_empty())
+                        .map(|a| String::from_utf8(a.to_vec()).unwrap())
+                        .collect();
+                    let end = argv.iter().position(|a| a == "--");
+                    let at = argv.iter().position(|a| a.ends_with(opener));
+                    assert!(
+                        matches!((end, at), (Some(e), Some(o)) if e + 1 == o),
+                        "{harness:?}, briefing {}: {opener:?} must follow `--`: {argv:?}",
+                        briefing.is_some()
+                    );
+                }
+            }
+        }
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     #[test]
