@@ -5569,6 +5569,18 @@ mod tests {
             .as_str()
             .unwrap()
             .contains("did not give its name"));
+        // An empty, blank or over-long name is no name either, and the window
+        // is never asked. The code is JSON-RPC's invalid-params, which a
+        // client reads. (The first cargo-mutants run, 2026-11-17, found a
+        // `&&` turned `||` in this check survived every test.)
+        for name in ["", "   ", &"x".repeat(65)] {
+            let out = ask(&census(name), &s);
+            assert_eq!(out["error"]["code"], -32602, "{name:?}: {out}");
+            assert!(out["error"]["message"]
+                .as_str()
+                .unwrap()
+                .contains("did not give its name"));
+        }
 
         // A bare `ctl mcp rpc` from inside a pane names no caller; the
         // kernel's word that its process is in a pane still shuts the door.
@@ -5589,6 +5601,7 @@ mod tests {
             pane: Some(u64::from(100u32 % 97)),
         });
         let refused = ask(&census("legion"), &s);
+        assert_eq!(refused["error"]["code"], -32002, "{refused}");
         assert!(
             refused["error"]["message"]
                 .as_str()
