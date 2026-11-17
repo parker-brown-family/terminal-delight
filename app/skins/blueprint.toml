@@ -42,6 +42,7 @@ marker_alpha = 0.0
 
 [ink]
 panel = "#102942"
+terminal_field = { from = "bg" }
 panel_sunken = "#0b2138"
 panel_raised = "#173753"
 panel_glass = "#102942"

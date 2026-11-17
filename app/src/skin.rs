@@ -318,6 +318,7 @@ macro_rules! ink_tokens {
 ink_tokens! {
     // ---- grounds ----
     panel        => "panel",        Recipe::of(Role::Bg),                          "the ground a chrome region sits on";
+    terminal_field => "terminal_field", Recipe::of(Role::Bg),                      "ground under terminal cells when the field dial is set; inherits panel when omitted";
     panel_raised => "panel_raised", Recipe::of(Role::Surface),                     "a surface lifted off the ground: a bar, a card";
     panel_sunken => "panel_sunken", Recipe::of(Role::Surface).l(0.40),             "a well: a track, an input field, an inset";
     panel_glass  => "panel_glass",  Recipe::of(Role::Bg).a(0.70),                  "the scrim an overlay lays over the workspace";
@@ -847,6 +848,9 @@ impl SkinSpec {
 
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         let mut ink = self.ink.bake(th);
+        if self.ink.terminal_field.is_none() {
+            ink.terminal_field = ink.panel;
+        }
         if self.shape.bake().material == Material::Paper {
             let light = if th.bg.l < th.text.l { th.text } else { th.bg };
             if self.ink.btn_face.is_none() {
@@ -997,7 +1001,7 @@ impl Skin {
             .grade
             .field_colour
             .or_else(|| self.unboxed().then_some(1.))
-            .map(|level| crate::mix(gpui::black(), self.ink.panel, level.clamp(0., 1.)));
+            .map(|level| crate::mix(gpui::black(), self.ink.terminal_field, level.clamp(0., 1.)));
         th
     }
 
@@ -3643,11 +3647,16 @@ mod tests {
                 (*id == "baremetal").then_some(sk.ink.panel),
                 "{id}"
             );
+            let field = if *id == "blueprint" {
+                th.bg
+            } else {
+                sk.ink.panel
+            };
             let mut chosen = th;
             chosen.grade.set(theme::GradeKey::FieldColour, 1.);
             assert_eq!(
                 sk.terminal_theme(chosen).field_background,
-                Some(sk.ink.panel),
+                Some(field),
                 "{id}"
             );
         }

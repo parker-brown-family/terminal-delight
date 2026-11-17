@@ -24,3 +24,5 @@ Give the current and selected reply a preview and use the title for older replie
 At wide widths, put decision options side by side and wrap architecture groups. At narrow widths, keep them stacked. The window test measures both option labels to distinguish those layouts.
 
 Blueprint uses static dimension lines and the direct terminal renderer. Check the hover face and the intersection of two grid strokes when choosing annotation ink. Keep the saved skin ID independent of its translated name.
+
+Keep the terminal field paired with the terminal palette. The Catppuccin Latte sweep measured dark terminal text on blue paper at 1.13 to 1. Blueprint now takes its terminal field from the palette while retaining blue paper for the workbench and chrome.
