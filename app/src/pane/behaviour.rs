@@ -5652,3 +5652,56 @@ while True:
     pane.keys("q");
     assert!(!pane.read(|v| v.scroll_mode));
 }
+
+#[gpui::test]
+fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    let (_, doc) = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(name, _)| *name == "01-decision")
+        .unwrap();
+    pane.view.update(pane.cx, |v, cx| {
+        let id = v
+            .bench
+            .apply(crate::surface::parse(&doc, 1).unwrap())
+            .unwrap();
+        v.bench.select(&id);
+        v.set_face(Face::Workbench, cx);
+    });
+    for width in [1600., 600.] {
+        pane.cx.simulate_resize(gpui::size(px(width), px(900.)));
+        pane.redraw();
+        pane.redraw();
+        let text = pane.read(|v| {
+            v.wb_atoms
+                .borrow()
+                .0
+                .iter()
+                .map(|atom| atom.text.clone())
+                .collect::<Vec<_>>()
+                .join(" ")
+        });
+        for phrase in [
+            "Does the artifact rail belong",
+            "Scoped to one conversation",
+            "Twenty panes means twenty rails",
+            "One place to look",
+            "mixes twenty conversations",
+            "The attention spine keeps",
+        ] {
+            assert!(
+                text.contains(phrase),
+                "at {width}px missing {phrase}: {text}"
+            );
+        }
+        assert!(
+            pane.read(|v| v.wb_zones.borrow().iter().any(|zone| matches!(
+                zone.hit,
+                crate::workbench::Hit::Verb {
+                    action: crate::surface::Action::Approve,
+                    ..
+                }
+            )))
+        );
+    }
+}
