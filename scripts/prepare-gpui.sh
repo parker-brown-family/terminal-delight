@@ -79,7 +79,8 @@ patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
 patch_filter="$repo_root/docs/patches/0015-constant-filter-taps.patch"
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter"; do
+patch_direct="$repo_root/docs/patches/0016-direct-rendering.patch"
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -179,3 +180,6 @@ apply_patch "$patch_tube_alpha" "tube-alpha" \
 
 apply_patch "$patch_filter" "constant-filter-taps" \
     'grep -qF "fn disk_sample" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_direct" "direct-rendering" \
+    'grep -qF "pub fn set_direct_rendering" crates/gpui_wgpu/src/wgpu_renderer.rs'

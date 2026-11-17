@@ -640,8 +640,15 @@ mod tests {
                         crate::warp::begin_frame();
                         pane.redraw();
                         let active_glows = crate::warp::rect_glows();
-                        if design == theme::CLEAN {
-                            // Clean holds the light off, whatever the dials say:
+                        let direct = skin == "baremetal";
+                        if direct {
+                            assert!(
+                                active_glows.is_empty(),
+                                "direct skin registered a tube: {case}"
+                            );
+                        }
+                        if direct || design == theme::CLEAN {
+                            // This skin and Clean both hold the light off, whatever the dials say:
                             // nothing glows and nothing erased lingers.
                             assert!(
                                 active_glows.iter().all(|g| g.abs() < 1e-5),
