@@ -1009,6 +1009,12 @@ impl Skin {
         } else {
             th.clone()
         };
+        self.apply_chrome_ink(&mut chrome);
+        chrome
+    }
+
+    /// Apply native ink to a local palette that already has its terminal grade.
+    pub fn apply_chrome_ink(&self, chrome: &mut Theme) {
         if self.text_controls() {
             chrome.bg = self.ink.panel;
             chrome.surface = self.ink.panel_raised;
@@ -1021,7 +1027,6 @@ impl Skin {
             chrome.glow = 0.;
             chrome.grade.phosphor = 0.;
         }
-        chrome
     }
 
     pub fn glass(&self) -> bool {
