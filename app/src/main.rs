@@ -74,6 +74,8 @@ mod fav;
 mod feedback;
 mod flyout;
 mod flyout_view;
+#[cfg(test)]
+mod fuzz;
 mod glyph;
 mod gridwire;
 mod handover;

@@ -52,6 +52,40 @@ fn a_machine_nobody_listed_reaches_nothing_and_an_unread_word_grants_nothing() {
     assert!(Sharing::parse("[[machine]]\nhost = 3\n").is_err());
 }
 
+/// A hand-edited file can name one machine twice. Before 0.5.5 the first
+/// entry decided the ceiling and a revocation removed only that one, so
+/// revoking a machine whose first entry was a word this build cannot read
+/// promoted the second entry's `prompt` into force.
+#[test]
+fn a_machine_named_twice_gets_the_least_and_a_revocation_removes_every_entry() {
+    let twice = "[[machine]]\nhost = \"far\"\nreach = \"prompt\"\n\n[[machine]]\nhost = \"FAR\"\nreach = \"see\"\n";
+    let mut s = Sharing::parse(twice).unwrap();
+    assert_eq!(
+        s.ceiling("far"),
+        Some(Rung::See),
+        "the least of the two holds"
+    );
+    assert!(s.set("far", None));
+    assert_eq!(s.ceiling("far"), None, "revoked means revoked");
+    assert_eq!(s.hosts().count(), 0);
+
+    let unread_first = "[[machine]]\nhost = \"far\"\nreach = \"command\"\n\n[[machine]]\nhost = \"far\"\nreach = \"prompt\"\n";
+    let mut s = Sharing::parse(unread_first).unwrap();
+    assert_eq!(s.ceiling("far"), None, "an unread entry closes the machine");
+    assert!(s.set("far", None));
+    assert_eq!(
+        s.ceiling("far"),
+        None,
+        "a revocation never opens the second entry"
+    );
+
+    let mut s = Sharing::parse(twice).unwrap();
+    assert!(s.set("far", Some(Rung::Ask)));
+    assert_eq!(s.ceiling("far"), Some(Rung::Ask));
+    assert_eq!(s.hosts().count(), 1, "one machine, one entry");
+    assert!(!s.set("far", Some(Rung::Ask)));
+}
+
 #[test]
 fn sharing_round_trips_and_keeps_a_later_builds_word() {
     let mut s = Sharing::parse("[[machine]]\nhost = \"later\"\nreach = \"command\"\n").unwrap();
@@ -480,4 +514,17 @@ fn a_far_prompt_key_is_the_sending_agents_own() {
         scoped_key(None, 11, "review"),
         scoped_key(None, 12, "review")
     );
+}
+
+/// The number a far machine's prompts are filed under is written to the
+/// prompt-key ledger, so a retry after an upgrade is matched only if every
+/// build computes the same number. Pinned to the value SHA-256 gives; a
+/// hasher with no promise across Rust releases fails this.
+#[test]
+fn a_far_senders_number_is_the_same_in_every_build() {
+    use crate::far_floor_view::{far_sender_pane, is_far_sender};
+    assert_eq!(far_sender_pane("legion"), 0x4000_ceee_c50a_9336);
+    assert_eq!(far_sender_pane("LEGION"), far_sender_pane("legion"));
+    assert_ne!(far_sender_pane("legion"), far_sender_pane("farbox"));
+    assert!(is_far_sender(far_sender_pane("farbox")));
 }
