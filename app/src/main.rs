@@ -1613,9 +1613,14 @@ const MARQUEE_SECS: f32 = 6.0;
 fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
     // Fade the last second rather than vanishing on a frame boundary.
     let fade = ((MARQUEE_SECS - age) / 1.0).clamp(0.0, 1.0);
-    let t = anim_clock();
     let bulbs = |phase: i64| {
-        let mut m = div().flex().flex_row().items_center().gap_1();
+        let t = anim_clock();
+        let mut m = div()
+            .debug_selector(|| "marquee-bulbs".into())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1();
         for k in 0..6 {
             let lit = (((t * 6.0) as i64 + k + phase) % 3) == 0;
             m = m.child(div().w(px(6.)).h(px(6.)).rounded_full().bg(if lit {
@@ -1627,6 +1632,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
         m
     };
     div()
+        .debug_selector(|| "marquee-banner".into())
         .absolute()
         .top(px(8.))
         .left_0()
@@ -1648,7 +1654,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                 .bg(th.bg.alpha(0.88 * fade))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
-                .child(bulbs(0))
+                .when(sk.shape.tube != skin::Tube::Direct, |d| d.child(bulbs(0)))
                 .child(
                     div()
                         .text_size(px(11.))
@@ -1656,7 +1662,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                         .text_color(th.text.alpha(fade))
                         .child(SharedString::from(text.to_string())),
                 )
-                .child(bulbs(1)),
+                .when(sk.shape.tube != skin::Tube::Direct, |d| d.child(bulbs(1))),
         )
 }
 
@@ -2666,6 +2672,21 @@ impl BaySays {
 
 /// How long the bay keeps saying it.
 const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
+
+/// Advance the drop target's doors and say whether its flame needs another frame.
+fn bay_frame(position: &mut f32, target: f32, direct: bool) -> bool {
+    if direct {
+        *position = target;
+        return false;
+    }
+    let distance = target - *position;
+    if distance.abs() < 0.004 {
+        *position = target;
+    } else {
+        *position += distance * 0.28;
+    }
+    *position > 0.
+}
 
 /// The trash tray's offer for one holding, `{label}` still to fill.
 ///
@@ -5084,6 +5105,8 @@ struct Workspace {
     /// The in-window marquee banner: what it says, and when it was raised. It
     /// fades itself out; nothing needs to clear it.
     marquee_says: Option<(String, Instant)>,
+    /// One wake to remove the next expiring static notice in direct mode.
+    static_notice_deadline: Option<Instant>,
     /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
     /// transient toast in the graveyard / plugins panel.
     harvest_status: Option<String>,
@@ -7044,6 +7067,7 @@ impl Workspace {
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
             marquee_says: None,
+            static_notice_deadline: None,
             harvest_status: None,
             savings_menu: false,
             savings_view: None,
@@ -14979,21 +15003,38 @@ impl Workspace {
         }
     }
 
-    /// Ease the doors toward where they should be, and say whether they moved.
-    ///
-    /// Returns true while still travelling, which the render pass turns into
-    /// another frame. Easing toward a target rather than storing one means a
-    /// drag that leaves mid-open closes from wherever it got to instead of
-    /// snapping shut — the difference between a door and a light switch.
-    fn ease_bay(&mut self) -> bool {
-        let want = self.bay_target();
-        let d = want - self.bay;
-        if d.abs() < 0.004 {
-            self.bay = want;
-            return false;
+    /// A direct-rendered notice needs one wake at expiry, including if a
+    /// newer notice replaces it or two different notices overlap.
+    fn wake_for_static_notices(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let next = [
+            self.marquee_says
+                .as_ref()
+                .map(|(_, at)| *at + Duration::from_secs_f32(MARQUEE_SECS)),
+            self.bay_says.map(|(_, at)| at + BAY_SAYS_FOR),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|at| *at > now)
+        .min();
+        if self.static_notice_deadline == next {
+            return;
         }
-        self.bay += d * 0.28;
-        true
+        self.static_notice_deadline = next;
+        if let Some(at) = next {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(at.saturating_duration_since(now))
+                    .await;
+                let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                    if ws.static_notice_deadline == Some(at) {
+                        ws.static_notice_deadline = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// A drag was released over the bay.
@@ -27482,7 +27523,9 @@ impl Workspace {
         // another, so the flicker never settles into a visible loop the way a
         // single wave does. Cheap: one `sin` a frame, no state, no timer — the
         // bay is already repainting while it is open.
-        let flicker = {
+        let flicker = if open == 0. || sk.shape.tube == skin::Tube::Direct {
+            1.
+        } else {
             let t = anim_clock();
             let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
             (0.86 + wobble).clamp(0., 1.)
@@ -33043,36 +33086,25 @@ impl Render for Workspace {
         // Who each brief's ↪ sends to, before any pane in this pass draws its
         // notes bar.
         self.label_note_sends(cx);
-        // The bay doors, eased toward wherever the drag says they should be —
-        // and the fire behind them.
-        //
-        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
-        // advances a GIF's frame during PAINT and never schedules the next one,
-        // so an animated image in a surface nobody is repainting draws once and
-        // freezes. Easing alone asks for frames only while the doors travel, so
-        // the fire ran for a third of a second and then stood still — a
-        // photograph of a fire, which is the failure that looks most like
-        // success. The bay is only ever open while a drag is in flight, so this
-        // is a bounded burst rather than a window that never sleeps.
-        let travelling = self.ease_bay();
-        if travelling || self.bay > 0.0 {
+        let direct = skin::spec(cx).shape.tube == Some(skin::Tube::Direct);
+        let target = self.bay_target();
+        if bay_frame(&mut self.bay, target, direct) {
             cx.notify();
         }
-        // A line the bay is saying needs frames for the same reason: it expires
-        // on a clock, and a clock nobody repaints for is a message that stays up
-        // until something else happens to redraw. Dropped here, at its deadline,
-        // so the count underneath comes back on its own.
+        if direct {
+            self.wake_for_static_notices(cx);
+        }
         if let Some((_, at)) = self.bay_says {
-            if at.elapsed() < BAY_SAYS_FOR {
-                cx.notify();
-            } else {
+            if at.elapsed() >= BAY_SAYS_FOR {
                 self.bay_says = None;
+            } else if !direct {
+                cx.notify();
             }
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
         self.ghosts
-            .retain(|g| g.born.elapsed() < Duration::from_millis(crt::IGNITION_MS));
+            .retain(|g| !direct && g.born.elapsed() < Duration::from_millis(crt::IGNITION_MS));
         let shutdown_ghosts: Vec<AnyElement> = self
             .ghosts
             .iter()
@@ -33165,7 +33197,7 @@ impl Render for Workspace {
             leaves.iter().any(|p| p.read(cx).popup_open())
         });
         #[cfg(target_os = "linux")]
-        gpui_wgpu::set_direct_rendering(skin::spec(cx).shape.tube == Some(skin::Tube::Direct));
+        gpui_wgpu::set_direct_rendering(direct);
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
@@ -34424,7 +34456,8 @@ impl Render for Workspace {
                 }),
             );
         let art_door_is_glyph = ui_glyph[6] && !chrome_narrow;
-        let (art_dot, art_bumps) = (self.art_unseen, self.art_bumps);
+        let art_dot = self.art_unseen;
+        let art_bumps = if direct { 0 } else { self.art_bumps };
         // The corner's news, for ⚙ Settings to wear when the glyphs that
         // carry it are put away: a hidden element never hides its news, so
         // the bug report's dot moves onto ⚙, and so does the Git notice's
@@ -36880,9 +36913,10 @@ impl Render for Workspace {
         // the fade actually runs.
         let marquee = self.marquee_says.as_ref().and_then(|(text, at)| {
             let age = at.elapsed().as_secs_f32();
-            (age < MARQUEE_SECS).then(|| marquee_banner(text, age, &th, &sk))
+            (age < MARQUEE_SECS)
+                .then(|| marquee_banner(text, if direct { 0. } else { age }, &th, &sk))
         });
-        if marquee.is_some() {
+        if !direct && marquee.is_some() {
             window.request_animation_frame();
         }
         let far_notice = self.render_far_notice(&th, &sk);
@@ -40753,7 +40787,10 @@ impl Render for Workspace {
         let focus_on = self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some();
         let focus_ramp = {
             let mut guard = FOCUS_OPEN_AT.lock().unwrap();
-            if focus_on {
+            if direct {
+                *guard = None;
+                f32::from(focus_on)
+            } else if focus_on {
                 let t0 = *guard.get_or_insert_with(std::time::Instant::now);
                 let e = t0.elapsed().as_secs_f32();
                 let f = (e / 0.22).clamp(0.0, 1.0);
@@ -43796,17 +43833,67 @@ mod tests {
     /// nobody repaints is a picture.
     #[test]
     fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
-        let src = shipped_src();
-        let at = src.find("let travelling = self.ease_bay();").expect(
-            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        let mut position = 0.;
+        assert!(bay_frame(&mut position, 1., false));
+        assert!(position > 0. && position < 1.);
+        position = 1.;
+        assert!(bay_frame(&mut position, 1., false));
+        assert!(!bay_frame(&mut position, 0., true));
+        assert_eq!(position, 0.);
+        assert!(!bay_frame(&mut position, 1., true));
+        assert_eq!(position, 1.);
+    }
+
+    #[gpui::test]
+    fn baremetal_shows_the_marquee_still_and_wakes_for_the_first_expiry(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+            skin::select(cx, "baremetal").unwrap();
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(900.), px(600.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|pane| pane.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|stop| stop()));
+        let now = Instant::now();
+        ws.update(cx, |ws, cx| {
+            ws.marquee_says = Some(("ready".into(), now));
+            ws.bay_says = Some((BaySays::Empty, now - Duration::from_secs(1)));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("marquee-banner").is_some());
+        assert!(cx.debug_bounds("marquee-bulbs").is_none());
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.static_notice_deadline),
+            Some(now - Duration::from_secs(1) + BAY_SAYS_FOR)
         );
-        let after = &src[at..at + 200];
-        assert!(
-            after.contains("self.bay > 0.0"),
-            "the render pass asks for another frame only while the doors are TRAVELLING. \
-             The flame then freezes at whichever phase the doors finished on, and every \
-             other check still passes"
-        );
+        cx.update(|w, cx| {
+            skin::select(cx, "default").unwrap();
+            w.refresh();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("marquee-bulbs").is_some());
     }
 
     /// A task row clears the disclosure triangle its parent wears.
