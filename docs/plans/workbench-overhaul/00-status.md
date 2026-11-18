@@ -14,3 +14,11 @@ Product, Architecture, Program design and Vertical slices were approved by the r
 ## Calls
 
 Use the existing decision contract. Approve and Reject apply to the proposal. A recommended option stays a recommendation. Keep the question, each case and each cost at both widths.
+
+Use one body at both widths for prose, decisions, patches, diagrams and unknown kinds. At narrow widths only tables need a different arrangement. Repeat the field labels in each record.
+
+Left and Right move among visible controls. Enter uses the same target as a pointer press. Keep the surface identity with a comment draft so that a replacement card cannot receive it. Keep Up and Down for traversing the conversation. Let the shelf scroll independently and keep the selected row visible.
+
+Give the current and selected reply a preview and use the title for older replies. Keep the window-wide attention rail and the per-pane Overview scoped as before.
+
+At wide widths, put decision options side by side and wrap architecture groups. At narrow widths, keep them stacked. The window test measures both option labels to distinguish those layouts.
