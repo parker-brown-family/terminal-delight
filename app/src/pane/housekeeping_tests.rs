@@ -64,10 +64,9 @@ fn hidden_output_does_not_dispatch_ui_events_and_activation_reads_latest(cx: &mu
         events,
         "hidden output dispatched screen events"
     );
-    assert_eq!(
-        pane.read(|v| v.housekeeping_ticks),
-        ticks,
-        "output woke the hidden clock"
+    assert!(
+        pane.read(|v| v.housekeeping_ticks) - ticks <= 2,
+        "hidden chunks must share the same preview deadline"
     );
     // A non-screen event must still reach the UI before any clock advances.
     attached.host.write_all(b"\x1b]2;hidden-title\x07").unwrap();
@@ -124,6 +123,18 @@ fn hidden_housekeeping_sleeps_and_visibility_edges_wake_it(cx: &mut TestAppConte
         "{hidden} housekeeping callbacks in one hidden second"
     );
 
+    // The pump uses a real OS thread and the GPUI clock is virtual. Fence
+    // the preceding bytes before declaring the PTY quiet or showing it again.
+    attached
+        .host
+        .write_all(b"\x1b]2;hidden-writes-finished\x07")
+        .unwrap();
+    let until = Instant::now() + Duration::from_secs(3);
+    while pane.read(|v| v.title.clone()) != "hidden-writes-finished" {
+        pane.cx.run_until_parked();
+        assert!(Instant::now() < until, "PTY did not reach the title fence");
+        std::thread::sleep(Duration::from_millis(2));
+    }
     // Waking on the visibility edge must be immediate even with a second
     // left on the timer; a following identical write must do nothing.
     let before = pane.read(|v| v.housekeeping_ticks);
@@ -137,9 +148,14 @@ fn hidden_housekeeping_sleeps_and_visibility_edges_wake_it(cx: &mut TestAppConte
     pane.cx.run_until_parked();
     assert_eq!(pane.read(|v| v.housekeeping_ticks), before);
 
-    pane.view.update(pane.cx, |v, _| v.fx.band = None);
+    pane.view.update(pane.cx, |v, _| {
+        v.fx.band = None;
+        v.last_screen_output = None;
+        v.wake_housekeeping();
+    });
+    pane.cx.run_until_parked();
     // Keyboard focus is independent of visibility. A visible unfocused pane
-    // retains the ordinary cadence.
+    // parks once its existing redraw deadlines have expired.
     let _other = pane.cx.update(|window, cx| {
         let other = cx.focus_handle();
         window.focus(&other, cx);
@@ -148,12 +164,31 @@ fn hidden_housekeeping_sleeps_and_visibility_edges_wake_it(cx: &mut TestAppConte
     let focus = pane.read(|v| v.focus_handle.clone());
     pane.cx
         .update(|window, _| assert!(!focus.is_focused(window)));
+    pane.view.update(pane.cx, |v, _| {
+        // The synthetic focus redraw can stage a fresh layout resize. Finish
+        // the debounced resize before measuring an otherwise quiet shell.
+        if let Some((size, _)) = v.pending_pty.take() {
+            v.grid = size.grid;
+            v.cell_px = size.cell_px;
+        }
+        v.last_screen_output = None;
+        v.fx.clear_active();
+        v.wake_housekeeping();
+    });
+    pane.cx.run_until_parked();
+    let before = pane.read(|v| v.housekeeping_ticks);
+    assert_eq!(pane.read(|v| v.housekeeping_delay()), None);
     for _ in 0..10 {
         step(pane, 100);
     }
-    assert!(pane.read(|v| v.housekeeping_ticks) - before >= 5);
+    assert_eq!(
+        pane.read(|v| v.housekeeping_ticks),
+        before,
+        "quiet shell kept waking"
+    );
     pane.view.update(pane.cx, |v, _| {
         v.fx.band = Some(0.25);
+        v.last_screen_output = Some(Instant::now());
         v.mark_shown(false);
         v.mark_shown(true);
     });
@@ -334,7 +369,7 @@ fn hidden_completion_keeps_its_short_debounce_without_a_busy_loop(cx: &mut TestA
         );
         v.agent_thinking = Some(false);
         assert!(
-            v.housekeeping_delay() >= Duration::from_millis(33),
+            v.housekeeping_delay().unwrap() >= Duration::from_millis(33),
             "expired deadlines cannot spin"
         );
     });

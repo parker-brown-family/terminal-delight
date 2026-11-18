@@ -63,6 +63,7 @@ pub(crate) struct FarFloor {
     pub(crate) lines: farfloor::FarLines,
     /// The machines in `machines.toml`, as last read.
     pub(crate) machines: Vec<entry::Machine>,
+    pub(super) clock_armed: bool,
     pub(crate) machines_trouble: Option<String>,
     pub(crate) census: std::collections::HashMap<String, MachineView>,
     /// Machines being asked right now, so one is never asked twice at once.
@@ -756,13 +757,27 @@ impl Workspace {
     /// Keep what this window knows of other machines current, while anything
     /// needs it: the Floor is open, a far line is drawn, or a far prompt is
     /// open. A window none of those is true of asks nobody anything.
-    pub(crate) fn watch_far_floor(window: &Window, cx: &mut Context<Self>) {
+    fn far_clock_needed(&self) -> bool {
+        self.threshing_floor
+            || self.far_machines_page_open()
+            || !self.far_floor.lines.is_empty()
+            || !self.far_floor.book.open_ones().is_empty()
+    }
+
+    pub(crate) fn watch_far_floor(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.scratch || self.far_floor.clock_armed || !self.far_clock_needed() {
+            return;
+        }
+        self.far_floor.clock_armed = true;
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_secs(STATUS_SECS))
                 .await;
-            let Ok((asks, statuses)) = this.update(cx, |ws: &mut Workspace, cx| {
-                (ws.far_due(cx), ws.far_open_prompts())
+            let Ok(Some((asks, statuses))) = this.update(cx, |ws: &mut Workspace, cx| {
+                ws.far_floor.clock_armed = ws.far_clock_needed();
+                ws.far_floor
+                    .clock_armed
+                    .then(|| (ws.far_due(cx), ws.far_open_prompts()))
             }) else {
                 break;
             };

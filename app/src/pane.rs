@@ -3330,6 +3330,7 @@ pub struct TerminalView {
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
+    last_screen_output: Option<Instant>,
     last_think_scan: Instant,
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
@@ -4996,6 +4997,7 @@ impl TerminalView {
         let arrived = !self.mode.is_agent() && mode.is_agent();
         let departed = self.mode.is_agent() && !mode.is_agent();
         self.mode = mode;
+        self.wake_housekeeping();
         if arrived {
             self.wb_had_agent = true;
             self.wb_briefed = (self.mode == PaneMode::Claude)
@@ -5483,6 +5485,8 @@ impl TerminalView {
 
         // per-pane effects clock. Visibility and a staged resize may interrupt
         // its sleep, but output keeps using the independent terminal event pump.
+        let hidden_wake = session.hidden_wake.clone();
+        let generation = session.generation.clone();
         let (housekeeping_wake, mut housekeeping_wakes) = futures::channel::mpsc::channel(1);
         cx.spawn(async move |this, cx| {
             loop {
@@ -5505,8 +5509,14 @@ impl TerminalView {
                     let th = theme::theme(cx);
                     let direct =
                         crate::skin::spec(cx).shape.tube == Some(crate::skin::Tube::Direct);
-                    if direct {
-                        view.fx.clear_active();
+                    if direct
+                        || !view.fx_recent()
+                        || !view.shown.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        if view.fx.active() {
+                            view.fx.clear_active();
+                            view.repaint(cx);
+                        }
                     } else if view.fx.tick(&th) {
                         view.repaint(cx);
                     }
@@ -5521,7 +5531,7 @@ impl TerminalView {
                     } else {
                         housekeeping::HIDDEN_INTERVAL
                     };
-                    if view.last_think_scan.elapsed() >= every
+                    if view.hosts_agent() && view.last_think_scan.elapsed() >= every
                         || view
                             .completion_deadline()
                             .is_some_and(|at| Instant::now() >= at)
@@ -5745,17 +5755,48 @@ impl TerminalView {
                     // frames are not drawn, so thirty a second is all cost
                     // (#964). The scans below still run at the idle cadence,
                     // which is what keeps its badge and its bell timely.
-                    view.housekeeping_delay()
+                    let hidden = !view.shown.load(std::sync::atomic::Ordering::Relaxed);
+                    (
+                        view.housekeeping_delay(),
+                        hidden.then_some(view.hidden_generation),
+                    )
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
                 // ends instead of waking forever on a dead entity. Without this,
                 // every closed pane leaks a permanent background loop and idle
                 // CPU climbs over a session.
-                let Ok(delay) = delay else { break };
-                futures::select_biased! {
-                    _ = housekeeping_wakes.next().fuse() => {},
-                    _ = cx.background_executor().timer(delay).fuse() => {},
+                let Ok((delay, hidden)) = delay else { break };
+                if let Some(delay) = delay {
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = cx.background_executor().timer(delay).fuse() => {},
+                    }
+                } else if let Some(observed) = hidden {
+                    // The pump wakes this only on the first output after parking.
+                    // Register before checking the generation to cover an arrival
+                    // between the previous grid read and this await.
+                    let dirty = futures::future::poll_fn(|cx| {
+                        hidden_wake.register(cx.waker());
+                        if generation.load(std::sync::atomic::Ordering::Acquire) != observed {
+                            std::task::Poll::Ready(())
+                        } else {
+                            std::task::Poll::Pending
+                        }
+                    });
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = dirty.fuse() => {
+                            // The wake only starts the preview deadline. A hidden
+                            // output chunk never runs housekeeping on arrival.
+                            futures::select_biased! {
+                                signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                                _ = cx.background_executor().timer(OFFSCREEN_REFRESH).fuse() => {},
+                            }
+                        },
+                    }
+                } else if housekeeping_wakes.next().await.is_none() {
+                    break;
                 }
             }
         })
@@ -5879,6 +5920,7 @@ impl TerminalView {
             mirror_doc: RefCell::new(None),
             read_history: RefCell::new(None),
             agent_thinking: None,
+            last_screen_output: None,
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
@@ -6634,6 +6676,11 @@ impl TerminalView {
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
+                let was_quiet = !self.fx_recent();
+                self.last_screen_output = Some(Instant::now());
+                if was_quiet {
+                    self.wake_housekeeping();
+                }
                 #[cfg(test)]
                 {
                     self.output_events += 1;

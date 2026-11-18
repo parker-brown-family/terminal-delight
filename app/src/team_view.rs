@@ -411,25 +411,6 @@ impl Workspace {
         self.save(cx);
         cx.notify();
     }
-
-    /// Run [`Self::team_drain`] on a short clock. The clock only looks; with
-    /// no team waiting a pass reads one empty list.
-    pub(crate) fn watch_teams(window: &Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(400))
-                .await;
-            if this
-                .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.team_drain(window, cx)
-                })
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
-    }
 }
 
 #[cfg(test)]
@@ -601,7 +582,7 @@ mod tests {
             cx.update(|w, _| lead_focus.is_focused(w)),
             "a team starting behind the person leaves their keyboard where it was"
         );
-        ws.update(cx, |ws, cx| {
+        ws.update(cx, |ws, _cx| {
             assert_eq!(
                 ws.tabs.len(),
                 tabs_before + 1,

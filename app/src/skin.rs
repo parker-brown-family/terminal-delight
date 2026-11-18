@@ -42,13 +42,7 @@
 //! `ink_tokens!` below, where the `None` arm reaches for the recipe rather than
 //! for a default value.
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::SystemTime};
 
 use gpui::{
     div, hsla, px, App, Div, Global, Hsla, InteractiveElement, ParentElement, Pixels, Stateful,
@@ -3200,11 +3194,12 @@ pub fn init(cx: &mut App) {
         active_id,
     });
 
+    let mut changes = crate::filewatch::Changes::new(std::slice::from_ref(&path));
     let mut last = mtime(&path);
     cx.spawn(async move |cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(300))
-            .await;
+        let executor = cx.background_executor().clone();
+        changes.wait(&executor).await;
+        changes = crate::filewatch::Changes::new(std::slice::from_ref(&path));
         let now = mtime(&path);
         if now != last {
             last = now;

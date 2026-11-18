@@ -46,6 +46,9 @@ def worker(directory, index, history, size):
     if index == 0:
         with open(Path(directory, "go"), "rb") as trigger:
             trigger.read(1)
+        if os.getenv("TD_BENCH_MCP"):
+            from mcp_calls import measure
+            measure(directory, int(os.environ["TD_BENCH_MCP"]))
         block = b"".join(
             f"\033[38;5;{n}mrow {n:03} 0123456789abcdef\033[0m\r\n".encode()
             for n in range(256)
@@ -170,6 +173,9 @@ def run(a, display_env, probe, n, skin, repeat):
         )
         if a.capture:
             env["TD_BENCH_CAPTURE"] = "1"
+        if a.mcp:
+            env["TD_BENCH_MCP"] = str(a.mcp)
+            env["TD_MCP_AUDIT"] = "1"
         if a.timer_audit:
             env["TD_TIMER_AUDIT"] = "1"
         if a.audit:
@@ -191,6 +197,8 @@ def run(a, display_env, probe, n, skin, repeat):
         sessions.mkdir(parents=True)
         os.mkfifo(d / "go")
         layout = f"active = 0\npanes = {n}\nwin = [0,0,{a.width},600]\n"
+        if a.mcp:
+            layout += '[mcp]\nenabled = true\nexpose = "all"\nevents = true\nwritable = false\n'
         for i in range(n):
             cmd = shlex.join(
                 [
@@ -218,6 +226,7 @@ def run(a, display_env, probe, n, skin, repeat):
                 )
                 start = CLOCK()
                 win = sp.Popen([a.binary], env=env, cwd=temp, stdout=log, stderr=log)
+                (d / "window-pid").write_text(str(win.pid))
                 try:
                     # Xvfb has no window manager. Supply the ConfigureNotify that
                     # starts gpui drawing here. Keep the final fixture size fixed.
@@ -334,6 +343,18 @@ def run(a, display_env, probe, n, skin, repeat):
                     (a.out / f"{skin}-{n}-{repeat}.frames").write_text(
                         "\n".join(lines) + "\n"
                     )
+                    if a.mcp:
+                        rows = json.loads((d / "calls.json").read_text())
+                        timings = [line.split() for line in log_path.read_text().splitlines() if line.startswith("td-mcp-time ")]
+                        # Catalogue is static. The setup census and each measured
+                        # tools/call build one snapshot and encode one response.
+                        snapshots = [int(row[2]) for row in timings if row[1] == "snapshot"]
+                        encoded = [int(row[2]) for row in timings if row[1] == "serialize"]
+                        if len(snapshots) != len(rows) + 1 or len(encoded) != len(rows) + 2:
+                            raise RuntimeError(f"incomplete MCP attribution: {len(rows)} calls, {len(snapshots)} snapshots, {len(encoded)} encodes")
+                        for row, snap, enc in zip(rows, snapshots[1:], encoded[2:], strict=True):
+                            row.update(snapshot_ns=snap, serialization_ns=enc)
+                        (a.out / f"mcp-{repeat}.json").write_text(json.dumps(rows, indent=2))
                     if a.audit:
                         audit_draws(log_path, skin)
                     return dict(
@@ -372,6 +393,7 @@ def main():
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--icd", type=Path, required=True, help="lavapipe Vulkan ICD JSON")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--mcp", type=int, default=0, help="repetitions per advertised tool from inside a private 20-pane fixture")
     p.add_argument("--timer-audit", action="store_true", help="log each fired GPUI timer with a realtime timestamp and source location")
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--panes", type=int, nargs="+", default=[1, 8, 16])
@@ -408,6 +430,8 @@ def main():
     )
     p.add_argument("--width", type=int, default=900, help="window width on the private 1000px display")
     a = p.parse_args()
+    if a.mcp and a.panes != [20]:
+        p.error("--mcp requires --panes 20")
     if not 320 <= a.width <= 1000:
         p.error("--width must be between 320 and 1000")
     if a.skin_file:

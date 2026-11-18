@@ -8,11 +8,10 @@
 //!   • **reader thread** — blocks on stdin. Static methods (`initialize`,
 //!     `tools/list`, `ping`, `logging/setLevel`) are answered instantly with no
 //!     snapshot, so the handshake never waits on the GUI. `tools/call` asks the
-//!     ticker for a fresh snapshot (5 s budget) and, on timeout, returns a
+//!     bridge for a fresh snapshot (5 s budget) and, on timeout, returns a
 //!     JSON-RPC error rather than dropping the request (no client hang).
-//!   • **ticker** (gpui main thread, leak-safe like the jiggle/checkpoint
-//!     clocks) — serves per-request snapshots where `&App` is available, and
-//!     every ~1 s also pushes a snapshot to the notifier.
+//!   • **bridge** (gpui main thread) — sleeps on its request channel. The
+//!     notifier requests snapshots only while its client accepts events.
 //!   • **notifier thread** — tails exposed agent transcripts off the main
 //!     thread, diffs them through [`mcp::Watcher`], and emits
 //!     `notifications/message` so an orchestrator reacts without polling.
@@ -22,7 +21,7 @@
 //!
 //! Opt-in via `TD_MCP`; process-wide singleton. It never writes to a PTY.
 //!
-//! **stdio is not the only way in.** The ticker is factored out as the *bridge*
+//! **stdio is not the only way in.** The shared main-thread *bridge* lives in
 //! ([`start_bridge`]) — the one main-thread round-trip every transport shares —
 //! and [`respond`] turns a JSON-RPC line into a response line against it. stdio
 //! requires the MCP client to be our PARENT (it pipes our stdin/stdout), which
@@ -30,11 +29,12 @@
 //! carries the same protocol to a terminal that is ALREADY running, which is
 //! how an agent inside a pane reaches the window hosting it.
 
+use futures::{channel::mpsc as ui_channel, StreamExt};
 use std::collections::HashMap;
 use std::io::Write;
 use std::sync::atomic::{AtomicBool, AtomicU8, Ordering};
 use std::sync::mpsc::{self, RecvTimeoutError};
-use std::sync::{Arc, Mutex, OnceLock};
+use std::sync::{Arc, OnceLock};
 use std::thread;
 use std::time::Duration;
 
@@ -42,9 +42,9 @@ use gpui::Context;
 
 use crate::{mcp, mcp_tail, paneident, session, Workspace};
 
-/// What the reader thread asks the ticker (gpui main thread) to do. Both
-/// variants carry a one-shot channel the ticker answers on, so the reader can
-/// block with a budget and never hang. Reads and writes share the one ticker so
+/// What the reader thread asks the bridge (gpui main thread) to do. Both
+/// variants carry a one-shot channel the bridge answers on, so the reader can
+/// block with a budget and never hang. Reads and writes share the one bridge so
 /// every touch of pane state happens on the main thread — the reader never
 /// mutates anything itself.
 enum UiReq {
@@ -82,40 +82,38 @@ fn refuse_all(updates: &[mcp::ConfigUpdate], why: &str) -> Vec<mcp::ApplyOutcome
 /// How long a `tools/call` waits for the UI to produce a snapshot before the
 /// client gets a "not ready" error instead of hanging.
 const SNAPSHOT_BUDGET: Duration = Duration::from_secs(5);
-/// Ticks (~40 ms each) between push-snapshots handed to the notifier (~1 s).
-const PUSH_EVERY_TICKS: u32 = 25;
 /// How many recent events to tail per pane when diffing the push feed.
 const PUSH_TAIL: usize = 50;
 
-/// The process-wide handle onto the ticker: how any thread asks the gpui main
-/// thread for a snapshot / an apply / a search. `mpsc::Sender` is `Send` but not
-/// `Sync`, so the global wraps it in a `Mutex` — contention is nil (a send is a
-/// pointer swap) and it keeps every transport pointed at the ONE ticker rather
-/// than each spawning a competing one.
-static BRIDGE: OnceLock<Mutex<mpsc::Sender<UiReq>>> = OnceLock::new();
+/// Every transport wakes the same main-thread receiver when it has work.
+static BRIDGE: OnceLock<ui_channel::UnboundedSender<UiReq>> = OnceLock::new();
 
-/// Queue a request for the main thread. `false` when the bridge was never
-/// started or the ticker is gone — callers turn that into a JSON-RPC error
-/// rather than blocking on a reply that will never come.
 fn bridge_send(req: UiReq) -> bool {
-    let Some(lock) = BRIDGE.get() else {
-        return false;
-    };
-    let Ok(tx) = lock.lock() else {
-        return false; // a panicked holder; treat as gone
-    };
-    tx.send(req).is_ok()
+    BRIDGE
+        .get()
+        .is_some_and(|tx| tx.unbounded_send(req).is_ok())
 }
 
 /// Start the stdio MCP server once per process. Call from `Workspace::build`.
 /// No-op on a second call. Brings the bridge up with it, wired to the push feed.
-pub fn start(cx: &mut Context<Workspace>) {
+pub fn start(config: &mcp::McpConfig, cx: &mut Context<Workspace>) {
     static STARTED: AtomicBool = AtomicBool::new(false);
     if STARTED.swap(true, Ordering::SeqCst) {
         return;
     }
 
-    let (snap_tx, snap_rx) = mpsc::channel::<mcp::Snapshot>(); // ticker → notifier (periodic)
+    start_bridge(cx);
+    let (push_tx, push_rx) = mpsc::channel::<bool>();
+    let exposed = Arc::new(AtomicBool::new(config.enabled && config.events));
+    let policy = exposed.clone();
+    let wake = push_tx.clone();
+    cx.observe_self(move |ws, _| {
+        let enabled = ws.mcp.enabled && ws.mcp.events;
+        if policy.swap(enabled, Ordering::Relaxed) != enabled {
+            let _ = wake.send(true);
+        }
+    })
+    .detach();
     let (out_tx, out_rx) = mpsc::channel::<String>(); // reader + notifier → writer
 
     // Shared, lock-free control bits: the desired log severity (gates the push
@@ -143,7 +141,15 @@ pub fn start(cx: &mut Context<Workspace>) {
         let home = session::home_dir();
         let _ = thread::Builder::new()
             .name("td-mcp-notify".into())
-            .spawn(move || notify_loop(snap_rx, out_tx, level, active, home));
+            .spawn(move || {
+                notify_loop(
+                    push_snapshots(push_rx, &active, &level, &exposed),
+                    out_tx,
+                    level.clone(),
+                    active.clone(),
+                    home,
+                )
+            });
     }
 
     // Reader: blocks on stdin, routes each request.
@@ -153,121 +159,76 @@ pub fn start(cx: &mut Context<Workspace>) {
         let active = Arc::clone(&active);
         let _ = thread::Builder::new()
             .name("td-mcp".into())
-            .spawn(move || serve_stdio(out_tx, level, active));
+            .spawn(move || serve_stdio(out_tx, level, active, push_tx));
     }
-
-    start_bridge(cx, Some(snap_tx));
 }
 
-/// Start the bridge: the ticker that services main-thread requests for every
-/// transport, plus (for stdio) the periodic push-feed snapshot. Idempotent, and
-/// called unconditionally from `Workspace::build` so the ctl socket's `mcp rpc`
-/// verb works in a plain desktop-launched terminal — one that was never handed
-/// piped stdio and so never runs [`start`]. `push` is `None` for that path: the
-/// notification feed belongs to the stdio client that asked for it.
-pub fn start_bridge(cx: &mut Context<Workspace>, push: Option<mpsc::Sender<mcp::Snapshot>>) {
-    static STARTED: AtomicBool = AtomicBool::new(false);
-    if STARTED.swap(true, Ordering::SeqCst) {
+/// A socket-only window registers no timer. Receiving a request schedules the UI.
+pub fn start_bridge(cx: &mut Context<Workspace>) {
+    let (req_tx, mut req_rx) = ui_channel::unbounded();
+    if BRIDGE.set(req_tx).is_err() {
         return;
     }
-
-    let (req_tx, req_rx) = mpsc::channel::<UiReq>(); // any transport → ticker
-    if BRIDGE.set(Mutex::new(req_tx)).is_err() {
-        return; // unreachable behind the guard, but never install two
-    }
-
-    // Ticker: services snapshot requests on the main thread + feeds the notifier.
     cx.spawn(async move |this, cx| {
-        let mut since_push: u32 = 0;
-        loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(40))
-                .await;
-
-            // Drain any pending per-request snapshot asks.
-            let mut alive = true;
-            loop {
-                match req_rx.try_recv() {
-                    Ok(UiReq::Snapshot(reply)) => match this.update(cx, snapshot_of) {
+        while let Some(req) = req_rx.next().await {
+            match req {
+                UiReq::Snapshot(reply) => {
+                    match this.update(cx, |ws, cx| mcp::timed("snapshot", || snapshot_of(ws, cx))) {
                         Ok(s) => {
                             let _ = reply.send(s);
                         }
                         Err(_) => {
                             let _ = reply.send(mcp::Snapshot::empty());
-                            alive = false;
+                            return;
                         }
-                    },
-                    Ok(UiReq::Apply(updates, reply)) => {
-                        match this.update(cx, |ws, cx| ws.apply_mcp_config(&updates, cx)) {
-                            Ok(out) => {
-                                let _ = reply.send(out);
-                            }
-                            Err(_) => {
-                                let _ = reply
-                                    .send(refuse_all(&updates, "terminal-delight UI not ready"));
-                                alive = false;
-                            }
-                        }
-                    }
-                    Ok(UiReq::Search(needle, cap, caller, reply)) => {
-                        match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, caller, cx)) {
-                            Ok(hits) => {
-                                let _ = reply.send(hits);
-                            }
-                            Err(_) => {
-                                let _ = reply.send(Vec::new());
-                                alive = false;
-                            }
-                        }
-                    }
-                    Ok(UiReq::Open(request, reply)) => {
-                        let answer = reply.clone();
-                        if this
-                            .update(cx, |ws, cx| ws.mcp_open(request, reply, cx))
-                            .is_err()
-                        {
-                            let _ = answer.send("err terminal-delight UI not ready".into());
-                            alive = false;
-                        }
-                    }
-                    Ok(UiReq::Ask(request, reply)) => {
-                        match this.update(cx, |ws, cx| ws.ask_bridge(&request, cx)) {
-                            Ok(answer) => {
-                                let _ = reply.send(answer);
-                            }
-                            Err(_) => {
-                                let _ = reply.send(mcp::AskReply::Refused(
-                                    crate::threshing_floor::Refusal::Gone,
-                                ));
-                                alive = false;
-                            }
-                        }
-                    }
-                    Err(mpsc::TryRecvError::Empty) => break,
-                    Err(mpsc::TryRecvError::Disconnected) => return, // reader gone
-                }
-            }
-
-            // Periodically feed the notifier — only while the feed is live, so
-            // we don't wake it for nothing. With no push sink (the ctl-only
-            // bridge) there is no notifier to feed, so skip the snapshot
-            // entirely rather than build one every second for nobody.
-            if let Some(snap_tx) = &push {
-                since_push += 1;
-                if since_push >= PUSH_EVERY_TICKS {
-                    since_push = 0;
-                    if let Ok(snap) = this.update(cx, snapshot_of) {
-                        if snap.config.enabled && snap.config.events {
-                            let _ = snap_tx.send(snap);
-                        }
-                    } else {
-                        alive = false;
                     }
                 }
-            }
-
-            if !alive || this.update(cx, |_, _| ()).is_err() {
-                break;
+                UiReq::Apply(updates, reply) => {
+                    match this.update(cx, |ws, cx| ws.apply_mcp_config(&updates, cx)) {
+                        Ok(out) => {
+                            let _ = reply.send(out);
+                        }
+                        Err(_) => {
+                            let _ =
+                                reply.send(refuse_all(&updates, "terminal-delight UI not ready"));
+                            return;
+                        }
+                    }
+                }
+                UiReq::Search(needle, cap, caller, reply) => {
+                    match this.update(cx, |ws, cx| ws.mcp_search(&needle, cap, caller, cx)) {
+                        Ok(hits) => {
+                            let _ = reply.send(hits);
+                        }
+                        Err(_) => {
+                            let _ = reply.send(Vec::new());
+                            return;
+                        }
+                    }
+                }
+                UiReq::Open(request, reply) => {
+                    let answer = reply.clone();
+                    if this
+                        .update(cx, |ws, cx| ws.mcp_open(request, reply, cx))
+                        .is_err()
+                    {
+                        let _ = answer.send("err terminal-delight UI not ready".into());
+                        return;
+                    }
+                }
+                UiReq::Ask(request, reply) => {
+                    match this.update(cx, |ws, cx| ws.ask_bridge(&request, cx)) {
+                        Ok(answer) => {
+                            let _ = reply.send(answer);
+                        }
+                        Err(_) => {
+                            let _ = reply.send(mcp::AskReply::Refused(
+                                crate::threshing_floor::Refusal::Gone,
+                            ));
+                            return;
+                        }
+                    }
+                }
             }
         }
     })
@@ -282,7 +243,7 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         panes: ws.mcp_snapshot(cx),
         outer_grade: ws.mcp_outer_grade(cx),
         instance: Some(here()),
-        // Filled in by the transport that has a caller to name; the ticker
+        // Filled in by the transport that has a caller to name; the bridge
         // serves every transport and knows nothing about who asked.
         caller: None,
         peer_in_pane: false,
@@ -378,7 +339,7 @@ pub(crate) fn respond_as(
                 stamp_agents(&mut snap.panes, &bound);
             }
             // The write capability: a set_pane_config batch is applied on the
-            // gpui main thread via the same ticker, bounded by the same budget.
+            // gpui main thread via the same bridge, bounded by the same budget.
             // Reads (list_panes/pane_events/get_pane_config) never invoke this.
             let apply = |updates: &[mcp::ConfigUpdate]| -> Vec<mcp::ApplyOutcome> {
                 let (tx, rx) = mpsc::channel();
@@ -391,7 +352,7 @@ pub(crate) fn respond_as(
                 }
             };
             // The read capability for `grep`: search exposed panes' grids on the
-            // gpui main thread via the same ticker + budget. Reads other than
+            // gpui main thread via the same bridge + budget. Reads other than
             // grep never invoke this closure.
             let search = |needle: &str, cap: usize| -> Vec<mcp::PaneMatches> {
                 let (tx, rx) = mpsc::channel();
@@ -450,7 +411,12 @@ pub(crate) fn respond_as(
 }
 
 /// The reader loop: one request line in, one response line out (via the writer).
-fn serve_stdio(out_tx: mpsc::Sender<String>, level: Arc<AtomicU8>, active: Arc<AtomicBool>) {
+fn serve_stdio(
+    out_tx: mpsc::Sender<String>,
+    level: Arc<AtomicU8>,
+    active: Arc<AtomicBool>,
+    push: mpsc::Sender<bool>,
+) {
     let stdin = std::io::stdin();
     let mut line = String::new();
     loop {
@@ -467,9 +433,10 @@ fn serve_stdio(out_tx: mpsc::Sender<String>, level: Arc<AtomicU8>, active: Arc<A
         // Transport-stateful, snapshot-independent bookkeeping.
         if let Some(sev) = mcp::log_level_from(req) {
             level.store(sev, Ordering::Relaxed);
+            let _ = push.send(true);
         }
-        if mcp::is_initialize(req) {
-            active.store(true, Ordering::Relaxed);
+        if mcp::is_initialize(req) && !active.swap(true, Ordering::Relaxed) {
+            let _ = push.send(true);
         }
 
         if let Some(resp) = respond(req) {
@@ -478,6 +445,7 @@ fn serve_stdio(out_tx: mpsc::Sender<String>, level: Arc<AtomicU8>, active: Arc<A
             }
         }
     }
+    let _ = push.send(false);
 }
 
 /// Resolve a pane's recent tool events by tailing its own transcript. Shared by
@@ -533,18 +501,49 @@ fn fleet_facts(panes: &[mcp::PaneInfo]) -> Vec<paneident::PaneFacts> {
         .collect()
 }
 
+fn push_snapshots<'a>(
+    demand: mpsc::Receiver<bool>,
+    active: &'a AtomicBool,
+    level: &'a AtomicU8,
+    exposed: &'a AtomicBool,
+) -> impl Iterator<Item = mcp::Snapshot> + 'a {
+    std::iter::from_fn(move || loop {
+        if !active.load(Ordering::Relaxed)
+            || !exposed.load(Ordering::Relaxed)
+            || level.load(Ordering::Relaxed) > mcp::log_severity("info")
+        {
+            if demand.recv() != Ok(true) {
+                return None;
+            }
+            continue;
+        }
+        match demand.recv_timeout(Duration::from_secs(1)) {
+            Ok(true) => continue,
+            Ok(false) | Err(RecvTimeoutError::Disconnected) => return None,
+            Err(RecvTimeoutError::Timeout) => {}
+        }
+        let (tx, rx) = mpsc::channel();
+        if !bridge_send(UiReq::Snapshot(tx)) {
+            return None;
+        }
+        if let Ok(snap) = rx.recv_timeout(SNAPSHOT_BUDGET) {
+            return Some(snap);
+        }
+    })
+}
+
 /// The push feed: each periodic snapshot is tailed and diffed into
-/// `notifications/message`. Exits when the ticker drops `snap_rx` (window gone)
+/// `notifications/message`. Exits when the bridge drops `snap_rx` (window gone)
 /// or the writer disappears.
 fn notify_loop(
-    snap_rx: mpsc::Receiver<mcp::Snapshot>,
+    snapshots: impl IntoIterator<Item = mcp::Snapshot>,
     out_tx: mpsc::Sender<String>,
     level: Arc<AtomicU8>,
     active: Arc<AtomicBool>,
     home: std::path::PathBuf,
 ) {
     let mut watcher = mcp::Watcher::default();
-    while let Ok(snap) = snap_rx.recv() {
+    for snap in snapshots {
         // Don't push before the client handshakes, if the client raised the log
         // level past info, or if exposure/events are off.
         if !active.load(Ordering::Relaxed)

@@ -38,6 +38,7 @@ pub struct EventProxy {
     events: UnboundedSender<TermEvent>,
     generation: Arc<AtomicU64>,
     screen_wakeups: Arc<AtomicBool>,
+    hidden_wake: Arc<futures::task::AtomicWaker>,
     /// Whether a program's question to the terminal is answered from here.
     answers_here: bool,
 }
@@ -68,6 +69,7 @@ impl EventProxy {
             events,
             generation,
             screen_wakeups: Arc::new(AtomicBool::new(true)),
+            hidden_wake: Default::default(),
             answers_here: answers == Answers::Here,
         }
     }
@@ -84,6 +86,7 @@ impl Listener for EventProxy {
         // Do not schedule a UI task for each chunk of invisible output. The
         // generation still advances, and every non-screen event still travels.
         if matches!(event, TermEvent::Wakeup) && !self.screen_wakeups.load(Ordering::Relaxed) {
+            self.hidden_wake.wake();
             return;
         }
         // `CSI 14 t` travels as its own event rather than as a `PtyWrite`, so
@@ -135,6 +138,7 @@ pub struct Session {
     /// Visibility gate for screen-only events. Parsing and protocol events
     /// are independent; activation renders the latest grid before waiting.
     pub screen_wakeups: Arc<AtomicBool>,
+    pub hidden_wake: Arc<futures::task::AtomicWaker>,
 }
 
 impl Session {
@@ -274,6 +278,7 @@ pub fn wire_pump(
     let generation = Arc::new(AtomicU64::new(0));
     let proxy = Arc::new(EventProxy::new(tx, generation.clone(), answers));
     let screen_wakeups = proxy.screen_wakeups.clone();
+    let hidden_wake = proxy.hidden_wake.clone();
     let term = vt::shared(vt::Term::new(size, proxy.clone()));
     // The loop owns its thread and lives as long as the program it reads.
     let (notifier, _thread) = vt::pump::spawn(term.clone(), proxy, source, tap)?;
@@ -286,6 +291,7 @@ pub fn wire_pump(
         shell_pid,
         generation,
         screen_wakeups,
+        hidden_wake,
     })
 }
 

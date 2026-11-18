@@ -4493,16 +4493,33 @@ pub(crate) fn tool_err(text: &str) -> Value {
     json!({ "content": [{ "type": "text", "text": text }], "isError": true })
 }
 
+/// Optional attribution for the private release benchmark. Disabled calls
+/// avoid clock reads and writes. The rig sends exactly one call at a time.
+pub(crate) fn timed<T>(phase: &'static str, work: impl FnOnce() -> T) -> T {
+    static ENABLED: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    if !*ENABLED.get_or_init(|| std::env::var_os("TD_MCP_AUDIT").is_some()) {
+        return work();
+    }
+    let now = std::time::Instant::now();
+    let value = work();
+    eprintln!("td-mcp-time {phase} {}", now.elapsed().as_nanos());
+    value
+}
+
 fn encode_ok(id: Value, result: Value) -> String {
-    serde_json::to_string(&json!({ "jsonrpc": "2.0", "id": id, "result": result }))
-        .unwrap_or_default()
+    timed("serialize", || {
+        serde_json::to_string(&json!({ "jsonrpc": "2.0", "id": id, "result": result }))
+            .unwrap_or_default()
+    })
 }
 
 fn encode_err(id: Value, code: i64, msg: String) -> String {
-    serde_json::to_string(&json!({
-        "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg }
-    }))
-    .unwrap_or_default()
+    timed("serialize", || {
+        serde_json::to_string(&json!({
+            "jsonrpc": "2.0", "id": id, "error": { "code": code, "message": msg }
+        }))
+        .unwrap_or_default()
+    })
 }
 
 // ---- transport helpers (let the stdio layer route without re-parsing logic) ----

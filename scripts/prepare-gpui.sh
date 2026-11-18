@@ -80,7 +80,8 @@ patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
 patch_filter="$repo_root/docs/patches/0015-constant-filter-taps.patch"
 patch_direct="$repo_root/docs/patches/0016-direct-rendering.patch"
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct"; do
+patch_demand="$repo_root/docs/patches/0017-demand-driven-frames.patch"
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct" "$patch_demand"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -183,3 +184,6 @@ apply_patch "$patch_filter" "constant-filter-taps" \
 
 apply_patch "$patch_direct" "direct-rendering" \
     'grep -qF "pub fn set_direct_rendering" crates/gpui_wgpu/src/wgpu_renderer.rs'
+
+apply_patch "$patch_demand" "demand-driven-frames" \
+    'grep -qF "fn frame_requester(" crates/gpui/src/platform.rs'

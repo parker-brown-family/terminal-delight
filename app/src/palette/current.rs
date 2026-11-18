@@ -7,7 +7,9 @@ mod tests;
 
 use super::{from_source, Palette};
 use gpui::{App, Global};
-use std::{path::PathBuf, time::Duration};
+use std::path::PathBuf;
+#[cfg(test)]
+use std::time::Duration;
 
 struct Current {
     last_good: Option<Palette>,
@@ -88,6 +90,16 @@ pub(super) fn init(cx: &mut App) {
 }
 
 fn watch(cx: &mut App, roots: Roots) {
+    let paths: Vec<_> = [&roots.primary, &roots.legacy]
+        .into_iter()
+        .flat_map(|root| {
+            [
+                root.join("current/theme/colors.toml"),
+                root.join("current/theme.name"),
+            ]
+        })
+        .collect();
+    let mut changes = crate::filewatch::Changes::new(&paths);
     let mut last = roots.snapshot();
     let mut current = Current {
         last_good: None,
@@ -98,7 +110,8 @@ fn watch(cx: &mut App, roots: Roots) {
     cx.set_global(current);
     cx.spawn(async move |cx| loop {
         let executor = cx.background_executor().clone();
-        executor.timer(Duration::from_millis(300)).await;
+        changes.wait(&executor).await;
+        changes = crate::filewatch::Changes::new(&paths);
         let roots = roots.clone();
         let (now, changed) = executor
             .spawn(async move {
