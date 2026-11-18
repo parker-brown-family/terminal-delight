@@ -1921,6 +1921,33 @@ mod tests {
         assert_eq!(via, Ok("line"));
     }
 
+    /// The edges the first cargo-mutants run (2026-11-17) found untested: a
+    /// question of exactly the longest allowed length is asked, one longer is
+    /// refused; and the agent wall's count shows a pane only when the window
+    /// shares and the pane is not off limits.
+    #[test]
+    fn a_question_at_the_limit_is_asked_and_the_wall_counts_only_what_it_may() {
+        let (orgs, ids) = orgset(&[("team", &[2])]);
+        let mut chart = Chart::default();
+        chart.draw_org(End::Seat(SeatId(1)), End::Org { org: ids[0] }, Rung::Ask);
+        let me = agent(Some(1), AgentAccess::Open);
+        let worker = agent(Some(2), AgentAccess::Open);
+        let ask = |chars| decide_ask(&on(), &chart, &orgs, &me, &worker, false, chars);
+        assert_eq!(ask(QUESTION_MAX_CHARS), Ok("line"));
+        assert_eq!(ask(QUESTION_MAX_CHARS + 1), Err(Refusal::BadQuestion));
+
+        let off = McpConfig::default();
+        assert!(visible_to_some_agent(&on(), &worker));
+        assert!(
+            !visible_to_some_agent(&off, &worker),
+            "a window not sharing shows nobody"
+        );
+        assert!(
+            !visible_to_some_agent(&on(), &agent(Some(2), AgentAccess::OffLimits)),
+            "an off-limits pane is not counted"
+        );
+    }
+
     #[test]
     fn a_whole_org_read_grants_a_write_to_an_open_member_only() {
         let (orgs, ids) = orgset(&[("team", &[2])]);

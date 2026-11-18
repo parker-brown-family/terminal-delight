@@ -5635,6 +5635,101 @@ mod tests {
         );
     }
 
+    /// A far prompt reaches the pane its name points at, and no other. The
+    /// far machine names an agent by its conversation or its seat; the door
+    /// trades that for the pane's pid here. Before this test, the first
+    /// cargo-mutants run (2026-11-17) found that turning either lookup's
+    /// `==` into `!=`, which would type a far prompt into a different agent,
+    /// survived every test.
+    #[test]
+    fn a_far_prompt_reaches_the_agent_its_name_points_at_and_no_other() {
+        use crate::threshing_floor::SeatId;
+        let mut proven = agent_pane(100, true);
+        proven.agent = Some("0199-conv".into());
+        let mut seated = agent_pane(200, true);
+        seated.seat = Some(SeatId(8));
+        let bare = agent_pane(300, true);
+        let s = snap(true, true, vec![proven, seated, bare]);
+        let prompt = |to: &str| {
+            json!({ "id": 1, "method": crate::farfloor::M_PROMPT, "params": {
+                "from": "legion", "sender": "lead", "to": to, "prompt": "review it" } })
+            .to_string()
+        };
+        let asked = std::cell::RefCell::new(Vec::new());
+        let window = |call: &AskCall| -> AskReply {
+            match call {
+                AskCall::Far(FarCall::PromptIn { target, prompt }) => {
+                    assert_eq!(prompt.from, "legion");
+                    asked.borrow_mut().push(*target);
+                    if *target == 200 {
+                        AskReply::Refused(crate::threshing_floor::Refusal::NoPromptLine)
+                    } else {
+                        AskReply::Said(tool_ok("taken".into(), json!({ "prompt_id": 9 })))
+                    }
+                }
+                other => panic!("only a far prompt is asked here: {other:?}"),
+            }
+        };
+        let ask = |line: &str| {
+            resp(
+                &handle_line_asking(line, &s, no_tail, no_apply, no_search, no_open, window)
+                    .unwrap(),
+            )
+        };
+        let by_conv = ask(&prompt("conv:0199-conv"));
+        assert_eq!(
+            by_conv["result"]["structuredContent"]["prompt_id"], 9,
+            "{by_conv}"
+        );
+        let by_seat = ask(&prompt("seat:8"));
+        assert!(
+            by_seat["result"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|t| t.contains("no line from your seat")),
+            "the window's own refusal is passed on: {by_seat}"
+        );
+        assert!(
+            by_conv["result"]["structuredContent"]
+                .get("unnamed")
+                .is_none(),
+            "a prompt's answer is not dressed as a census: {by_conv}"
+        );
+        assert_eq!(
+            *asked.borrow(),
+            vec![100, 200],
+            "each name reached its own pane"
+        );
+        for stranger in ["conv:nobody", "seat:9", "pid:300", "300"] {
+            let out = ask(&prompt(stranger));
+            assert!(
+                out["result"]["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|t| t.contains("no agent by that name")),
+                "{stranger}: {out}"
+            );
+        }
+        assert_eq!(
+            asked.borrow().len(),
+            2,
+            "a name that points nowhere never reaches the window"
+        );
+        let bad = json!({ "id": 1, "method": crate::farfloor::M_PROMPT, "params": { "from": "legion", "to": 3 } })
+            .to_string();
+        assert_eq!(
+            ask(&bad)["error"]["code"],
+            -32602,
+            "a prompt this build cannot read"
+        );
+        let status =
+            json!({ "id": 1, "method": crate::farfloor::M_STATUS, "params": { "from": "legion" } })
+                .to_string();
+        assert_eq!(
+            ask(&status)["error"]["code"],
+            -32602,
+            "a status with no number"
+        );
+    }
+
     /// A caller sees the far agents its OWN seat has a line to, apart from the
     /// panes of this window, with the two words a verb needs to name one.
     #[test]
