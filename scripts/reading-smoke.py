@@ -1,8 +1,16 @@
 #!/usr/bin/env python3
 """Exercise real native HTML exposure on a private Xvfb display and temporary file.
 
-No input goes to the operator's display. Pass --bin, --brief, --out and --vulkan
-(an installed software Vulkan library, such as Mesa's libvulkan_lvp.so).
+No input goes to the operator's display. Pass --bin, --out and --vulkan (an
+installed software Vulkan library, such as Mesa's libvulkan_lvp.so). --brief
+defaults to scripts/fixtures/reading-smoke.html, a synthetic decision brief with
+one passage of each kind the reading clock times (opening, section, figure,
+entry) and no reading sessions. Rebuild it from reading-smoke.src.html with the
+briefing skill's `brief.py html` when the skill's page format changes.
+
+A debug build can take longer than the control socket's two seconds to answer.
+The script then asks a read (`doc notes`) again, and accepts a slow action
+without repeating it, since the checks after every action prove its effect.
 """
 import argparse
 import json
@@ -30,8 +38,10 @@ def wait_for(function, seconds=45):
 
 def main():
     parser = argparse.ArgumentParser()
-    for flag in ('bin', 'brief', 'out', 'vulkan'):
+    for flag in ('bin', 'out', 'vulkan'):
         parser.add_argument('--' + flag, type=Path, required=True)
+    parser.add_argument('--brief', type=Path,
+                        default=Path(__file__).resolve().parent / 'fixtures' / 'reading-smoke.html')
     args = parser.parse_args()
     root = args.out.resolve()
     root.mkdir(parents=True, exist_ok=False)
@@ -71,7 +81,7 @@ def main():
                                   start_new_session=True)
         ctl_path = root / f'runtime/terminal-delight/ctl-{window.pid}.sock'
 
-        def ctl(command, strict=True):
+        def ask(command):
             with socket.socket(socket.AF_UNIX) as connection:
                 connection.settimeout(10)
                 connection.connect(str(ctl_path))
@@ -81,11 +91,24 @@ def main():
                     chunk = connection.recv(65536)
                     if not chunk: break
                     data.extend(chunk)
-                result = data.decode()
-                if strict:
-                    assert result.startswith('ok'), result
-                    return result[2:].strip()
-                return result.strip()
+                return data.decode()
+
+        def ctl(command, strict=True):
+            result = ask(command)
+            # A debug build can answer after the socket's two seconds. A read
+            # is asked again; an action is not, because it may already have
+            # happened, and the checks that follow it prove whether it did.
+            for _ in range(20):
+                if 'window did not answer' not in result or not command.startswith('doc notes'):
+                    break
+                time.sleep(.5)
+                result = ask(command)
+            if strict and 'window did not answer' in result and not command.startswith('doc notes'):
+                return ''
+            if strict:
+                assert result.startswith('ok'), result
+                return result[2:].strip()
+            return result.strip()
 
         wait_for(lambda: ctl_path.exists())
         wid = wait_for(lambda: subprocess.check_output(
@@ -95,7 +118,10 @@ def main():
         subprocess.run(['xdotool', 'windowsize', wid, '1360', '940'], env=env, check=True)
         subprocess.run(['xdotool', 'windowfocus', '--sync', wid], env=env, check=True)
         wait_for(lambda: 'window did not answer' not in ctl('doc notes', strict=False), seconds=120)
-        ctl('doc here ' + str(page))
+        # A slow build answers after the socket's two seconds; the open still
+        # happens, and the wait for an active reading below is what proves it.
+        opened = ctl('doc here ' + str(page), strict=False)
+        assert opened.startswith('ok') or 'window did not answer' in opened, opened
 
         def notes():
             result = ctl('doc notes')
@@ -110,6 +136,8 @@ def main():
         initial = wait_for(lambda: (r if (r := reading()).get('active') else None), seconds=90)
         report['initial'] = initial
         assert {'opening','section','figure','entry'}.issubset({t['kind'] for t in initial['session']['targets']})
+        # The note goes on the page's own first section, whatever its id.
+        first_section = next(t['anchor'] for t in initial['session']['targets'] if t['kind'] == 'section')
         time.sleep(6)
         first = reading()
         assert first['session'] and first['saved'], first
@@ -194,7 +222,7 @@ def main():
         subprocess.run(['xdotool', 'windowsize', wid, '900', '940'], env=env, check=True)
         time.sleep(3)
         assert reading()['session']['session'] == identity, 'Resize keeps one session owner'
-        ctl('doc note add sec-one Native timing and notes coexist.')
+        ctl(f'doc note add {first_section} Native timing and notes coexist.')
         wait_for(lambda: notes()['unsaved'] == 0)
         assert 'VISIBLE TIME' in notes()['map']
         assert 'Native timing and notes coexist.' in page.read_text()
