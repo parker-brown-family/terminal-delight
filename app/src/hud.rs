@@ -344,7 +344,10 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
         AgentState::Error
     } else if lower.iter().any(|l| is_blocked_prompt(l)) {
         AgentState::Blocked
-    } else if lower.iter().any(|l| is_at_rest(l)) || ends_on_a_finished_turn(rows) {
+    } else if lower.iter().any(|l| is_at_rest(l))
+        || ends_on_a_finished_turn(rows)
+        || has_empty_claude_composer(rows)
+    {
         // The agent's own idle furniture is on screen. It is not working, it has
         // not errored and it is not asking — it is sitting at its prompt, which
         // is a thing we can recognise rather than a thing we failed to.
@@ -444,6 +447,18 @@ fn ends_on_a_finished_turn(rows: &[String]) -> bool {
     };
     let l = last.to_ascii_lowercase();
     last.starts_with('\u{273b}') && l.contains(" for ") && l.contains("\u{00b7} done ")
+}
+
+/// Claude Code's input box with nothing typed in it: a row that is only `❯`,
+/// directly under a rule of `─`. It is on screen whenever a turn has ended,
+/// however short the pane, and a working spinner or a question above it is
+/// decided before this is asked. Seen 2026-11-17 on a six-row tiled pane whose
+/// footer and done line were both unreadable as rest.
+fn has_empty_claude_composer(rows: &[String]) -> bool {
+    rows.windows(2).any(|w| {
+        let rule = w[0].trim();
+        !rule.is_empty() && rule.chars().all(|c| c == '\u{2500}') && w[1].trim() == "\u{276f}"
+    })
 }
 
 fn is_blocked_prompt(l: &str) -> bool {
@@ -699,6 +714,29 @@ mod tests {
             parse_status_line(&notice).state,
             AgentState::Idle,
             "Claude's update notice under the done line is looked past"
+        );
+        // The same pane a minute later: the empty input box under the notice.
+        let composer = rows(&[
+            "",
+            "",
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "                                Update available \u{00b7} run mise upgrade claude",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "\u{276f}",
+        ]);
+        assert_eq!(
+            parse_status_line(&composer).state,
+            AgentState::Idle,
+            "an empty input box under its rule is rest"
+        );
+        let typed = rows(&[
+            "\u{2500}\u{2500}\u{2500}\u{2500}",
+            "\u{276f} half a sentence",
+        ]);
+        assert_eq!(
+            parse_status_line(&typed).state,
+            AgentState::Unknown,
+            "an input box with words in it is not evidence of rest"
         );
         let after = rows(&[
             "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
