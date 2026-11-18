@@ -2617,6 +2617,53 @@ mod tests {
     }
     use super::*;
 
+    /// Issue #1472, from the 2026-11-17 cargo-mutants run. Each assertion is
+    /// one of the mutants that survived, now caught (mutation runs named in
+    /// the commit).
+    ///
+    /// The ancestry walk stops before pid 1: init is every process's
+    /// ancestor, so "descends from 1" would prove nothing about anyone.
+    /// Catches the guard `p > 1 && p != at` replaced by `true`, its `&&` by
+    /// `||`, and its `>` by `>=`.
+    #[test]
+    fn the_ancestry_walk_never_reaches_init() {
+        let me = std::process::id();
+        let chain: Vec<u32> = peer_ancestry(Some(me)).collect();
+        assert_eq!(chain.first(), Some(&me), "the walk starts at the peer");
+        assert!(!chain.contains(&1), "init is no one's proof: {chain:?}");
+        assert!(!descends_from(me, 1));
+        let parent = std::os::unix::process::parent_id();
+        if parent > 1 {
+            assert!(descends_from(me, parent), "{chain:?}");
+        }
+    }
+
+    /// A pane whose shell reads as pid 1 never vouches for a caller, even if
+    /// pid 1 is in the caller's chain. Catches `shell > 1` replaced by
+    /// `shell >= 1` in verify_caller.
+    #[test]
+    fn a_pane_whose_shell_is_init_vouches_for_no_caller() {
+        let caller = |pane| Caller {
+            session: "1".into(),
+            pane: Some(pane),
+        };
+        let shell = |pane: u64| Some(if pane == 5 { 1 } else { 300 });
+        let ancestry = [900, 300, 1];
+        assert_eq!(verify_caller(caller(5), &ancestry, shell).pane, None);
+        assert_eq!(verify_caller(caller(7), &ancestry, shell).pane, Some(7));
+    }
+
+    /// A word that starts with `-` is a flag unless it is a number, so
+    /// `doc scroll -2400` scrolls and `doc scroll -x` is refused. Catches the
+    /// number guard replaced by `true`.
+    #[test]
+    fn a_negative_number_is_a_word_and_any_other_dash_is_a_flag() {
+        let (line, _) = parse_cli(&["doc".into(), "scroll".into(), "-2400".into()]).unwrap();
+        assert!(line.contains("-2400"), "{line}");
+        let err = parse_cli(&["doc".into(), "scroll".into(), "-x".into()]).unwrap_err();
+        assert!(err.contains("unknown flag"), "{err}");
+    }
+
     fn hop(uid: u32, comm: &str) -> Hop {
         Hop {
             uid,

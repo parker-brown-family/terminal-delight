@@ -267,7 +267,10 @@ impl Sharing {
 /// that machine's ceiling in place of a line. A seated pane and an unseated
 /// one are the same to it: a machine with no ceiling sees neither.
 pub fn inbound_reach(cfg: &McpConfig, ceiling: Option<Rung>, target: &Party) -> Reach {
-    if !cfg.enabled || target.access.is_off_limits() || !policy_admits(cfg, target.is_agent) {
+    // MCP switched off is refused by `policy_admits`, which begins with
+    // `cfg.enabled`; the separate check this line once had was the same test
+    // twice, and the mutation run could not tell them apart (issue #1472).
+    if target.access.is_off_limits() || !policy_admits(cfg, target.is_agent) {
         return Reach::Hidden;
     }
     let Some(ceiling) = ceiling else {
