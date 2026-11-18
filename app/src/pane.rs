@@ -11792,7 +11792,7 @@ impl Render for TerminalView {
                     .child(
                         div()
                             .debug_selector(move || format!("ctx-hint-{keys}"))
-                            .text_color(faint)
+                            .text_color(txt.alpha(0.8))
                             .child(keys),
                     )
             };
