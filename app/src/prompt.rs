@@ -65,6 +65,11 @@ pub const PROBE_AFTER_MS: u64 = 3_000;
 /// An error that stays on the worker's screen this long after Enter ends the
 /// prompt.
 pub const ERROR_ENDS_MS: u64 = 60_000;
+/// A worker that took the prompt and whose screen then reads as nothing at all
+/// (not working, not blocked, not at rest) for this long ends the prompt, with
+/// its outcome unknown. Without a bound the stage stayed "working, worker
+/// unknown" for good, and the line could not carry another prompt (#1465).
+pub const UNREADABLE_ENDS_MS: u64 = 15 * 60_000;
 /// A woken worker that is still asleep or resting this long after the wake is
 /// woken again.
 pub const REWAKE_MS: u64 = 60_000;
@@ -239,6 +244,8 @@ pub struct Sent {
     pub before: Vec<String>,
     pub entered_ms: Option<u64>,
     pub errored_ms: Option<u64>,
+    /// When the current unbroken run of unreadable looks began, after Enter.
+    pub unreadable_ms: Option<u64>,
     /// The reply is being read off the window's thread.
     pub reading_reply: bool,
     /// When the current unbroken run of at-rest looks began.
@@ -544,6 +551,7 @@ impl PromptBook {
             before: Vec::new(),
             entered_ms: None,
             errored_ms: None,
+            unreadable_ms: None,
             reading_reply: false,
             ready_since: None,
             probing: false,
@@ -869,6 +877,19 @@ fn step(s: &mut Sent, w: &Worker, now: u64, acts: &mut Vec<Act>) {
                 }
             } else {
                 s.errored_ms = None;
+            }
+            if w.seen == Seen::Unreadable && worked {
+                let since = *s.unreadable_ms.get_or_insert(now);
+                if now.saturating_sub(since) >= UNREADABLE_ENDS_MS {
+                    end(
+                        s,
+                        failed("the worker took the prompt, then its screen could not be read for fifteen minutes; its outcome is unknown. Read it with pane_events or look at the pane"),
+                        now,
+                    );
+                    return;
+                }
+            } else {
+                s.unreadable_ms = None;
             }
             match w.seen {
                 Seen::Working | Seen::Blocked | Seen::Errored => {
@@ -1978,7 +1999,34 @@ mod tests {
         assert_eq!(stage(&b, 1).word(), "failed");
     }
 
-    /// A worker restarted from sleep for a prompt is told what it lost, under
+    /// Issue #1465: a worker that took the prompt and then reads as nothing
+    /// for fifteen minutes ends it, freeing the line; one readable look in the
+    /// run starts the clock again. Mutation: removing the bound leaves the
+    /// prompt open for good.
+    #[test]
+    fn a_worker_unreadable_for_fifteen_minutes_ends_the_prompt() {
+        let mut b = PromptBook::default();
+        b.send(new(1, 1, 500, None)).unwrap();
+        b.tick(T0 - SETTLE_MS, |_| worker(Seen::Ready));
+        b.tick(T0, |_| worker(Seen::Ready));
+        b.tick(T0 + E, |_| {
+            with_rows(worker(Seen::Ready), &["> [Threshing Floor prompt 1, f"])
+        });
+        b.tick(T0 + E + 400, |_| worker(Seen::Working));
+        b.tick(T0 + 60_000, |_| worker(Seen::Unreadable));
+        b.tick(T0 + 120_000, |_| worker(Seen::Working));
+        b.tick(T0 + 180_000, |_| worker(Seen::Unreadable));
+        b.tick(T0 + 180_000 + UNREADABLE_ENDS_MS - 1, |_| {
+            worker(Seen::Unreadable)
+        });
+        assert!(stage(&b, 1).is_open(), "a working look restarted the clock");
+        b.tick(T0 + 180_000 + UNREADABLE_ENDS_MS, |_| {
+            worker(Seen::Unreadable)
+        });
+        assert_eq!(stage(&b, 1).word(), "failed");
+    }
+
+    /// A worker restarted from sleep for a prompt is told what it lost, under    /// A worker restarted from sleep for a prompt is told what it lost, under
     /// the header, which stays the first line; a worker only thawed from rest
     /// is the same process and is told nothing.
     #[test]
