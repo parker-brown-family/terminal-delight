@@ -7408,6 +7408,64 @@ mod tests {
     /// changed since my last post". Now the caller is worked out on the call,
     /// like a deliverable, and the answer names the pane the way a person says
     /// it, never by number.
+    /// Issue #1472: each of the three writing verbs hands the window a patch
+    /// that names the caller's own pane, and its own payload, so nothing can
+    /// land on another pane's bench or glass. The 2026-11-17 mutation run found
+    /// that deleting `caller_pane`, `own_pane`, `surface` or `deliverable` from
+    /// these patches failed no test; each deletion fails this one.
+    #[test]
+    fn the_writing_verbs_name_the_callers_own_pane_in_their_patch() {
+        let mut mine = agent_pane(100, true);
+        mine.pane_id = Some(9);
+        let mut sibling = agent_pane(200, true);
+        sibling.pane_id = Some(4);
+        let mut s = snap_writable(vec![sibling, mine]);
+        s.instance = None;
+        s.caller = Some(Caller {
+            session: "tdclip".into(),
+            pane: Some(9),
+        });
+        let seen = std::cell::RefCell::new(Vec::new());
+        let apply = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
+            seen.borrow_mut().extend(ups.iter().cloned());
+            ups.iter()
+                .map(|(t, _)| (t.clone(), Ok(GradeReport::default())))
+                .collect()
+        };
+        let calls = [
+            ("leave_note", json!({ "pid": 100, "text": "done" })),
+            (
+                "declare_deliverable",
+                json!({ "label": "report", "href": "/tmp/r.html" }),
+            ),
+            (
+                "present_surface",
+                json!({ "surface": { "td": "0.4", "kind": "response", "title": "t",
+                    "model": { "layman": "done" } } }),
+            ),
+        ];
+        for (name, args) in calls {
+            seen.borrow_mut().clear();
+            let line = json!({ "id": 9, "method": "tools/call",
+                "params": { "name": name, "arguments": args } })
+            .to_string();
+            let out = resp(&handle_line_with(&line, &s, no_tail, apply, no_search).unwrap());
+            assert_ne!(out["result"]["isError"], true, "{name}: {out}");
+            let patches = seen.borrow();
+            let (target, patch) = patches
+                .first()
+                .unwrap_or_else(|| panic!("{name} wrote nothing"));
+            assert_eq!(*target, Target::Pane(100), "{name}");
+            assert_eq!(patch.caller_pane, Some(9), "{name} names the caller's pane");
+            assert!(patch.own_pane, "{name} knows the pane is the caller's own");
+            match name {
+                "leave_note" => assert!(patch.note.is_some()),
+                "declare_deliverable" => assert!(patch.deliverable.is_some()),
+                _ => assert!(patch.surface.is_some()),
+            }
+        }
+    }
+
     #[test]
     fn a_reply_card_with_no_pid_lands_on_the_pane_that_sent_it() {
         let mut mine = agent_pane(100, true);
