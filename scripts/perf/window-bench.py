@@ -76,6 +76,43 @@ def proc_stats(pid):
     )
 
 
+def thread_sleeps(pid):
+    """Voluntary switches count blocking sleeps. Keep thread IDs for deltas."""
+    result = {}
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        try:
+            fields = dict(line.split(":", 1) for line in (task / "status").read_text().splitlines() if ":" in line)
+            result[task.name] = (fields["Name"].strip(), int(fields["voluntary_ctxt_switches"]))
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return result
+
+
+def idle_window(pid, sample):
+    before = thread_sleeps(pid)
+    cpu0, _ = proc_stats(pid)
+    start = CLOCK()
+    epoch_us = time.time_ns() // 1000
+    time.sleep(sample)
+    end = CLOCK()
+    cpu1, rss = proc_stats(pid)
+    after = thread_sleeps(pid)
+    duration = end - start
+    by_name = {}
+    for tid in before.keys() & after.keys():
+        name, count = after[tid]
+        by_name[name] = by_name.get(name, 0) + count - before[tid][1]
+    return start, end, rss, {
+        "idle_window_cpu_pct": 100 * (cpu1 - cpu0) / duration,
+        "voluntary_switches_s": sum(by_name.values()) / duration,
+        "voluntary_switches_by_thread_name": by_name,
+        "threads_started": len(after.keys() - before.keys()),
+        "threads_exited": len(before.keys() - after.keys()),
+        "idle_sample_s": duration,
+        "idle_start_epoch_us": epoch_us,
+    }
+
+
 def tagged(directory):
     marker = f"TD_BENCH_RUN={directory}".encode()
     for item in Path("/proc").glob("[0-9]*/environ"):
@@ -133,6 +170,8 @@ def run(a, display_env, probe, n, skin, repeat):
         )
         if a.capture:
             env["TD_BENCH_CAPTURE"] = "1"
+        if a.timer_audit:
+            env["TD_TIMER_AUDIT"] = "1"
         if a.audit:
             env["TD_FRAME_AUDIT"] = "1"
         if a.scene == "floor":
@@ -247,11 +286,7 @@ def run(a, display_env, probe, n, skin, repeat):
                     ]
                     if len(host) != 1:
                         raise RuntimeError(f"expected one private host, found {host}")
-                    t = CLOCK()
-                    cpu0 = proc_stats(win.pid)[0]
-                    time.sleep(a.sample)
-                    cpu1, rss = proc_stats(win.pid)
-                    idle = 100 * (cpu1 - cpu0) / (CLOCK() - t)
+                    idle_start, idle_end, rss, idle = idle_window(win.pid, a.sample)
                     host_rss = proc_stats(host[0])[1]
                     if a.profile:
                         record = sp.Popen(
@@ -307,7 +342,12 @@ def run(a, display_env, probe, n, skin, repeat):
                         panes=n,
                         history_lines_per_pane=a.history,
                         cold_process_paint_ms=first_ms,
-                        idle_window_cpu_pct=idle,
+                        **idle,
+                        idle_redraws_s=sum(
+                            1 for kind, xid, ts, _ in map(str.split, lines)
+                            if kind == "damage" and int(xid) == window_id
+                            and idle_start <= float(ts) < idle_end
+                        ) / (idle_end - idle_start),
                         window_rss_mib=rss,
                         host_rss_mib=host_rss,
                         stream_mib_s=sent / 1048576 / (end - begin),
@@ -332,6 +372,7 @@ def main():
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--icd", type=Path, required=True, help="lavapipe Vulkan ICD JSON")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--timer-audit", action="store_true", help="log each fired GPUI timer with a realtime timestamp and source location")
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--panes", type=int, nargs="+", default=[1, 8, 16])
     p.add_argument("--skins", nargs="+", default=["default"])
