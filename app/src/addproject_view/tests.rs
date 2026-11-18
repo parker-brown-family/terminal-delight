@@ -407,6 +407,33 @@ fn a_far_folder_is_listed_and_added_over_ssh_and_keeps_its_machine(cx: &mut gpui
             .unwrap_or_default();
         assert!(note.contains("proj is on farbox"), "{note}");
     });
+    // Issue #1440: pictures for an agent on the far machine are refused with
+    // a note, and nothing starts. Mutation: dropping the check sends them.
+    cx.update(|w, cx| {
+        ws.update(cx, |ws, cx| {
+            let c = ws.composer.as_mut().unwrap();
+            c.machine = c.machines.iter().position(|m| m.name == "farbox").unwrap();
+            c.pictures = vec![std::path::PathBuf::from("/tmp/shot.png")];
+            c.text = EditBuffer::at_end("look at this");
+            ws.composer_send(entry::Send::Open, w, cx);
+        })
+    });
+    redraw(cx);
+    ws.read_with(cx, |ws, _| {
+        assert_eq!(ws.tabs.len(), tabs, "no tab was opened");
+        let note = ws
+            .composer
+            .as_ref()
+            .unwrap()
+            .note
+            .clone()
+            .unwrap_or_default();
+        assert!(
+            note.contains("farbox") && note.contains("Pictures"),
+            "{note}"
+        );
+    });
+    cx.update(|_, cx| ws.update(cx, |ws, _| ws.composer.as_mut().unwrap().pictures.clear()));
     // Found again by typing on the PROJECT chip, the far project brings its
     // machine back with it.
     cx.update(|_, cx| {

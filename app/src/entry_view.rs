@@ -24,7 +24,7 @@ pub(crate) struct Composer {
     pub(crate) text: EditBuffer,
     /// Pictures pasted in, saved under the session's surfaces; they go with
     /// the sentence as paths (see [`entry::with_pictures`]).
-    pictures: Vec<std::path::PathBuf>,
+    pub(crate) pictures: Vec<std::path::PathBuf>,
     /// Long pastes, each as the token that stands for it in `text` and the
     /// text itself; the text takes the token's place when the prompt is sent
     /// (see [`entry::unfold`]).
@@ -723,6 +723,18 @@ impl Workspace {
                 cx.notify();
                 return;
             }
+        }
+        // A picture is saved on this machine and handed over as a path, which
+        // an agent started on another machine cannot open. Say so rather than
+        // send it a path to nothing (issue #1440).
+        if machine.is_far() && !c.pictures.is_empty() {
+            c.note = Some(lang::fill(
+                e.composer_far_pictures,
+                &[("machine", &machine.name)],
+            ));
+            self.composer = Some(c);
+            cx.notify();
+            return;
         }
         // No project: a folder of its own, named from the date and the first
         // words, the way T3 starts a "No project" thread. Here it is claimed
