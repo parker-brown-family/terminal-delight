@@ -932,6 +932,7 @@ impl Workspace {
             })
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .justify_between()
             .gap_4()
@@ -943,7 +944,8 @@ impl Workspace {
                     .flex_col()
                     .gap_0p5()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(px(112.))
+                    .when_some(id, |d, id| d.debug_selector(move || format!("{id}-label")))
                     .child(
                         div()
                             .text_size(sk.text_px(10.5))
@@ -3132,6 +3134,23 @@ mod tests {
         for _ in 0..2 {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
+        }
+    }
+
+    #[gpui::test]
+    fn menu_clarity_settings_titles_keep_a_readable_measure(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        for width in [600., 1600.] {
+            cx.simulate_resize(size(px(width), px(950.)));
+            redraw(cx);
+            for name in ["st-open-palette-label", "st-open-gauges-label"] {
+                let label = cx.debug_bounds(name).unwrap();
+                assert!(label.size.width >= px(112.), "{width}: {name} {label:?}");
+            }
         }
     }
 

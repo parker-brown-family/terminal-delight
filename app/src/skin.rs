@@ -1983,6 +1983,19 @@ impl Skin {
             .bg(self.ink.panel_raised)
     }
 
+    /// A menu choice shares its spoken label across the pane and the Floor.
+    pub fn choice_label(&self, label: &str, active: bool, selected: &str) -> String {
+        if self.text_controls() {
+            if active {
+                format!("{label} · {selected}")
+            } else {
+                label.to_owned()
+            }
+        } else {
+            format!("{} {label}", if active { "●" } else { "○" })
+        }
+    }
+
     /// The divider between two stacked things. Returns a container rather than a
     /// bare line so `Divider::Double` can be two lines without the call site
     /// knowing there are two.
@@ -3605,6 +3618,32 @@ fn report_unknown(path: &std::path::Path, spec: &SkinSpec) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn menu_clarity_uses_the_local_word_for_an_active_text_choice() {
+        let th = palette();
+        for (id, body) in BUILTIN_SKINS {
+            if !["terminimalist", "default"].contains(id) {
+                continue;
+            }
+            let spec = parse(body).unwrap();
+            let sk = spec.bake(&th, 1.);
+            for language in crate::lang::Lang::ALL {
+                let parts = language.strings().parts;
+                let label = parts.pane_ctx_read_only;
+                let mark = parts.ctl_selected;
+                if *id == "terminimalist" {
+                    assert_eq!(
+                        sk.choice_label(label, true, mark),
+                        format!("{label} · {mark}")
+                    );
+                    assert_eq!(sk.choice_label(label, false, mark), label);
+                } else {
+                    assert_eq!(sk.choice_label(label, true, mark), format!("● {label}"));
+                }
+            }
+        }
+    }
 
     #[test]
     fn terminimalist_follows_the_palette_and_only_overrides_the_default_field() {
