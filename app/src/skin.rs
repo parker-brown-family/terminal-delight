@@ -68,6 +68,7 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 /// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
 const BUILTIN_SKINS: &[(&str, &str)] = &[
     ("baremetal", include_str!("../skins/baremetal.toml")),
+    ("blueprint", include_str!("../skins/blueprint.toml")),
     ("chalk", include_str!("../skins/chalk.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
@@ -317,6 +318,7 @@ macro_rules! ink_tokens {
 ink_tokens! {
     // ---- grounds ----
     panel        => "panel",        Recipe::of(Role::Bg),                          "the ground a chrome region sits on";
+    terminal_field => "terminal_field", Recipe::of(Role::Bg),                      "ground under terminal cells when the field dial is set; inherits panel when omitted";
     panel_raised => "panel_raised", Recipe::of(Role::Surface),                     "a surface lifted off the ground: a bar, a card";
     panel_sunken => "panel_sunken", Recipe::of(Role::Surface).l(0.40),             "a well: a track, an input field, an inset";
     panel_glass  => "panel_glass",  Recipe::of(Role::Bg).a(0.70),                  "the scrim an overlay lays over the workspace";
@@ -575,6 +577,8 @@ pub enum Emphasis {
 pub enum Divider {
     #[default]
     Line,
+    /// A fine rule capped by perpendicular witness marks.
+    Dimension,
     Double,
     None,
 }
@@ -844,6 +848,9 @@ impl SkinSpec {
 
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         let mut ink = self.ink.bake(th);
+        if self.ink.terminal_field.is_none() {
+            ink.terminal_field = ink.panel;
+        }
         if self.shape.bake().material == Material::Paper {
             let light = if th.bg.l < th.text.l { th.text } else { th.bg };
             if self.ink.btn_face.is_none() {
@@ -994,7 +1001,7 @@ impl Skin {
             .grade
             .field_colour
             .or_else(|| self.unboxed().then_some(1.))
-            .map(|level| crate::mix(gpui::black(), self.ink.panel, level.clamp(0., 1.)));
+            .map(|level| crate::mix(gpui::black(), self.ink.terminal_field, level.clamp(0., 1.)));
         th
     }
 
@@ -1006,6 +1013,12 @@ impl Skin {
         } else {
             th.clone()
         };
+        self.apply_chrome_ink(&mut chrome);
+        chrome
+    }
+
+    /// Apply native ink to a local palette that already has its terminal grade.
+    pub fn apply_chrome_ink(&self, chrome: &mut Theme) {
         if self.text_controls() {
             chrome.bg = self.ink.panel;
             chrome.surface = self.ink.panel_raised;
@@ -1018,7 +1031,6 @@ impl Skin {
             chrome.glow = 0.;
             chrome.grade.phosphor = 0.;
         }
-        chrome
     }
 
     pub fn glass(&self) -> bool {
@@ -1983,6 +1995,15 @@ impl Skin {
         match self.shape.divider {
             Divider::None => div().h(px(0.)),
             Divider::Line => line(self.ink.rule),
+            Divider::Dimension => div()
+                .w_full()
+                .h(self.px(5.))
+                .flex()
+                .items_center()
+                .border_l_1()
+                .border_r_1()
+                .border_color(self.ink.rule_strong)
+                .child(line(self.ink.rule)),
             Divider::Double => div()
                 .flex()
                 .flex_col()
@@ -1998,6 +2019,15 @@ impl Skin {
         match self.shape.divider {
             Divider::None => div().w(px(0.)),
             Divider::Line => line(self.ink.rule),
+            Divider::Dimension => div()
+                .h_full()
+                .w(self.px(5.))
+                .flex()
+                .justify_center()
+                .border_t_1()
+                .border_b_1()
+                .border_color(self.ink.rule_strong)
+                .child(line(self.ink.rule)),
             Divider::Double => div()
                 .flex()
                 .flex_row()
@@ -2872,6 +2902,7 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
             &[
                 ("line", Divider::Line),
                 ("double", Divider::Double),
+                ("dimension", Divider::Dimension),
                 ("none", Divider::None),
             ],
             "shape.divider",
@@ -3616,11 +3647,16 @@ mod tests {
                 (*id == "baremetal").then_some(sk.ink.panel),
                 "{id}"
             );
+            let field = if *id == "blueprint" {
+                th.bg
+            } else {
+                sk.ink.panel
+            };
             let mut chosen = th;
             chosen.grade.set(theme::GradeKey::FieldColour, 1.);
             assert_eq!(
                 sk.terminal_theme(chosen).field_background,
-                Some(sk.ink.panel),
+                Some(field),
                 "{id}"
             );
         }
@@ -4083,6 +4119,10 @@ mod tests {
                 assert_eq!(sk.data_family, "Share Tech Mono");
                 assert_eq!(sk.font_family, "Chakra Petch");
                 assert_eq!(sk.heading_text("Jev"), "JEV");
+            } else if *id == "blueprint" {
+                assert_eq!(sk.heading_family, "Share Tech Mono");
+                assert_eq!(sk.data_family, "Share Tech Mono");
+                assert_eq!(sk.font_family, "Chakra Petch");
             } else {
                 assert_eq!(
                     sk.heading_family, sk.font_family,
@@ -4281,6 +4321,42 @@ mod tests {
                 );
             }
         }
+    }
+
+    #[test]
+    fn blueprint_text_clears_its_paper_and_its_selected_control() {
+        let sk = parse(builtin_toml("blueprint").unwrap())
+            .unwrap()
+            .bake(&palette(), 1.);
+        assert_eq!(sk.shape.tube, Tube::Direct);
+        let mut lit = palette();
+        lit.crawl = true;
+        lit.warp = 2.;
+        let flat = sk.terminal_theme(lit);
+        assert!(!flat.crawl && !flat.crt);
+        assert_eq!(flat.warp, 0.);
+        assert_eq!(sk.shape.material, Material::Grid);
+        assert_eq!(sk.shape.boundary, Boundary::Double);
+        assert_eq!(sk.shape.divider, Divider::Dimension);
+        assert_eq!(sk.m.glow, 0.);
+        assert_eq!(sk.m.grain, 0.);
+        for bg in [
+            sk.ink.panel,
+            sk.ink.panel_raised,
+            sk.ink.btn_face,
+            sk.ink.row_active,
+            sk.ink.hover,
+        ] {
+            for fg in [sk.ink.ink, sk.ink.ink_dim, sk.ink.ink_faint, sk.ink.ink_off] {
+                let line = sk.ink.mark.alpha(0.045);
+                let ruled = over(line, bg);
+                for ground in [bg, ruled, over(line, ruled)] {
+                    let ratio = contrast(over(fg, ground), ground);
+                    assert!(ratio >= 4.5, "drafting label has contrast {ratio:.2}");
+                }
+            }
+        }
+        assert!(contrast(sk.ink.ink_on_mark, sk.ink.mark) >= 4.5);
     }
 
     /// A resting control chip reads at the body's dim weight in every skin that

@@ -13038,8 +13038,9 @@ impl Render for TerminalView {
             // ramp. Both are bench-local: the header above keeps the plain skin,
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
-            let bench_th = graded_palette(&th);
+            let mut bench_th = graded_palette(&th);
             let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
+            bench_sk.apply_chrome_ink(&mut bench_th);
             self.bench_el(
                 &bench_th,
                 &bench_sk,
