@@ -811,6 +811,17 @@ pub struct Snapshot {
     /// that names no caller is not thereby from outside: an agent can call
     /// `ctl mcp rpc` bare. `false` when the transport had no peer to check.
     pub peer_in_pane: bool,
+    /// Whether the peer process came through the system's ssh daemon
+    /// (`ctl::arrived_over_ssh`): the only way another machine's call
+    /// arrives. `None`: there was no peer, or its parents could not all be
+    /// read, so where it came from is not known. The far door opens only on
+    /// `Some(true)`.
+    pub peer_over_ssh: Option<bool>,
+    /// The window was launched to accept the far door from a local process
+    /// (`TD_FAR_DOOR_LOCAL=1`), for a rig whose "other machine" is a second
+    /// home on this one with a stand-in ssh. A property of the launch, like
+    /// `TD_MCP_SCRIPTED`: an agent cannot turn it on in a running window.
+    pub far_door_local: bool,
     /// The engineering state of every project the rail has read — checkouts,
     /// drift, what it would take to land everything. The `engineering_state`
     /// tool's whole answer; empty until the rail's first scan lands.
@@ -1285,6 +1296,8 @@ impl Snapshot {
             instance: None,
             caller: None,
             peer_in_pane: false,
+            peer_over_ssh: None,
+            far_door_local: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: true,
@@ -1739,6 +1752,26 @@ where
             "this is the door another machine's Threshing Floor uses. From inside a pane, \
              use ask_agent or prompt_agent along a line a person drew."
                 .into(),
+        ));
+    }
+    // And only a call that came through ssh. "Not in a pane" was never proof
+    // of another machine: a process an agent detaches from its pane, or an
+    // agent a service supervises, descends from no pane either (#1467).
+    if !snap.far_door_local && snap.peer_over_ssh != Some(true) {
+        return Err((
+            -32003,
+            match snap.peer_over_ssh {
+                Some(false) => {
+                    "this door answers only another machine's Terminal Delight, reaching \
+                     this one over ssh, and this call did not come through ssh. From this \
+                     machine, use ask_agent or prompt_agent along a line a person drew."
+                }
+                _ => {
+                    "this window could not tell where the call came from, so the door \
+                     another machine uses stays shut."
+                }
+            }
+            .into(),
         ));
     }
     let from = params
@@ -4850,6 +4883,11 @@ pub fn requires_snapshot(line: &str) -> bool {
     snapshot_for(line).is_some()
 }
 
+/// Whether `line` is a call to the far door ([`far_door`]).
+pub fn is_far_line(line: &str) -> bool {
+    parse_req(line).is_some_and(|r| is_far_method(&r.method))
+}
+
 /// The methods another machine's Threshing Floor calls (see [`far_door`]).
 fn is_far_method(method: &str) -> bool {
     matches!(
@@ -5672,6 +5710,10 @@ mod tests {
             }),
             caller: None,
             peer_in_pane: false,
+            // Tests of the far door's other rules reach them as a call from
+            // over ssh would; its origin rule has a test of its own.
+            peer_over_ssh: Some(true),
+            far_door_local: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: true,
@@ -5955,6 +5997,63 @@ mod tests {
             requires_snapshot(&census("legion")),
             "it needs the live window"
         );
+    }
+
+    /// Issue #1467: a call that names no pane and comes from no pane was
+    /// taken for another machine. The door now opens only for a call the
+    /// window saw arrive through ssh, or in a window launched for the
+    /// two-home rig; an origin it could not read keeps it shut.
+    #[test]
+    fn the_far_door_opens_only_for_a_call_that_came_through_ssh() {
+        let mut s = snap(true, true, vec![agent_pane(100, true)]);
+        let census =
+            json!({ "id": 1, "method": crate::farfloor::M_CENSUS, "params": { "from": "legion" } })
+                .to_string();
+        let asked = std::cell::Cell::new(0);
+        let window = |_: &AskCall| -> AskReply {
+            asked.set(asked.get() + 1);
+            AskReply::Said(tool_ok(
+                "x".into(),
+                json!({ "machine": "here", "agents": [] }),
+            ))
+        };
+        let ask = |s: &Snapshot| {
+            resp(
+                &handle_line_asking(&census, s, no_tail, no_apply, no_search, no_open, window)
+                    .unwrap(),
+            )
+        };
+        s.caller = None;
+        s.peer_in_pane = false;
+
+        s.peer_over_ssh = Some(false);
+        let detached = ask(&s);
+        assert_eq!(detached["error"]["code"], -32003, "{detached}");
+        assert!(detached["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("did not come through ssh"));
+        s.peer_over_ssh = None;
+        let unknown = ask(&s);
+        assert_eq!(unknown["error"]["code"], -32003, "{unknown}");
+        assert!(unknown["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("could not tell"));
+        assert_eq!(asked.get(), 0, "the window was never asked");
+
+        s.peer_over_ssh = Some(true);
+        assert!(ask(&s)["result"].is_object(), "a call over ssh is answered");
+        s.peer_over_ssh = Some(false);
+        s.far_door_local = true;
+        assert!(
+            ask(&s)["result"].is_object(),
+            "the rig's window takes a local call"
+        );
+        // The rig's switch never opens the door to a pane.
+        s.peer_in_pane = true;
+        assert_eq!(ask(&s)["error"]["code"], -32002);
+        assert_eq!(asked.get(), 2);
     }
 
     /// A far prompt reaches the pane its name points at, and no other. The

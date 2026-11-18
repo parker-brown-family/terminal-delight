@@ -1822,6 +1822,75 @@ pub(crate) fn peer_ancestry(pid: Option<u32>) -> impl Iterator<Item = u32> {
     std::iter::successors(pid, |at| ppid_of(*at).filter(|p| *p > 1 && p != at)).take(24)
 }
 
+/// One process on the way up from a connection's peer: who owns it and what
+/// it is called (`/proc/<pid>/status` Uid, `/proc/<pid>/comm`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Hop {
+    pub uid: u32,
+    pub comm: String,
+}
+
+/// Whether a chain of processes, the peer first and its parents after it,
+/// passed through the system's ssh daemon.
+///
+/// The mark is a process owned by root and named `sshd` or `sshd-session`
+/// (OpenSSH 9.8 and later run each connection as `sshd-session`). Measured on
+/// the far box, 2026-11-17: a command delivered over ssh runs under
+/// `sshd-session` (the user's) ← `sshd-session` (root) ← `sshd` (root). A
+/// process on this machine that never came through ssh has no root ancestor
+/// but pid 1, and nothing it does without root can give it one: renaming
+/// itself `sshd-session` leaves it owned by the user. That is the whole of
+/// the check, and why it holds where the pane-ancestry test does not (#1467).
+pub(crate) fn chain_arrived_over_ssh(chain: &[Hop]) -> bool {
+    chain
+        .iter()
+        .any(|h| h.uid == 0 && matches!(h.comm.as_str(), "sshd" | "sshd-session"))
+}
+
+/// The hop `/proc` describes for `pid`, and its parent. `None` when either
+/// file cannot be read, which is a process that went or one this user may
+/// not read: unknown, never a hop that is not there.
+fn hop_of(pid: u32) -> Option<(Hop, u32)> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(name))
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse::<u32>().ok())
+    };
+    let (uid, ppid) = (field("Uid:")?, field("PPid:")?);
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some((
+        Hop {
+            uid,
+            comm: comm.trim_end_matches('\n').to_string(),
+        },
+        ppid,
+    ))
+}
+
+/// Whether the process `pid` arrived over ssh ([`chain_arrived_over_ssh`]),
+/// walking its parents in `/proc` up to pid 1. `None`: the walk could not be
+/// finished (a parent went, or `/proc` refused a read), so where it came
+/// from is not known. A caller that needs `Some(true)` treats that as no.
+pub(crate) fn arrived_over_ssh(pid: u32) -> Option<bool> {
+    let mut chain = Vec::new();
+    let mut at = pid;
+    for _ in 0..64 {
+        let (hop, parent) = hop_of(at)?;
+        chain.push(hop);
+        if chain_arrived_over_ssh(&chain) {
+            return Some(true);
+        }
+        if parent <= 1 || parent == at {
+            return Some(false);
+        }
+        at = parent;
+    }
+    None
+}
+
 /// The control-socket twin of the Threshing Floor's chart — fail-closed.
 ///
 /// The chart gates the MCP read verbs: who may see, read or ask whom. But the
@@ -2547,6 +2616,96 @@ mod tests {
         }
     }
     use super::*;
+
+    fn hop(uid: u32, comm: &str) -> Hop {
+        Hop {
+            uid,
+            comm: comm.into(),
+        }
+    }
+
+    /// Issue #1467: the far door took any process outside a pane for another
+    /// machine. The chains here are real: the first was walked on the far
+    /// box over ssh, the second from a Claude pane on the Legion, both on
+    /// 2026-11-17.
+    #[test]
+    fn only_a_chain_through_roots_sshd_arrived_over_ssh() {
+        let over_ssh = [
+            hop(1000, "terminal-deligh"),
+            hop(1000, "sh"),
+            hop(1000, "sshd-session"),
+            hop(0, "sshd-session"),
+            hop(0, "sshd"),
+        ];
+        assert!(chain_arrived_over_ssh(&over_ssh));
+        // OpenSSH before 9.8 names every hop `sshd`.
+        assert!(chain_arrived_over_ssh(&[
+            hop(1000, "bash"),
+            hop(1000, "sshd"),
+            hop(0, "sshd")
+        ]));
+        let pane = [
+            hop(1000, "bash"),
+            hop(1000, "claude"),
+            hop(1000, "bash"),
+            hop(1000, "td-a47eabf8-wav"),
+            hop(1000, "systemd"),
+        ];
+        assert!(!chain_arrived_over_ssh(&pane));
+        // A process an agent names `sshd-session` is still the agent's.
+        let forged = [
+            hop(1000, "terminal-deligh"),
+            hop(1000, "sshd-session"),
+            hop(1000, "systemd"),
+        ];
+        assert!(!chain_arrived_over_ssh(&forged), "a name is not an owner");
+        // Root alone is not ssh: pid 1 is root too.
+        assert!(!chain_arrived_over_ssh(&[
+            hop(1000, "bash"),
+            hop(0, "systemd")
+        ]));
+        assert!(!chain_arrived_over_ssh(&[]));
+    }
+
+    /// The bypass the issue measured: `setsid -f` leaves the pane's tree, and
+    /// the window must still see that the process never came through ssh.
+    /// And this test's own process reads as over ssh exactly when it runs in
+    /// an ssh session, which is how the real path was checked on the far box.
+    #[test]
+    fn a_detached_process_did_not_arrive_over_ssh_and_this_one_did_only_if_ssh_started_it() {
+        let out = std::process::Command::new("sh")
+            .args(["-c", "setsid sleep 30 >/dev/null 2>&1 & echo $!"])
+            .output()
+            .expect("sh");
+        let pid: u32 = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .expect("a pid");
+        let parent = ppid_of(pid);
+        assert_ne!(
+            parent,
+            Some(std::process::id()),
+            "the child left the test's tree"
+        );
+        let origin = arrived_over_ssh(pid);
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+        assert_eq!(
+            origin,
+            Some(false),
+            "a detached process came through no ssh"
+        );
+        let here = arrived_over_ssh(std::process::id());
+        let in_ssh = std::env::var_os("SSH_CONNECTION").is_some();
+        assert_eq!(here, Some(in_ssh), "SSH_CONNECTION set: {in_ssh}");
+    }
+
+    #[test]
+    fn a_process_that_is_gone_is_unknown_not_local() {
+        // pid_max is at most 2^22; this pid cannot exist.
+        assert_eq!(arrived_over_ssh(u32::MAX - 7), None);
+    }
 
     #[test]
     fn a_scoped_note_needs_explicit_success_for_the_pinned_recipient() {
