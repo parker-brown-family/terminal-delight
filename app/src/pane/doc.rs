@@ -1561,7 +1561,9 @@ impl TerminalView {
             view.update(cx, |v, cx| v.glow(mv, cx));
             return Handled::Consumed;
         }
-        let Some(key) = crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform) else {
+        let Some(key) =
+            crate::docopen::doc_face_key(&ks.key, m.alt, m.control, m.platform, m.shift)
+        else {
             return Handled::Consumed;
         };
         view.update(cx, |v, cx| match key {
