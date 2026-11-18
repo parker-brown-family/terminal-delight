@@ -424,7 +424,14 @@ fn the_far_script_carries_the_line_on_stdin_and_refuses_a_window_that_is_not_a_n
             .spawn()
             .unwrap();
         use std::io::Write;
-        child.stdin.take().unwrap().write_all(b"{}").unwrap();
+        // The script may answer and exit before it reads its stdin (it does
+        // when no Terminal Delight is on the PATH), and then this write meets
+        // a closed pipe. That is the script's business, not the test's: what
+        // is asserted is what it printed. It failed CI once as a broken pipe
+        // (run 44402893421, on a pull request that changed no Rust).
+        if let Err(e) = child.stdin.take().unwrap().write_all(b"{}") {
+            assert_eq!(e.kind(), std::io::ErrorKind::BrokenPipe, "{e}");
+        }
         String::from_utf8_lossy(&child.wait_with_output().unwrap().stdout).into_owned()
     };
     // No Terminal Delight on this PATH: said in a word the reader knows.
