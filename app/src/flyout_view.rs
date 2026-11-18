@@ -1006,6 +1006,17 @@ fn read_file(
 }
 
 fn read_pull(dir: &Path, owner: &str, repo: &str, number: u64) -> Result<flyout::Pull, String> {
+    read_pull_with(&gh_program(), dir, owner, repo, number)
+}
+
+fn read_pull_with(
+    program: &str,
+    dir: &Path,
+    owner: &str,
+    repo: &str,
+    number: u64,
+) -> Result<flyout::Pull, String> {
+    let gh = |dir: &Path, args: &[&str]| gh_with(program, dir, args, GH_BUDGET);
     let slug = format!("{owner}/{repo}");
     let n = number.to_string();
     let out = gh(
@@ -1019,8 +1030,28 @@ fn read_pull(dir: &Path, owner: &str, repo: &str, number: u64) -> Result<flyout:
             "--json",
             flyout::PULL_FIELDS,
         ],
-    )?;
-    flyout::parse_pull(&String::from_utf8_lossy(&out))
+    );
+    match out {
+        Ok(out) => flyout::parse_pull(&String::from_utf8_lossy(&out)),
+        // The number is an issue: GitHub numbers both alike, so a link to an
+        // issue, or a bare #N that names one, still opens.
+        Err(e) if flyout::not_a_pull(&e) => {
+            let out = gh(
+                dir,
+                &[
+                    "issue",
+                    "view",
+                    &n,
+                    "--repo",
+                    &slug,
+                    "--json",
+                    flyout::ISSUE_FIELDS,
+                ],
+            )?;
+            flyout::parse_issue(&String::from_utf8_lossy(&out))
+        }
+        Err(e) => Err(e),
+    }
 }
 
 fn read_pull_diff(
@@ -1135,7 +1166,7 @@ fn read_suggest(repo: &Path) -> Result<Suggest, String> {
 /// is tried against `cwd`, then against the repository holding it.
 pub(crate) fn side_of(token: &str, cwd: Option<&str>) -> Option<SideOpen> {
     let token = token.trim();
-    if let Some((owner, repo, number)) = flyout::pull_of_url(token) {
+    if let Some((owner, repo, number)) = flyout::item_of_url(token) {
         return Some(SideOpen {
             target: Target::Pull {
                 owner,
@@ -1199,7 +1230,7 @@ fn drawn_kind(path: &Path) -> Option<crate::docopen::DocKind> {
 /// `None` for anything the flyout does not show (a web page, a clip, a file
 /// that is gone), which goes where a handover always went.
 pub(crate) fn artifact_target(href: &str) -> Option<SideOpen> {
-    if let Some((owner, repo, number)) = flyout::pull_of_url(href.trim()) {
+    if let Some((owner, repo, number)) = flyout::item_of_url(href.trim()) {
         return Some(SideOpen {
             target: Target::Pull {
                 owner,
@@ -1226,7 +1257,7 @@ pub(crate) fn artifact_target(href: &str) -> Option<SideOpen> {
 /// Whether the rail offers "◨ side" for a deliverable, by its address alone:
 /// the rail paints every frame and never touches the disk to decide.
 pub(crate) fn side_offers(href: &str) -> bool {
-    if flyout::pull_of_url(href.trim()).is_some() {
+    if flyout::item_of_url(href.trim()).is_some() {
         return true;
     }
     crate::handover::file_path(href)
@@ -2804,7 +2835,9 @@ impl Workspace {
         let Live::Pull(p) = self.flyout_live(key) else {
             return;
         };
-        let wants_diff = p.face == PullFace::Files
+        let is_issue = p.pull.got().is_some_and(|x| x.is_issue);
+        let wants_diff = !is_issue
+            && p.face == PullFace::Files
             && (p.diff.got().is_none() && p.diff.error().is_none() || force)
             && !p.diff.busy();
         if p.pull.due(PULL_EVERY) || force && !p.pull.busy() {
@@ -3540,9 +3573,18 @@ impl Workspace {
                 };
                 if let (Target::Pull { .. }, "tab") = (t, key) {
                     if let Some(Live::Pull(p)) = self.flyout.live.get(t) {
-                        let faces = [PullFace::Overview, PullFace::Files, PullFace::Conversation];
+                        let faces: &[PullFace] = if p.pull.got().is_some_and(|x| x.is_issue) {
+                            &[PullFace::Overview, PullFace::Conversation]
+                        } else {
+                            &[PullFace::Overview, PullFace::Files, PullFace::Conversation]
+                        };
+                        let n = faces.len();
                         let at = faces.iter().position(|f| *f == p.face).unwrap_or(0);
-                        let next = if shift { (at + 2) % 3 } else { (at + 1) % 3 };
+                        let next = if shift {
+                            (at + n - 1) % n
+                        } else {
+                            (at + 1) % n
+                        };
                         self.pull_face(faces[next], cx);
                     }
                     return;
@@ -5817,6 +5859,8 @@ impl Workspace {
                     ),
                 ]
                 .into_iter()
+                // An issue has no files: its tab offers what it has.
+                .filter(|(face, _)| *face != PullFace::Files || !pull.is_some_and(|x| x.is_issue))
                 .map(|(face, word)| {
                     div()
                         .id(SharedString::from(format!("flyout-face-{face:?}")))
@@ -7154,6 +7198,69 @@ mod tests {
     /// A stand-in `gh`: answers `pr diff` with `diff_says` (an exit code and
     /// what it prints), answers `api` with two pages of GitHub's per-file
     /// list, and writes every call it gets to `calls`.
+    /// Issue links in the flyout (Parker, 2026-11-18, on an Alt+click of
+    /// issue 1508: "alt clicking a link should OPEN that link in the right
+    /// FLYOUT (and make sure it is ABLE TO!)"). An issue URL is a flyout
+    /// target, and a number GitHub says is not a pull request is read as the
+    /// issue it is, with no files. Mutation: dropping the `not_a_pull`
+    /// fallback in read_pull_with, or reading only `/pull/` in item_of_url,
+    /// fails this.
+    #[test]
+    fn an_issue_link_opens_in_the_flyout_as_the_issue_it_is() {
+        assert_eq!(
+            flyout::item_of_url("https://github.com/o/r/issues/1508"),
+            Some(("o".into(), "r".into(), 1508))
+        );
+        assert_eq!(
+            flyout::item_of_url("https://github.com/o/r/pull/7"),
+            Some(("o".into(), "r".into(), 7))
+        );
+        assert_eq!(
+            flyout::item_of_url("https://github.com/o/r/blob/main/x"),
+            None
+        );
+        assert!(side_of("https://github.com/o/r/issues/1508", None).is_some());
+
+        let dir = std::env::temp_dir().join(format!("td-gh-issue-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let issue = dir.join("issue.json");
+        std::fs::write(
+            &issue,
+            r#"{"number":1508,"title":"The sections list opens on hover","state":"OPEN","author":{"login":"parker"},"url":"https://github.com/o/r/issues/1508","body":"two choices","createdAt":"2026-11-18T19:00:00Z","updatedAt":"2026-11-18T19:30:00Z","labels":[{"name":"follow-up"}],"comments":[{"author":{"login":"agent"},"body":"answered","createdAt":"2026-11-18T19:20:00Z"}]}"#,
+        )
+        .unwrap();
+        let script = dir.join("gh");
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            std::fs::write(
+                &script,
+                format!(
+                    "#!/bin/sh
+[ \"$1\" = probe ] && exit 0
+case \"$1 $2\" in
+  \"pr view\") \
+                     echo 'GraphQL: Could not resolve to a PullRequest with the number of 1508. (repository.pullRequest)' >&2; exit 1;;\n  \
+                     \"issue view\") cat '{issue}';;\n  *) exit 2;;\nesac\n",
+                    issue = issue.display()
+                ),
+            )
+            .unwrap();
+            use std::os::unix::fs::PermissionsExt;
+            std::fs::set_permissions(&script, std::fs::Permissions::from_mode(0o755)).unwrap();
+        }
+        let got = read_pull_with(&script.to_string_lossy(), &dir, "o", "r", 1508).unwrap();
+        assert!(got.is_issue, "read as the issue it is");
+        assert_eq!(got.title, "The sections list opens on hover");
+        assert_eq!(got.remarks.len(), 1);
+        assert!(got.files.is_empty());
+        assert_eq!(
+            got.changed_files, None,
+            "an issue has no files: absent, not zero"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     fn fake_gh(dir: &Path, diff_code: i32, diff_out: &str) -> PathBuf {
         let calls = dir.join("calls");
         let page = dir.join("pages.json");
