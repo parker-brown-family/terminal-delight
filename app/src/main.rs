@@ -9621,14 +9621,27 @@ impl Workspace {
     }
 
     fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
+        self.mcp_panes(cx, true, false)
+    }
+
+    fn mcp_panes(&self, cx: &App, runtime: bool, filter_facts: bool) -> Vec<mcp::PaneInfo> {
         let mut out = vec![];
         let outer = theme::outer_choice(cx);
         for (ti, tab) in self.tabs.iter().enumerate() {
+            let spine = self.spine_path(ti);
+            let project = filter_facts
+                .then(|| {
+                    self.place_of(ti)
+                        .project
+                        .and_then(|id| self.project_at(id))
+                        .map(|p| p.english_label())
+                })
+                .flatten();
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                let rt = p.runtime();
+                let rt = runtime.then(|| p.runtime());
                 // Asleep agents too: they run a shell in the foreground, and
                 // judged by mode alone they read as gone (#1160).
                 let is_agent = p.counts_as_agent();
@@ -9650,6 +9663,8 @@ impl Workspace {
                 let Some(pid) = p.shell_pid() else { continue };
                 out.push(mcp::PaneInfo {
                     tab: ti,
+                    project: project.clone(),
+                    state: filter_facts.then(|| p.agent_status().state.label()),
                     title,
                     mode: p.mode.label().to_string(),
                     is_agent,
@@ -9658,8 +9673,8 @@ impl Workspace {
                     // That is a real state, not a missing reading, and the wire
                     // keeps the two apart.
                     pane_id: p.pane_id(),
-                    cwd: rt.cwd,
-                    session: rt.resume,
+                    cwd: rt.as_ref().and_then(|r| r.cwd.clone()),
+                    session: rt.and_then(|r| r.resume),
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
                     note: p.saved_note().map(|n| mcp::NoteReport {
                         title: n.title,
@@ -9674,7 +9689,7 @@ impl Workspace {
                     // the pane, from the same helper, so the listing and the
                     // Floor can never name one pane two ways. A pane with no
                     // words to its name is unnamed (null), never "".
-                    name: Some(self.pane_name(leaf, cx))
+                    name: Some(threshing_floor::PaneName::new(&spine, &p.header_title()))
                         .filter(|n| !n.full().is_empty())
                         .map(|n| mcp::PaneNameReport::from(&n)),
                     // Which conversation, proven. An asleep agent's is its sleep
@@ -48377,7 +48392,7 @@ mod tests {
             "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
              exception at the effect: {writes}"
         );
-        let snapshot = live_fn("fn mcp_snapshot(");
+        let snapshot = live_fn("fn mcp_panes(");
         assert!(
             snapshot.contains("access: p.agent_access") && snapshot.contains("seat: p.seat"),
             "the snapshot carries what the rules need: {snapshot}"

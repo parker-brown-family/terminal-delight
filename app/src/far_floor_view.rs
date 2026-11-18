@@ -132,8 +132,8 @@ fn far_ok(text: String, structured: serde_json::Value) -> mcp::AskReply {
     mcp::AskReply::Said(mcp::tool_ok(text, structured))
 }
 
-fn far_no(text: &str) -> mcp::AskReply {
-    mcp::AskReply::Said(mcp::tool_err(text))
+fn far_no(code: &str, text: &str) -> mcp::AskReply {
+    mcp::AskReply::Said(mcp::tool_err(code, text))
 }
 
 /// A far stage in one sentence, for the agent that sent the prompt.
@@ -179,7 +179,10 @@ impl Workspace {
                     crate::prompt::now_ms(),
                 ) {
                     Some(status) => mcp::AskReply::Said(mcp::prompt_said(&status)),
-                    None => far_no("no prompt by that number came from your machine."),
+                    None => far_no(
+                        "prompt_unavailable",
+                        "no prompt by that number came from your machine.",
+                    ),
                 }
             }
             mcp::FarCall::AskOut {
@@ -298,7 +301,10 @@ impl Workspace {
         let brief = crate::prompt::clean(&p.prompt);
         let brief_len = brief.chars().count();
         let Some(target) = self.leaf_by_shell_pid(target_pid, cx) else {
-            return far_no("that agent is no longer in this window.");
+            return far_no(
+                "target_unavailable",
+                "that agent is no longer in this window.",
+            );
         };
         let (party, to_seat, program, returns) = {
             let tv = target.read(cx);
@@ -351,7 +357,7 @@ impl Workspace {
         if let Some((code, why)) = refusal {
             entry.refusal = Some(code.into());
             self.record(&entry);
-            return far_no(why);
+            return far_no("permission_denied", why);
         }
         self.far_floor.senders.insert(sender_pane, p.from.clone());
         let sender = format!("{} (on {})", crate::prompt::clean(&p.sender), p.from);
@@ -390,7 +396,7 @@ impl Workspace {
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string));
                 self.record(&entry);
-                far_no(r.why())
+                mcp::AskReply::Said(mcp::floor_refusal(r))
             }
         }
     }
@@ -518,7 +524,7 @@ impl Workspace {
         let Some((_, agent)) = found.filter(|_| reach >= threshing_floor::Reach::Ask) else {
             let why = self.far_refusal_out(seat, machine, to, threshing_floor::Rung::Ask);
             self.far_mark_stale(machine);
-            return far_no(&why);
+            return far_no("permission_denied", &why);
         };
         let heard = self
             .far_floor
@@ -574,13 +580,16 @@ impl Workspace {
         let brief = crate::prompt::clean(brief);
         let chars = brief.chars().count();
         if chars == 0 || chars > threshing_floor::PROMPT_MAX_CHARS {
-            return far_no("the prompt is empty or longer than 32,000 characters.");
+            return far_no(
+                "invalid_arguments",
+                "the prompt is empty or longer than 32,000 characters.",
+            );
         }
         let (reach, found) = self.far_reach_out(seat, machine, to);
         let Some((census, _)) = found.filter(|_| reach >= threshing_floor::Reach::Prompt) else {
             let why = self.far_refusal_out(seat, machine, to, threshing_floor::Rung::Prompt);
             self.far_mark_stale(machine);
-            return far_no(&why);
+            return far_no("permission_denied", &why);
         };
         let far_window = census.window;
         // A retry with a key this agent already used is answered with the
@@ -601,6 +610,7 @@ impl Workspace {
         }
         if self.far_floor.book.busy(caller_pane, machine, to) {
             return far_no(
+                "prompt_pending",
                 "an earlier prompt from you to that agent has not finished. Read it with \
                  prompt_status first.",
             );
@@ -612,9 +622,10 @@ impl Workspace {
             .find(|m| m.name == machine)
             .and_then(|m| m.ssh.clone())
         else {
-            return far_no(&format!(
-                "no machine named {machine:?} is in machines.toml."
-            ));
+            return far_no(
+                "machine_unavailable",
+                &format!("no machine named {machine:?} is in machines.toml."),
+            );
         };
         let now = crate::prompt::now_ms();
         self.ask_seq = (self.ask_seq + 1).max(now);

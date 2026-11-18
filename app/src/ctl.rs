@@ -1814,17 +1814,12 @@ pub(crate) fn ppid_of(pid: u32) -> Option<u32> {
 /// parent chain on this box is a dozen deep at most and `/proc` can lie about
 /// a pid that was recycled mid-walk.
 pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
-    let mut at = pid;
-    for _ in 0..24 {
-        if at == ancestor {
-            return true;
-        }
-        match ppid_of(at) {
-            Some(p) if p > 1 && p != at => at = p,
-            _ => return false,
-        }
-    }
-    false
+    peer_ancestry(Some(pid)).any(|p| p == ancestor)
+}
+
+/// One bounded walk is enough to authenticate a peer against every pane.
+pub(crate) fn peer_ancestry(pid: Option<u32>) -> impl Iterator<Item = u32> {
+    std::iter::successors(pid, |at| ppid_of(*at).filter(|p| *p > 1 && p != at)).take(24)
 }
 
 /// The control-socket twin of the Threshing Floor's chart — fail-closed.
@@ -1906,12 +1901,11 @@ fn person_acting_refusal(cmd: &Cmd) -> String {
 /// the current pane shell. Unknown identity never becomes a guessed pane.
 pub(crate) fn verify_caller(
     mut caller: Caller,
-    peer: Option<u32>,
+    ancestry: &[u32],
     shell_for: impl Fn(u64) -> Option<u32>,
 ) -> Caller {
     caller.pane = caller.pane.filter(|pane| {
-        peer.zip(shell_for(*pane))
-            .is_some_and(|(pid, shell)| shell > 1 && descends_from(pid, shell))
+        shell_for(*pane).is_some_and(|shell| shell > 1 && ancestry.contains(&shell))
     });
     caller
 }
@@ -2477,17 +2471,32 @@ mod tests {
             pane: Some(9),
         };
         assert_eq!(
-            verify_caller(claim(), peer, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                std::process::id()
+            ))
+            .pane,
             Some(9)
         );
         assert_eq!(
-            verify_caller(claim(), peer, |_| ppid_of(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| {
+                ppid_of(std::process::id())
+            })
+            .pane,
             Some(9)
         );
-        assert_eq!(verify_caller(claim(), peer, |_| Some(u32::MAX)).pane, None);
-        assert_eq!(verify_caller(claim(), peer, |_| None).pane, None);
         assert_eq!(
-            verify_caller(claim(), None, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                u32::MAX
+            ))
+            .pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| None).pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &[], |_| Some(std::process::id())).pane,
             None
         );
     }

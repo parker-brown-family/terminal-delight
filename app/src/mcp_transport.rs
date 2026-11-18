@@ -50,7 +50,7 @@ use crate::{mcp, mcp_tail, paneident, session, Workspace};
 enum UiReq {
     /// Produce a fresh pane snapshot (every `tools/call` needs one to gate on
     /// policy and read identities/grades).
-    Snapshot(mpsc::Sender<mcp::Snapshot>),
+    Snapshot(mcp::SnapshotFor, mpsc::Sender<mcp::Snapshot>),
     /// Apply a parsed `set_pane_config` batch and report the per-target outcome.
     Apply(Vec<mcp::ConfigUpdate>, mpsc::Sender<Vec<mcp::ApplyOutcome>>),
     /// `grep`: carry the verified caller to the grid read, so queued searches
@@ -172,8 +172,10 @@ pub fn start_bridge(cx: &mut Context<Workspace>) {
     cx.spawn(async move |this, cx| {
         while let Some(req) = req_rx.next().await {
             match req {
-                UiReq::Snapshot(reply) => {
-                    match this.update(cx, |ws, cx| mcp::timed("snapshot", || snapshot_of(ws, cx))) {
+                UiReq::Snapshot(need, reply) => {
+                    match this.update(cx, |ws, cx| {
+                        mcp::timed("snapshot", || scoped_snapshot(ws, cx, need))
+                    }) {
                         Ok(s) => {
                             let _ = reply.send(s);
                         }
@@ -236,29 +238,61 @@ pub fn start_bridge(cx: &mut Context<Workspace>) {
 }
 
 /// Build a fresh snapshot from the live workspace (runs on the main thread).
+#[cfg(test)]
 pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mcp::Snapshot {
-    ws.sync_coordination_scope(cx);
+    scoped_snapshot(ws, cx, mcp::SnapshotFor::Other)
+}
+
+fn scoped_snapshot(
+    ws: &mut Workspace,
+    cx: &mut Context<Workspace>,
+    need: mcp::SnapshotFor,
+) -> mcp::Snapshot {
+    use mcp::SnapshotFor::*;
+    let coord = matches!(need, Coordination | Engineering);
+    if coord {
+        ws.sync_coordination_scope(cx);
+    }
+    let runtime = !matches!(
+        need,
+        Panes { compact: true, .. } | Identity | Engineering | Coordination | Documents
+    );
+    let filter_facts = matches!(
+        need,
+        Panes {
+            filter_facts: true,
+            ..
+        }
+    );
     mcp::Snapshot {
         config: ws.mcp.clone(),
-        panes: ws.mcp_snapshot(cx),
+        panes: ws.mcp_panes(cx, runtime, filter_facts),
         outer_grade: ws.mcp_outer_grade(cx),
         instance: Some(here()),
         // Filled in by the transport that has a caller to name; the bridge
         // serves every transport and knows nothing about who asked.
         caller: None,
         peer_in_pane: false,
-        engineering: if ws.coordination_full_scope() {
+        engineering: if matches!(need, Engineering) && ws.coordination_full_scope() {
             ws.eng_reports()
         } else {
             vec![]
         },
-        coordination: Some(ws.coord_authorized.clone()),
-        engineering_allowed: ws.coordination_full_scope(),
-        documents: ws.mcp_documents(cx),
+        coordination: coord.then(|| ws.coord_authorized.clone()),
+        engineering_allowed: coord && ws.coordination_full_scope(),
+        documents: if matches!(need, Documents) {
+            ws.mcp_documents(cx)
+        } else {
+            vec![]
+        },
         chart: ws.chart.clone(),
         orgs: ws.floor_orgs.clone(),
         moved: ws.mcp_moves(cx),
-        far: ws.far_seen(cx),
+        far: if matches!(need, Panes { far: true, .. }) {
+            ws.far_seen(cx)
+        } else {
+            vec![]
+        },
     }
 }
 
@@ -307,22 +341,22 @@ pub(crate) fn respond_as(
     caller: Option<crate::ctl::Caller>,
     peer_pid: Option<u32>,
 ) -> Option<String> {
-    if !mcp::requires_snapshot(line) {
+    let Some(need) = mcp::snapshot_for(line) else {
         return mcp::handle_line(line, &mcp::Snapshot::empty(), |_, _| vec![]);
-    }
+    };
     let (reply_tx, reply_rx) = mpsc::channel();
-    if !bridge_send(UiReq::Snapshot(reply_tx)) {
+    if !bridge_send(UiReq::Snapshot(need, reply_tx)) {
         return mcp::error_response(line, -32000, "terminal-delight UI not ready");
     }
     match reply_rx.recv_timeout(SNAPSHOT_BUDGET) {
         Ok(mut snap) => {
-            snap.peer_in_pane = peer_pid.is_some_and(|pid| {
-                snap.panes
-                    .iter()
-                    .any(|p| p.pid > 1 && crate::ctl::descends_from(pid, p.pid))
-            });
+            let ancestry = crate::ctl::peer_ancestry(peer_pid).collect::<Vec<_>>();
+            snap.peer_in_pane = snap
+                .panes
+                .iter()
+                .any(|p| p.pid > 1 && ancestry.contains(&p.pid));
             snap.caller = caller.map(|c| {
-                let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
+                let verified = crate::ctl::verify_caller(c, &ancestry, |pane| {
                     snap.panes
                         .iter()
                         .find(|p| p.pane_id == Some(pane))
@@ -523,7 +557,7 @@ fn push_snapshots<'a>(
             Err(RecvTimeoutError::Timeout) => {}
         }
         let (tx, rx) = mpsc::channel();
-        if !bridge_send(UiReq::Snapshot(tx)) {
+        if !bridge_send(UiReq::Snapshot(mcp::SnapshotFor::Push, tx)) {
             return None;
         }
         if let Ok(snap) = rx.recv_timeout(SNAPSHOT_BUDGET) {
@@ -609,6 +643,8 @@ mod tests {
                 team: false,
             },
             panes: vec![mcp::PaneInfo {
+                project: None,
+                state: None,
                 tab: 0,
                 title: "work".into(),
                 mode: "CLAUDE".into(),
