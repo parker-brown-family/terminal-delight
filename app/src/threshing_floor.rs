@@ -934,6 +934,10 @@ pub enum Refusal {
     PromptBusy,
     /// `prompt_status` named no prompt this pane sent.
     NoSuchPrompt,
+    /// `prompt_status` named a prompt older than this window: it may well
+    /// have been sent and be running, but its record stayed with the window
+    /// that sent it (issue #1214).
+    PromptBeforeThisWindow,
     /// Keyed prompt receipts cannot be read or durably written. Repeating a
     /// key while its earlier use is unknown could create duplicate work.
     PromptKeyStoreUnavailable,
@@ -962,8 +966,21 @@ impl Refusal {
             Self::BadBrief => "the prompt is empty or longer than 32,000 characters",
             Self::PromptBusy => "your earlier prompt to that pane has not finished; read it with prompt_status first",
             Self::NoSuchPrompt => "no prompt by that id was sent from your pane",
+            Self::PromptBeforeThisWindow => "that prompt is older than this window: it may have been sent and still be running, but its record stayed with the window that sent it (a window swap keeps only keyed prompts' receipts). Its outcome is unknown here; read the worker with pane_events",
             Self::PromptKeyStoreUnavailable => "the prompt key record is unavailable; this request sent no work. Repair the record or storage, then restart Terminal Delight before retrying that key",
         }
+    }
+}
+
+/// What `prompt_status` says about an id this window holds no record of.
+/// Prompt ids are minted no lower than the clock in milliseconds, so an id
+/// below the moment this window started was sent by an earlier window: unknown
+/// here, which is not the same fact as never sent (issue #1214).
+pub fn unrecorded_prompt(id: AskId, window_started_ms: u64) -> Refusal {
+    if id.0 < window_started_ms {
+        Refusal::PromptBeforeThisWindow
+    } else {
+        Refusal::NoSuchPrompt
     }
 }
 
@@ -1368,6 +1385,26 @@ impl AskBook {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #1214: an id older than the window is unknown here, not unsent,
+    /// and says so with its own code. Mutation: answering NoSuchPrompt for
+    /// every id fails the first assertion.
+    #[test]
+    fn a_prompt_older_than_the_window_is_unknown_not_unsent() {
+        let started = 1_794_990_000_000;
+        assert_eq!(
+            unrecorded_prompt(AskId(started - 60_000), started),
+            Refusal::PromptBeforeThisWindow
+        );
+        assert_eq!(
+            unrecorded_prompt(AskId(started + 5), started),
+            Refusal::NoSuchPrompt
+        );
+        assert_eq!(
+            serde_json::to_value(Refusal::PromptBeforeThisWindow).unwrap(),
+            serde_json::json!("prompt_before_this_window")
+        );
+    }
 
     #[test]
     fn direction_cycle_keeps_grants_and_round_trips() {

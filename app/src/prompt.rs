@@ -1096,6 +1096,15 @@ pub fn key_of(raw: Option<&str>) -> Result<Option<String>, &'static str> {
     }
 }
 
+static WINDOW_STARTED_MS: std::sync::OnceLock<u64> = std::sync::OnceLock::new();
+
+/// When this window process started its prompt book, in [`now_ms`]'s clock.
+/// Set once, when the first workspace is built; read by `prompt_status` to
+/// tell an earlier window's prompt from one never sent.
+pub fn window_started_ms() -> u64 {
+    *WINDOW_STARTED_MS.get_or_init(now_ms)
+}
+
 /// Milliseconds since the epoch, the clock every stage is stamped in.
 pub fn now_ms() -> u64 {
     std::time::SystemTime::now()

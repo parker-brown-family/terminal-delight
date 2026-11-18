@@ -6261,7 +6261,10 @@ impl Workspace {
                 // Not one of this window's own: it may have gone to an agent
                 // on another machine, which a different book holds.
                 None => self.far_prompt_status(prompt_id.0, *caller_pane).unwrap_or(
-                    mcp::AskReply::Refused(threshing_floor::Refusal::NoSuchPrompt),
+                    mcp::AskReply::Refused(threshing_floor::unrecorded_prompt(
+                        *prompt_id,
+                        crate::prompt::window_started_ms(),
+                    )),
                 ),
             },
             mcp::AskCall::Far(call) => self.far_bridge(call, cx),

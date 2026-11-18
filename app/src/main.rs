@@ -6953,6 +6953,9 @@ impl Workspace {
             }
         };
         let ask_seq = prompts.latest_receipt_id();
+        // Stamp the window's start before any prompt can be minted, so an id
+        // an earlier window minted reads as older than this one.
+        prompt::window_started_ms();
         let mut ws = Self {
             drag: None,
             tabs: vec![],
