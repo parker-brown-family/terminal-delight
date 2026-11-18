@@ -82,9 +82,10 @@ pub struct PointerReq {
     pub control: bool,
 }
 
-/// A queued control request, applied on the UI thread by the ticker.
+/// A queued control request, applied on the UI thread by the bridge.
 #[derive(Debug)]
 pub(crate) enum Req {
+    ReadMirrors(mpsc::Sender<()>),
     Set(bool),
     Toggle,
     Adopt(AdoptReq),
@@ -132,8 +133,8 @@ pub(crate) enum Req {
     DocNote(crate::docview::NotesCommand, mpsc::Sender<String>),
 }
 
-/// Wait for the window to say what a bench verb actually did. The ticker
-/// drains the queue every 150ms, so two seconds is many chances; past that
+/// Wait for the window to say what a bench verb actually did. The bridge
+/// wakes when a request arrives. After two seconds,
 /// the window is not answering and the socket should say so rather than `ok`.
 fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
     rx.recv_timeout(Duration::from_secs(2))
@@ -464,7 +465,7 @@ pub(crate) enum BenchFace {
     Toggle,
 }
 
-// The `mcp status` mirror, refreshed by the ticker each pass (same pattern as
+// The `mcp status` mirror, refreshed when requested (same pattern as
 // the paint mirror): a policy read never touches the main thread.
 const MCP_ON: u8 = 1 << 0;
 const MCP_WRITES: u8 = 1 << 1;
@@ -812,12 +813,39 @@ impl SkinMirror {
     }
 }
 
+trait ControlQueue {
+    fn send(&self, req: Req) -> Result<(), ()>;
+    fn refresh_mirrors(&self) -> bool;
+}
+
+impl ControlQueue for futures::channel::mpsc::UnboundedSender<Req> {
+    fn send(&self, req: Req) -> Result<(), ()> {
+        self.unbounded_send(req).map_err(|_| ())
+    }
+
+    fn refresh_mirrors(&self) -> bool {
+        let (tx, rx) = mpsc::channel();
+        self.send(Req::ReadMirrors(tx)).is_ok() && rx.recv_timeout(Duration::from_secs(2)).is_ok()
+    }
+}
+
+#[cfg(test)]
+impl ControlQueue for mpsc::Sender<Req> {
+    fn send(&self, req: Req) -> Result<(), ()> {
+        mpsc::Sender::send(self, req).map_err(|_| ())
+    }
+    // Socket protocol fixtures own their mirrors, with no gpui thread.
+    fn refresh_mirrors(&self) -> bool {
+        true
+    }
+}
+
 fn handle_conn(
     stream: UnixStream,
     mirror: &AtomicBool,
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
-    tx: &mpsc::Sender<Req>,
+    tx: &impl ControlQueue,
     policy_control: PolicyControl,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
@@ -842,6 +870,14 @@ fn handle_conn(
                 return;
             }
         }
+    }
+    if matches!(
+        &parsed,
+        Ok(Cmd::PaintStatus | Cmd::McpStatus | Cmd::SkinStatus | Cmd::Skin(_))
+    ) && !tx.refresh_mirrors()
+    {
+        let _ = writeln!(&stream, "err ui unavailable");
+        return;
     }
     let reply = match parsed {
         // `mcp rpc` is the one verb that waits on the gpui main thread (up to
@@ -954,7 +990,7 @@ fn handle_conn(
                 )
             }
         }
-        // Refused before the queue: the ticker applies whatever reaches it, so
+        // Refused before the queue: the bridge applies whatever reaches it, so
         // this is where an unauthorized policy mutation must be stopped.
         Ok(Cmd::McpPolicy(p)) if policy_control == PolicyControl::Refused => p.refusal(),
         Ok(Cmd::McpPolicy(p)) => {
@@ -1117,7 +1153,8 @@ pub fn start(cx: &mut Context<Workspace>) {
         }
     };
 
-    let (tx, rx) = mpsc::channel::<Req>();
+    use futures::StreamExt;
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<Req>();
     let mirror = Arc::new(AtomicBool::new(false));
     let mcp_mirror = Arc::new(AtomicU8::new(0));
     // Not an atomic: the skin mirror is a name plus a list, and it is read once
@@ -1145,26 +1182,30 @@ pub fn start(cx: &mut Context<Workspace>) {
         });
     }
 
-    // Ticker: applies queued commands on the main thread and re-mirrors the
-    // live paint flag every pass — Esc flips the global without going through
-    // this queue, and `paint status` must not report around that.
-    cx.spawn(async move |this, cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(150))
-            .await;
-        let mut cmds = Vec::new();
-        while let Ok(c) = rx.try_recv() {
-            cmds.push(c);
-        }
-        let applied = this.update(cx, |ws, cx| {
-            for c in cmds {
+    cx.spawn(async move |this, cx| {
+        while let Some(c) = rx.next().await {
+            let applied = this.update(cx, |ws, cx| {
                 match c {
+                    Req::ReadMirrors(reply) => {
+                        mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
+                        mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
+                        if let Ok(mut m) = skin_mirror.lock() {
+                            *m = SkinMirror {
+                                active: crate::skin::active_id(cx),
+                                known: crate::skin::all_skins(cx)
+                                    .into_iter()
+                                    .map(|(id, _, _)| id)
+                                    .collect(),
+                            };
+                        }
+                        let _ = reply.send(());
+                    }
                     Req::Set(v) => theme::set_paint_mode(cx, v),
                     Req::Toggle => {
                         let v = !theme::paint_mode(cx);
                         theme::set_paint_mode(cx, v);
                     }
-                    // Adoption needs a Window to build the pane; this ticker is
+                    // Adoption needs a Window to build the pane; this bridge is
                     // window-less, so park it — render() drains next frame.
                     Req::Adopt(a) => ws.queue_adopt(a, cx),
                     // Tab edits need no Window — the strip is workspace state.
@@ -1194,7 +1235,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocHere(path, reply) => {
                         let _ = reply.send(ws.doc_here(&path, cx));
                     }
-                    // The split needs a Window, which this ticker has none
+                    // The split needs a Window, which this bridge has none
                     // of: the pane is asked, as a click asks it, and the
                     // workspace answers from the subscription that has one.
                     Req::DocBeside(path, reply) => ws.doc_beside(&path, reply, cx),
@@ -1242,21 +1283,10 @@ pub fn start(cx: &mut Context<Workspace>) {
                         cx.notify();
                     }
                 }
+            });
+            if applied.is_err() {
+                return; // UI gone
             }
-            mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
-            mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
-            if let Ok(mut m) = skin_mirror.lock() {
-                *m = SkinMirror {
-                    active: crate::skin::active_id(cx),
-                    known: crate::skin::all_skins(cx)
-                        .into_iter()
-                        .map(|(id, _, _)| id)
-                        .collect(),
-                };
-            }
-        });
-        if applied.is_err() {
-            return; // UI gone — the listener thread dies with the process
         }
     })
     .detach();
@@ -1784,17 +1814,12 @@ pub(crate) fn ppid_of(pid: u32) -> Option<u32> {
 /// parent chain on this box is a dozen deep at most and `/proc` can lie about
 /// a pid that was recycled mid-walk.
 pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
-    let mut at = pid;
-    for _ in 0..24 {
-        if at == ancestor {
-            return true;
-        }
-        match ppid_of(at) {
-            Some(p) if p > 1 && p != at => at = p,
-            _ => return false,
-        }
-    }
-    false
+    peer_ancestry(Some(pid)).any(|p| p == ancestor)
+}
+
+/// One bounded walk is enough to authenticate a peer against every pane.
+pub(crate) fn peer_ancestry(pid: Option<u32>) -> impl Iterator<Item = u32> {
+    std::iter::successors(pid, |at| ppid_of(*at).filter(|p| *p > 1 && p != at)).take(24)
 }
 
 /// The control-socket twin of the Threshing Floor's chart — fail-closed.
@@ -1876,12 +1901,11 @@ fn person_acting_refusal(cmd: &Cmd) -> String {
 /// the current pane shell. Unknown identity never becomes a guessed pane.
 pub(crate) fn verify_caller(
     mut caller: Caller,
-    peer: Option<u32>,
+    ancestry: &[u32],
     shell_for: impl Fn(u64) -> Option<u32>,
 ) -> Caller {
     caller.pane = caller.pane.filter(|pane| {
-        peer.zip(shell_for(*pane))
-            .is_some_and(|(pid, shell)| shell > 1 && descends_from(pid, shell))
+        shell_for(*pane).is_some_and(|shell| shell > 1 && ancestry.contains(&shell))
     });
     caller
 }
@@ -2447,17 +2471,32 @@ mod tests {
             pane: Some(9),
         };
         assert_eq!(
-            verify_caller(claim(), peer, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                std::process::id()
+            ))
+            .pane,
             Some(9)
         );
         assert_eq!(
-            verify_caller(claim(), peer, |_| ppid_of(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| {
+                ppid_of(std::process::id())
+            })
+            .pane,
             Some(9)
         );
-        assert_eq!(verify_caller(claim(), peer, |_| Some(u32::MAX)).pane, None);
-        assert_eq!(verify_caller(claim(), peer, |_| None).pane, None);
         assert_eq!(
-            verify_caller(claim(), None, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                u32::MAX
+            ))
+            .pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| None).pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &[], |_| Some(std::process::id())).pane,
             None
         );
     }
@@ -3055,7 +3094,7 @@ mod tests {
             }
             other => panic!("expected the adopt on the queue, got {other:?}"),
         }
-        mirror.store(true, Ordering::Relaxed); // the UI ticker's job
+        mirror.store(true, Ordering::Relaxed); // the UI bridge's job
         assert_eq!(send(&sock, "paint status").unwrap(), "on");
         server.join().unwrap();
     }

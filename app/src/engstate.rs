@@ -1269,6 +1269,19 @@ pub fn scan(input: &ScanInput) -> ProjectState {
 // ---- derivations -----------------------------------------------------------
 
 impl ProjectState {
+    /// The engineering rows the workspace paints. Scan time and duration
+    /// describe this observation and are still recorded on every pass.
+    pub(crate) fn same_facts(&self, other: &Self) -> bool {
+        self.project == other.project
+            && self.name == other.name
+            && self.repos == other.repos
+            && self.checkouts == other.checkouts
+            && self.idle == other.idle
+            && self.no_git == other.no_git
+            && self.foreign == other.foreign
+            && self.visitors == other.visitors
+    }
+
     pub fn primary(&self) -> Option<&RepoFacts> {
         self.repos.first()
     }

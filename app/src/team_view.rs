@@ -85,8 +85,8 @@ fn said(text: String, data: serde_json::Value) -> mcp::AskReply {
     mcp::AskReply::Said(mcp::tool_ok(text, data))
 }
 
-fn refused(why: &str) -> mcp::AskReply {
-    mcp::AskReply::Said(mcp::tool_err(why))
+fn refused(code: &str, why: &str) -> mcp::AskReply {
+    mcp::AskReply::Said(mcp::tool_err(code, why))
 }
 
 impl Workspace {
@@ -134,7 +134,10 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> mcp::AskReply {
         let Some(coordinator) = self.leaf_by_pane_id(caller_pane, cx) else {
-            return refused("the pane you are calling from is not in this window.");
+            return refused(
+                "caller_unverified",
+                "the pane you are calling from is not in this window.",
+            );
         };
         // Seats whose panes have closed stop counting before the count is read.
         let worn = self.team_worn_seats(cx);
@@ -157,17 +160,21 @@ impl Workspace {
                 "terminal-delight: start_team refused for pane {caller_pane}: {}",
                 why.split('.').next().unwrap_or(&why)
             );
-            return refused(&why);
+            return refused("team_policy_refused", &why);
         }
         if !spec.project.is_dir() {
-            return refused(&format!(
-                "`project` {} is not a folder on this machine.",
-                spec.project.display()
-            ));
+            return refused(
+                "invalid_project",
+                &format!(
+                    "`project` {} is not a folder on this machine.",
+                    spec.project.display()
+                ),
+            );
         }
         // Each member's launch line, made the way the launcher makes one.
         let Some(dir) = surfacefeed::session_dir() else {
             return refused(
+                "session_unavailable",
                 "Terminal Delight could not find its session folder to write a briefing in.",
             );
         };
@@ -193,7 +200,12 @@ impl Workspace {
             })();
             match line {
                 Ok(line) => lines.push(line),
-                Err(why) => return refused(&format!("{} cannot be started: {why}", m.role)),
+                Err(why) => {
+                    return refused(
+                        "launch_unavailable",
+                        &format!("{} cannot be started: {why}", m.role),
+                    )
+                }
             }
         }
         self.ask_seq = (self.ask_seq + 1).max(crate::prompt::now_ms());
@@ -411,25 +423,6 @@ impl Workspace {
         self.save(cx);
         cx.notify();
     }
-
-    /// Run [`Self::team_drain`] on a short clock. The clock only looks; with
-    /// no team waiting a pass reads one empty list.
-    pub(crate) fn watch_teams(window: &Window, cx: &mut Context<Self>) {
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(400))
-                .await;
-            if this
-                .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.team_drain(window, cx)
-                })
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
-    }
 }
 
 #[cfg(test)]
@@ -601,7 +594,7 @@ mod tests {
             cx.update(|w, _| lead_focus.is_focused(w)),
             "a team starting behind the person leaves their keyboard where it was"
         );
-        ws.update(cx, |ws, cx| {
+        ws.update(cx, |ws, _cx| {
             assert_eq!(
                 ws.tabs.len(),
                 tabs_before + 1,

@@ -53,6 +53,8 @@ bitflags = "2"
 # comrak's own CLI and highlighter, and the renderer uses none of them.
 comrak = { version = "0.52", default-features = false }
 futures = "0.3"
+async-io = "2"
+rustix = { version = "1", features = ["fs"] }
 # What TD's read loop (src/vt/pump.rs) waits on: a terminal's descriptor, its
 # child's pidfd, and the wake a keystroke sends.
 polling = "3.8"
