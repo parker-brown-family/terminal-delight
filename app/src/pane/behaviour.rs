@@ -5667,14 +5667,18 @@ fn read_card_phrase(pane: &mut Pane, phrase: &str) {
             else {
                 return false;
             };
-            phrase.char_indices().all(|(i, _)| {
-                layout.position_for_index(start + i).is_some_and(|at| {
-                    at.x >= b.left()
-                        && at.x < b.right()
-                        && at.y >= b.top()
-                        && at.y + layout.line_height() <= b.bottom() + px(1.)
+            phrase
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(phrase.len()))
+                .all(|i| {
+                    layout.position_for_index(start + i).is_some_and(|at| {
+                        at.x >= b.left()
+                            && at.x <= b.right() + px(1.)
+                            && at.y >= b.top()
+                            && at.y + layout.line_height() <= b.bottom() + px(1.)
+                    })
                 })
-            })
         })
     };
     while !pane.read(visible) {
@@ -5742,6 +5746,8 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
                 );
             }
         });
+        let model = &doc["model"];
+        read_card_phrase(&mut pane, model["question"].as_str().unwrap());
         assert!(
             pane.read(|v| v.wb_zones.borrow().iter().any(|zone| zone.w > 0.
                 && zone.h > 0.
@@ -5753,15 +5759,13 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
                     }
                 )))
         );
-        for phrase in [
-            "Does the artifact rail belong",
-            "Scoped to one conversation",
-            "Twenty panes means twenty rails",
-            "One place to look",
-            "mixes twenty conversations",
-            "The attention spine keeps",
-        ] {
-            read_card_phrase(&mut pane, phrase);
+        for option in model["options"].as_array().unwrap() {
+            for key in ["case", "cost"] {
+                read_card_phrase(&mut pane, option[key].as_str().unwrap());
+            }
+        }
+        for consequence in model["consequences"].as_array().unwrap() {
+            read_card_phrase(&mut pane, consequence.as_str().unwrap());
         }
     }
 }
@@ -6041,5 +6045,41 @@ fn workbench_draft_survives_other_cards_and_scripted_speech(cx: &mut TestAppCont
     assert_eq!(
         pane.read(|v| v.wb_compose.as_ref().unwrap().text().to_string()),
         draft
+    );
+}
+
+#[gpui::test]
+fn menu_clarity_pane_shows_the_clipboard_shortcuts_when_they_apply(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let open = |pane: &mut Pane| {
+        pane.view.update(pane.cx, |v, cx| {
+            v.ctx_menu = Some(point(px(140.), px(100.)));
+            cx.notify();
+        });
+        pane.redraw();
+    };
+    open(&mut pane);
+    let hint = |pane: &mut Pane, chord: &'static str| pane.cx.debug_bounds(chord);
+    assert!(hint(&mut pane, "ctx-hint-Ctrl+Shift+C").is_none());
+    let paste = hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap();
+    let clear = hint(&mut pane, "ctx-hint-Ctrl+Shift+K").unwrap();
+    assert!(paste.size.width > px(0.) && paste.bottom() <= clear.top());
+    pane.view.update(pane.cx, |v, cx| {
+        v.ctx_menu = None;
+        cx.notify();
+    });
+    pane.redraw();
+    type_line(&mut pane, "echo hello world foo");
+    let a = pane.point_at("world");
+    let b = pane.point_at("ld");
+    pane.press(a);
+    pane.drag_to(b);
+    pane.release(b);
+    assert!(pane.read(|v| v.has_selection()));
+    open(&mut pane);
+    let copy = hint(&mut pane, "ctx-hint-Ctrl+Shift+C").unwrap();
+    assert!(
+        copy.size.width > px(0.)
+            && copy.bottom() <= hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap().top()
     );
 }

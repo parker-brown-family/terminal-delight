@@ -11789,7 +11789,12 @@ impl Render for TerminalView {
                     .text_color(txt)
                     .hover(move |s| s.bg(acc.alpha(0.22)))
                     .child(label.to_string())
-                    .child(div().text_color(faint).child(keys))
+                    .child(
+                        div()
+                            .debug_selector(move || format!("ctx-hint-{keys}"))
+                            .text_color(faint)
+                            .child(keys),
+                    )
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
@@ -11940,18 +11945,20 @@ impl Render for TerminalView {
                 menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
             }
             menu = menu
-                .child(row(s.m_copy, has_sel).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|v, _, _, cx| {
-                        if !v.bench_copy(cx) {
-                            v.copy_selection(cx);
-                        }
-                        v.ctx_menu = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                ))
-                .child(row(s.m_paste, true).on_mouse_down(
+                .when(has_sel, |menu| {
+                    menu.child(link_row(s.m_copy, "Ctrl+Shift+C").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _, _, cx| {
+                            if !v.bench_copy(cx) {
+                                v.copy_selection(cx);
+                            }
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .child(link_row(s.m_paste, "Ctrl+Shift+V").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paste_clipboard(cx);
@@ -11960,7 +11967,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row(s.m_clear, true).on_mouse_down(
+                .child(link_row(s.m_clear, "Ctrl+Shift+K").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.clear_scrollback(cx);
@@ -11999,12 +12006,12 @@ impl Render for TerminalView {
                     ]
                     .into_iter()
                     .map(|(access, label, id)| {
-                        let mark = if self.agent_access == access {
-                            "\u{25cf}"
-                        } else {
-                            "\u{25cb}"
-                        };
-                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                        let face = menu_skin.choice_label(
+                            label,
+                            self.agent_access == access,
+                            parts.ctl_selected,
+                        );
+                        row(&face, true).id(id).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |v, _, _, cx| {
                                 v.ctx_menu = None;
