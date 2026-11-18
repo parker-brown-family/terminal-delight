@@ -286,6 +286,8 @@ pub(crate) fn snapshot_of(ws: &mut Workspace, cx: &mut Context<Workspace>) -> mc
         // serves every transport and knows nothing about who asked.
         caller: None,
         peer_in_pane: false,
+        peer_over_ssh: None,
+        far_door_local: far_door_local(),
         engineering: if ws.coordination_full_scope() {
             ws.eng_reports()
         } else {
@@ -319,6 +321,14 @@ fn here() -> mcp::Instance {
             .ok()
             .and_then(|p| p.file_name().map(|n| n.to_string_lossy().into_owned())),
     }
+}
+
+/// Whether this window was launched to take the far door from a local
+/// process (`TD_FAR_DOOR_LOCAL=1`, for the two-home rig). Read once: the
+/// environment a window starts with is the whole of the claim.
+fn far_door_local() -> bool {
+    static LOCAL: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
+    *LOCAL.get_or_init(|| std::env::var("TD_FAR_DOOR_LOCAL").as_deref() == Ok("1"))
 }
 
 /// Answer ONE JSON-RPC line against the bridge. `None` for a notification or an
@@ -360,6 +370,11 @@ pub(crate) fn respond_as(
                     .iter()
                     .any(|p| p.pid > 1 && crate::ctl::descends_from(pid, p.pid))
             });
+            // Asked only for the far door's methods: the walk reads /proc
+            // for every parent, and no other verb needs the answer.
+            if mcp::is_far_line(line) {
+                snap.peer_over_ssh = peer_pid.and_then(crate::ctl::arrived_over_ssh);
+            }
             snap.caller = caller.map(|c| {
                 let verified = crate::ctl::verify_caller(c, peer_pid, |pane| {
                     snap.panes
@@ -636,6 +651,8 @@ mod tests {
             }),
             caller: None,
             peer_in_pane: false,
+            peer_over_ssh: None,
+            far_door_local: false,
             engineering: vec![],
             coordination: None,
             engineering_allowed: false,
