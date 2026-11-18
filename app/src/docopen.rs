@@ -426,11 +426,24 @@ pub const DOC_ARROW_STEP: f32 = 48.0;
 /// Only unmodified keys (Shift aside, which `+` needs on most layouts) are the
 /// face's: a chord is somebody else's, and the window and the pane have
 /// already been asked for theirs before a key gets this far.
-pub fn doc_face_key(key: &str, alt: bool, control: bool, platform: bool) -> Option<DocKey> {
+pub fn doc_face_key(
+    key: &str,
+    alt: bool,
+    control: bool,
+    platform: bool,
+    shift: bool,
+) -> Option<DocKey> {
     if alt || control || platform {
         return None;
     }
     Some(match key {
+        // Space pages down and Shift+Space back up, as in a browser: the
+        // keyboard reader's way through a brief they have not read yet, which
+        // is why the sections list needs no key of its own (Parker,
+        // 2026-11-18, on issue 1508: "space skipping pages... shift space to
+        // go back a page, is fully sufficient for the keyboard-only idea").
+        "space" if shift => DocKey::Page(-1),
+        "space" => DocKey::Page(1),
         "0" => DocKey::Fit,
         "1" => DocKey::Actual,
         "+" | "=" => DocKey::ZoomIn,
@@ -1795,7 +1808,7 @@ mod tests {
     /// swallowed by the face, not acted on.
     #[test]
     fn the_document_face_keys_zoom_pan_and_page() {
-        let k = |key| doc_face_key(key, false, false, false);
+        let k = |key| doc_face_key(key, false, false, false, false);
         assert_eq!(k("0"), Some(DocKey::Fit));
         assert_eq!(k("1"), Some(DocKey::Actual));
         assert_eq!(k("+"), Some(DocKey::ZoomIn));
@@ -1808,12 +1821,27 @@ mod tests {
         assert_eq!(k("up"), Some(DocKey::Pan(0.0, DOC_ARROW_STEP)));
         assert_eq!(k("right"), Some(DocKey::Pan(-DOC_ARROW_STEP, 0.0)));
         assert_eq!(k("left"), Some(DocKey::Pan(DOC_ARROW_STEP, 0.0)));
-        for other in ["a", "2", "enter", "escape", "space", "tab"] {
+        // Mutation: dropping the space arms fails these two.
+        assert_eq!(k("space"), Some(DocKey::Page(1)));
+        assert_eq!(
+            doc_face_key("space", false, false, false, true),
+            Some(DocKey::Page(-1)),
+            "shift+space pages back"
+        );
+        for other in ["a", "2", "enter", "escape", "tab"] {
             assert_eq!(k(other), None, "{other}");
         }
-        assert_eq!(doc_face_key("0", false, true, false), None, "ctrl+0");
-        assert_eq!(doc_face_key("down", true, false, false), None, "alt+down");
-        assert_eq!(doc_face_key("1", false, false, true), None, "super+1");
+        assert_eq!(doc_face_key("0", false, true, false, false), None, "ctrl+0");
+        assert_eq!(
+            doc_face_key("down", true, false, false, false),
+            None,
+            "alt+down"
+        );
+        assert_eq!(
+            doc_face_key("1", false, false, true, false),
+            None,
+            "super+1"
+        );
     }
 
     fn origin() -> FloatRect {

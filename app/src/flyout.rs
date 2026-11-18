@@ -1497,6 +1497,45 @@ pub fn split_line_ref(s: &str) -> (&str, Option<u32>) {
 // ---------------------------------------------------------------------------
 
 /// The fields asked of `gh pr view --json`.
+/// What `gh issue view --json` is asked for when a number is an issue.
+pub const ISSUE_FIELDS: &str =
+    "number,title,state,author,url,body,createdAt,updatedAt,labels,comments";
+
+/// An issue as the pull request tab shows it: the same overview and
+/// conversation, with no branches, checks or files, and those fields absent
+/// (not zero) because an issue has none.
+pub fn parse_issue(json: &str) -> Result<Pull, String> {
+    let mut issue = parse_pull(json)?;
+    issue.is_issue = true;
+    Ok(issue)
+}
+
+/// Whether `gh pr view` failed because the number belongs to an issue.
+pub fn not_a_pull(error: &str) -> bool {
+    error.contains("Could not resolve to a PullRequest")
+}
+
+/// A GitHub pull request OR issue address, as `(owner, repo, number)`. The
+/// flyout opens both in its pull request tab, which falls back to the issue.
+pub fn item_of_url(url: &str) -> Option<(String, String, u64)> {
+    pull_of_url(url).or_else(|| {
+        let rest = url
+            .strip_prefix("https://")
+            .or_else(|| url.strip_prefix("http://"))?;
+        let rest = rest.strip_prefix("www.").unwrap_or(rest);
+        let rest = rest.strip_prefix("github.com/")?;
+        let rest = rest.split(['?', '#']).next().unwrap_or(rest);
+        let mut parts = rest.split('/');
+        let owner = parts.next().filter(|s| !s.is_empty())?;
+        let repo = parts.next().filter(|s| !s.is_empty())?;
+        if parts.next()? != "issues" {
+            return None;
+        }
+        let number = parts.next()?.parse::<u64>().ok().filter(|n| *n > 0)?;
+        Some((owner.to_string(), repo.to_string(), number))
+    })
+}
+
 pub const PULL_FIELDS: &str = "number,title,state,isDraft,author,url,baseRefName,headRefName,\
 additions,deletions,changedFiles,body,createdAt,updatedAt,reviewDecision,mergeable,labels,\
 reviewRequests,statusCheckRollup,comments,reviews,files,commits";
@@ -1572,6 +1611,10 @@ pub struct Pull {
     pub checks: Vec<Check>,
     pub remarks: Vec<Remark>,
     pub files: Vec<PullFile>,
+    /// GitHub answered with an issue, not a pull request. Issues and pull
+    /// requests share one numbering per repository, so the pull request tab
+    /// carries either; an issue has no files to show.
+    pub is_issue: bool,
 }
 
 fn s(v: &Value, k: &str) -> Option<String> {
@@ -1693,6 +1736,7 @@ pub fn parse_pull(json: &str) -> Result<Pull, String> {
         checks,
         remarks,
         files,
+        is_issue: false,
     })
 }
 
