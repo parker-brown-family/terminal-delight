@@ -432,7 +432,9 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
             th.text.alpha(0.05)
         })
         .hover(move |st| st.bg(th.text.alpha(0.12)))
-        .child(head)
+        .when(row.unseen || lane.is_some() || row.badge.is_some(), |d| {
+            d.child(head)
+        })
         .child(
             div()
                 .text_size(px(sk.pt(Step::Small)))
@@ -449,13 +451,18 @@ pub fn rail_row(row: &Row, sk: &Skin, th: &Theme) -> Div {
         // and larger, is what a scanning eye reads; repeating it fainter
         // below adds nothing and reads as the row having glitched.
         .when(
-            !row.subtitle.trim().is_empty() && !title_echoes_subtitle(&row.title, &row.subtitle),
+            (row.kind != "response" || on_cursor)
+                && !row.subtitle.trim().is_empty()
+                && !title_echoes_subtitle(&row.title, &row.subtitle),
             |d| {
                 d.child(
                     div()
                         .text_size(px(sk.pt(Step::Tag)))
                         .text_color(sk.ink.ink_faint)
-                        .child(sel(clip(&row.subtitle, 44))),
+                        .whitespace_nowrap()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .child(sel(clip(&row.subtitle, 90))),
                 )
             },
         )
@@ -874,6 +881,7 @@ pub fn weights(w: &Weight, sk: &Skin, th: &Theme) -> Div {
 pub fn body(
     surface: &Surface,
     how: Embodiment,
+    verbs: Option<Div>,
     picks: Option<&Picks>,
     sk: &Skin,
     th: &Theme,
@@ -919,19 +927,27 @@ pub fn body(
             None => frame,
         },
     };
-    match how {
-        Embodiment::Summary => frame.child(summary_line(surface, sk, th)),
-        Embodiment::Compact => frame
-            .child(heading(surface, sk, th))
-            .child(compact(surface, picks, sk, th)),
-        Embodiment::Full if unweighable => frame
-            .child(heading(surface, sk, th))
-            .child(full(surface, picks, sk, th)),
-        Embodiment::Full => frame
-            .child(heading(surface, sk, th))
-            .child(weights(&surface.weight, sk, th))
-            .child(full(surface, picks, sk, th)),
+    if how == Embodiment::Summary {
+        return frame.child(summary_line(surface, sk, th)).children(verbs);
     }
+    let frame = frame.child(heading(surface, sk, th));
+    let frame = match &surface.kind {
+        Kind::Decision(d) => frame.child(micro(d.question.clone(), Step::Lead, th.text, sk, th)),
+        _ => frame,
+    };
+    let frame = frame.when(
+        !matches!(surface.kind, Kind::Table(_) | Kind::Changeset(_)),
+        |d| d.max_w(px(850.)),
+    );
+    frame
+        .children(verbs)
+        .child(match how {
+            Embodiment::Compact => compact(surface, picks, sk, th),
+            _ => full(surface, picks, sk, th),
+        })
+        .when(how == Embodiment::Full && !unweighable, |frame| {
+            frame.child(weights(&surface.weight, sk, th))
+        })
 }
 
 fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
@@ -960,6 +976,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
     div()
         .flex()
         .flex_col()
+        .pr(px(if sk.text_controls() { 58. } else { 25. }))
         .gap(px(3.))
         .child(
             div()
@@ -994,7 +1011,14 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // opacity. A response's subtitle is its gist, which the body draws
         // large directly underneath.
         .when(
-            !matches!(surface.kind, Kind::Question(_) | Kind::Response(_)),
+            !matches!(
+                surface.kind,
+                Kind::Question(_)
+                    | Kind::Response(_)
+                    | Kind::Decision(_)
+                    | Kind::Artifact(_)
+                    | Kind::Unclassified(_)
+            ),
             |d| {
                 d.child(micro(
                     surface.subtitle(),
@@ -1019,7 +1043,7 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
             if surface.origin.is_unattributed() {
                 crate::emphasis::meta(th)
             } else {
-                crate::emphasis::meta(th).alpha(0.42)
+                sk.ink.ink_faint
             },
             sk,
             th,
@@ -1028,85 +1052,17 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
 
 /// The shape of the thing, for a pane too small to hold the thing.
 fn compact(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
-    // A panel rather than bare rows: at this size the body and the rail sit
-    // close enough together that an unframed list reads as part of the rail.
-    let list = sk.panel().flex().flex_col().gap(px(3.));
-    match &surface.kind {
-        // DELEGATES to the renderer the floating square uses, so a card and a
-        // document draw one Markdown. It used to print the first six raw
-        // lines, `#` and `**` included.
-        Kind::Markdown(m) => list.child(markdown(m, CardSize::Compact, sk, th)),
-        Kind::Table(t) => list.children(
-            t.rows
-                .iter()
-                .take(5)
-                .map(|r| micro(join_cells(r, " · "), Step::Small, th.text, sk, th)),
-        ),
-        Kind::Architecture(a) => list.children(
-            a.nodes
-                .iter()
-                .take(8)
-                .map(|n| micro(format!("▪ {}", n.label), Step::Small, th.text, sk, th)),
-        ),
-        Kind::Changeset(c) => list.children(c.hunks.iter().take(8).map(|h| {
-            micro(
-                format!("{}  +{} −{}", clip(&h.file, 28), h.added, h.removed),
-                Step::Small,
-                verdict_ink(h.verdict, sk, th),
-                sk,
-                th,
-            )
-        })),
-        // The proposal keeps its verbs at this width. Keep the evidence a
-        // reader needs before approving or rejecting it, too.
-        Kind::Decision(d) => decision(d, sk, th),
-        // A question's options are the BUTTONS underneath, and listing
-        // them here printed every one of them twice — six labels as text
-        // directly above the same six as chips. Parker, on the second
-        // time this shipped: *"Again -- repeating ourselves ... just
-        // ummm... just the buttons"*.
-        //
-        // The full renderer was trimmed for exactly this and this one was
-        // missed, so it now DELEGATES: one renderer for a question at
-        // either size, and no second list of kinds to keep in step.
-        Kind::Question(q) => question(q, picks, sk, th),
-        Kind::Artifact(a) => {
-            list.child(micro(a.href.clone(), Step::Small, sk.ink.ink_faint, sk, th))
-        }
-        // DELEGATES, for the same reason the question does and then some.
-        //
-        // The compact form was a list of one-line section summaries: the right
-        // information and no way to act on it, because a summary carries no
-        // press target. That made the fold — the whole interaction this kind
-        // exists for — silently unavailable at a width a tiled pane reaches
-        // constantly. Measured on a half-monitor pane with the left bar
-        // showing: about 394 points of content against a 460 threshold, so the
-        // common case was the one with no affordance.
-        //
-        // A compact card may legitimately show LESS. It may not show a control
-        // that is missing, which is what the reader reads as a broken feature
-        // rather than as a small screen.
-        Kind::Response(r) => response(&surface.title, r, picks, sk, th),
-        // DELEGATES, and belongs on the list the delegation test walks: a
-        // comment is short by nature, so there is nothing a narrow pane could
-        // usefully show LESS of. A second renderer here would exist only to
-        // drift from the first one.
-        Kind::Comment(_) => comment(surface, sk, th),
-        Kind::Unclassified(u) => list.child(micro(
-            u.reason.clone(),
-            Step::Small,
-            sk.ink.ink_faint,
-            sk,
-            th,
-        )),
+    if let Kind::Table(t) = &surface.kind {
+        return compact_table(t, sk, th);
     }
+    full(surface, picks, sk, th)
 }
 
 /// The whole thing.
 fn full(surface: &Surface, picks: Option<&Picks>, sk: &Skin, th: &Theme) -> Div {
     match &surface.kind {
         Kind::Artifact(a) => artifact(a, sk, th),
-        Kind::Markdown(m) => markdown(m, CardSize::Full, sk, th),
+        Kind::Markdown(m) => markdown(m, sk, th),
         Kind::Table(t) => table(t, sk, th),
         Kind::Architecture(a) => architecture(a, sk, th),
         Kind::Changeset(c) => changeset(c, sk, th),
@@ -2049,6 +2005,43 @@ fn column_shares(t: &crate::surface::Table) -> Vec<f32> {
     demand.iter().map(|d| d / total).collect()
 }
 
+fn table_value(value: Option<&str>) -> &str {
+    value.unwrap_or(words().benchdraw_unavailable)
+}
+
+/// Each record carries its own column names when there is no room for a grid.
+fn compact_table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
+    let mut records = div().flex().flex_col().gap(px(8.));
+    if t.rows.is_empty() {
+        return table(t, sk, th);
+    }
+    for row in &t.rows {
+        let fields = t.columns.iter().enumerate().map(|(i, column)| {
+            let value = row.get(i).and_then(Option::as_deref);
+            div()
+                .flex()
+                .flex_row()
+                .gap(px(8.))
+                .child(div().w(gpui::relative(0.35)).min_w_0().child(micro(
+                    column.clone(),
+                    Step::Fine,
+                    sk.ink.ink_faint,
+                    sk,
+                    th,
+                )))
+                .child(div().flex_1().min_w_0().child(micro(
+                    table_value(value).to_owned(),
+                    Step::Small,
+                    th.text,
+                    sk,
+                    th,
+                )))
+        });
+        records = records.child(sk.panel().flex().flex_col().gap(px(3.)).children(fields));
+    }
+    records
+}
+
 fn table(t: &crate::surface::Table, sk: &Skin, th: &Theme) -> Div {
     let shares = column_shares(t);
     // `min_w_0` on every cell and nothing anywhere allowed to grow past its
@@ -2152,7 +2145,7 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                             d.child(micro(s, Step::Tag, th.accent, sk, th))
                         })
                 }));
-        if name.is_empty() {
+        let group = if name.is_empty() {
             inner
         } else {
             sk.panel()
@@ -2167,7 +2160,8 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
                     th,
                 ))
                 .child(inner)
-        }
+        };
+        group.flex_grow(1.).flex_basis(px(240.)).min_w_0()
     });
     let edges = a.edges.iter().map(|e| {
         micro(
@@ -2202,7 +2196,14 @@ fn architecture(a: &crate::surface::Architecture, sk: &Skin, th: &Theme) -> Div 
         .flex()
         .flex_col()
         .gap(px(8.))
-        .children(boxes)
+        .child(
+            div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(6.))
+                .children(boxes),
+        )
         .child(sk.rule_h())
         .children(edges)
         .children(dangling)
@@ -2249,10 +2250,9 @@ fn changeset(c: &crate::surface::Changeset, sk: &Skin, th: &Theme) -> Div {
         }))
 }
 
-/// A patch, coloured the way a diff is coloured everywhere else, and clipped
-/// so one enormous hunk cannot own the pane.
+/// Keep the entire patch available in the scrollable card.
 fn patch(text: &str, sk: &Skin, th: &Theme) -> Div {
-    let lines = text.lines().take(24);
+    let lines = text.lines();
     div().flex().flex_col().children(lines.map(|line| {
         let colour = if line.starts_with("+++") || line.starts_with("---") {
             sk.ink.ink_faint
@@ -2278,56 +2278,67 @@ fn decision(d: &crate::surface::Decision, sk: &Skin, th: &Theme) -> Div {
         .gap(px(8.))
         .child(
             div()
-                .text_size(px(sk.pt(Step::Lead)))
-                .text_color(th.text)
-                .child(sel(d.question.clone())),
-        )
-        .children(d.options.iter().map(|o| {
-            // Exactly one option is lit, and the parser has already made sure of
-            // it. A reader scanning three equal cards has to read all three
-            // before he can start weighing.
-            let panel = sk.panel().flex().flex_col().gap(px(3.));
-            let panel = if o.recommended {
-                panel.border_l(px(3.)).border_color(th.accent)
-            } else {
-                panel
-            };
-            panel
-                .child(
-                    div()
+                .flex()
+                .flex_row()
+                .flex_wrap()
+                .gap(px(8.))
+                .children(d.options.iter().map(|o| {
+                    // Exactly one option is lit, and the parser has already made sure of
+                    // it. A reader scanning three equal cards has to read all three
+                    // before he can start weighing.
+                    let panel = sk
+                        .panel()
+                        .flex_grow(1.)
+                        .flex_basis(px(290.))
+                        .min_w_0()
                         .flex()
-                        .flex_row()
-                        .gap(px(7.))
-                        .items_baseline()
+                        .flex_col()
+                        .gap(px(3.));
+                    let panel = if o.recommended {
+                        panel.border_l(px(3.)).border_color(th.accent)
+                    } else {
+                        panel
+                    };
+                    panel
                         .child(
                             div()
-                                .text_size(px(sk.pt(Step::Body)))
-                                .text_color(th.text)
-                                .child(sel(o.name.clone())),
+                                .flex()
+                                .flex_row()
+                                .gap(px(7.))
+                                .items_baseline()
+                                .child(
+                                    div()
+                                        .text_size(px(sk.pt(Step::Body)))
+                                        .text_color(th.text)
+                                        .child(sel(o.name.clone())),
+                                )
+                                .when(o.recommended, |x| {
+                                    x.child(micro(
+                                        words().benchdraw_decision_recommended,
+                                        Step::Tag,
+                                        th.accent,
+                                        sk,
+                                        th,
+                                    ))
+                                }),
                         )
-                        .when(o.recommended, |x| {
+                        .when_some(o.case.clone(), |x, case| {
+                            x.child(micro(case, Step::Small, th.text.alpha(0.8), sk, th))
+                        })
+                        .when_some(o.cost.clone(), |x, cost| {
                             x.child(micro(
-                                words().benchdraw_decision_recommended,
-                                Step::Tag,
-                                th.accent,
+                                crate::lang::fill(
+                                    words().benchdraw_decision_cost,
+                                    &[("cost", &cost)],
+                                ),
+                                Step::Small,
+                                sk.ink.ink_faint,
                                 sk,
                                 th,
                             ))
-                        }),
-                )
-                .when_some(o.case.clone(), |x, case| {
-                    x.child(micro(case, Step::Small, th.text.alpha(0.8), sk, th))
-                })
-                .when_some(o.cost.clone(), |x, cost| {
-                    x.child(micro(
-                        crate::lang::fill(words().benchdraw_decision_cost, &[("cost", &cost)]),
-                        Step::Small,
-                        sk.ink.ink_faint,
-                        sk,
-                        th,
-                    ))
-                })
-        }))
+                        })
+                })),
+        )
         .when(!d.consequences.is_empty(), |x| {
             x.child(sk.rule_h()).child(
                 div()
@@ -2423,7 +2434,7 @@ fn unclassified(u: &crate::surface::Unclassified, sk: &Skin, th: &Theme) -> Div 
             sk,
             th,
         ))
-        .child(paragraph(first_lines(&u.raw, 20), sk, th))
+        .child(paragraph(u.raw.clone(), sk, th))
 }
 
 /// One fact per row, and each row its OWN surface.
@@ -2485,41 +2496,11 @@ fn field_grid(fields: Vec<(&str, Option<String>)>, sk: &Skin, th: &Theme) -> Div
         }))
 }
 
-/// Which of a card's two sizes a renderer that serves both is drawing.
-#[derive(Clone, Copy, PartialEq, Eq, Debug)]
-enum CardSize {
-    Compact,
-    Full,
-}
-
-/// How many source lines a compact Markdown card opens with.
-const COMPACT_MARKDOWN_LINES: usize = 6;
-
-/// A Markdown surface, at either size, drawn by the renderer the floating
-/// square draws Markdown files with (`docview::markdown`), in the bench's
-/// palette and through the pane's gauge.
-///
-/// Compact is the blocks whose source starts in the first six lines, then an
-/// ellipsis if more follow — the same cut the card made when it printed raw
-/// lines, now of rendered blocks, so a heading reads as a heading rather than
-/// as a line starting with `#`. Links are drawn in the accent without an
-/// underline, since a plain press on a card never follows one; Alt, Ctrl+Alt
-/// and Ctrl on a label do, as on the grid, because each run carries the
-/// target its label hides (`sel_linked`). Pictures are the box that names
-/// them: a card holds no decoded images.
-fn markdown(m: &crate::surface::Markdown, size: CardSize, sk: &Skin, th: &Theme) -> Div {
+/// Both widths share the document renderer and the enclosing card scroll.
+fn markdown(m: &crate::surface::Markdown, sk: &Skin, th: &Theme) -> Div {
     use crate::docview::markdown as md;
     let doc = md::parsed(&m.body);
-    let style = md::MdStyle::bench(sk, th);
-    match size {
-        CardSize::Full => md::document(&doc, &style, None, None, None),
-        CardSize::Compact => {
-            let (count, more) = md::opening(&doc, COMPACT_MARKDOWN_LINES);
-            md::column(&doc, count, &style, None, None, None).when(more, |col| {
-                col.child(micro("…", Step::Small, sk.ink.ink_faint, sk, th))
-            })
-        }
-    }
+    md::document(&doc, &md::MdStyle::bench(sk, th), None, None, None)
 }
 
 fn paragraph(text: String, sk: &Skin, th: &Theme) -> Div {
@@ -4492,21 +4473,6 @@ fn clip(text: &str, max: usize) -> String {
     format!("{kept}…")
 }
 
-fn first_lines(text: &str, n: usize) -> String {
-    let mut out: Vec<&str> = text.lines().take(n).collect();
-    if text.lines().count() > n {
-        out.push("…");
-    }
-    out.join("\n")
-}
-
-fn join_cells(row: &[Option<String>], sep: &str) -> String {
-    row.iter()
-        .map(|c| c.clone().unwrap_or_else(|| "—".into()))
-        .collect::<Vec<_>>()
-        .join(sep)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5183,18 +5149,15 @@ mod tests {
             .1
             .split_once("fn full(")
             .expect("a full renderer");
-        let full_body = rest;
-        for (which, body) in [("compact", compact_body), ("full", full_body)] {
-            let arm = body
-                .split_once(kind)
-                .unwrap_or_else(|| panic!("{which} has no arm for {kind}"))
-                .1;
-            let arm = arm.split_once('\n').map(|(a, _)| a).unwrap_or(arm);
-            assert!(
-                arm.contains(renderer),
-                "{which}'s {kind} arm does not delegate to {renderer}: {arm}"
-            );
-        }
+        assert!(compact_body.contains("full(surface, picks, sk, th)"));
+        let arm = rest
+            .split_once(kind)
+            .expect("kind in the shared renderer")
+            .1;
+        assert!(arm
+            .lines()
+            .next()
+            .is_some_and(|line| line.contains(renderer)));
     }
 
     /// A Markdown card and a Markdown document are drawn by one renderer at
@@ -5216,32 +5179,18 @@ mod tests {
             .expect("benchdraw has a markdown renderer");
         let body = body.split("\n}\n").next().unwrap_or(body);
         assert!(
-            body.contains("md::document(") && body.contains("md::column("),
+            body.contains("md::document("),
             "both sizes go through docview::markdown: {body}"
         );
     }
 
-    /// The compact card cuts at six source lines, and what it shows is
-    /// rendered: a heading's words, never the `#` or `**` around them.
+    /// Markdown headings and emphasis arrive as rendered words.
     #[test]
     fn a_compact_markdown_card_shows_no_markdown_syntax() {
         use crate::docview::markdown as md;
         let doc = md::parsed("# Title\n**bold**");
-        let (count, more) = md::opening(&doc, COMPACT_MARKDOWN_LINES);
-        assert_eq!((count, more), (2, false));
         assert_eq!(md::block_plain(&doc.blocks[0]), "Title");
         assert_eq!(md::block_plain(&doc.blocks[1]), "bold");
-        for b in &doc.blocks[..count] {
-            let shown = md::block_plain(b);
-            assert!(!shown.contains('#') && !shown.contains("**"), "{shown}");
-        }
-        let long = "# Title\n\none\n\ntwo\n\nthree\n\nfour\n";
-        let (count, more) = md::opening(&md::parsed(long), COMPACT_MARKDOWN_LINES);
-        assert_eq!(
-            (count, more),
-            (3, true),
-            "blocks on lines 1, 3 and 5; more after"
-        );
     }
 
     /// A weight fixture with everything filled in, so each test can knock one
@@ -5809,21 +5758,8 @@ mod tests {
 
     #[test]
     fn a_missing_cell_and_an_empty_one_read_differently() {
-        assert_eq!(join_cells(&[None, Some("x".into())], "·"), "—·x");
-        assert_eq!(
-            join_cells(&[Some(String::new()), Some("x".into())], "·"),
-            "·x"
-        );
-    }
-
-    #[test]
-    fn first_lines_says_when_it_stopped() {
-        let text = (1..=10)
-            .map(|i| i.to_string())
-            .collect::<Vec<_>>()
-            .join("\n");
-        assert!(first_lines(&text, 3).ends_with('…'));
-        assert!(!first_lines("one\ntwo", 5).ends_with('…'));
+        assert_eq!(table_value(None), words().benchdraw_unavailable);
+        assert_eq!(table_value(Some("")), "");
     }
 
     #[test]
