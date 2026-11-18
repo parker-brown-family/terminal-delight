@@ -5667,14 +5667,18 @@ fn read_card_phrase(pane: &mut Pane, phrase: &str) {
             else {
                 return false;
             };
-            phrase.char_indices().all(|(i, _)| {
-                layout.position_for_index(start + i).is_some_and(|at| {
-                    at.x >= b.left()
-                        && at.x < b.right()
-                        && at.y >= b.top()
-                        && at.y + layout.line_height() <= b.bottom() + px(1.)
+            phrase
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(phrase.len()))
+                .all(|i| {
+                    layout.position_for_index(start + i).is_some_and(|at| {
+                        at.x >= b.left()
+                            && at.x <= b.right() + px(1.)
+                            && at.y >= b.top()
+                            && at.y + layout.line_height() <= b.bottom() + px(1.)
+                    })
                 })
-            })
         })
     };
     while !pane.read(visible) {
@@ -5742,6 +5746,8 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
                 );
             }
         });
+        let model = &doc["model"];
+        read_card_phrase(&mut pane, model["question"].as_str().unwrap());
         assert!(
             pane.read(|v| v.wb_zones.borrow().iter().any(|zone| zone.w > 0.
                 && zone.h > 0.
@@ -5753,15 +5759,13 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
                     }
                 )))
         );
-        for phrase in [
-            "Does the artifact rail belong",
-            "Scoped to one conversation",
-            "Twenty panes means twenty rails",
-            "One place to look",
-            "mixes twenty conversations",
-            "The attention spine keeps",
-        ] {
-            read_card_phrase(&mut pane, phrase);
+        for option in model["options"].as_array().unwrap() {
+            for key in ["case", "cost"] {
+                read_card_phrase(&mut pane, option[key].as_str().unwrap());
+            }
+        }
+        for consequence in model["consequences"].as_array().unwrap() {
+            read_card_phrase(&mut pane, consequence.as_str().unwrap());
         }
     }
 }
