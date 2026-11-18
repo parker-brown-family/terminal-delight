@@ -34909,19 +34909,7 @@ impl Render for Workspace {
                 // The id is the skin's file name and stays as it is; only the
                 // caption under the icon speaks the reader's language, and a
                 // skin somebody wrote themselves keeps the name they gave it.
-                let caption = match id.as_str() {
-                    "default" => t.ui.pal_skin_default,
-                    "deco" => t.ui.pal_skin_deco,
-                    "chalk" => t.ui.pal_skin_chalk,
-                    "ops" => t.ui.pal_skin_ops,
-                    "clean" => t.ui.pal_skin_clean,
-                    "blueprint" => t.ui.pal_skin_blueprint,
-                    "custom" if sk.text_controls() => t.parts.ctl_custom_file,
-                    "custom" => t.ui.pal_skin_custom,
-                    "baremetal" => "BAREMETAL",
-                    "terminimalist" => "TERMINIMALIST",
-                    other => other,
-                };
+                let caption = skin::picker_caption(&id, t, sk.text_controls());
                 skin_row = skin_row.child(
                     theme_icon_btn_wide(&th, &sk, &icon, caption, lit, skin::picker_cells(&id))
                         .id(SharedString::from(format!("skin-btn-{id}")))

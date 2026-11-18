@@ -508,6 +508,28 @@ impl Workspace {
         if key == "escape" {
             return self.settings_escape(cx);
         }
+        if matches!(key, "left" | "right")
+            && !(m.control || m.alt || m.platform || m.function || m.shift)
+            && self
+                .settings
+                .as_ref()
+                .is_some_and(|b| b.page == Page::Appearance && !b.searching())
+        {
+            let choices = skin::gallery_skins(cx);
+            if let Some(i) = choices
+                .iter()
+                .position(|(id, _)| *id == skin::active_id(cx))
+            {
+                let n = choices.len();
+                let next = if key == "right" {
+                    (i + 1) % n
+                } else {
+                    (i + n - 1) % n
+                };
+                self.settings_choose_skin(&choices[next].0, cx);
+            }
+            return true;
+        }
         let pages = self.settings_hit_pages();
         if key == "," && m.control {
             self.close_settings(cx);
@@ -759,6 +781,7 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::General, s.s_window, s.r_scale, s.r_scale_sub),
         (Page::General, s.s_window, s.r_updates, s.r_updates_sub),
         (Page::General, s.s_window, s.r_admin, s.r_admin_sub),
+        (Page::Appearance, ui.pal_hdr_skin, ui.pal_hdr_skin, ""),
         (Page::Appearance, s.s_look, s.r_palette, s.r_palette_sub),
         (Page::Appearance, s.s_look, s.r_gauges, s.r_gauges_sub),
         (Page::Appearance, s.s_agent_panes, s.r_tint, s.r_tint_sub),
@@ -1052,6 +1075,84 @@ impl Workspace {
             press: Some(press(cx)),
             id: Some(id),
         }
+    }
+
+    fn settings_choose_skin(&mut self, id: &str, cx: &mut Context<Self>) {
+        match skin::select(cx, id) {
+            Ok(_) => self.save(cx),
+            Err(e) => eprintln!("terminal-delight: {e}"),
+        }
+        cx.notify();
+    }
+
+    fn st_skin_gallery(
+        &self,
+        look: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = self.lang.strings();
+        if !row_shown(t.ui.pal_hdr_skin) {
+            return div().hidden();
+        }
+        let active = skin::active_id(cx);
+        let caption = skin::picker_caption(&active, t, sk.text_controls());
+        let mut gallery = div().w_full().flex().flex_wrap().gap(px(4.));
+        for (id, spec) in skin::gallery_skins(cx) {
+            let selected = id == active;
+            let caption = skin::picker_caption(&id, t, sk.text_controls()).to_owned();
+            let selector = format!("st-skin-{id}");
+            let hint = if selected { sk.ink.mark } else { sk.ink.rule };
+            gallery = gallery.child(
+                div()
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
+                    .w(px(98.))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .border_1()
+                    .border_color(hint)
+                    .rounded(sk.radius())
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .child(settings_preview::skin_sample(look, &spec))
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(3.))
+                            .h(px(16.))
+                            .line_height(px(15.))
+                            .truncate()
+                            .text_size(sk.text_px(9.))
+                            .text_color(sk.ink.ink)
+                            .when(selected, |d| {
+                                d.bg(sk.ink.mark_wash)
+                                    .debug_selector(|| "st-current-skin".into())
+                            })
+                            .child(caption),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            ws.settings_choose_skin(&id, cx);
+                        }),
+                    ),
+            );
+        }
+        div()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(sk.text_px(10.))
+                    .text_color(sk.ink.ink)
+                    .child(format!("←  →    {caption} · {}", t.parts.ctl_selected)),
+            )
+            .child(gallery)
     }
 
     /// Every language by its own name, the one in use lit. A press changes
@@ -1803,6 +1904,13 @@ impl Workspace {
                 ),
             ],
             Page::Appearance => vec![
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-skins",
+                    ui.pal_hdr_skin,
+                    vec![self.st_skin_gallery(&look, sk, cx)],
+                ),
                 Self::st_section(
                     th,
                     sk,
@@ -3133,6 +3241,62 @@ mod tests {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
         }
+    }
+
+    #[gpui::test]
+    fn skin_gallery_draws_only_open_choices_and_supports_click_and_keys(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        let count = || settings_preview::SKIN_SAMPLE_COUNT.get();
+        let closed = count();
+        redraw(cx);
+        assert_eq!(count(), closed);
+        cx.simulate_resize(size(px(600.), px(950.)));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        redraw(cx);
+        assert!(count() >= closed + 8);
+        let page = cx.debug_bounds("st-page").unwrap();
+        for id in [
+            "default",
+            "chalk",
+            "clean",
+            "deco",
+            "ops",
+            "terminimalist",
+            "baremetal",
+            "blueprint",
+        ] {
+            let card = cx
+                .debug_bounds(Box::leak(format!("st-skin-{id}").into_boxed_str()))
+                .unwrap();
+            assert!(
+                card.size.width >= px(90.)
+                    && page.contains(&card.origin)
+                    && page.contains(&card.bottom_right()),
+                "{id}: {card:?} outside {page:?}"
+            );
+        }
+        let blue = cx.debug_bounds("st-skin-blueprint").unwrap();
+        cx.simulate_click(blue.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
+        assert!(blue.contains(&cx.debug_bounds("st-current-skin").unwrap().center()));
+        cx.simulate_keystrokes("left");
+        redraw(cx);
+        assert_ne!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
+        cx.simulate_keystrokes("right");
+        redraw(cx);
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        let closed = count();
+        redraw(cx);
+        assert_eq!(count(), closed);
+        assert!(cx.debug_bounds("st-skin-blueprint").is_none());
     }
 
     #[gpui::test]

@@ -3046,6 +3046,36 @@ pub fn picker_cells(id: &str) -> u8 {
     }
 }
 
+pub(crate) fn picker_caption<'a>(
+    id: &'a str,
+    t: &crate::lang::Strings,
+    text_controls: bool,
+) -> &'a str {
+    match id {
+        "default" => t.ui.pal_skin_default,
+        "deco" => t.ui.pal_skin_deco,
+        "chalk" => t.ui.pal_skin_chalk,
+        "ops" => t.ui.pal_skin_ops,
+        "clean" => t.ui.pal_skin_clean,
+        "blueprint" => t.ui.pal_skin_blueprint,
+        "custom" if text_controls => t.parts.ctl_custom_file,
+        "custom" => t.ui.pal_skin_custom,
+        "baremetal" => "BAREMETAL",
+        "terminimalist" => "TERMINIMALIST",
+        other => other,
+    }
+}
+
+/// The installed looks in picker order. Include a personal file when it is in use.
+pub(crate) fn gallery_skins(cx: &App) -> Vec<(String, Arc<SkinSpec>)> {
+    let reg = cx.global::<SkinRegistry>();
+    let mut skins = reg.builtins.clone();
+    if reg.active_id == USER_FILE {
+        skins.push((USER_FILE.to_owned(), reg.custom.clone()));
+    }
+    skins
+}
+
 /// Every skin that can be selected, as `(id, icon, whether it is active now)`.
 /// `custom` appears only when the user actually has a file.
 pub fn all_skins(cx: &App) -> Vec<(String, String, bool)> {
