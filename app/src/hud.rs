@@ -344,7 +344,10 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
         AgentState::Error
     } else if lower.iter().any(|l| is_blocked_prompt(l)) {
         AgentState::Blocked
-    } else if lower.iter().any(|l| is_at_rest(l)) {
+    } else if lower.iter().any(|l| is_at_rest(l))
+        || ends_on_a_finished_turn(rows)
+        || has_empty_claude_composer(rows)
+    {
         // The agent's own idle furniture is on screen. It is not working, it has
         // not errored and it is not asking — it is sitting at its prompt, which
         // is a thing we can recognise rather than a thing we failed to.
@@ -404,8 +407,13 @@ pub fn doing_line(row: &str) -> Option<String> {
 /// only shrink that set, and the collapsed "N panes could not be read" line is
 /// what keeps the remainder visible instead of silently absorbed.
 fn is_at_rest(l: &str) -> bool {
-    const NEEDLES: [&str; 7] = [
+    const NEEDLES: [&str; 8] = [
         "? for shortcuts",
+        // Codex's empty composer. A narrow Codex pane drops `? for shortcuts`
+        // from its footer and keeps this, and while it works the `Working (…
+        // esc to interrupt)` row above wins first (2026-11-17: two tiled GPT
+        // agents never came to rest, so the Floor could not prompt them).
+        "ask codex to do anything",
         // The truncated form first, because it is the one a tiled pane leaves.
         // `shift+tab to cycle` is the same footer at a width that fits, and a
         // narrow column cuts it to `auto mode on (shift+tab to` — which is how
@@ -418,6 +426,39 @@ fn is_at_rest(l: &str) -> bool {
         "send with enter",
     ];
     NEEDLES.iter().any(|n| l.contains(n))
+}
+
+/// A Claude Code pane too short to show its footer still says how its last
+/// turn ended: `✻ Brewed for 2h 38m 30s · done 4:29 PM`. When that line is the
+/// last thing on the screen, the turn is over and nothing has come after it,
+/// so the agent is at its prompt. Only the last non-blank row counts: the same
+/// line further up is history under whatever came next, and working, errors
+/// and questions are all decided before this is asked. Claude Code's own
+/// "Update available" notice can print under it, so that one row is looked
+/// past (seen 2026-11-17, right after the window was swapped).
+fn ends_on_a_finished_turn(rows: &[String]) -> bool {
+    let Some(last) = rows
+        .iter()
+        .rev()
+        .map(|r| r.trim())
+        .find(|r| !r.is_empty() && !r.to_ascii_lowercase().starts_with("update available"))
+    else {
+        return false;
+    };
+    let l = last.to_ascii_lowercase();
+    last.starts_with('\u{273b}') && l.contains(" for ") && l.contains("\u{00b7} done ")
+}
+
+/// Claude Code's input box with nothing typed in it: a row that is only `❯`,
+/// directly under a rule of `─`. It is on screen whenever a turn has ended,
+/// however short the pane, and a working spinner or a question above it is
+/// decided before this is asked. Seen 2026-11-17 on a six-row tiled pane whose
+/// footer and done line were both unreadable as rest.
+fn has_empty_claude_composer(rows: &[String]) -> bool {
+    rows.windows(2).any(|w| {
+        let rule = w[0].trim();
+        !rule.is_empty() && rule.chars().all(|c| c == '\u{2500}') && w[1].trim() == "\u{276f}"
+    })
 }
 
 fn is_blocked_prompt(l: &str) -> bool {
@@ -620,6 +661,88 @@ mod tests {
             Some("Calling lean-ctx 2 times"),
             "the in-flight tool line, bullet and ellipsis stripped"
         );
+    }
+
+    /// Captured 2026-11-17 from two Codex panes tiled four to a tab. At rest the
+    /// footer is cut to `← for agents    ⚠ 2 warnings · f2 to view`, without the
+    /// `? for shortcuts` the detector knew, so a finished worker read Unknown
+    /// and the Floor could not hand it its next order. Working, the same
+    /// composer placeholder is on screen and the Working row must still win.
+    ///
+    /// Mutation-tested: dropping the composer needle fails the first assertion.
+    #[test]
+    fn a_narrow_codex_pane_at_rest_is_idle_and_working_still_wins() {
+        let rest = rows(&[
+            "  Worked for 2h 23m 54s \u{2022} 4:14 PM",
+            "\u{203a} Ask Codex to do anything",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/terminal-",
+            "  delight \u{00b7} Improve Terminal Delight speed",
+            "  \u{2190} for agents    \u{26a0} 2 warnings \u{00b7} f2 to view",
+        ]);
+        assert_eq!(parse_status_line(&rest).state, AgentState::Idle);
+        let working = rows(&[
+            "\u{2022} Working (1h 34m 57s \u{2022} esc to interrupt)",
+            "\u{203a} Ask Codex to do anything",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/terminal-",
+            "  \u{2190} for agents    \u{26a0} 2 warnings \u{00b7} f2 to view",
+        ]);
+        assert_eq!(parse_status_line(&working).state, AgentState::Working);
+    }
+
+    /// Captured 2026-11-17: a Claude Code pane so short that only its last
+    /// turn's line was on screen. That line, last and alone, is rest; the same
+    /// line with anything after it is not evidence of rest.
+    ///
+    /// Mutation-tested: reading every row instead of the last fails the second
+    /// assertion.
+    #[test]
+    fn a_short_claude_pane_ending_on_its_done_line_is_idle_and_only_then() {
+        let done = rows(&[
+            "",
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "",
+            "",
+        ]);
+        assert_eq!(parse_status_line(&done).state, AgentState::Idle);
+        let notice = rows(&[
+            "",
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "                                Update available \u{00b7} run mise upgrade claude",
+            "",
+        ]);
+        assert_eq!(
+            parse_status_line(&notice).state,
+            AgentState::Idle,
+            "Claude's update notice under the done line is looked past"
+        );
+        // The same pane a minute later: the empty input box under the notice.
+        let composer = rows(&[
+            "",
+            "",
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "                                Update available \u{00b7} run mise upgrade claude",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "\u{276f}",
+        ]);
+        assert_eq!(
+            parse_status_line(&composer).state,
+            AgentState::Idle,
+            "an empty input box under its rule is rest"
+        );
+        let typed = rows(&[
+            "\u{2500}\u{2500}\u{2500}\u{2500}",
+            "\u{276f} half a sentence",
+        ]);
+        assert_eq!(
+            parse_status_line(&typed).state,
+            AgentState::Unknown,
+            "an input box with words in it is not evidence of rest"
+        );
+        let after = rows(&[
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "\u{25cf} Something the screen shows that no rule reads",
+        ]);
+        assert_eq!(parse_status_line(&after).state, AgentState::Unknown);
     }
 
     /// The tool line is the LAST bulleted, unfinished row on screen, and a
