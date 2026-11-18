@@ -4721,6 +4721,70 @@ fn a_printed_handover_is_read_off_the_screen_and_becomes_the_needs_me_link(
     assert_eq!(pane.read(|v| v.handovers.newest_first().len()), 1);
 }
 
+/// A reply that prints a `Deliverable:` line and then its `## Links` table:
+/// the line is still the one handover and the needs-me link, and the table's
+/// links — the wrapped one joined — go to the pane's list of listed links and
+/// nowhere else.
+#[gpui::test]
+fn a_links_table_is_listed_beside_the_handover_and_never_becomes_one(cx: &mut TestAppContext) {
+    let brief = "file:///tmp/td-links-test/brief.html";
+    let pr = "https://github.com/parker-brown-family/terminal-delight/pull/1465";
+    let (head, tail) = pr.split_at(40);
+    let row = |a: &str, b: &str| format!("  │ {a:<8} │ {b:<40} │");
+    let rule =
+        |l: char, m: char, r: char| format!("  {l}{}{m}{}{r}", "─".repeat(10), "─".repeat(42));
+    let lines = [
+        "  Deliverable: The brief —".to_string(),
+        format!("  {brief}"),
+        rule('┌', '┬', '┐'),
+        row("What", "Link"),
+        rule('├', '┼', '┤'),
+        row("The PR", head),
+        row("", tail),
+        rule('├', '┼', '┤'),
+        row("Brief", brief),
+        rule('└', '┴', '┘'),
+    ];
+    let quoted: Vec<String> = lines.iter().map(|l| format!("'{l}'")).collect();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' {} 'ready'; exec cat", quoted.join(" ")),
+    );
+    pane.wait_for("ready");
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.scan_handovers(cx);
+    });
+    let handed: Vec<String> = pane.read(|v| {
+        v.handovers
+            .newest_first()
+            .iter()
+            .map(|h| h.href.clone())
+            .collect()
+    });
+    assert_eq!(handed, [brief], "the Deliverable line is the only handover");
+    assert_eq!(
+        pane.read(|v| v.deliverable()).map(|d| d.href),
+        Some(brief.to_string())
+    );
+    let mut linked: Vec<(String, String)> = pane.read(|v| {
+        v.linked
+            .newest_first()
+            .iter()
+            .map(|h| (h.label.clone(), h.href.clone()))
+            .collect()
+    });
+    linked.sort();
+    assert_eq!(
+        linked,
+        [
+            ("Brief".to_string(), brief.to_string()),
+            ("The PR".to_string(), pr.to_string()),
+        ],
+        "the table's links, the PR joined across its cell"
+    );
+}
+
 /// A link longer than the pane, printed as one line, is wrapped by the
 /// terminal itself and carried on at the left edge with the row flagged. An
 /// agent that does not draw fullscreen hands things over in this shape, and
