@@ -81,7 +81,8 @@ patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 patch_filter="$repo_root/docs/patches/0015-constant-filter-taps.patch"
 patch_direct="$repo_root/docs/patches/0016-direct-rendering.patch"
 patch_demand="$repo_root/docs/patches/0017-demand-driven-frames.patch"
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct" "$patch_demand"; do
+patch_light_glow="$repo_root/docs/patches/0018-light-aware-glow.patch"
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct" "$patch_demand" "$patch_light_glow"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -187,3 +188,9 @@ apply_patch "$patch_direct" "direct-rendering" \
 
 apply_patch "$patch_demand" "demand-driven-frames" \
     'grep -qF "fn frame_requester(" crates/gpui/src/platform.rs'
+
+# 0018 is a delta on the shader as 0009-0015 leave it: the bloom closes where
+# its neighbourhood is already bright, and the document grade eases into white
+# instead of clipping (pictures in a document read in a pane washed out).
+apply_patch "$patch_light_glow" "light-aware-glow" \
+    'grep -qF "td-light-aware-glow" crates/gpui_wgpu/src/crt_pass.wgsl'

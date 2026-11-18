@@ -1,0 +1,51 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -209,7 +209,36 @@
+         halo += glow_emission(p + vec2<f32>(3.0, 3.0) * 1.6, r) * (1.0 / 64.0);
+     }
+     // Screen blend preserves the sharp core and each colour channel's hue.
+-    return base + halo * strength * 1.8 * (vec3<f32>(1.0) - base);
++    // td-light-aware-glow: the halo is light spilling onto a DARK field, which
++    // is what a phosphor glow is. Where the neighbourhood is already bright (a
++    // light page, a screenshot, a light terminal theme) there is no dark to
++    // spill onto, and lifting every pixel toward white there is what washed
++    // pictures out. `room` closes the glow as the halo's own brightness goes
++    // from GLOW_ROOM_LO to GLOW_ROOM_HI; ordinary terminal text sits below
++    // the first (99th percentile 0.50 on a measured dark fixture, most of it
++    // near 0), a white card at about 0.85.
++    let field = dot(halo, vec3<f32>(0.2126, 0.7152, 0.0722));
++    let room = 1.0 - smoothstep(GLOW_ROOM_LO, GLOW_ROOM_HI, field);
++    return base + halo * strength * 1.8 * (vec3<f32>(1.0) - base) * room;
++}
++
++// td-light-aware-glow: where the bloom's room starts to close and where it
++// is shut, as the halo's luminance (see `image_bloom`).
++const GLOW_ROOM_LO: f32 = 0.3;
++const GLOW_ROOM_HI: f32 = 0.7;
++// td-light-aware-glow: where a graded document starts easing into white.
++const DOC_KNEE: f32 = 0.8;
++
++// td-light-aware-glow: a graded channel, unchanged up to DOC_KNEE and then
++// eased toward white instead of clipped at it. Continuous, with slope 1 at the
++// knee, and never reaching 1, so two highlights the gauges lifted past white
++// stay two highlights (a clamp made every value above about 0.8 the same
++// white at the document gauges' 1.17 and 1.23). Below zero still floors at 0.
++fn ease_into_white(x: vec3<f32>) -> vec3<f32> {
++    let over = max(x - vec3<f32>(DOC_KNEE), vec3<f32>(0.0));
++    let eased = vec3<f32>(DOC_KNEE)
++        + (1.0 - DOC_KNEE) * (vec3<f32>(1.0) - exp(-over / (1.0 - DOC_KNEE)));
++    return select(max(x, vec3<f32>(0.0)), eased, x > vec3<f32>(DOC_KNEE));
+ }
+ 
+ // td-doc-grade: `col` as seen at source pixel `p`, graded by the last document
+@@ -221,8 +250,7 @@
+         let r = crt.doc_rects[i - 1u];
+         if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
+             let g = crt.doc_grade[i - 1u];
+-            return clamp(((col - vec3<f32>(0.5)) * g.y + vec3<f32>(0.5)) * g.x,
+-                vec3<f32>(0.0), vec3<f32>(1.0));
++            return ease_into_white(((col - vec3<f32>(0.5)) * g.y + vec3<f32>(0.5)) * g.x);
+         }
+     }
+     return col;
