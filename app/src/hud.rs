@@ -430,9 +430,16 @@ fn is_at_rest(l: &str) -> bool {
 /// last thing on the screen, the turn is over and nothing has come after it,
 /// so the agent is at its prompt. Only the last non-blank row counts: the same
 /// line further up is history under whatever came next, and working, errors
-/// and questions are all decided before this is asked.
+/// and questions are all decided before this is asked. Claude Code's own
+/// "Update available" notice can print under it, so that one row is looked
+/// past (seen 2026-11-17, right after the window was swapped).
 fn ends_on_a_finished_turn(rows: &[String]) -> bool {
-    let Some(last) = rows.iter().rev().map(|r| r.trim()).find(|r| !r.is_empty()) else {
+    let Some(last) = rows
+        .iter()
+        .rev()
+        .map(|r| r.trim())
+        .find(|r| !r.is_empty() && !r.to_ascii_lowercase().starts_with("update available"))
+    else {
         return false;
     };
     let l = last.to_ascii_lowercase();
@@ -682,6 +689,17 @@ mod tests {
             "",
         ]);
         assert_eq!(parse_status_line(&done).state, AgentState::Idle);
+        let notice = rows(&[
+            "",
+            "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
+            "                                Update available \u{00b7} run mise upgrade claude",
+            "",
+        ]);
+        assert_eq!(
+            parse_status_line(&notice).state,
+            AgentState::Idle,
+            "Claude's update notice under the done line is looked past"
+        );
         let after = rows(&[
             "\u{273b} Brewed for 2h 38m 30s \u{00b7} done 4:29 PM",
             "\u{25cf} Something the screen shows that no rule reads",
