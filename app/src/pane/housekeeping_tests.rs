@@ -301,20 +301,39 @@ fn hidden_prompt_is_detected_by_the_one_second_fallback(cx: &mut TestAppContext)
     let pane = &mut attached.pane;
     hide(pane);
     pane.running_as(PaneMode::Codex);
-    attached
-        .host
-        .write_all(b"Do you want to proceed?\r\n  1. Yes\r\n  esc to cancel\r\n")
-        .unwrap();
-    run_for(pane, 1150);
+    // Fence the real parser before advancing the virtual executor. Advance one
+    // complete scan period from a known due time for each screen transition.
+    let scan =
+        |pane: &mut Pane, host: &mut std::os::unix::net::UnixStream, bytes: &[u8], title: &str| {
+            host.write_all(bytes).unwrap();
+            write!(host, "\x1b]2;{title}\x07").unwrap();
+            let until = Instant::now() + Duration::from_secs(3);
+            while pane.read(|v| v.title.clone()) != title {
+                pane.cx.run_until_parked();
+                assert!(Instant::now() < until, "PTY did not reach {title}");
+                std::thread::sleep(Duration::from_millis(2));
+            }
+            pane.view.update(pane.cx, |v, _| {
+                v.last_think_scan = Instant::now() - housekeeping::HIDDEN_INTERVAL;
+            });
+            step(pane, 1000);
+        };
+    scan(
+        pane,
+        &mut attached.host,
+        b"Do you want to proceed?\r\n  1. Yes\r\n  esc to cancel\r\n",
+        "question",
+    );
     assert!(
         pane.read(|v| v.needs_input),
         "hidden permission prompt was missed"
     );
-    attached
-        .host
-        .write_all(b"\x1b[2J\x1b[Hstill thinking (esc to interrupt)\r\n")
-        .unwrap();
-    run_for(pane, 1100);
+    scan(
+        pane,
+        &mut attached.host,
+        b"\x1b[2J\x1b[Hstill thinking (esc to interrupt)\r\n",
+        "answered",
+    );
     assert!(
         !pane.read(|v| v.needs_input),
         "answered prompt stayed latched"

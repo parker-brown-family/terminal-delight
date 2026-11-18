@@ -51,7 +51,8 @@ impl TerminalView {
         let shown = self.shown.load(std::sync::atomic::Ordering::Relaxed);
         let mut delay = if !shown {
             if self.hosts_agent() {
-                Some(HIDDEN_INTERVAL)
+                // An unrelated wake must not postpone the next scan by a full interval.
+                Some(HIDDEN_INTERVAL.saturating_sub(self.last_think_scan.elapsed()))
             } else if self.offscreen_dirty {
                 Some(OFFSCREEN_REFRESH.saturating_sub(self.offscreen_flushed.elapsed()))
             } else {
