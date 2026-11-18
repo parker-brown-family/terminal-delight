@@ -775,6 +775,46 @@ fn unwrap_outcome<T>(outcome: Outcome<T>) -> std::io::Result<T> {
 /// Announced as a tool: this connection attaches no panes and must never take
 /// one from the window that is using them.
 pub fn watch(socket: &Path) -> std::io::Result<futures::channel::mpsc::UnboundedReceiver<Push>> {
+    let mut conn = open_watch(socket)?;
+    let socket = socket.to_path_buf();
+    let (tx, rx) = futures::channel::mpsc::unbounded();
+    std::thread::spawn(move || {
+        loop {
+            if !relay_pushes(&mut conn, &tx) {
+                return; // the window has gone
+            }
+            // The feed dropped: a host restart, a socket hiccup, an EOF. It
+            // used to end here for good, and the window heard nothing more for
+            // the rest of its life without being able to say so (issue #466).
+            // Say so once, then keep trying, more slowly each time, until the
+            // host answers again or the window goes.
+            eprintln!("terminal-delight: the session host's push feed dropped; reconnecting");
+            let mut wait = RECONNECT_FIRST;
+            conn = loop {
+                if tx.is_closed() {
+                    return;
+                }
+                std::thread::sleep(wait);
+                match open_watch(&socket) {
+                    Ok(c) => {
+                        eprintln!("terminal-delight: the session host's push feed is back");
+                        break c;
+                    }
+                    Err(_) => wait = (wait * 2).min(RECONNECT_MAX),
+                }
+            };
+        }
+    });
+    Ok(rx)
+}
+
+/// The first wait before a dropped push feed is tried again, and the longest.
+const RECONNECT_FIRST: Duration = Duration::from_millis(250);
+const RECONNECT_MAX: Duration = Duration::from_secs(30);
+
+/// Open a listening connection: greet as a tool, ask to watch, and wait with
+/// no read timeout.
+fn open_watch(socket: &Path) -> std::io::Result<Conn> {
     let stream = UnixStream::connect(socket)?;
     // No read timeout: waiting is the point. A watcher that gave up after five
     // seconds of quiet would report a healthy host as gone every time nothing
@@ -794,35 +834,36 @@ pub fn watch(socket: &Path) -> std::io::Result<futures::channel::mpsc::Unbounded
         other => Err(other),
     })?;
     let _ = conn.reader.get_ref().set_read_timeout(None);
+    Ok(conn)
+}
 
-    let (tx, rx) = futures::channel::mpsc::unbounded();
-    std::thread::spawn(move || {
-        let mut line = String::new();
-        loop {
-            line.clear();
-            match conn.reader.read_line(&mut line) {
-                Ok(0) | Err(_) => break,
-                Ok(_) => {}
-            }
-            // Read as a document first and dispatched on which key it carries.
-            // A reply and a push are different kinds of sentence and neither
-            // parses as the other, so trying one type and then the next would
-            // make an ordinary message look like a broken one.
-            let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
-                continue;
-            };
-            if value.get("push").is_none() {
-                continue;
-            }
-            let Ok(push) = serde_json::from_value::<Push>(value) else {
-                continue;
-            };
-            if tx.unbounded_send(push).is_err() {
-                break; // the window has gone
-            }
+/// Hand every push on `conn` to the window until the connection ends. False
+/// when the window has gone, true when the feed dropped.
+fn relay_pushes(conn: &mut Conn, tx: &futures::channel::mpsc::UnboundedSender<Push>) -> bool {
+    let mut line = String::new();
+    loop {
+        line.clear();
+        match conn.reader.read_line(&mut line) {
+            Ok(0) | Err(_) => return true,
+            Ok(_) => {}
         }
-    });
-    Ok(rx)
+        // Read as a document first and dispatched on which key it carries.
+        // A reply and a push are different kinds of sentence and neither
+        // parses as the other, so trying one type and then the next would
+        // make an ordinary message look like a broken one.
+        let Ok(value) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+            continue;
+        };
+        if value.get("push").is_none() {
+            continue;
+        }
+        let Ok(push) = serde_json::from_value::<Push>(value) else {
+            continue;
+        };
+        if tx.unbounded_send(push).is_err() {
+            return false;
+        }
+    }
 }
 
 /// Start a session host for `key`, and wait for it to be ready to talk.
@@ -1319,6 +1360,61 @@ mod talking {
             "a listening connection attaches nothing and must say so: {hello}"
         );
         assert!(asked.contains(r#""verb":"watch""#), "{asked}");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #466: a push feed that drops is opened again, and what the host
+    /// says afterwards still reaches the window. Mutation: returning from the
+    /// thread when the feed drops (the old behaviour) leaves the second push
+    /// unheard.
+    #[test]
+    fn a_dropped_push_feed_reconnects_and_keeps_listening() {
+        let dir = tmp("redial");
+        let path = dir.join("session-redial.sock");
+        let listener = std::os::unix::net::UnixListener::bind(&path).expect("bind");
+        std::thread::spawn(move || {
+            for pane in [1u64, 2] {
+                let (stream, _) = listener.accept().expect("accept");
+                let mut reader = BufReader::new(stream.try_clone().expect("clone"));
+                let mut writer = stream;
+                let mut line = String::new();
+                reader.read_line(&mut line).expect("hello");
+                let _ = writer.write_all(
+                    b"{\"reply\":\"hello\",\"proto\":1,\"session\":\"redial\",\"panes\":0,\"attended\":false}\n",
+                );
+                line.clear();
+                reader.read_line(&mut line).expect("watch");
+                let _ = writer.write_all(b"{\"reply\":\"watching\"}\n");
+                let _ = writer.write_all(
+                    format!("{{\"push\":\"mode\",\"pane\":{pane},\"mode\":\"shell\"}}\n")
+                        .as_bytes(),
+                );
+                // The first connection hangs up here, as a restarting host would.
+                if pane == 2 {
+                    std::thread::sleep(Duration::from_millis(500));
+                }
+            }
+        });
+        let mut news = watch(&path).expect("start watching");
+        let next = |news: &mut futures::channel::mpsc::UnboundedReceiver<Push>| {
+            futures::executor::block_on(futures::StreamExt::next(news))
+        };
+        assert_eq!(
+            next(&mut news),
+            Some(Push::Mode {
+                pane: PaneId(1),
+                mode: crate::hostproto::WireMode::Shell
+            })
+        );
+        assert_eq!(
+            next(&mut news),
+            Some(Push::Mode {
+                pane: PaneId(2),
+                mode: crate::hostproto::WireMode::Shell
+            }),
+            "the feed dropped and was never opened again"
+        );
+        drop(news);
         let _ = std::fs::remove_dir_all(&dir);
     }
 
