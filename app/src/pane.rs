@@ -3519,6 +3519,8 @@ pub struct TerminalView {
     /// a hand over a chip and still leave the chip looking exactly as dead as
     /// the label beside it.
     wb_hover: Option<crate::workbench::Hit>,
+    wb_key_focus: Option<crate::workbench::Hit>,
+    wb_draft_verb: Option<(crate::surface::SurfaceId, crate::surface::Action)>,
     /// Whether a dragged file is over the composer right now, so the box can
     /// say it will take it. Set from the same un-bent hover that decides the
     /// pointer, and cleared when the drag leaves the window — which arrives
@@ -3540,6 +3542,7 @@ pub struct TerminalView {
     /// than its pane was clipped and no gesture on the surface could reach the
     /// rest of it — `wheel_target` resolved a turn over the body to `Nothing`.
     wb_card_scroll: gpui::ScrollHandle,
+    wb_rail_scroll: gpui::ScrollHandle,
     /// Which surface the scroll offset above belongs to.
     ///
     /// A card is a different document from the one before it, so the offset
@@ -5958,10 +5961,13 @@ impl TerminalView {
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_hover: None,
+            wb_key_focus: None,
+            wb_draft_verb: None,
             wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
+            wb_rail_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
             wb_dial_options: Vec::new(),
@@ -7313,6 +7319,7 @@ impl TerminalView {
         }
         out |= self.note_hover.take().is_some();
         out |= self.wb_hover.take().is_some();
+        out |= self.wb_key_focus.take().is_some();
         out |= std::mem::take(&mut self.wb_drop);
         out |= std::mem::take(&mut self.wb_pointer) != crate::workbench::Pointer::Arrow;
         let float_doc = self.float.as_ref().map(|f| f.view.clone());
@@ -8154,7 +8161,7 @@ impl TerminalView {
             // `ctrl+c` reach a working agent from the face that is showing you
             // its turn.
             crate::keylayer::Layer::Bench => {
-                if self.bench_key(ks, cx) {
+                if self.bench_key(ks, _window, cx) {
                     Handled::Consumed
                 } else {
                     self.terminal_key(&k, ks, cx)
@@ -13078,8 +13085,9 @@ impl Render for TerminalView {
             // ramp. Both are bench-local: the header above keeps the plain skin,
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
-            let bench_th = graded_palette(&th);
+            let mut bench_th = graded_palette(&th);
             let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
+            bench_sk.apply_chrome_ink(&mut bench_th);
             self.bench_el(
                 &bench_th,
                 &bench_sk,

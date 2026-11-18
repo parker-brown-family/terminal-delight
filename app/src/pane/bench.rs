@@ -617,10 +617,26 @@ impl TerminalView {
         // A click is on a pane that is on screen, whatever the sweep last
         // said: the sweep runs once a second and a tab can have changed since.
         self.wb_on_screen = true;
+        self.wb_key_focus = None;
         match hit {
             Hit::Choose(i) => self.bench_choose(i, cx),
             Hit::PressNav(at) => self.bench_press_nav(at, cx),
-            Hit::Verb { action, target } => self.bench_act(action, target, cx),
+            Hit::Verb { action, target } => {
+                if action.wants_comment()
+                    && self
+                        .wb_compose
+                        .as_ref()
+                        .is_none_or(|line| line.text().trim().is_empty())
+                {
+                    if let Some(surface) = self.bench.selected() {
+                        self.wb_draft_verb = Some((surface.id.clone(), action));
+                        self.wb_compose
+                            .get_or_insert_with(crate::workbench::Line::new);
+                    }
+                } else {
+                    self.bench_act(action, target, cx);
+                }
+            }
             Hit::SubmitAnswers => self.bench_submit_round(cx),
             Hit::CloseCard => {
                 self.bench.close_card();
@@ -703,14 +719,34 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        let Some((hit, _)) = self.bench_flat(ev.position) else {
+        let Some((hit, flat)) = self.bench_flat(ev.position) else {
             return;
         };
+        let over_rail = crate::workbench::region_of(
+            &self.wb_regions.borrow(),
+            f32::from(flat.x),
+            f32::from(flat.y),
+            0.,
+            0.,
+        ) == crate::workbench::Region::Rail;
         match crate::workbench::wheel_target(
             hit.as_ref(),
+            over_rail,
             self.wb_card_at.is_some(),
             self.wb_mirror,
         ) {
+            crate::workbench::Wheel::Rail => {
+                let scroll = &self.wb_rail_scroll;
+                let at = scroll.offset();
+                let delta = ev.delta.pixel_delta(line_height);
+                let y = crate::workbench::wheel_offset(
+                    f32::from(at.y),
+                    f32::from(delta.y),
+                    f32::from(scroll.max_offset().y),
+                );
+                scroll.set_offset(gpui::point(at.x, px(y)));
+                cx.notify();
+            }
             crate::workbench::Wheel::Dial => {
                 let delta = ev.delta.pixel_delta(line_height);
                 let at = self.wb_dial_scroll.offset();
@@ -886,6 +922,75 @@ impl TerminalView {
         }
     }
 
+    fn bench_control_key(
+        &mut self,
+        key: &str,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        use crate::workbench::Hit;
+        if matches!(key, "pageup" | "pagedown") {
+            let scroll = &self.wb_card_scroll;
+            let at = scroll.offset();
+            let page = f32::from(scroll.bounds().size.height) * 0.9;
+            let delta = if key == "pageup" { page } else { -page };
+            let y = crate::workbench::wheel_offset(
+                f32::from(at.y),
+                delta,
+                f32::from(scroll.max_offset().y),
+            );
+            scroll.set_offset(gpui::point(at.x, px(y)));
+            self.wb_key_focus = None;
+            cx.notify();
+            return true;
+        }
+        if !matches!(key, "left" | "right" | "enter")
+            || (key == "enter" && self.wb_key_focus.is_none())
+        {
+            return false;
+        }
+        let zones = self.wb_zones.borrow();
+        let mut controls: Vec<&crate::workbench::Zone> = Vec::new();
+        for zone in zones.iter().filter(|z| {
+            z.w > 0.
+                && z.h > 0.
+                && !matches!(z.hit, Hit::Arm | Hit::Nothing)
+                && self.wb_dial.is_none_or(
+                    |dial| matches!(z.hit, Hit::Dial(d) | Hit::DialPick(d, _) if d == dial),
+                )
+        }) {
+            if !controls.iter().any(|prior| prior.hit == zone.hit) {
+                controls.push(zone);
+            }
+        }
+        let current = controls
+            .iter()
+            .position(|z| Some(&z.hit) == self.wb_key_focus.as_ref());
+        if key == "enter" {
+            let selected = current.map(|i| (*controls[i]).clone());
+            drop(zones);
+            if let Some(z) = selected {
+                self.bench_hit(
+                    z.hit,
+                    gpui::point(px(z.x + z.w / 2.), px(z.y + z.h / 2.)),
+                    window,
+                    cx,
+                );
+            }
+        } else if !controls.is_empty() {
+            let count = controls.len();
+            let next = match (key, current) {
+                ("left", Some(i)) => (i + count - 1) % count,
+                ("left", None) => count - 1,
+                (_, Some(i)) => (i + 1) % count,
+                (_, None) => 0,
+            };
+            self.wb_key_focus = Some(controls[next].hit.clone());
+        }
+        cx.notify();
+        true
+    }
+
     /// The bench's own keys, and only its own.
     ///
     /// `true` when the bench took the keystroke — the gallery, the shelf chords,
@@ -906,7 +1011,12 @@ impl TerminalView {
     /// window's chords: `keylayer` routes those to the workspace without asking.
     /// Nor does it stop propagation — `on_key` does that in one place, from what
     /// this returns.
-    pub(super) fn bench_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> bool {
+    pub(super) fn bench_key(
+        &mut self,
+        ks: &Keystroke,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
         // ALT+<n> LANDS ON A SHELF, above everything that could swallow a digit.
         //
         // Above `reading_key` in particular, which reads a bare digit as
@@ -966,6 +1076,7 @@ impl TerminalView {
                     cx.notify();
                 }
                 Peel::Typing => {
+                    self.wb_draft_verb = None;
                     self.wb_compose = None;
                     cx.notify();
                 }
@@ -1073,6 +1184,12 @@ impl TerminalView {
             cx.notify();
             return true;
         }
+        if ks.modifiers == gpui::Modifiers::default()
+            && self.bench_control_key(ks.key.as_str(), window, cx)
+        {
+            return true;
+        }
+        self.wb_key_focus = None;
         // The rules themselves are a table in `workbench`, so they can be
         // asserted without a render.
         let answerable = match self.bench.selected().map(|s| &s.kind) {
@@ -1115,11 +1232,23 @@ impl TerminalView {
                     .selected()
                     .and_then(|s| s.actions.first().cloned());
                 if let Some(action) = first {
-                    if action.wants_comment() {
-                        self.wb_compose = Some(crate::workbench::Line::new());
+                    if matches!(
+                        action,
+                        crate::surface::Action::AcceptPart | crate::surface::Action::RejectPart
+                    ) {
+                        // A part-specific verb needs a visible, named choice.
+                        self.wb_key_focus = self.wb_zones.borrow().iter().find(|z| z.w > 0. && z.h > 0. && matches!(&z.hit, crate::workbench::Hit::Verb {action:a,target:Some(_)} if a == &action)).map(|z| z.hit.clone());
                         cx.notify();
                     } else {
-                        self.bench_act(action, None, cx);
+                        self.bench_hit(
+                            crate::workbench::Hit::Verb {
+                                action,
+                                target: None,
+                            },
+                            gpui::point(px(0.), px(0.)),
+                            window,
+                            cx,
+                        );
                     }
                 } else if crate::workbench::return_launches(
                     crate::workbench::strip_verb(self.bench_status(), self.mode.is_agent()),
@@ -2928,7 +3057,7 @@ impl TerminalView {
             })
     }
 
-    pub(super) fn bench_verbs(&mut self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
+    pub(super) fn bench_verbs(&self, sk: &crate::skin::Skin, th: &Theme) -> Option<gpui::Div> {
         let surface = self.bench.selected()?;
         let actions = surface.actions.clone();
         let hunks: Vec<String> = match &surface.kind {
@@ -3420,8 +3549,9 @@ impl TerminalView {
     /// by `ctl bench say`, which is how a caller with no pointer tests the
     /// thing a pointer would do.
     pub fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        self.wb_compose = Some(crate::workbench::Line::holding(line));
-        self.bench_send(cx);
+        if !line.trim().is_empty() {
+            self.bench_deliver_say(line.to_string(), cx);
+        }
     }
 
     /// Put bytes into the pseudoterminal — or, if nobody is looking at this
@@ -3766,6 +3896,10 @@ impl TerminalView {
     /// bench's usual three (on screen, an agent in the pane, no dial press in
     /// flight), so a held message is recorded as held and goes when it can.
     pub(super) fn bench_send(&mut self, cx: &mut Context<Self>) {
+        if let Some((_, action)) = &self.wb_draft_verb {
+            self.bench_act(action.clone(), None, cx);
+            return;
+        }
         let Some(text) = self
             .wb_compose
             .take()
@@ -3777,6 +3911,10 @@ impl TerminalView {
             cx.notify();
             return;
         };
+        self.bench_deliver_say(text, cx);
+    }
+
+    fn bench_deliver_say(&mut self, text: String, cx: &mut Context<Self>) {
         // ANY message ends a pause, whatever it says and wherever it came
         // from — the composer, `ctl bench say`, or the strip's own resume,
         // which is `bench_say` with one sentence in it. The person is talking
@@ -3848,6 +3986,25 @@ impl TerminalView {
         target: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if let Some((id, bound)) = &self.wb_draft_verb {
+            if bound != &action
+                || !self
+                    .bench
+                    .selected()
+                    .is_some_and(|s| &s.id == id && s.actions.contains(bound))
+            {
+                return;
+            }
+        }
+        if action.wants_comment()
+            && self
+                .wb_compose
+                .as_ref()
+                .is_none_or(|line| line.text().trim().is_empty())
+        {
+            return;
+        }
+        self.wb_draft_verb = None;
         // A question the channel carried answers THROUGH the channel. Decided
         // before `Bench::act`, which knows nothing about hooks and must not:
         // it would drive a menu that never painted.
@@ -4170,7 +4327,9 @@ impl TerminalView {
             .as_ref()
             .map(|t| t.id.clone())
             .or_else(|| showing_id.clone());
-        if self.wb_card_at != room_id {
+        let room_changed = self.wb_card_at != room_id;
+        if room_changed {
+            self.wb_key_focus = None;
             self.wb_card_scroll
                 .set_offset(gpui::point(gpui::px(0.), gpui::px(0.)));
             self.wb_card_at = room_id.clone();
@@ -4272,7 +4431,8 @@ impl TerminalView {
                         zones: self.wb_zones.clone(),
                         submit: can_submit,
                     };
-                    let drawn = crate::benchdraw::body(surface, how, Some(&picks), sk, th);
+                    let verbs = self.bench_verbs(sk, th);
+                    let drawn = crate::benchdraw::body(surface, how, verbs, Some(&picks), sk, th);
                     // A question opened from the rail is still a question, so it
                     // gets the chips the inline block gets. Built before the verb
                     // row because both borrow `self`.
@@ -4281,7 +4441,6 @@ impl TerminalView {
                         _ => None,
                     };
                     let answers = asked.map(|q| self.answer_chips(&q, sk, th));
-                    let verbs = self.bench_verbs(sk, th);
                     // One title, not two. The card drew `kind · title` here and
                     // then [`benchdraw::body`] drew its own heading directly
                     // underneath — the same two strings twice, six pixels apart,
@@ -4294,8 +4453,8 @@ impl TerminalView {
                             .relative()
                             .flex()
                             .flex_col()
-                            .gap(px(12.))
-                            .p(px(16.))
+                            .gap(px(if full { 12. } else { 6. }))
+                            .p(px(if full { 16. } else { 8. }))
                             .bg(th.surface)
                             .border_l(px(3.))
                             // The card's edge goes to the accent for the moment
@@ -4319,8 +4478,12 @@ impl TerminalView {
                                 .top(px(8.))
                                 .text_size(px(sk.pt(Step::Lead)))
                                 .text_color(sk.ink.ink_faint)
-                                .child("\u{2715}")
-                                .relative()
+                                .px(px(3.))
+                                .h(px(22.))
+                                .child(sk.control(
+                                    "\u{2715}",
+                                    crate::lang::current().strings().parts.ctl_close,
+                                ))
                                 .child(crate::benchdraw::zone(
                                     self.wb_zones.clone(),
                                     crate::workbench::Hit::CloseCard,
@@ -4329,7 +4492,6 @@ impl TerminalView {
                     })
                     .child(drawn)
                     .children(answers)
-                    .children(verbs)
                 }
                 // No card: the conversation.
                 None => {
@@ -4579,6 +4741,13 @@ impl TerminalView {
                     }),
                 );
                 let rows = self.bench.rows();
+                if room_changed {
+                    if let Some(i) = rows.iter().position(|row| row.selected) {
+                        self.wb_rail_scroll.scroll_to_item(i);
+                    } else {
+                        self.wb_rail_scroll.set_offset(gpui::point(px(0.), px(0.)));
+                    }
+                }
                 // The RAIL wears the attention spine's own frame.
                 //
                 // It is the same object one scale down — a queue of things
@@ -4668,15 +4837,27 @@ impl TerminalView {
                             )
                         },
                     )
-                    .children(rows.into_iter().map(|row| {
-                        let id = row.id.clone();
-                        crate::benchdraw::rail_row(&row, sk, th).relative().child(
-                            crate::benchdraw::zone(
-                                self.wb_zones.clone(),
-                                crate::workbench::Hit::OpenRow(id.clone()),
-                            ),
-                        )
-                    })),
+                    .child(
+                        div()
+                            .id("workbench-shelf-rows")
+                            .min_h_0()
+                            .flex_1()
+                            .overflow_y_scroll()
+                            .track_scroll(&self.wb_rail_scroll)
+                            .flex()
+                            .flex_col()
+                            .gap(px(3.))
+                            .children(rows.into_iter().map(|row| {
+                                let id = row.id.clone();
+                                crate::benchdraw::rail_row(&row, sk, th)
+                                    .flex_none()
+                                    .relative()
+                                    .child(crate::benchdraw::zone(
+                                        self.wb_zones.clone(),
+                                        crate::workbench::Hit::OpenRow(id.clone()),
+                                    ))
+                            })),
+                    ),
                 )
             }
         };
@@ -4918,6 +5099,34 @@ impl TerminalView {
             // card's and win the lookup — last painted wins. Before the
             // gallery, which is a modal and must win over both.
             .children(dial_list)
+            .when_some(self.wb_key_focus.clone(), |root, focus| {
+                let zones = self.wb_zones.clone();
+                let color = sk.ink.focus;
+                root.child(
+                    gpui::canvas(
+                        |_, _, _| {},
+                        move |_, _, window, _| {
+                            if let Some(z) = zones
+                                .borrow()
+                                .iter()
+                                .find(|z| z.hit == focus && z.w > 0. && z.h > 0.)
+                            {
+                                let bounds = gpui::Bounds::new(
+                                    gpui::point(px(z.x), px(z.y)),
+                                    gpui::size(px(z.w), px(z.h)),
+                                );
+                                window.paint_quad(gpui::outline(
+                                    bounds,
+                                    color,
+                                    gpui::BorderStyle::Solid,
+                                ));
+                            }
+                        },
+                    )
+                    .absolute()
+                    .inset_0(),
+                )
+            })
             // Last, so its hitbox and its cursor request are painted after
             // every control's — see the hook for why that order is the rule.
             .child(self.pointer_hook(weak))

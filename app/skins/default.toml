@@ -46,6 +46,7 @@ icon = "▢"
 [ink]
 # grounds
 # panel        = { from = "bg" }                      # the ground a region sits on
+# terminal_field = { from = "bg" }                   # optional terminal field override; omitted follows panel
 # panel_raised = { from = "surface" }                 # a bar, a card
 # panel_sunken = { from = "surface", l = 0.40 }       # a track, an input well
 # panel_glass  = { from = "bg", a = 0.70 }            # an overlay's scrim
@@ -144,7 +145,7 @@ boundary = "hairline"   # hairline | double | inset | none
 # one soft shadow over a 0.22 wash, and the wash is what made a lit row read as a
 # selected item in a web list rather than as a lit edge.
 emphasis = "glow"       # fill | underline | bracket | rail | glow | bar
-divider  = "line"       # line | double | none
+divider  = "line"       # line | double | dimension | none
 caps     = "off"        # off | upper | tracked
 shine    = "gradient"   # gradient | flat — whether a raised surface is lit
 gauge    = "rail"       # rail | pips — how a measured share is drawn

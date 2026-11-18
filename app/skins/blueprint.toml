@@ -1,0 +1,72 @@
+# Fine double rules and registration ticks on dark drafting paper.
+name = "BLUEPRINT"
+icon = "⊞"
+
+[font]
+family = "Chakra Petch"
+heading = "Share Tech Mono"
+data = "Share Tech Mono"
+min_px = 11.0
+line_height = 1.16
+
+[shape]
+controls = "text"
+material = "grid"
+tube = "direct"
+corner = "square"
+boundary = "double"
+emphasis = "rail"
+divider = "dimension"
+focus = "hatch"
+shine = "flat"
+caps = "off"
+
+[metric]
+radius = 0.0
+radius_lg = 0.0
+hairline = 1.0
+border = 1.0
+rule_gap = 2.0
+gap = 6.0
+pad_x = 9.0
+pad_y = 5.0
+label_size = 11.0
+rail = 2.0
+glow = 0.0
+glow_a = 0.0
+frost = 0.0
+roughness = 0.0
+grain = 0.0
+lift = 0.0
+marker_alpha = 0.0
+
+[ink]
+panel = "#102942"
+terminal_field = { from = "bg" }
+panel_sunken = "#0b2138"
+panel_raised = "#173753"
+panel_glass = "#102942"
+btn_face = "#20415d"
+face_rest = "#173753"
+ink = "#e6f3f6"
+ink_lit = "#ffffff"
+ink_dim = "#c5e2eb"
+ink_faint = "#a5cbdc"
+ink_off = "#adcedb"
+ink_on_mark = "#082436"
+rule = "#28516c"
+rule_strong = "#487e96"
+edge = "#37657e"
+edge_rest = "#28516c"
+edge_strong = "#68b8ce"
+focus = "#ffe198"
+mark = "#84d9eb"
+mark_soft = "#a9e4ef"
+mark_dim = "#4e879e"
+mark_wash = "#234b63"
+row_active = "#21455b"
+hover = "#24495e"
+
+[note]
+stock = true
+decoration = "plain"
