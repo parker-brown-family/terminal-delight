@@ -9194,6 +9194,12 @@ impl Workspace {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             if this
                 .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    // An undo hold that has run out ends its panes in the host
+                    // here too, not only when a frame is drawn: a quiet or
+                    // hidden window may draw nothing for hours, so the shells
+                    // of a tab closed and never reopened lived on in the host
+                    // and came back with the next window (issue #1295).
+                    ws.sweep_trash(cx);
                     ws.reclaim_abandoned_streams(window, cx);
                 })
                 .is_err()
@@ -42257,6 +42263,17 @@ mod tests {
             "and the document it was reading goes with it"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #1295: the undo holds are swept by the loop that runs whether or
+    /// not the window draws, so an expired hold ends its panes in the host on
+    /// time. Mutation: removing the sweep from that loop fails this.
+    #[test]
+    fn expired_holds_are_swept_by_the_loop_that_runs_without_a_frame() {
+        let src = include_str!("main.rs");
+        let start = src.find("fn watch_for_abandoned_streams").unwrap();
+        let body = &src[start..start + src[start..].find("\n    }\n").unwrap()];
+        assert!(body.contains("ws.sweep_trash(cx);"), "{body}");
     }
 
     /// Issue #476: a save that changes nothing takes no backup slot and writes
