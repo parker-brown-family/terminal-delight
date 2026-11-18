@@ -149,14 +149,32 @@ pub struct Project {
 /// Roots rather than a recursive sweep of `$HOME`: the logo picker learned
 /// that the deep sweep is the slow one, and a project list that takes 600ms to
 /// appear is a menu people stop opening.
+///
+/// The folders come from `roots` in `launch.toml` when it is set, and otherwise
+/// from a shipped list of common names. That list used to be one machine's own
+/// folders, compiled into every build that shipped (issue #802).
 pub fn default_roots(home: &Path) -> Vec<PathBuf> {
-    vec![
-        home.join("Work"),
-        home.join("BROWN-FAMILY-SPORTS/Software"),
-        home.join("BROWN-FAMILY-SPORTS"),
-        home.join("INTELLIMASS"),
-        home.to_path_buf(),
-    ]
+    roots_for(crate::launchpref::load().roots.as_deref(), home)
+}
+
+/// [`default_roots`] over its inputs. A configured list is taken as written,
+/// with a leading `~` read as `home`; with none, the shipped list, which a
+/// folder that does not exist costs nothing in, since the scan skips it.
+pub fn roots_for(configured: Option<&[String]>, home: &Path) -> Vec<PathBuf> {
+    match configured {
+        Some(list) => list
+            .iter()
+            .map(|r| match r.strip_prefix("~") {
+                Some(rest) => home.join(rest.trim_start_matches('/')),
+                None => PathBuf::from(r),
+            })
+            .collect(),
+        None => ["Work", "work", "src", "code", "projects", "Projects", "dev"]
+            .iter()
+            .map(|d| home.join(d))
+            .chain(std::iter::once(home.to_path_buf()))
+            .collect(),
+    }
 }
 
 /// One level down from each root, newest first.
@@ -731,6 +749,37 @@ pub fn fingerprint(text: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #802: the launcher's folders are configurable, and the shipped
+    /// list names no one's private folders. Mutation: ignoring the configured
+    /// list fails the first assertion.
+    #[test]
+    fn the_launcher_reads_its_folders_from_launch_toml_or_a_generic_list() {
+        let home = Path::new("/home/someone");
+        let mine = vec![
+            "~/Work".to_string(),
+            "~".to_string(),
+            "/srv/repos".to_string(),
+        ];
+        assert_eq!(
+            roots_for(Some(&mine), home),
+            vec![
+                home.join("Work"),
+                home.to_path_buf(),
+                PathBuf::from("/srv/repos")
+            ]
+        );
+        let shipped = roots_for(None, home);
+        assert!(shipped.contains(&home.join("code")) && shipped.contains(&home.to_path_buf()));
+        for private in ["BROWN-FAMILY-SPORTS", "INTELLIMASS"] {
+            assert!(
+                !shipped
+                    .iter()
+                    .any(|p| p.to_string_lossy().contains(private)),
+                "{private} is one machine's folder"
+            );
+        }
+    }
 
     fn recipe(harness: Harness, effort: &str) -> Recipe {
         Recipe {
