@@ -395,11 +395,40 @@ pub fn row_is_working(text: &str) -> bool {
         }
         rest = &rest[1.min(rest.len())..];
     }
+    // Codex's own working row, `• Working (1h 34m 57s • esc to interrupt)`, cut
+    // by a narrow pane before its `interrupt` (#1479): its `• Working (` and an
+    // elapsed time are what survive. Codex keeps its empty-composer placeholder
+    // on screen while it works, so without this a truncated working row read as
+    // rest, and the Floor could type into an agent mid-turn.
+    if codex_working_row(text) {
+        return true;
+    }
     // The spinner line — `✻ Forming… (6m 34s · ↓ 50.0k tokens)` — is the needle
     // that survives a NARROW pane, where the footer carrying every string above
     // has been truncated away (#477). Case does not matter to it, so the row
     // this function was handed is the row it gets.
     crate::hud::is_live_spinner(text)
+}
+
+/// `• Working (12s` and longer: a bullet, a word ending in "ing", then a bracket
+/// opening on an elapsed time. History rows (`• Ran cargo test`, `• Explored`)
+/// carry no such bracket, so they never match.
+fn codex_working_row(text: &str) -> bool {
+    let Some(rest) = text.trim_start().strip_prefix('\u{2022}') else {
+        return false;
+    };
+    let rest = rest.trim_start();
+    let word: String = rest
+        .chars()
+        .take_while(|c| c.is_ascii_alphabetic())
+        .collect();
+    if word.len() < 4 || !word.ends_with("ing") {
+        return false;
+    }
+    let Some(inner) = rest[word.len()..].trim_start().strip_prefix('(') else {
+        return false;
+    };
+    inner.chars().next().is_some_and(|c| c.is_ascii_digit())
 }
 
 /// A run of digits followed by a time unit — `49s`, `2m`, `1h`.

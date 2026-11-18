@@ -297,13 +297,6 @@ pub fn reanchor(old: &[BlockMeta], top: usize, new: &[BlockMeta]) -> usize {
         .map_or(nearest, |(i, _)| i)
 }
 
-/// The blocks whose source starts in the first `lines` lines, counted from the
-/// top, and whether any block follows them: what a compact card shows.
-pub fn opening(doc: &MdDoc, lines: usize) -> (usize, bool) {
-    let count = doc.meta.iter().take_while(|m| m.line < lines).count();
-    (count, count < doc.blocks.len())
-}
-
 /* ---------------- inline spans ---------------- */
 
 fn collect_inline<'a>(

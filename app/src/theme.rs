@@ -12,12 +12,7 @@
 //! deciding how much CRT you get. Both files are polled; either one changing
 //! repaints.
 
-use std::{
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{fs, path::PathBuf, sync::Arc, time::SystemTime};
 
 use gpui::{rgb, App, Global, Hsla};
 use serde::{Deserialize, Deserializer, Serialize};
@@ -7042,11 +7037,15 @@ pub fn init(cx: &mut App) {
     // the palette is the external system's. Re-statting the paths rather than
     // watching inodes is deliberate — it survives the staging-directory rename
     // that a theme switch performs.
+    let paths: Vec<_> = std::iter::once(path.clone())
+        .chain(palette.clone())
+        .collect();
+    let mut changes = crate::filewatch::Changes::new(&paths);
     let mut last = (mtime(&path), palette.as_ref().and_then(mtime));
     cx.spawn(async move |cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(300))
-            .await;
+        let executor = cx.background_executor().clone();
+        changes.wait(&executor).await;
+        changes = crate::filewatch::Changes::new(&paths);
         let now = (mtime(&path), palette.as_ref().and_then(mtime));
         if now != last {
             last = now;

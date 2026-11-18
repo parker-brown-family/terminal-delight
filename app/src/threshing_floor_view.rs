@@ -2697,14 +2697,14 @@ impl Workspace {
                 "floor-context-off-limits",
             ),
         ] {
-            let mark = if leaf.read(cx).agent_access == access {
-                "●"
-            } else {
-                "○"
-            };
+            let face = sk.choice_label(
+                label,
+                leaf.read(cx).agent_access == access,
+                parts.ctl_selected,
+            );
             let leaf = leaf.clone();
             menu = menu.child(
-                row(format!("{mark} {label}"))
+                row(face)
                     .id(id)
                     .debug_selector(move || id.to_string())
                     .on_click(cx.listener(move |ws, _, _, cx| {
@@ -4731,6 +4731,7 @@ impl Workspace {
         cx: &mut Context<Self>,
     ) -> gpui::Stateful<gpui::Div> {
         let ui = self.lang.strings().ui;
+        let narrow = self.last_win.is_some_and(|(_, _, width, _)| width < 820.);
         let editor = self.floor_relation.as_ref();
         let map_open = self.floor_map.is_some();
         let actor = editor.and_then(|e| e.actor.clone()).or_else(|| {
@@ -5184,7 +5185,7 @@ impl Workspace {
                 .id("floor-relationship-composer")
                 .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
                 .debug_selector(|| "floor-relationship-composer".to_string())
-                .h(px(178.))
+                .h(px(if narrow { 281. } else { 178. }))
                 .flex_none()
                 .min_w(px(0.))
                 .p_3()
@@ -5199,16 +5200,22 @@ impl Workspace {
         .child(title)
         .child(
             div()
-                .h(px(95.))
                 .flex_none()
                 .flex()
-                .flex_row()
-                .gap_3()
+                .gap_2()
+                .when(narrow, |d| d.flex_col())
                 .min_w(px(0.))
-                .child(actor_slot)
-                .child(div().pt(px(39.)).child("→"))
-                .child(verb_slot)
-                .child(div().pt(px(39.)).child("→"))
+                .child(
+                    div()
+                        .h(px(95.))
+                        .flex_none()
+                        .flex()
+                        .gap_2()
+                        .child(actor_slot)
+                        .child(div().pt(px(39.)).child("→"))
+                        .child(verb_slot),
+                )
+                .when(!narrow, |d| d.child(div().pt(px(39.)).child("→")))
                 .child(target_slot),
         )
         .child(footer)
@@ -11411,6 +11418,39 @@ mod tests {
             );
             assert_eq!(ws.floor_view.offset, offset);
         });
+    }
+
+    #[gpui::test]
+    fn menu_clarity_floor_targets_have_room_at_six_hundred_pixels(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx, _) = fixture(cx);
+        cx.simulate_resize(size(px(600.), px(950.)));
+        for skin_id in ["default", "terminimalist"] {
+            cx.update(|w, cx| {
+                skin::select(cx, skin_id).unwrap();
+                w.refresh();
+            });
+            cx.run_until_parked();
+            let form = bounds(cx, "floor-relationship-composer");
+            let verb = bounds(cx, "floor-rel-verb");
+            let target = bounds(cx, "floor-rel-to");
+            assert!(
+                target.size.width >= px(95.) && target.top() >= verb.bottom(),
+                "{skin_id}: {target:?} beside {verb:?}"
+            );
+            assert!(target.right() <= form.right() && target.bottom() < form.bottom());
+            click(cx, "floor-rel-to");
+            assert!(ws.read_with(cx, |ws, _| ws
+                .floor_relation
+                .as_ref()
+                .unwrap()
+                .targets
+                .last()
+                == Some(&None)));
+            click(cx, "floor-rel-cancel");
+        }
     }
 
     #[gpui::test]

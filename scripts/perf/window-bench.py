@@ -46,6 +46,9 @@ def worker(directory, index, history, size):
     if index == 0:
         with open(Path(directory, "go"), "rb") as trigger:
             trigger.read(1)
+        if os.getenv("TD_BENCH_MCP"):
+            from mcp_calls import measure
+            measure(directory, int(os.environ["TD_BENCH_MCP"]))
         block = b"".join(
             f"\033[38;5;{n}mrow {n:03} 0123456789abcdef\033[0m\r\n".encode()
             for n in range(256)
@@ -74,6 +77,43 @@ def proc_stats(pid):
         (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK"),
         int(fields[21]) * os.sysconf("SC_PAGE_SIZE") / 1048576,
     )
+
+
+def thread_sleeps(pid):
+    """Voluntary switches count blocking sleeps. Keep thread IDs for deltas."""
+    result = {}
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        try:
+            fields = dict(line.split(":", 1) for line in (task / "status").read_text().splitlines() if ":" in line)
+            result[task.name] = (fields["Name"].strip(), int(fields["voluntary_ctxt_switches"]))
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return result
+
+
+def idle_window(pid, sample):
+    before = thread_sleeps(pid)
+    cpu0, _ = proc_stats(pid)
+    start = CLOCK()
+    epoch_us = time.time_ns() // 1000
+    time.sleep(sample)
+    end = CLOCK()
+    cpu1, rss = proc_stats(pid)
+    after = thread_sleeps(pid)
+    duration = end - start
+    by_name = {}
+    for tid in before.keys() & after.keys():
+        name, count = after[tid]
+        by_name[name] = by_name.get(name, 0) + count - before[tid][1]
+    return start, end, rss, {
+        "idle_window_cpu_pct": 100 * (cpu1 - cpu0) / duration,
+        "voluntary_switches_s": sum(by_name.values()) / duration,
+        "voluntary_switches_by_thread_name": by_name,
+        "threads_started": len(after.keys() - before.keys()),
+        "threads_exited": len(before.keys() - after.keys()),
+        "idle_sample_s": duration,
+        "idle_start_epoch_us": epoch_us,
+    }
 
 
 def tagged(directory):
@@ -133,6 +173,11 @@ def run(a, display_env, probe, n, skin, repeat):
         )
         if a.capture:
             env["TD_BENCH_CAPTURE"] = "1"
+        if a.mcp:
+            env["TD_BENCH_MCP"] = str(a.mcp)
+            env["TD_MCP_AUDIT"] = "1"
+        if a.timer_audit:
+            env["TD_TIMER_AUDIT"] = "1"
         if a.audit:
             env["TD_FRAME_AUDIT"] = "1"
         if a.scene == "floor":
@@ -152,6 +197,8 @@ def run(a, display_env, probe, n, skin, repeat):
         sessions.mkdir(parents=True)
         os.mkfifo(d / "go")
         layout = f"active = 0\npanes = {n}\nwin = [0,0,{a.width},600]\n"
+        if a.mcp:
+            layout += '[mcp]\nenabled = true\nexpose = "all"\nevents = true\nwritable = false\n'
         for i in range(n):
             cmd = shlex.join(
                 [
@@ -179,6 +226,7 @@ def run(a, display_env, probe, n, skin, repeat):
                 )
                 start = CLOCK()
                 win = sp.Popen([a.binary], env=env, cwd=temp, stdout=log, stderr=log)
+                (d / "window-pid").write_text(str(win.pid))
                 try:
                     # Xvfb has no window manager. Supply the ConfigureNotify that
                     # starts gpui drawing here. Keep the final fixture size fixed.
@@ -247,11 +295,7 @@ def run(a, display_env, probe, n, skin, repeat):
                     ]
                     if len(host) != 1:
                         raise RuntimeError(f"expected one private host, found {host}")
-                    t = CLOCK()
-                    cpu0 = proc_stats(win.pid)[0]
-                    time.sleep(a.sample)
-                    cpu1, rss = proc_stats(win.pid)
-                    idle = 100 * (cpu1 - cpu0) / (CLOCK() - t)
+                    idle_start, idle_end, rss, idle = idle_window(win.pid, a.sample)
                     host_rss = proc_stats(host[0])[1]
                     if a.profile:
                         record = sp.Popen(
@@ -299,6 +343,18 @@ def run(a, display_env, probe, n, skin, repeat):
                     (a.out / f"{skin}-{n}-{repeat}.frames").write_text(
                         "\n".join(lines) + "\n"
                     )
+                    if a.mcp:
+                        rows = json.loads((d / "calls.json").read_text())
+                        timings = [line.split() for line in log_path.read_text().splitlines() if line.startswith("td-mcp-time ")]
+                        # Catalogue is static. The setup census and each measured
+                        # tools/call build one snapshot and encode one response.
+                        snapshots = [int(row[2]) for row in timings if row[1] == "snapshot"]
+                        encoded = [int(row[2]) for row in timings if row[1] == "serialize"]
+                        if len(snapshots) != len(rows) + 1 or len(encoded) != len(rows) + 2:
+                            raise RuntimeError(f"incomplete MCP attribution: {len(rows)} calls, {len(snapshots)} snapshots, {len(encoded)} encodes")
+                        for row, snap, enc in zip(rows, snapshots[1:], encoded[2:], strict=True):
+                            row.update(snapshot_ns=snap, serialization_ns=enc)
+                        (a.out / f"mcp-{repeat}.json").write_text(json.dumps(rows, indent=2))
                     if a.audit:
                         audit_draws(log_path, skin)
                     return dict(
@@ -307,7 +363,12 @@ def run(a, display_env, probe, n, skin, repeat):
                         panes=n,
                         history_lines_per_pane=a.history,
                         cold_process_paint_ms=first_ms,
-                        idle_window_cpu_pct=idle,
+                        **idle,
+                        idle_redraws_s=sum(
+                            1 for kind, xid, ts, _ in map(str.split, lines)
+                            if kind == "damage" and int(xid) == window_id
+                            and idle_start <= float(ts) < idle_end
+                        ) / (idle_end - idle_start),
                         window_rss_mib=rss,
                         host_rss_mib=host_rss,
                         stream_mib_s=sent / 1048576 / (end - begin),
@@ -332,6 +393,8 @@ def main():
     p.add_argument("--binary", type=Path, required=True)
     p.add_argument("--icd", type=Path, required=True, help="lavapipe Vulkan ICD JSON")
     p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--mcp", type=int, default=0, help="repetitions per advertised tool from inside a private 20-pane fixture")
+    p.add_argument("--timer-audit", action="store_true", help="log each fired GPUI timer with a realtime timestamp and source location")
     p.add_argument("--display", type=int, default=96)
     p.add_argument("--panes", type=int, nargs="+", default=[1, 8, 16])
     p.add_argument("--skins", nargs="+", default=["default"])
@@ -367,6 +430,8 @@ def main():
     )
     p.add_argument("--width", type=int, default=900, help="window width on the private 1000px display")
     a = p.parse_args()
+    if a.mcp and a.panes != [20]:
+        p.error("--mcp requires --panes 20")
     if not 320 <= a.width <= 1000:
         p.error("--width must be between 320 and 1000")
     if a.skin_file:

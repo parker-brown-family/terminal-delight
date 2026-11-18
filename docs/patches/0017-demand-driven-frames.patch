@@ -1,0 +1,504 @@
+--- a/crates/gpui/src/executor.rs
++++ b/crates/gpui/src/executor.rs
+@@ -163,7 +163,25 @@
+         if duration.is_zero() {
+             return Task::ready(());
+         }
+-        self.spawn(self.inner.scheduler().timer(duration))
++        let sleep = self.inner.scheduler().timer(duration);
++        static AUDIT: std::sync::OnceLock<bool> = std::sync::OnceLock::new();
++        if *AUDIT.get_or_init(|| std::env::var_os("TD_TIMER_AUDIT").is_some()) {
++            let site = std::panic::Location::caller();
++            return self.spawn(async move {
++                sleep.await;
++                let at = std::time::SystemTime::now()
++                    .duration_since(std::time::UNIX_EPOCH)
++                    .expect("unix clock");
++                eprintln!(
++                    "td-timer {} {}:{} {}",
++                    at.as_micros(),
++                    site.file(),
++                    site.line(),
++                    duration.as_millis()
++                );
++            });
++        }
++        self.spawn(sleep)
+     }
+ 
+     /// In tests, run an arbitrary number of tasks (determined by the SEED environment variable)
+--- a/crates/gpui/src/platform.rs
++++ b/crates/gpui/src/platform.rs
+@@ -648,6 +648,10 @@
+     fn zoom(&self);
+     fn toggle_fullscreen(&self);
+     fn is_fullscreen(&self) -> bool;
++    /// Wake a platform frame source that sleeps when no frame is pending.
++    fn frame_requester(&self) -> Option<Rc<dyn Fn()>> {
++        None
++    }
+     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>);
+     fn on_input(&self, callback: Box<dyn FnMut(PlatformInput) -> DispatchEventResult>);
+     fn on_active_status_change(&self, callback: Box<dyn FnMut(bool)>);
+--- a/crates/gpui/src/window.rs
++++ b/crates/gpui/src/window.rs
+@@ -114,6 +114,7 @@
+ 
+ struct WindowInvalidatorInner {
+     pub dirty: bool,
++    frame_requester: Option<Rc<dyn Fn()>>,
+     pub draw_phase: DrawPhase,
+     pub dirty_views: FxHashSet<EntityId>,
+     pub update_count: usize,
+@@ -140,6 +141,7 @@
+         WindowInvalidator {
+             inner: Rc::new(RefCell::new(WindowInvalidatorInner {
+                 dirty: true,
++                frame_requester: None,
+                 draw_phase: DrawPhase::None,
+                 dirty_views: FxHashSet::default(),
+                 update_count: 0,
+@@ -154,6 +156,11 @@
+         inner.dirty_views.insert(entity);
+         if inner.draw_phase == DrawPhase::None {
+             Self::record_frame_dirty(&mut inner);
++            if !inner.dirty
++                && let Some(request) = &inner.frame_requester
++            {
++                request();
++            }
+             inner.dirty = true;
+             cx.push_effect(Effect::Notify { emitter: entity });
+             true
+@@ -168,6 +175,12 @@
+ 
+     pub fn set_dirty(&self, dirty: bool) {
+         let mut inner = self.inner.borrow_mut();
++        if dirty
++            && !inner.dirty
++            && let Some(request) = &inner.frame_requester
++        {
++            request();
++        }
+         inner.dirty = dirty;
+         if dirty {
+             inner.update_count += 1;
+@@ -1344,6 +1357,7 @@
+         let appearance = platform_window.appearance();
+         let text_system = Arc::new(WindowTextSystem::new(cx.text_system().clone()));
+         let invalidator = WindowInvalidator::new();
++        invalidator.inner.borrow_mut().frame_requester = platform_window.frame_requester();
+         let active = Rc::new(Cell::new(platform_window.is_active()));
+         let hovered = Rc::new(Cell::new(platform_window.is_hovered()));
+         let needs_present = Rc::new(Cell::new(false));
+@@ -1484,6 +1498,9 @@
+                     if let Some(last_frame) = last_frame_time.get()
+                         && now.duration_since(last_frame) < min_interval
+                     {
++                        if let Some(request) = &invalidator.inner.borrow().frame_requester {
++                            request();
++                        }
+                         // Must still complete the frame on platforms that require it.
+                         // On Wayland, `surface.frame()` was already called to request the
+                         // next frame callback, so we must call `surface.commit()` (via
+@@ -1530,6 +1547,12 @@
+                             .log_err();
+                     })
+                 } else if needs_present {
++                    if active.get()
++                        && input_rate_tracker.borrow_mut().is_high_rate()
++                        && let Some(request) = &invalidator.inner.borrow().frame_requester
++                    {
++                        request();
++                    }
+                     handle
+                         .update(&mut cx, |_, window, _| window.present())
+                         .log_err();
+@@ -2163,7 +2186,13 @@
+ 
+     /// Schedule the given closure to be run directly after the current frame is rendered.
+     pub fn on_next_frame(&self, callback: impl FnOnce(&mut Window, &mut App) + 'static) {
+-        RefCell::borrow_mut(&self.next_frame_callbacks).push(Box::new(callback));
++        let mut pending = self.next_frame_callbacks.borrow_mut();
++        if pending.is_empty()
++            && let Some(request) = &self.invalidator.inner.borrow().frame_requester
++        {
++            request();
++        }
++        pending.push(Box::new(callback));
+     }
+ 
+     /// Schedule a frame to be drawn on the next animation frame.
+@@ -4646,6 +4675,11 @@
+ 
+         if self.invalidator.update_count() > update_count_before {
+             self.input_rate_tracker.borrow_mut().record_input();
++            if self.input_rate_tracker.borrow_mut().is_high_rate()
++                && let Some(request) = &self.invalidator.inner.borrow().frame_requester
++            {
++                request();
++            }
+             #[cfg(feature = "input-latency-histogram")]
+             if self.invalidator.not_drawing() {
+                 self.input_latency_tracker.record_input(dispatch_time);
+--- a/crates/gpui_linux/src/linux/wayland/window.rs
++++ b/crates/gpui_linux/src/linux/wayland/window.rs
+@@ -92,6 +92,7 @@
+ pub struct WaylandWindowState {
+     surface_state: WaylandSurfaceState,
+     acknowledged_first_configure: bool,
++    frame_requested: bool,
+     parent: Option<WaylandWindowStatePtr>,
+     children: FxHashSet<ObjectId>,
+     pub surface: wl_surface::WlSurface,
+@@ -318,6 +319,14 @@
+ }
+ 
+ impl WaylandWindowState {
++    fn request_frame(&mut self) {
++        if self.acknowledged_first_configure && !self.frame_requested && self.surface.is_alive() {
++            self.frame_requested = true;
++            self.surface.frame(&self.globals.qh, self.surface.id());
++            self.surface.commit();
++        }
++    }
++
+     pub(crate) fn new(
+         handle: AnyWindowHandle,
+         surface: wl_surface::WlSurface,
+@@ -368,6 +377,7 @@
+         Ok(Self {
+             surface_state,
+             acknowledged_first_configure: false,
++            frame_requested: false,
+             parent,
+             children: FxHashSet::default(),
+             surface,
+@@ -586,7 +596,7 @@
+ 
+     pub fn frame(&self) {
+         let mut state = self.state.borrow_mut();
+-        state.surface.frame(&state.globals.qh, state.surface.id());
++        state.frame_requested = false;
+         state.resize_throttle = false;
+         let force_render = state.force_render_after_recovery;
+         state.force_render_after_recovery = false;
+@@ -653,6 +663,7 @@
+                         return;
+                     } else if configure.resizing {
+                         state.resize_throttle = true;
++                        state.request_frame();
+                     }
+                     if !configure.fullscreen && !configure.maximized {
+                         configure.size = if got_unmaximized {
+@@ -1360,6 +1371,29 @@
+         self.borrow().fullscreen
+     }
+ 
++    fn frame_requester(&self) -> Option<Rc<dyn Fn()>> {
++        // Invalidation can arrive from inside a platform callback holding state.
++        // Coalesce on the foreground executor and commit after that borrow ends.
++        let state = Rc::downgrade(&self.0.state);
++        let executor = self.borrow().globals.executor.clone();
++        let queued = Rc::new(std::cell::Cell::new(false));
++        Some(Rc::new(move || {
++            if queued.replace(true) {
++                return;
++            }
++            let state = state.clone();
++            let queued = queued.clone();
++            executor
++                .spawn(async move {
++                    queued.set(false);
++                    if let Some(state) = state.upgrade() {
++                        state.borrow_mut().request_frame();
++                    }
++                })
++                .detach();
++        }))
++    }
++
+     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+         self.0.callbacks.borrow_mut().request_frame = Some(callback);
+     }
+@@ -1425,6 +1459,7 @@
+             }
+ 
+             state.force_render_after_recovery = true;
++            state.request_frame();
+             return;
+         }
+ 
+@@ -1432,6 +1467,7 @@
+ 
+         if state.renderer.needs_redraw() {
+             state.force_render_after_recovery = true;
++            state.request_frame();
+         }
+     }
+ 
+--- a/crates/gpui_linux/src/linux/x11/client.rs
++++ b/crates/gpui_linux/src/linux/x11/client.rs
+@@ -82,6 +82,8 @@
+     window: X11WindowStatePtr,
+     refresh_state: Option<RefreshState>,
+     expose_event_received: bool,
++    ping_token: RegistrationToken,
++    last_frame: Option<Instant>,
+     last_visibility: Visibility,
+     is_mapped: bool,
+ }
+@@ -104,9 +106,9 @@
+     Hidden {
+         refresh_rate: Duration,
+     },
+-    PeriodicRefresh {
++    Visible {
+         refresh_rate: Duration,
+-        event_loop_token: RegistrationToken,
++        event_loop_token: Option<RegistrationToken>,
+     },
+ }
+ 
+@@ -238,12 +240,15 @@
+         };
+         let mut state = client.0.borrow_mut();
+ 
+-        if let Some(window_ref) = state.windows.remove(&x_window)
+-            && let Some(RefreshState::PeriodicRefresh {
+-                event_loop_token, ..
++        if let Some(window_ref) = state.windows.remove(&x_window) {
++            state.loop_handle.remove(window_ref.ping_token);
++            if let Some(RefreshState::Visible {
++                event_loop_token: Some(token),
++                ..
+             }) = window_ref.refresh_state
+-        {
+-            state.loop_handle.remove(event_loop_token);
++            {
++                state.loop_handle.remove(token);
++            }
+         }
+         if state.mouse_focused_window == Some(x_window) {
+             state.mouse_focused_window = None;
+@@ -647,10 +652,11 @@
+                 break;
+             }
+ 
+-            for window in windows_to_refresh.into_iter() {
++            for window_id in windows_to_refresh.into_iter() {
+                 let mut state = self.0.borrow_mut();
+-                if let Some(window) = state.windows.get_mut(&window) {
++                if let Some(window) = state.windows.get_mut(&window_id) {
+                     window.expose_event_received = true;
++                    state.request_refresh(window_id);
+                 }
+             }
+ 
+@@ -1635,7 +1641,16 @@
+         .log_err();
+         xcb_flush(&state.xcb_connection);
+ 
++        let (ping, source) = calloop::ping::make_ping()?;
++        window.0.state.borrow_mut().frame_ping = Some(ping);
++        let ping_token = state
++            .loop_handle
++            .insert_source(source, move |_, _, client| {
++                client.0.borrow_mut().request_refresh(x_window);
++            })?;
+         let window_ref = WindowRef {
++            ping_token,
++            last_frame: None,
+             window: window.0.clone(),
+             refresh_state: None,
+             expose_event_received: false,
+@@ -1884,28 +1899,27 @@
+         match (is_visible, window_ref.refresh_state.take()) {
+             (false, refresh_state @ Some(RefreshState::Hidden { .. }))
+             | (false, refresh_state @ None)
+-            | (true, refresh_state @ Some(RefreshState::PeriodicRefresh { .. })) => {
++            | (true, refresh_state @ Some(RefreshState::Visible { .. })) => {
+                 window_ref.refresh_state = refresh_state;
+             }
+             (
+                 false,
+-                Some(RefreshState::PeriodicRefresh {
++                Some(RefreshState::Visible {
+                     refresh_rate,
+                     event_loop_token,
+                 }),
+             ) => {
+-                self.loop_handle.remove(event_loop_token);
++                if let Some(token) = event_loop_token {
++                    self.loop_handle.remove(token);
++                }
+                 window_ref.refresh_state = Some(RefreshState::Hidden { refresh_rate });
+             }
+             (true, Some(RefreshState::Hidden { refresh_rate })) => {
+-                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+-                let Some(window_ref) = self.windows.get_mut(&x_window) else {
+-                    return;
+-                };
+-                window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
++                window_ref.refresh_state = Some(RefreshState::Visible {
+                     refresh_rate,
+-                    event_loop_token,
++                    event_loop_token: None,
+                 });
++                self.request_refresh(x_window);
+             }
+             (true, None) => {
+                 let Some(screen_resources) = get_reply(
+@@ -1944,56 +1958,67 @@
+                     }
+                 };
+ 
+-                let event_loop_token = self.start_refresh_loop(x_window, refresh_rate);
+-                let Some(window_ref) = self.windows.get_mut(&x_window) else {
+-                    return;
+-                };
+-                window_ref.refresh_state = Some(RefreshState::PeriodicRefresh {
++                window_ref.refresh_state = Some(RefreshState::Visible {
+                     refresh_rate,
+-                    event_loop_token,
++                    event_loop_token: None,
+                 });
++                self.request_refresh(x_window);
+             }
+         }
+     }
+ 
+-    #[must_use]
+-    fn start_refresh_loop(
+-        &self,
+-        x_window: xproto::Window,
+-        refresh_rate: Duration,
+-    ) -> RegistrationToken {
+-        self.loop_handle
+-            .insert_source(calloop::timer::Timer::immediate(), {
+-                move |mut instant, (), client| {
+-                    let xcb_connection = {
++    /// One frame per demand, paced to this monitor, including the first frame
++    /// after remapping. Expose, invalidation and animation share this pending timer.
++    fn request_refresh(&mut self, x_window: xproto::Window) {
++        let Some(window) = self.windows.get_mut(&x_window) else {
++            return;
++        };
++        let Some(RefreshState::Visible {
++            refresh_rate,
++            event_loop_token,
++        }) = &mut window.refresh_state
++        else {
++            return;
++        };
++        if event_loop_token.is_some() {
++            return;
++        }
++        let at = window
++            .last_frame
++            .map_or_else(Instant::now, |last| last + *refresh_rate);
++        *event_loop_token = Some(
++            self.loop_handle
++                .insert_source(
++                    calloop::timer::Timer::from_deadline(at),
++                    move |_, (), client| {
+                         let mut state = client.0.borrow_mut();
+-                        let xcb_connection = state.xcb_connection.clone();
++                        let connection = state.xcb_connection.clone();
+                         if let Some(window) = state.windows.get_mut(&x_window) {
+-                            let expose_event_received = window.expose_event_received;
+-                            window.expose_event_received = false;
++                            if let Some(RefreshState::Visible {
++                                event_loop_token, ..
++                            }) = &mut window.refresh_state
++                            {
++                                *event_loop_token = None;
++                            }
++                            window.last_frame = Some(Instant::now());
++                            let require_presentation =
++                                std::mem::take(&mut window.expose_event_received);
+                             let force_render = std::mem::take(
+                                 &mut window.window.state.borrow_mut().force_render_after_recovery,
+                             );
+-                            let window = window.window.clone();
++                            let target = window.window.clone();
+                             drop(state);
+-                            window.refresh(RequestFrameOptions {
+-                                require_presentation: expose_event_received,
++                            target.refresh(RequestFrameOptions {
++                                require_presentation,
+                                 force_render,
+                             });
++                            client.process_x11_events(&connection).log_err();
+                         }
+-                        xcb_connection
+-                    };
+-                    client.process_x11_events(&xcb_connection).log_err();
+-
+-                    // Take into account that some frames have been skipped
+-                    let now = Instant::now();
+-                    while instant < now {
+-                        instant += refresh_rate;
+-                    }
+-                    calloop::timer::TimeoutAction::ToInstant(instant)
+-                }
+-            })
+-            .expect("Failed to initialize window refresh timer")
++                        calloop::timer::TimeoutAction::Drop
++                    },
++                )
++                .expect("register X11 frame deadline"),
++        );
+     }
+ 
+     fn get_cursor_icon(&mut self, style: CursorStyle) -> Option<xproto::Cursor> {
+--- a/crates/gpui_linux/src/linux/x11/window.rs
++++ b/crates/gpui_linux/src/linux/x11/window.rs
+@@ -278,6 +278,7 @@
+     hidden: bool,
+     active: bool,
+     hovered: bool,
++    pub(crate) frame_ping: Option<calloop::ping::Ping>,
+     pub(crate) force_render_after_recovery: bool,
+     fullscreen: bool,
+     client_side_decorations_supported: bool,
+@@ -789,6 +790,7 @@
+                 input_handler: None,
+                 active: false,
+                 hovered: false,
++                frame_ping: None,
+                 force_render_after_recovery: false,
+                 fullscreen: false,
+                 maximized_vertical: false,
+@@ -1620,6 +1622,11 @@
+         self.0.state.borrow().fullscreen
+     }
+ 
++    fn frame_requester(&self) -> Option<Rc<dyn Fn()>> {
++        let ping = self.0.state.borrow().frame_ping.clone()?;
++        Some(Rc::new(move || ping.ping()))
++    }
++
+     fn on_request_frame(&self, callback: Box<dyn FnMut(RequestFrameOptions)>) {
+         self.0.callbacks.borrow_mut().request_frame = Some(callback);
+     }
+@@ -1683,6 +1690,9 @@
+             }
+ 
+             inner.force_render_after_recovery = true;
++            if let Some(ping) = &inner.frame_ping {
++                ping.ping();
++            }
+             return;
+         }
+ 
+@@ -1690,6 +1700,9 @@
+ 
+         if inner.renderer.needs_redraw() {
+             inner.force_render_after_recovery = true;
++            if let Some(ping) = &inner.frame_ping {
++                ping.ping();
++            }
+         }
+     }
+ 

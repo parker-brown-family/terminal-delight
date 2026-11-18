@@ -195,84 +195,106 @@ pub fn init(cx: &mut App) {
         .join("hypr")
         .join(signature)
         .join(".socket.sock");
-    let border_path = path.clone();
-    if crate::palette::omarchy_installed() {
-        let tag_path = path.clone();
-        cx.spawn(async move |cx| {
-            // Hyprland is asked only while our window list differs from the
-            // one last settled, so a window at rest costs no request.
-            let mut settled = Vec::new();
-            loop {
-                let windows: Vec<_> = cx.update(|cx| {
-                    cx.windows()
-                        .iter()
-                        .map(|window| window.window_id())
-                        .collect()
-                });
-                if windows != settled {
-                    let path = tag_path.clone();
-                    let expected = windows.len();
-                    let outcome = cx
-                        .background_executor()
-                        .spawn(async move { apply_tags(&path, std::process::id(), expected) })
-                        .await;
-                    if outcome == Sent::Refused {
-                        eprintln!("terminal-delight: the compositor refused the terminal tag");
-                    }
-                    if outcome != Sent::NotYet {
-                        settled = windows;
-                    }
-                }
-                cx.background_executor().timer(Duration::from_secs(1)).await;
-            }
-        })
-        .detach();
-    }
-    cx.spawn(async move |cx| {
-        // The state the compositor last settled on for us. `None` until one
-        // has: a border we never took away has nothing to give back.
-        let mut settled: Option<bool> = None;
-        loop {
-            let want = cx.update(|cx| crate::skin::skin(cx, 1.).unboxed());
-            if settled != Some(want) && (want || settled.is_some()) {
-                let path = border_path.clone();
-                let outcome = cx
-                    .background_executor()
-                    .spawn(async move { apply_border(&path, want) })
-                    .await;
-                if outcome == Sent::Refused {
-                    eprintln!("terminal-delight: the compositor refused border_size");
-                }
-                if outcome != Sent::NotYet {
-                    settled = Some(want);
-                }
-            }
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-        }
+    use futures::{FutureExt, StreamExt};
+    let (wake, mut changes) = futures::channel::mpsc::channel(1);
+    let mut skin = wake.clone();
+    cx.observe_global::<crate::skin::SkinRegistry>(move |_| {
+        let _ = skin.try_send(());
     })
     .detach();
-    cx.spawn(async move |cx| loop {
-        if !cx.update(|cx| crate::skin::skin(cx, 1.).m.frost > 0.) {
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-            continue;
-        }
-        let path = path.clone();
-        let policy = cx
-            .background_executor()
-            .spawn(async move {
-                Policy {
-                    active: query(&path, "active"),
-                    inactive: query(&path, "inactive"),
+    let mut theme = wake.clone();
+    cx.observe_global::<crate::theme::ThemeGen>(move |_| {
+        let _ = theme.try_send(());
+    })
+    .detach();
+    let opened = wake.clone();
+    cx.observe_new::<crate::Workspace>(move |_, _, _| {
+        let _ = opened.clone().try_send(());
+    })
+    .detach();
+    let mut closed = wake;
+    cx.on_window_closed(move |_, _| {
+        let _ = closed.try_send(());
+    })
+    .detach();
+
+    let tag = crate::palette::omarchy_installed();
+    cx.spawn(async move |cx| {
+        let mut tagged = Vec::new();
+        let mut border = None;
+        loop {
+            let (windows, want, frost) = cx.update(|cx| {
+                let skin = crate::skin::skin(cx, 1.);
+                (
+                    cx.windows()
+                        .iter()
+                        .map(|w| w.window_id())
+                        .collect::<Vec<_>>(),
+                    skin.unboxed(),
+                    skin.m.frost > 0.,
+                )
+            });
+            let mut retry = false;
+            if tag && windows != tagged {
+                let path = path.clone();
+                let expected = windows.len();
+                match cx
+                    .background_executor()
+                    .spawn(async move { apply_tags(&path, std::process::id(), expected) })
+                    .await
+                {
+                    Sent::NotYet => retry = true,
+                    other => {
+                        if other == Sent::Refused {
+                            eprintln!("terminal-delight: the compositor refused the terminal tag");
+                        }
+                        tagged.clone_from(&windows);
+                    }
                 }
-            })
-            .await;
-        cx.update(|cx| {
-            if *cx.global::<Policy>() != policy {
-                cx.set_global(policy);
-                cx.refresh_windows();
             }
-        });
-        cx.background_executor().timer(Duration::from_secs(1)).await;
+            if (want || border.is_some()) && border.as_ref() != Some(&(want, windows.clone())) {
+                let path = path.clone();
+                match cx
+                    .background_executor()
+                    .spawn(async move { apply_border(&path, want) })
+                    .await
+                {
+                    Sent::NotYet => retry = true,
+                    other => {
+                        if other == Sent::Refused {
+                            eprintln!("terminal-delight: the compositor refused border_size");
+                        }
+                        border = Some((want, windows));
+                    }
+                }
+            }
+            if frost {
+                let path = path.clone();
+                let policy = cx
+                    .background_executor()
+                    .spawn(async move {
+                        Policy {
+                            active: query(&path, "active"),
+                            inactive: query(&path, "inactive"),
+                        }
+                    })
+                    .await;
+                cx.update(|cx| {
+                    if *cx.global::<Policy>() != policy {
+                        cx.set_global(policy);
+                        cx.refresh_windows();
+                    }
+                });
+            }
+            if frost || retry {
+                futures::select_biased! {
+                    signal = changes.next().fuse() => if signal.is_none() { break; },
+                    _ = cx.background_executor().timer(Duration::from_secs(1)).fuse() => {},
+                }
+            } else if changes.next().await.is_none() {
+                break;
+            }
+        }
     })
     .detach();
 }

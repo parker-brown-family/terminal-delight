@@ -347,6 +347,7 @@ pub fn parse_status_line(rows: &[String]) -> AgentStatus {
     } else if lower.iter().any(|l| is_at_rest(l))
         || ends_on_a_finished_turn(rows)
         || has_empty_claude_composer(rows)
+        || has_codex_composer(rows)
     {
         // The agent's own idle furniture is on screen. It is not working, it has
         // not errored and it is not asking — it is sitting at its prompt, which
@@ -437,16 +438,42 @@ fn is_at_rest(l: &str) -> bool {
 /// "Update available" notice can print under it, so that one row is looked
 /// past (seen 2026-11-17, right after the window was swapped).
 fn ends_on_a_finished_turn(rows: &[String]) -> bool {
-    let Some(last) = rows
-        .iter()
-        .rev()
-        .map(|r| r.trim())
-        .find(|r| !r.is_empty() && !r.to_ascii_lowercase().starts_with("update available"))
-    else {
+    let Some(last) = rows.iter().rev().map(|r| r.trim()).find(|r| {
+        !r.is_empty()
+            && !r.to_ascii_lowercase().starts_with("update available")
+            && !is_input_box_furniture(r)
+    }) else {
         return false;
     };
     let l = last.to_ascii_lowercase();
     last.starts_with('\u{273b}') && l.contains(" for ") && l.contains("\u{00b7} done ")
+}
+
+/// A row that is only part of Claude Code's input box: a rule of `─`, or the
+/// bare `❯` of an empty box. Looked past when finding a pane's last real row,
+/// because a short pane can show the done line, then just the box's furniture
+/// (seen 2026-11-17 at 22:58 on a five-row pane, with the `❯` not even drawn).
+fn is_input_box_furniture(row: &str) -> bool {
+    let t = row.trim();
+    t == "\u{276f}" || (!t.is_empty() && t.chars().all(|c| c == '\u{2500}'))
+}
+
+/// Codex's composer at rest: a `› ` input row with Codex's own footer within
+/// the next few rows (its model and folder, `← for agents`, or `context
+/// left`). Read by structure rather than by the placeholder's words, because
+/// Codex rotates its placeholder and a narrow pane cuts it short (`› Ask Codex
+/// to do any`, 2026-11-17 22:58). Working, error and question are decided
+/// first, and Codex's own working row is a working sign however it is cut.
+fn has_codex_composer(rows: &[String]) -> bool {
+    rows.iter().enumerate().any(|(i, r)| {
+        r.trim_start().starts_with("\u{203a} ")
+            && rows.iter().skip(i + 1).take(4).any(|f| {
+                let l = f.to_ascii_lowercase();
+                l.contains("gpt-")
+                    || l.contains("\u{2190} for agents")
+                    || l.contains("context left")
+            })
+    })
 }
 
 /// Claude Code's input box with nothing typed in it: a row that is only `❯`,
@@ -687,6 +714,74 @@ mod tests {
             "  \u{2190} for agents    \u{26a0} 2 warnings \u{00b7} f2 to view",
         ]);
         assert_eq!(parse_status_line(&working).state, AgentState::Working);
+    }
+
+    /// Captured 2026-11-17 22:58, both from panes tiled narrower than before: a
+    /// Codex composer cut to `› Ask Codex to do any`, and a five-row Claude pane
+    /// showing its done line, then only its input box's rule. Both are at rest.
+    ///
+    /// Mutation-tested: dropping `has_codex_composer` fails the Codex
+    /// assertion; not skipping furniture fails the Claude one.
+    #[test]
+    fn narrower_panes_at_rest_still_read_idle() {
+        let codex = rows(&[
+            "  Worked for 1h 2m 3s \u{2022} 8:20 PM",
+            "\u{203a} Ask Codex to do any",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/",
+            "  \u{2190} for agents    \u{26a0} 2",
+        ]);
+        assert_eq!(parse_status_line(&codex).state, AgentState::Idle);
+        let rotated = rows(&[
+            "\u{203a} Find and fix a bug in @filename",
+            "  gpt-6.2-astra high \u{00b7} ~",
+        ]);
+        assert_eq!(
+            parse_status_line(&rotated).state,
+            AgentState::Idle,
+            "a rotated placeholder is still the composer"
+        );
+        let claude = rows(&[
+            "",
+            "\u{273b} Brewed for 1h 46m 38s \u{00b7} done 7:08 PM",
+            "",
+            "\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}\u{2500}",
+            "",
+        ]);
+        assert_eq!(parse_status_line(&claude).state, AgentState::Idle);
+        let working = rows(&[
+            "\u{2022} Working (3m 2s \u{2022} esc to inte",
+            "\u{203a} Ask Codex to do any",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/",
+        ]);
+        assert_eq!(parse_status_line(&working).state, AgentState::Working);
+    }
+
+    /// Issue #1479 (Claude's review of #1477): Codex keeps its empty composer on
+    /// screen while it works, so a working row cut before `interrupt` by a
+    /// narrow pane must still read Working, or the Floor types into a turn.
+    ///
+    /// Mutation-tested: removing `codex_working_row` makes the truncated row
+    /// read Idle.
+    #[test]
+    fn a_codex_working_row_cut_before_interrupt_still_reads_working() {
+        let cut = rows(&[
+            "\u{2022} Working (1h 34m 57s \u{2022} esc to inte",
+            "\u{203a} Ask Codex to do anything",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/terminal-",
+        ]);
+        assert_eq!(parse_status_line(&cut).state, AgentState::Working);
+        let shorter = rows(&["\u{2022} Working (12s", "\u{203a} Ask Codex to do anything"]);
+        assert_eq!(parse_status_line(&shorter).state, AgentState::Working);
+        let history = rows(&[
+            "\u{2022} Ran cargo test --locked",
+            "\u{2022} Explored",
+            "\u{203a} Ask Codex to do anything",
+        ]);
+        assert_eq!(
+            parse_status_line(&history).state,
+            AgentState::Idle,
+            "finished history bullets are not a working row"
+        );
     }
 
     /// Captured 2026-11-17: a Claude Code pane so short that only its last

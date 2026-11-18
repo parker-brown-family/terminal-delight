@@ -3330,6 +3330,7 @@ pub struct TerminalView {
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
+    last_screen_output: Option<Instant>,
     last_think_scan: Instant,
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
@@ -3518,6 +3519,8 @@ pub struct TerminalView {
     /// a hand over a chip and still leave the chip looking exactly as dead as
     /// the label beside it.
     wb_hover: Option<crate::workbench::Hit>,
+    wb_key_focus: Option<crate::workbench::Hit>,
+    wb_draft_verb: Option<(crate::surface::SurfaceId, crate::surface::Action)>,
     /// Whether a dragged file is over the composer right now, so the box can
     /// say it will take it. Set from the same un-bent hover that decides the
     /// pointer, and cleared when the drag leaves the window — which arrives
@@ -3539,6 +3542,7 @@ pub struct TerminalView {
     /// than its pane was clipped and no gesture on the surface could reach the
     /// rest of it — `wheel_target` resolved a turn over the body to `Nothing`.
     wb_card_scroll: gpui::ScrollHandle,
+    wb_rail_scroll: gpui::ScrollHandle,
     /// Which surface the scroll offset above belongs to.
     ///
     /// A card is a different document from the one before it, so the offset
@@ -4996,6 +5000,7 @@ impl TerminalView {
         let arrived = !self.mode.is_agent() && mode.is_agent();
         let departed = self.mode.is_agent() && !mode.is_agent();
         self.mode = mode;
+        self.wake_housekeeping();
         if arrived {
             self.wb_had_agent = true;
             self.wb_briefed = (self.mode == PaneMode::Claude)
@@ -5483,6 +5488,8 @@ impl TerminalView {
 
         // per-pane effects clock. Visibility and a staged resize may interrupt
         // its sleep, but output keeps using the independent terminal event pump.
+        let hidden_wake = session.hidden_wake.clone();
+        let generation = session.generation.clone();
         let (housekeeping_wake, mut housekeeping_wakes) = futures::channel::mpsc::channel(1);
         cx.spawn(async move |this, cx| {
             loop {
@@ -5505,8 +5512,14 @@ impl TerminalView {
                     let th = theme::theme(cx);
                     let direct =
                         crate::skin::spec(cx).shape.tube == Some(crate::skin::Tube::Direct);
-                    if direct {
-                        view.fx.clear_active();
+                    if direct
+                        || !view.fx_recent()
+                        || !view.shown.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        if view.fx.active() {
+                            view.fx.clear_active();
+                            view.repaint(cx);
+                        }
                     } else if view.fx.tick(&th) {
                         view.repaint(cx);
                     }
@@ -5521,7 +5534,7 @@ impl TerminalView {
                     } else {
                         housekeeping::HIDDEN_INTERVAL
                     };
-                    if view.last_think_scan.elapsed() >= every
+                    if view.hosts_agent() && view.last_think_scan.elapsed() >= every
                         || view
                             .completion_deadline()
                             .is_some_and(|at| Instant::now() >= at)
@@ -5745,17 +5758,48 @@ impl TerminalView {
                     // frames are not drawn, so thirty a second is all cost
                     // (#964). The scans below still run at the idle cadence,
                     // which is what keeps its badge and its bell timely.
-                    view.housekeeping_delay()
+                    let hidden = !view.shown.load(std::sync::atomic::Ordering::Relaxed);
+                    (
+                        view.housekeeping_delay(),
+                        hidden.then_some(view.hidden_generation),
+                    )
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
                 // ends instead of waking forever on a dead entity. Without this,
                 // every closed pane leaks a permanent background loop and idle
                 // CPU climbs over a session.
-                let Ok(delay) = delay else { break };
-                futures::select_biased! {
-                    _ = housekeeping_wakes.next().fuse() => {},
-                    _ = cx.background_executor().timer(delay).fuse() => {},
+                let Ok((delay, hidden)) = delay else { break };
+                if let Some(delay) = delay {
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = cx.background_executor().timer(delay).fuse() => {},
+                    }
+                } else if let Some(observed) = hidden {
+                    // The pump wakes this only on the first output after parking.
+                    // Register before checking the generation to cover an arrival
+                    // between the previous grid read and this await.
+                    let dirty = futures::future::poll_fn(|cx| {
+                        hidden_wake.register(cx.waker());
+                        if generation.load(std::sync::atomic::Ordering::Acquire) != observed {
+                            std::task::Poll::Ready(())
+                        } else {
+                            std::task::Poll::Pending
+                        }
+                    });
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = dirty.fuse() => {
+                            // The wake only starts the preview deadline. A hidden
+                            // output chunk never runs housekeeping on arrival.
+                            futures::select_biased! {
+                                signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                                _ = cx.background_executor().timer(OFFSCREEN_REFRESH).fuse() => {},
+                            }
+                        },
+                    }
+                } else if housekeeping_wakes.next().await.is_none() {
+                    break;
                 }
             }
         })
@@ -5879,6 +5923,7 @@ impl TerminalView {
             mirror_doc: RefCell::new(None),
             read_history: RefCell::new(None),
             agent_thinking: None,
+            last_screen_output: None,
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
@@ -5916,10 +5961,13 @@ impl TerminalView {
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_hover: None,
+            wb_key_focus: None,
+            wb_draft_verb: None,
             wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
+            wb_rail_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
             wb_dial_options: Vec::new(),
@@ -6290,7 +6338,7 @@ impl TerminalView {
     /// What this pane costs: everything its group holds in RAM and swap, or,
     /// while it rests, what is left in RAM and what went out. `unmeasured`
     /// where the group could not be made or read, never a smaller number.
-    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+    pub(crate) fn memory_label(&self) -> Option<String> {
         use crate::agentrest::short_bytes;
         let parts = crate::lang::current().strings().parts;
         let u = self.rest.usage;
@@ -6313,6 +6361,11 @@ impl TerminalView {
             // Not looked at yet: a blank, not a guess.
             (false, _) => return None,
         };
+        Some(text)
+    }
+
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        let text = self.memory_label()?;
         Some(
             div()
                 .flex_none()
@@ -6634,6 +6687,11 @@ impl TerminalView {
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
+                let was_quiet = !self.fx_recent();
+                self.last_screen_output = Some(Instant::now());
+                if was_quiet {
+                    self.wake_housekeeping();
+                }
                 #[cfg(test)]
                 {
                     self.output_events += 1;
@@ -7266,6 +7324,7 @@ impl TerminalView {
         }
         out |= self.note_hover.take().is_some();
         out |= self.wb_hover.take().is_some();
+        out |= self.wb_key_focus.take().is_some();
         out |= std::mem::take(&mut self.wb_drop);
         out |= std::mem::take(&mut self.wb_pointer) != crate::workbench::Pointer::Arrow;
         let float_doc = self.float.as_ref().map(|f| f.view.clone());
@@ -8107,7 +8166,7 @@ impl TerminalView {
             // `ctrl+c` reach a working agent from the face that is showing you
             // its turn.
             crate::keylayer::Layer::Bench => {
-                if self.bench_key(ks, cx) {
+                if self.bench_key(ks, _window, cx) {
                     Handled::Consumed
                 } else {
                     self.terminal_key(&k, ks, cx)
@@ -11782,7 +11841,12 @@ impl Render for TerminalView {
                     .text_color(txt)
                     .hover(move |s| s.bg(acc.alpha(0.22)))
                     .child(label.to_string())
-                    .child(div().text_color(faint).child(keys))
+                    .child(
+                        div()
+                            .debug_selector(move || format!("ctx-hint-{keys}"))
+                            .text_color(txt.alpha(0.8))
+                            .child(keys),
+                    )
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
@@ -11933,18 +11997,20 @@ impl Render for TerminalView {
                 menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
             }
             menu = menu
-                .child(row(s.m_copy, has_sel).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|v, _, _, cx| {
-                        if !v.bench_copy(cx) {
-                            v.copy_selection(cx);
-                        }
-                        v.ctx_menu = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                ))
-                .child(row(s.m_paste, true).on_mouse_down(
+                .when(has_sel, |menu| {
+                    menu.child(link_row(s.m_copy, "Ctrl+Shift+C").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _, _, cx| {
+                            if !v.bench_copy(cx) {
+                                v.copy_selection(cx);
+                            }
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .child(link_row(s.m_paste, "Ctrl+Shift+V").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paste_clipboard(cx);
@@ -11953,7 +12019,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row(s.m_clear, true).on_mouse_down(
+                .child(link_row(s.m_clear, "Ctrl+Shift+K").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.clear_scrollback(cx);
@@ -11992,12 +12058,12 @@ impl Render for TerminalView {
                     ]
                     .into_iter()
                     .map(|(access, label, id)| {
-                        let mark = if self.agent_access == access {
-                            "\u{25cf}"
-                        } else {
-                            "\u{25cb}"
-                        };
-                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                        let face = menu_skin.choice_label(
+                            label,
+                            self.agent_access == access,
+                            parts.ctl_selected,
+                        );
+                        row(&face, true).id(id).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |v, _, _, cx| {
                                 v.ctx_menu = None;
@@ -13031,8 +13097,9 @@ impl Render for TerminalView {
             // ramp. Both are bench-local: the header above keeps the plain skin,
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
-            let bench_th = graded_palette(&th);
+            let mut bench_th = graded_palette(&th);
             let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
+            bench_sk.apply_chrome_ink(&mut bench_th);
             self.bench_el(
                 &bench_th,
                 &bench_sk,

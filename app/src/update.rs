@@ -347,7 +347,7 @@ pub(crate) struct Pending {
     pub(crate) over: Option<String>,
 }
 
-fn choices_path(roots: &Roots) -> PathBuf {
+pub(crate) fn choices_path(roots: &Roots) -> PathBuf {
     roots.config.join("updates.toml")
 }
 
