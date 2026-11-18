@@ -1649,6 +1649,25 @@ pub(crate) fn launch_gui(program: &str, args: &[&str]) {
 /// host. Accepts what `link_under` hands back: an already-absolute path, or a
 /// URL. The tricky half (percent-decoding, which authorities mean this
 /// machine) is [`reveal_target_on`], testable without a file manager.
+/// The file name a link names when it is a local file that is not on disk,
+/// for saying so; `None` for a file that is there, or for anything that is not
+/// a local path (a web link, another machine's file).
+fn missing_local_file(target: &str) -> Option<String> {
+    let path = reveal_target(target)?;
+    // A link into a page carries its #section (or a ?query): the file is the
+    // part before it, and a file that is there is not missing.
+    let bare = path.split(['#', '?']).next().unwrap_or(&path);
+    if std::path::Path::new(&path).exists() || std::path::Path::new(bare).exists() {
+        return None;
+    }
+    let path = std::path::Path::new(bare);
+    Some(
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+    )
+}
+
 fn reveal_target(target: &str) -> Option<String> {
     reveal_target_on(target, this_host())
 }
@@ -10106,6 +10125,21 @@ impl TerminalView {
         {
             let mods = click_mods(ev.modifiers);
             let link = self.link_under(ev.position);
+            // A link to a local file that is not on disk opened nothing and
+            // said nothing: the desktop's opener failed quietly and Alt found
+            // no document (Parker, 2026-11-18, on a link an agent wrote before
+            // the file existed: "oh, so there just isn't a file.. gross").
+            if let Some(name) = link.as_deref().and_then(missing_local_file) {
+                let (row, _, _) = self.viewport_cell(ev.position);
+                let ui = crate::lang::current().strings().ui;
+                self.say(
+                    crate::lang::fill(ui.link_not_there, &[("name", &name)]),
+                    Some(row),
+                    cx,
+                );
+                cx.stop_propagation();
+                return;
+            }
             let revealable = link.as_deref().and_then(reveal_target);
             let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
                 .then(|| link.as_deref().and_then(|l| self.document_of(l)))
@@ -16410,6 +16444,34 @@ mod tests {
         // resolves to a cell further from centre — matching what's drawn there)
         let (ex, _) = warp_screen_to_content(0.8, 0.5, 0.14, 0.06);
         assert!(ex > 0.8);
+    }
+
+    /// A click on a link to a local file that is not there says so (Parker,
+    /// 2026-11-18: "oh, so there just isn't a file.. gross"). A file that is
+    /// there, one reached with a #section, a web link and another machine's
+    /// file are not "missing". Mutation: dropping the exists checks reports a
+    /// file that is there as missing.
+    #[test]
+    fn a_link_to_a_file_that_is_not_there_is_named_as_missing() {
+        let dir = std::env::temp_dir().join(format!("td-missing-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let here = dir.join("06-themes.html");
+        std::fs::write(&here, "x").unwrap();
+        let gone = dir.join("08-home-colour-workshop.html");
+        let url = |p: &std::path::Path| format!("file://{}", p.display());
+        assert_eq!(
+            missing_local_file(&url(&gone)).as_deref(),
+            Some("08-home-colour-workshop.html")
+        );
+        assert_eq!(missing_local_file(&url(&here)), None);
+        assert_eq!(missing_local_file(&format!("{}#sec-one", url(&here))), None);
+        assert_eq!(missing_local_file(&here.display().to_string()), None);
+        assert_eq!(missing_local_file("https://github.com/o/r/issues/1"), None);
+        assert_eq!(
+            missing_local_file("file://another-machine/tmp/nothing.html"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Super+Ctrl-click reveals the ITEM, so the target has to survive the round
