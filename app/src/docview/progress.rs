@@ -36,7 +36,7 @@ use gpui::{div, point, prelude::*, px, AnyElement, BoxShadow};
 use crate::theme::Theme;
 
 /// From the view's right edge to the rail.
-const INSET: f32 = 4.0;
+pub(super) const INSET: f32 = 4.0;
 /// How wide the rail is.
 const WIDTH: f32 = 6.0;
 /// Room the rail keeps on the right: its inset, its width, and a gap. Corner
@@ -127,13 +127,25 @@ pub fn blocks(r: Reading, n: usize) -> Vec<Block> {
         .collect()
 }
 
+/// Pure. How tall the rail is over a view `view_h` tall. `None` for a view
+/// too short to hold one.
+fn track(view_h: f32) -> Option<f32> {
+    let track = view_h - 2.0 * END;
+    (track >= FEWEST as f32 * (BLOCK + GAP)).then_some(track)
+}
+
+/// Pure. Where a point `frac` of the way down the document sits on the rail,
+/// view-local, for what a backend marks beside it (a brief's sections).
+/// `None` where there is no rail to mark.
+pub fn y_at(frac: f32, view_h: f32) -> Option<f32> {
+    let track = track(view_h)?;
+    frac.is_finite().then(|| END + frac.clamp(0.0, 1.0) * track)
+}
+
 /// The rail and its percentage, over a view `view_h` tall. Nothing for a
 /// document that fits, or a view too short to hold a rail.
 pub fn rail(r: Reading, view_h: f32, th: &Theme, sk: &crate::skin::Skin) -> Option<AnyElement> {
-    let track = view_h - 2.0 * END;
-    if r.fits() || track < FEWEST as f32 * (BLOCK + GAP) {
-        return None;
-    }
+    let track = track(view_h).filter(|_| !r.fits())?;
     let lit = th.accent;
     let column = blocks(r, count(track)).into_iter().map(|b| {
         let (fill, rim) = match b {
@@ -275,6 +287,21 @@ mod tests {
         let end = blocks(Reading::of(99_950.0, 50.0, 100_000.0).unwrap(), 40);
         assert_eq!(end[39], Block::Here);
         assert!(end[..39].iter().all(|b| *b == Block::Passed));
+    }
+
+    /// A mark beside the rail sits where its share of the document does, and
+    /// a view too short for a rail has nowhere to put one.
+    #[test]
+    fn a_mark_sits_at_its_share_of_the_rail() {
+        assert_eq!(y_at(0.0, 1012.0), Some(END));
+        assert_eq!(y_at(0.5, 1012.0), Some(END + 500.0));
+        assert_eq!(
+            y_at(7.0, 1012.0),
+            Some(1012.0 - END),
+            "past the end is the end"
+        );
+        assert_eq!(y_at(f32::NAN, 1012.0), None);
+        assert_eq!(y_at(0.5, 40.0), None);
     }
 
     /// The rail holds as many blocks as its height, within bounds.

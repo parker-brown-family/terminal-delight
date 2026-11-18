@@ -114,7 +114,38 @@ def main():
         first = reading()
         assert first['session'] and first['saved'], first
         assert any((t['visible_ms'] or 0) >= 3000 for t in first['session']['targets']), first
-        assert first['rail_targets'] > 0
+        # At rest the sections are pips beside the progress rail and nothing
+        # sits on the page. The list opens only with the pointer on the
+        # document's right edge. This pointer is the private display's.
+        assert first['rail_pips'] > 0 and first['rail_targets'] == first['rail_pips'], first
+        assert not first['rail_open'], first
+
+        def shoot(name, size='1400x1000'):
+            subprocess.run(['ffmpeg', '-v', 'error', '-y', '-f', 'x11grab', '-video_size', size,
+                            '-i', env['DISPLAY'], '-frames:v', '1', str(root / name)],
+                           env=env, check=True, timeout=30)
+
+        def pointer(x, y):
+            subprocess.run(['xdotool', 'mousemove', str(x), str(y)], env=env, check=True)
+
+        shoot('sections-rest.png')
+        edge = None
+        for x in range(1356, 500, -4):
+            pointer(x, 470)
+            time.sleep(.08)
+            if reading()['rail_open']:
+                edge = x
+                break
+        assert edge is not None, 'the pointer never opened the sections list'
+        opened = wait_for(lambda: (r if (r := reading())['rail_targets'] > r['rail_pips'] else None))
+        time.sleep(.5)
+        shoot('sections-open.png')
+        pointer(edge - 600, 470)
+        wait_for(lambda: not reading()['rail_open'])
+        assert reading()['rail_targets'] == first['rail_pips']
+        report['sections'] = {'pips': first['rail_pips'], 'listRows': opened['rail_targets'] - opened['rail_pips'],
+                              'openedAtX': edge}
+        pointer(2000, 1200)
         key('alt+r')
         time.sleep(2)
         def copy_timing():
@@ -209,14 +240,15 @@ def main():
         assert any(s['session'] == old_session for s in reopened['saved']['sessions'])
         assert reopened['session']['session'] != old_session
         report['reopened'] = reopened
-        # A full Document face at desktop width exercises the actual left rail.
+        # A full Document face at desktop width: the same pips, and no panel
+        # (this width used to draw a fixed column down the left).
         ctl('doc close')
         subprocess.run(['xdotool', 'windowsize', wid, '2200', '1300'], env=env, check=True)
         ctl('doc beside ' + str(page))
         key('alt+Left')
         key('alt+w')
-        wide = wait_for(lambda: (r if (r := reading()).get('active') and r['rail_targets'] > 2 and r.get('saved') and r.get('session') and any((t['visible_ms'] or 0) >= 2000 for t in r['session']['targets']) else None), seconds=90)
-        report['wideLeftRail'] = wide
+        wide = wait_for(lambda: (r if (r := reading()).get('active') and r['rail_pips'] > 0 and not r['rail_open'] and r.get('saved') and r.get('session') and any((t['visible_ms'] or 0) >= 2000 for t in r['session']['targets']) else None), seconds=90)
+        report['wideSections'] = wide
         time.sleep(2)
         subprocess.run(['ffmpeg', '-v', 'error', '-f', 'x11grab', '-video_size', '2400x1400',
                         '-i', env['DISPLAY'], '-frames:v', '1', str(root / 'native-wide.png')],
