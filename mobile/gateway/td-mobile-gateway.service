@@ -1,0 +1,19 @@
+# The door between the phone and Terminal Delight's session hosts.
+#
+#   install -Dm644 td-mobile-gateway.service ~/.config/systemd/user/td-mobile-gateway.service
+#   systemctl --user daemon-reload && systemctl --user enable --now td-mobile-gateway
+#
+# Listens on loopback (the USB route, via `adb reverse`) and the tailnet address.
+# Add `--lan` to ExecStart for a phone on the home Wi-Fi without Tailscale.
+[Unit]
+Description=Terminal Delight mobile gateway
+After=network-online.target tailscaled.service
+Wants=network-online.target
+
+[Service]
+ExecStart=%h/.local/bin/td-mobile-gateway serve
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=default.target
