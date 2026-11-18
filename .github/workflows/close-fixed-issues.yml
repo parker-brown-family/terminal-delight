@@ -1,0 +1,33 @@
+# Close the issues a pull request fixes when it merges into a dev/ branch.
+#
+# GitHub closes "Fixes #N" issues only on merges into the default branch, and
+# work here lands on integration branches (dev/0.5.5). On 2026-11-18 a triage
+# found ten issues fixed and never closed, one for two weeks. This closes each
+# named open issue with a comment naming the pull request and the branch.
+# Pull request bodies are read from the event, never run: the script only
+# reads numbers out of the text and calls gh with them.
+name: Close fixed issues
+
+on:
+  pull_request:
+    types: [closed]
+    branches: ['dev/**']
+
+permissions:
+  issues: write
+  pull-requests: read
+
+jobs:
+  close:
+    if: github.event.pull_request.merged == true
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+      - name: Close the issues the body says it fixes
+        env:
+          GH_TOKEN: ${{ github.token }}
+          GH_REPO: ${{ github.repository }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          PR_BODY: ${{ github.event.pull_request.body }}
+          PR_BASE: ${{ github.event.pull_request.base.ref }}
+        run: python3 scripts/close_fixed_issues.py
