@@ -5454,7 +5454,7 @@ mod tests {
                 let apply = |_: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
                     panic!("invalid pid reached mutation: {request}")
                 };
-                let reply = handle_line_with(&request, &s, no_tail, &apply, no_search).unwrap();
+                let reply = handle_line_with(&request, &s, no_tail, apply, no_search).unwrap();
                 assert!(reply.contains("isError"), "{request}: {reply}");
             }
         }
@@ -5485,7 +5485,7 @@ mod tests {
             let refuse = |ups: &[ConfigUpdate]| -> Vec<ApplyOutcome> {
                 vec![(ups[0].0.clone(), Err("pane 300 is not exposed".into()))]
             };
-            let reply = handle_line_with(&line, &s, no_tail, &refuse, no_search).unwrap();
+            let reply = handle_line_with(&line, &s, no_tail, refuse, no_search).unwrap();
             let landed = dir.exists();
             if let Some(root) = dir.parent() {
                 let _ = std::fs::remove_dir_all(root);

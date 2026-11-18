@@ -105,15 +105,18 @@ jobs:
       - name: Check
         run: cargo check --locked
 
+      # --all-targets lints the tests too. Without it clippy checked only the
+      # binary, so the code where most of this repository's reasoning lives was
+      # never linted (issue 430).
       - name: Clippy
-        run: cargo clippy --locked -- -D warnings
+        run: cargo clippy --locked --all-targets -- -D warnings
 
       # rio-vt is the only core TD ships. alacritty_terminal stays as the
       # test-only reference Terminal Lab compares rio-vt against, and a
       # reference nobody builds stops compiling (issue 826 tracks removing it,
       # and these steps with it).
       - name: Clippy, reference core
-        run: cargo clippy --locked --features core-alacritty -- -D warnings
+        run: cargo clippy --locked --all-targets --features core-alacritty -- -D warnings
 
   # The whole suite on the core TD ships. Its cache is shared with the
   # reference-core job and with td-lab.yml under the key `rust`, which is the

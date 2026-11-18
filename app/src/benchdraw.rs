@@ -5475,7 +5475,7 @@ mod tests {
     /// Comments go first so neither the explanation above a line nor the prose
     /// in this test can satisfy a gate that is looking for the line itself —
     /// a source grep has passed on a comment in this repository before.
-    fn body_of<'a>(src: &'a str, signature: &str) -> String {
+    fn body_of(src: &str, signature: &str) -> String {
         let code: String = src
             .split_once("\n#[cfg(test)]")
             .map_or(src, |(before, _)| before)

@@ -4558,7 +4558,7 @@ mod tests {
     #[test]
     fn a_response_without_a_plain_brief_is_refused_by_the_verb_and_kept_by_the_file() {
         let bare = json!({ "td": "0.3", "kind": "response", "model": { "eli5": "only this" } });
-        let err = parse(&bare, NOW).err().expect("refused");
+        let err = parse(&bare, NOW).expect_err("refused");
         assert!(err.contains("layman"), "{err}");
         let landed = parse_lenient(&bare, NOW, "x.json").surface.unwrap();
         assert!(

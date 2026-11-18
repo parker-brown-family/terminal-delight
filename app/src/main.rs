@@ -42023,6 +42023,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn a_selected_surface_survives_state_serialisation_without_rewriting_the_theme() {
         let mut saved = StateFile::default();
         saved.skin = Some("chalk".into());
@@ -46183,7 +46184,7 @@ mod tests {
     #[test]
     fn a_folded_row_opens_on_a_short_hover_or_any_click() {
         assert_eq!(FOLD_OPEN_MS, 750, "the hover reveal Parker asked for");
-        assert!(FOLD_CLOSE_MS < 1000);
+        const { assert!(FOLD_CLOSE_MS < 1000) };
         let src = shipped_code();
         let at = src.find("let fold = |row").expect("the fold wrapper");
         let wrapper = &src[at..at + src[at..].find("};").expect("end")];
@@ -46247,7 +46248,7 @@ mod tests {
             !top_bar_is_empty(false, false, false, false, false),
             "with the left bar shut the tabs are the top bar's"
         );
-        assert!(TOP_BAR_EMPTY_H < TOP_BAR_H);
+        const { assert!(TOP_BAR_EMPTY_H < TOP_BAR_H) };
         // And the bar reads it: its height, padding and corner all follow.
         let src = shipped_code();
         // Every skin folds, unboxed ones included: their ADD PROJECT is on the
@@ -46408,10 +46409,12 @@ mod tests {
             !row.contains("scoped") && !row.contains("border_l_2()"),
             "no row wears a pinned light any more"
         );
-        assert!(
-            STANDING_WASH < 0.12,
-            "fainter than the hover, or it stops being a faint indicator"
-        );
+        const {
+            assert!(
+                STANDING_WASH < 0.12,
+                "fainter than the hover, or it stops being a faint indicator"
+            )
+        };
     }
 
     /// A click on a branch row goes there — the strip's chips' act — and pins
@@ -52895,6 +52898,7 @@ node = "Leaf"
     /// and the dark shadows that lift them are the same shadows — so a panel
     /// turned all the way down is still bordered and still raised.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn the_phosphor_gauge_moves_the_halos_and_leaves_the_rims_and_the_lift() {
         let ink = hsla(0.33, 0.9, 0.6, 1.0);
         // Light is a coloured, blurred, outer shadow. A rim has no blur and a

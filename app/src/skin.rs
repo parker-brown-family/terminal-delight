@@ -3708,7 +3708,7 @@ mod tests {
             assert_eq!(matching.ansi, th.ansi);
             // Drawing directly holds the inactive blur at zero and leaves the
             // rest of the grade as the palette set it.
-            let mut held = th.grade.clone();
+            let mut held = th.grade;
             held.inactive_blur = Some(0.);
             assert_eq!(matching.grade, held);
             th.grade.set(theme::GradeKey::FieldColour, 0.);

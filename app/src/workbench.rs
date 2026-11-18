@@ -5590,10 +5590,7 @@ mod tests {
         assert_eq!(b.picked_register(&id, Group::Reading), None);
 
         b.pick_register(&id, "technical");
-        assert_eq!(
-            b.picked_register(&id, Group::Reading).as_deref(),
-            Some("technical")
-        );
+        assert_eq!(b.picked_register(&id, Group::Reading), Some("technical"));
         assert_eq!(
             b.picked_tab(&id),
             Some(Group::Reading),
@@ -5610,7 +5607,7 @@ mod tests {
             "a tab nobody has read inside has no register picked"
         );
         assert_eq!(
-            b.picked_register(&id, Group::Reading).as_deref(),
+            b.picked_register(&id, Group::Reading),
             Some("technical"),
             "and the reading tab still remembers"
         );
@@ -5619,10 +5616,7 @@ mod tests {
         // evidence rather than falling through to `other`.
         b.pick_register(&id, "doubts");
         assert_eq!(b.picked_tab(&id), Some(Group::Evidence));
-        assert_eq!(
-            b.picked_register(&id, Group::Evidence).as_deref(),
-            Some("doubts")
-        );
+        assert_eq!(b.picked_register(&id, Group::Evidence), Some("doubts"));
 
         // Retiring forgets both, so an id reused later starts fresh rather than
         // inheriting a stranger's reading position.
