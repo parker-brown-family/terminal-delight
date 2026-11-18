@@ -3986,25 +3986,36 @@ impl TerminalView {
         target: Option<String>,
         cx: &mut Context<Self>,
     ) {
-        if let Some((id, bound)) = &self.wb_draft_verb {
-            if bound != &action
-                || !self
-                    .bench
-                    .selected()
-                    .is_some_and(|s| &s.id == id && s.actions.contains(bound))
+        // An armed comment is the draft's own: only its own action on its own
+        // card sends it, and no other comment-wanting button may take its
+        // text. Any other button acts as it always does, without the draft,
+        // and leaves the draft armed where it was. Blocking every button
+        // until Esc, with nothing saying why, was issue #1483.
+        let keep_draft = match &self.wb_draft_verb {
+            Some((id, bound)) => {
+                let own = bound == &action
+                    && self
+                        .bench
+                        .selected()
+                        .is_some_and(|s| &s.id == id && s.actions.contains(bound));
+                if !own && action.wants_comment() {
+                    return;
+                }
+                !own
+            }
+            None => false,
+        };
+        if !keep_draft {
+            if action.wants_comment()
+                && self
+                    .wb_compose
+                    .as_ref()
+                    .is_none_or(|line| line.text().trim().is_empty())
             {
                 return;
             }
+            self.wb_draft_verb = None;
         }
-        if action.wants_comment()
-            && self
-                .wb_compose
-                .as_ref()
-                .is_none_or(|line| line.text().trim().is_empty())
-        {
-            return;
-        }
-        self.wb_draft_verb = None;
         // A question the channel carried answers THROUGH the channel. Decided
         // before `Bench::act`, which knows nothing about hooks and must not:
         // it would drive a menu that never painted.
@@ -4021,11 +4032,14 @@ impl TerminalView {
                 return;
             }
         }
-        let comment = self
-            .wb_compose
-            .take()
-            .map(|l| l.text().to_string())
-            .filter(|c| !c.trim().is_empty());
+        let comment = if keep_draft {
+            None
+        } else {
+            self.wb_compose
+                .take()
+                .map(|l| l.text().to_string())
+                .filter(|c| !c.trim().is_empty())
+        };
         match self.bench.act(&action, target, comment) {
             crate::workbench::Dispatch::Open(href) => self.bench_open_href(&href, cx),
             // No journal entry and no line typed anywhere. A copy is a person

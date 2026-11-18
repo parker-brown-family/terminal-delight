@@ -6083,3 +6083,77 @@ fn menu_clarity_pane_shows_the_clipboard_shortcuts_when_they_apply(cx: &mut Test
             && copy.bottom() <= hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap().top()
     );
 }
+
+/// Issue #1483 (found by the Claude reviewer, whose test this is): an armed
+/// comment made every other workbench button do nothing until Esc. Approve now
+/// acts and the draft stays armed on its own card. Mutation: restoring the old
+/// early return for any other action fails the 1 -> 1 case.
+#[gpui::test]
+fn an_armed_comment_does_not_swallow_another_buttons_action(cx: &mut TestAppContext) {
+    use crate::{surface::Action, workbench::Hit};
+    let mut pane = Pane::running(cx, "exec cat");
+    let mut doc = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(k, _)| *k == "01-decision")
+        .unwrap()
+        .1;
+    doc["actions"] = serde_json::json!(["comment", "approve"]);
+    let press = |pane: &mut Pane, action| {
+        let view = pane.view.clone();
+        pane.cx.update(|w, cx| {
+            view.update(cx, |v, cx| {
+                v.bench_hit(
+                    Hit::Verb {
+                        action,
+                        target: None,
+                    },
+                    point(px(0.), px(0.)),
+                    w,
+                    cx,
+                )
+            })
+        });
+    };
+    // What reached the agent: echoed on screen, or queued for it.
+    let approvals = |pane: &mut Pane| {
+        for _ in 0..20 {
+            pane.redraw();
+        }
+        let shown = pane
+            .rows()
+            .iter()
+            .filter(|r| r.to_lowercase().contains("approve"))
+            .count();
+        shown + pane.read(|v| v.wb_queued.len())
+    };
+    // Control: Approve on a card with nothing armed reaches the agent.
+    doc["id"] = serde_json::json!("first");
+    open_bench_fixture(&mut pane, &doc);
+    let before = approvals(&mut pane);
+    press(&mut pane, Action::Approve);
+    let after_plain = approvals(&mut pane);
+    let queued = pane.read(|v| v.wb_queued.len());
+    let rows = pane.rows().join("|");
+    assert!(
+        after_plain > before || queued > 0,
+        "control: a plain Approve is seen ({before} -> {after_plain}, queued {queued}): {rows}"
+    );
+    // The case: Comment armed (nothing typed), then the same card's Approve.
+    doc["id"] = serde_json::json!("second");
+    open_bench_fixture(&mut pane, &doc);
+    press(&mut pane, Action::Comment);
+    assert!(pane.read(|v| v.wb_draft_verb.is_some()));
+    let before = approvals(&mut pane);
+    press(&mut pane, Action::Approve);
+    let after = approvals(&mut pane);
+    assert!(
+        after > before,
+        "Approve after arming Comment was swallowed ({before} -> {after})"
+    );
+    // And the draft is still armed, on the card it was armed on.
+    let armed = pane.read(|v| v.wb_draft_verb.clone());
+    assert!(
+        armed.is_some_and(|(id, verb)| id.as_str() == "second" && verb == Action::Comment),
+        "Approve left the armed comment where it was"
+    );
+}
