@@ -592,11 +592,17 @@ mod tests {
             cx.global::<crate::skin::SkinRegistry>()
                 .builtins
                 .iter()
-                .map(|(id, _)| id.clone())
+                .map(|(id, spec)| {
+                    (
+                        id.clone(),
+                        spec.shape.tube == Some(crate::skin::Tube::Direct),
+                    )
+                })
                 .collect::<Vec<_>>()
         });
         assert!(!skins.is_empty());
-        for skin in &skins {
+        for (skin, direct) in &skins {
+            let direct = *direct;
             for design in theme::builtin_ids() {
                 for glass in [false, true] {
                     for crawl in [false, true] {
@@ -640,7 +646,6 @@ mod tests {
                         crate::warp::begin_frame();
                         pane.redraw();
                         let active_glows = crate::warp::rect_glows();
-                        let direct = skin == "baremetal";
                         if direct {
                             assert!(
                                 active_glows.is_empty(),

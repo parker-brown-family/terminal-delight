@@ -689,6 +689,34 @@ mod tests {
         assert_eq!(parse_status_line(&working).state, AgentState::Working);
     }
 
+    /// Issue #1479 (Claude's review of #1477): Codex keeps its empty composer on
+    /// screen while it works, so a working row cut before `interrupt` by a
+    /// narrow pane must still read Working, or the Floor types into a turn.
+    ///
+    /// Mutation-tested: removing `codex_working_row` makes the truncated row
+    /// read Idle.
+    #[test]
+    fn a_codex_working_row_cut_before_interrupt_still_reads_working() {
+        let cut = rows(&[
+            "\u{2022} Working (1h 34m 57s \u{2022} esc to inte",
+            "\u{203a} Ask Codex to do anything",
+            "  GPT-6.2-Astra high \u{00b7} ~/Work/terminal-",
+        ]);
+        assert_eq!(parse_status_line(&cut).state, AgentState::Working);
+        let shorter = rows(&["\u{2022} Working (12s", "\u{203a} Ask Codex to do anything"]);
+        assert_eq!(parse_status_line(&shorter).state, AgentState::Working);
+        let history = rows(&[
+            "\u{2022} Ran cargo test --locked",
+            "\u{2022} Explored",
+            "\u{203a} Ask Codex to do anything",
+        ]);
+        assert_eq!(
+            parse_status_line(&history).state,
+            AgentState::Idle,
+            "finished history bullets are not a working row"
+        );
+    }
+
     /// Captured 2026-11-17: a Claude Code pane so short that only its last
     /// turn's line was on screen. That line, last and alone, is rest; the same
     /// line with anything after it is not evidence of rest.
