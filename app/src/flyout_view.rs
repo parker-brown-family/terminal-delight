@@ -504,7 +504,10 @@ pub(crate) struct Suggest {
 #[derive(Clone, Debug, PartialEq)]
 enum AddRow {
     /// Something an agent of this task handed over: a declared deliverable,
-    /// an artifact on its bench, or a `Deliverable:` line it printed.
+    /// an artifact on its bench, or a `Deliverable:` line it printed. Or,
+    /// `linked`, a link it listed in a reply's table — its `## Links` — which
+    /// it referenced rather than made, so the row is drawn without the ✦ and
+    /// never as waiting to be opened.
     Artifact {
         pane: EntityId,
         key: String,
@@ -514,6 +517,7 @@ enum AddRow {
         opened: bool,
         /// The pane's name, as a person reads it.
         who: String,
+        linked: bool,
     },
     Changes(PathBuf),
     Pull {
@@ -1749,7 +1753,7 @@ impl Workspace {
         let mut leaves = Vec::new();
         tab.root.leaves(&mut leaves);
         let mut rows = Vec::new();
-        for l in leaves {
+        for l in &leaves {
             let v = l.read(cx);
             let who = v.handover_pane_name();
             for h in v.handovers().newest_first() {
@@ -1762,9 +1766,49 @@ impl Workspace {
                     href: h.href.clone(),
                     at_ms: h.at_ms,
                     who: who.clone(),
+                    linked: false,
                 });
             }
         }
+        // Then what a reply's Links table listed, once each, and never over a
+        // handover of the same thing: that row already says more.
+        let mut seen: HashSet<String> = rows
+            .iter()
+            .filter_map(|r| match r {
+                AddRow::Artifact { key, .. } => Some(key.clone()),
+                _ => None,
+            })
+            .collect();
+        let mut linked = Vec::new();
+        for l in &leaves {
+            let v = l.read(cx);
+            let who = v.handover_pane_name();
+            for h in v.linked().newest_first() {
+                linked.push(AddRow::Artifact {
+                    pane: l.entity_id(),
+                    key: h.key(),
+                    label: h.label.clone(),
+                    href: h.href.clone(),
+                    at_ms: h.at_ms,
+                    opened: true,
+                    who: who.clone(),
+                    linked: true,
+                });
+            }
+        }
+        linked.sort_by_key(|r| match r {
+            AddRow::Artifact { at_ms, .. } => std::cmp::Reverse(*at_ms),
+            _ => std::cmp::Reverse(0),
+        });
+        for r in linked {
+            if let AddRow::Artifact { key, .. } = &r {
+                if seen.insert(key.clone()) {
+                    rows.push(r);
+                }
+            }
+        }
+        // Newest first; a stable sort, so a handover and the links listed in
+        // the same reply keep the handover ahead.
         rows.sort_by_key(|r| match r {
             AddRow::Artifact { at_ms, .. } => std::cmp::Reverse(*at_ms),
             _ => std::cmp::Reverse(0),
@@ -6355,9 +6399,10 @@ impl Workspace {
                     at_ms,
                     opened,
                     who,
+                    linked,
                     ..
                 } => (
-                    "\u{2726}",
+                    if *linked { "\u{2197}" } else { "\u{2726}" },
                     th.accent,
                     plain(label.clone()),
                     Some(plain(
@@ -8053,6 +8098,91 @@ mod tests {
             );
         });
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The links an agent listed in a reply's table are on the `+` page
+    /// beside what it handed over, found by a word of their label or their
+    /// address; a link that was also handed over is one row, the handover's.
+    #[gpui::test]
+    fn the_links_a_reply_listed_are_found_on_the_plus_page(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = flyout_window(cx);
+        redraw(cx);
+        let brief = "file:///tmp/td-flyout-linked/brief.html";
+        let pr = "https://github.com/parker-brown-family/terminal-delight/pull/1465";
+        let row = |a: &str, b: &str| format!("  │ {a:<14} │ {b:<66} │");
+        let rule =
+            |l: char, m: char, r: char| format!("  {l}{}{m}{}{r}", "─".repeat(16), "─".repeat(68));
+        let screen = [
+            rule('┌', '┬', '┐'),
+            row("What", "Link"),
+            rule('├', '┼', '┤'),
+            row("Glass review", pr),
+            rule('├', '┼', '┤'),
+            row("The brief", brief),
+            rule('└', '┴', '┘'),
+        ];
+        let pane = ws.read_with(cx, |ws, _| {
+            let mut leaves = Vec::new();
+            ws.tabs[ws.active].root.leaves(&mut leaves);
+            leaves[0].clone()
+        });
+        cx.update(|w, cx| {
+            pane.update(cx, |v, cx| {
+                v.hand_over(
+                    Some("The brief".into()),
+                    brief.into(),
+                    crate::handover::Source::Declared,
+                    cx,
+                );
+                v.scan_linked(&screen, cx);
+            });
+            ws.update(cx, |ws, cx| ws.flyout_toggle(w, cx));
+        });
+        redraw(cx);
+        let artifacts = |ws: &Workspace, cx: &App| -> Vec<(String, String, bool)> {
+            ws.add_rows(cx)
+                .into_iter()
+                .filter_map(|r| match r {
+                    AddRow::Artifact {
+                        label,
+                        href,
+                        linked,
+                        ..
+                    } => Some((label, href, linked)),
+                    _ => None,
+                })
+                .collect()
+        };
+        ws.read_with(cx, |ws, cx| {
+            // Newest first, and the two arrived in the same millisecond or
+            // the next: the order is not what this asks.
+            let mut all = artifacts(ws, cx);
+            all.sort();
+            assert_eq!(
+                all,
+                [
+                    ("Glass review".to_string(), pr.to_string(), true),
+                    ("The brief".to_string(), brief.to_string(), false),
+                ],
+                "the handover once, and the link only the table had"
+            );
+        });
+        for (query, why) in [
+            ("glass", "a word of its label"),
+            ("pull/1465", "its address"),
+        ] {
+            ws.update(cx, |ws, _| ws.flyout.query = query.into());
+            ws.read_with(cx, |ws, cx| {
+                assert_eq!(
+                    artifacts(ws, cx),
+                    [("Glass review".to_string(), pr.to_string(), true)],
+                    "{why} finds it"
+                );
+            });
+        }
     }
 
     /// Under the composer, a press on the panel or on a file's find field

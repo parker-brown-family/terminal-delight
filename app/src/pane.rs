@@ -3290,6 +3290,13 @@ pub struct TerminalView {
     /// window restart where `deliverable` deliberately does not. See
     /// [`crate::handover`].
     handovers: crate::handover::Ledger,
+    /// The links this pane's agent listed in a table of a reply — its
+    /// `## Links` — read off the screen for the flyout's `+` page to find.
+    /// Kept apart from `handovers` on purpose: a link a reply referenced is not
+    /// one it made, so none of these names the needs-me link, the header
+    /// chip, the rail or the record. Held for the pane's life and never filed.
+    /// See [`crate::handover::table_links`].
+    linked: crate::handover::Ledger,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -5919,6 +5926,7 @@ impl TerminalView {
             deliverable: None,
             access_ask: None,
             handovers: crate::handover::Ledger::default(),
+            linked: crate::handover::Ledger::default(),
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,

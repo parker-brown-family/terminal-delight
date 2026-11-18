@@ -28,9 +28,11 @@
 //! list fed only by the verb would miss a third of what was handed over. The
 //! rule for which rows count is [`handover_rows`], and it is narrow on purpose:
 //! a row that starts with `Deliverable:` and carries a link, on that row or as
-//! the first thing on the next. A Links table is never read — it lists
-//! everything referenced, and choosing which of those was made is the guess the
-//! attention rail was built to refuse.
+//! the first thing on the next. A Links table is never read as a handover — it
+//! lists everything referenced, and choosing which of those was made is the
+//! guess the attention rail was built to refuse. Its links are read by
+//! [`table_links`] into a list of their own, which only the flyout's `+` page
+//! searches.
 //!
 //! # Nothing here knows about gpui
 //!
@@ -218,7 +220,14 @@ pub fn handover_rows(rows: &[String], wraps: &[bool]) -> Vec<(String, String)> {
         };
         // The handover's own text: this row, and the rows a link that did not
         // fit was carried onto.
-        let (text, mut last, cut) = carry(rows, wraps, i, margin, rest.trim_start().to_string());
+        let (text, mut last, cut) = carry(
+            rows,
+            wraps,
+            i,
+            margin,
+            rest.trim_start().to_string(),
+            MAX_ROWS,
+        );
         let (label, href) = match find_link(&text) {
             Some((at, href)) => (text[..at].to_string(), Some(href)),
             None => (text.clone(), None),
@@ -234,7 +243,7 @@ pub fn handover_rows(rows: &[String], wraps: &[bool]) -> Vec<(String, String)> {
                 return None;
             }
             let next_margin = rows[j].chars().count() - rows[j].trim_start().chars().count();
-            let (t, k, c) = carry(rows, wraps, j, next_margin, first.to_string());
+            let (t, k, c) = carry(rows, wraps, j, next_margin, first.to_string(), MAX_ROWS);
             last = k;
             cut = c;
             find_link(&t).map(|(_, h)| h)
@@ -269,13 +278,15 @@ pub fn handover_rows(rows: &[String], wraps: &[bool]) -> Vec<(String, String)> {
 /// Answers the text, the last row used, and whether the link still ends at an
 /// edge with nothing found to carry it: cut, which the caller refuses. A row
 /// that opens a handover of its own is never a continuation, and a link that
-/// reaches the edge just before one ended there.
+/// reaches the edge just before one ended there. A link runs across
+/// `max_rows` rows at most.
 fn carry(
     rows: &[String],
     wraps: &[bool],
     start: usize,
     margin: usize,
     mut text: String,
+    max_rows: usize,
 ) -> (String, usize, bool) {
     let mut last = start;
     loop {
@@ -291,7 +302,7 @@ fn carry(
         if next.trim().is_empty() || strip_bullet(next.trim_start()).starts_with(MARK) {
             return (text, last, false);
         }
-        if last + 1 - start >= MAX_ROWS
+        if last + 1 - start >= max_rows
             || !(flagged || at_margin(next, margin) || at_margin(next, 0))
         {
             return (text, last, true);
@@ -388,6 +399,267 @@ fn clean_label(s: &str) -> String {
         .trim_matches('*')
         .trim()
         .to_string()
+}
+
+// ---------------------------------------------------------------------------
+// the Links table
+// ---------------------------------------------------------------------------
+
+/// Every link in a table on a screen, as `(label, href)`, top to bottom: what
+/// an agent's `## Links` table referenced, for the flyout's `+` page to find.
+///
+/// **These are not handovers.** A Links table lists everything a reply
+/// referenced, and which of those was made is the guess the attention rail was
+/// built to refuse, so what this reads goes to a list of its own on the pane
+/// (the pane's `linked`): never the ledger, the needs-me
+/// link, the header chip or the conversation's record.
+///
+/// Any table counts, not only one under a `Links` heading: Claude Code draws
+/// the heading as a bold word that nothing on the grid tells apart from prose,
+/// and a link in any table of a reply is one the agent pointed at.
+///
+/// A table is rows that open and close with a cell rule — Claude Code's `│` or
+/// `┃`, or a raw Markdown `|` — between rows of box rules. A run of rows with
+/// their rules at the same columns is one row of the table, its cells wrapped
+/// at the cell's own width; the space of padding inside each rule is taken
+/// off, so a cell is read as a little screen of its own and a link wrapped in
+/// it is joined by [`carry`], the join the `Deliverable:` rule uses. Unlike a
+/// screen's edge, a cell's last row is bounded by its rule, so a link that
+/// fills the cell there ended there.
+///
+/// The label is the row's cell under a header that says `What`, else its
+/// first cell that holds words and no link, else — unknown is not zero — the
+/// link itself.
+pub fn table_links(rows: &[String]) -> Vec<(String, String)> {
+    let grid: Vec<Vec<char>> = rows.iter().map(|r| r.chars().collect()).collect();
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < grid.len() {
+        if cell_rules(&grid[i]).is_none() {
+            i += 1;
+            continue;
+        }
+        // One table: its cell rows and box rules, top to bottom.
+        let mut end = i;
+        while end + 1 < grid.len()
+            && (cell_rules(&grid[end + 1]).is_some() || is_box_rule(&grid[end + 1]))
+        {
+            end += 1;
+        }
+        let mut blocks: Vec<(usize, usize, Vec<usize>)> = Vec::new();
+        let mut r = i;
+        while r <= end {
+            let Some(rules) = cell_rules(&grid[r]) else {
+                r += 1;
+                continue;
+            };
+            let mut last = r;
+            while last < end && cell_rules(&grid[last + 1]).as_ref() == Some(&rules) {
+                last += 1;
+            }
+            blocks.push((r, last, rules));
+            r = last + 1;
+        }
+        let cells_of = |(a, b, rules): &(usize, usize, Vec<usize>)| -> Vec<Vec<String>> {
+            rules
+                .windows(2)
+                .map(|w| {
+                    (*a..=*b)
+                        .map(|row| {
+                            let (from, to) = ((w[0] + 2).min(w[1]), w[1].saturating_sub(1));
+                            grid[row]
+                                .get(from..to.max(from))
+                                .map(|c| c.iter().collect())
+                                .unwrap_or_default()
+                        })
+                        .collect()
+                })
+                .collect()
+        };
+        // The header: the table's first row, when it holds no link.
+        let mut what: Option<usize> = None;
+        let mut body = &blocks[..];
+        if let Some(head) = blocks.first() {
+            let cells = cells_of(head);
+            if cells
+                .iter()
+                .all(|c| c.iter().all(|line| find_link(line).is_none()))
+            {
+                what = cells
+                    .iter()
+                    .position(|c| cell_words(c).trim_matches('*').eq_ignore_ascii_case("what"));
+                body = &blocks[1..];
+            }
+            let width = cells.len();
+            for block in body {
+                let cells = cells_of(block);
+                let what = what.filter(|_| cells.len() == width);
+                for (links, col) in cells.iter().map(|c| cell_links(c)).zip(0..) {
+                    let alone = links.len() == 1;
+                    for (first, last, href) in links {
+                        // A row holding one link is labelled by the whole
+                        // row; a row whose rules hold several (a table drawn
+                        // without rules between its rows) by the lines each
+                        // link spans.
+                        let span = |c: &Vec<String>| {
+                            if alone {
+                                cell_words(c)
+                            } else {
+                                cell_words(&c[first..=last])
+                            }
+                        };
+                        let label = what
+                            .filter(|&w| w != col)
+                            .and_then(|w| cells.get(w))
+                            .map(span)
+                            .filter(|t| !t.is_empty())
+                            .or_else(|| {
+                                cells
+                                    .iter()
+                                    .enumerate()
+                                    .filter(|(k, _)| *k != col)
+                                    .map(|(_, c)| span(c))
+                                    .find(|t| !t.is_empty() && find_link(t).is_none())
+                            })
+                            .map(|t| clean_label(&t))
+                            .filter(|t| !t.is_empty())
+                            .unwrap_or_else(|| href.clone());
+                        out.push((label, href));
+                    }
+                }
+            }
+        }
+        i = end + 1;
+    }
+    out
+}
+
+/// The columns of a table row's cell rules, left to right: the row opens and
+/// closes with one, after its margin, and holds two cells at least. `None` for any
+/// other row. A row drawn with box rules is read by box rules only, so a `|`
+/// in a cell's words is not a rule.
+fn cell_rules(row: &[char]) -> Option<Vec<usize>> {
+    let first = row.iter().position(|c| !c.is_whitespace())?;
+    let last = row.iter().rposition(|c| !c.is_whitespace())?;
+    let is_rule: fn(char) -> bool = match row[first] {
+        '│' | '┃' => |c| matches!(c, '│' | '┃'),
+        '|' => |c| c == '|',
+        _ => return None,
+    };
+    if last == first || !is_rule(row[last]) {
+        return None;
+    }
+    let rules: Vec<usize> = (first..=last).filter(|&k| is_rule(row[k])).collect();
+    // Two rules are a box, not a table: Claude Code's prompt and its welcome
+    // card are drawn so, and a link pasted into the prompt is no reply's.
+    (rules.len() >= 3).then_some(rules)
+}
+
+/// A row drawn between a table's rows: box rules, or a Markdown table's
+/// `|---|` line.
+fn is_box_rule(row: &[char]) -> bool {
+    let mut seen = false;
+    for c in row.iter().filter(|c| !c.is_whitespace()) {
+        if !matches!(
+            c,
+            '─' | '━'
+                | '┌'
+                | '┐'
+                | '└'
+                | '┘'
+                | '├'
+                | '┤'
+                | '┬'
+                | '┴'
+                | '┼'
+                | '┏'
+                | '┓'
+                | '┗'
+                | '┛'
+                | '┣'
+                | '┫'
+                | '┳'
+                | '┻'
+                | '╋'
+                | '|'
+                | '-'
+                | ':'
+                | '+'
+                | '='
+        ) {
+            return false;
+        }
+        seen = true;
+    }
+    seen
+}
+
+/// Every link in one cell, as the first and last of its lines a link spans
+/// and the link itself, joined across the lines the cell wrapped it onto.
+fn cell_links(lines: &[String]) -> Vec<(usize, usize, String)> {
+    let mut out = Vec::new();
+    let mut i = 0;
+    while i < lines.len() {
+        // Where a link starts: a whole one, or the start of a scheme the
+        // cell's edge cut before it could be read as one.
+        let mut at = None;
+        let mut off = 0;
+        for token in lines[i].split_inclusive(char::is_whitespace) {
+            let word = token.trim();
+            if find_link(word).is_some() || is_link_prefix(word) {
+                at = Some(off + (token.len() - token.trim_start().len()));
+                break;
+            }
+            off += token.len();
+        }
+        let Some(at) = at else {
+            i += 1;
+            continue;
+        };
+        let text = lines[i][at..].trim_end().to_string();
+        // A line that opens with a scheme starts a link of its own, so the
+        // join stops short of it: a link that filled the line above ended
+        // there.
+        let fresh = |l: &String| {
+            let t = l.trim_start();
+            ["file://", "https://", "http://"]
+                .iter()
+                .any(|s| t.starts_with(s))
+        };
+        let upto = (i + 1..lines.len())
+            .find(|&j| fresh(&lines[j]))
+            .unwrap_or(lines.len());
+        let (text, last, _cut) = carry(lines, &[], i, 0, text, upto - i);
+        match find_link(&text) {
+            Some((_, href)) => {
+                out.push((i, last, href));
+                i = last + 1;
+            }
+            // A word that only looked like the start of one: the lines it
+            // was carried onto are read again for their own.
+            None => i += 1,
+        }
+    }
+    out
+}
+
+/// A cell's words as one line: a row that fills the cell broke a word at its
+/// edge and joins the next directly, any other joins it with a space.
+fn cell_words(lines: &[String]) -> String {
+    let mut out = String::new();
+    let mut glued = true;
+    for line in lines {
+        let t = line.trim();
+        if t.is_empty() {
+            continue;
+        }
+        if !out.is_empty() && !glued {
+            out.push(' ');
+        }
+        out.push_str(t);
+        glued = fills(line);
+    }
+    out
 }
 
 // ---------------------------------------------------------------------------
@@ -1094,6 +1366,213 @@ mod tests {
             &padded("Deliverable: <short label> — <file:// or https:// URL>", 90),
         ]);
         assert_eq!(read(&screen), vec![]);
+    }
+
+    /// A table as Claude Code draws a reply's `## Links`: two margin spaces,
+    /// box rules, one space of padding inside each, a rule between rows.
+    /// `body` is the table's rows, each a list of cell lines `(left, right)`.
+    fn claude_table(
+        head: (&str, &str),
+        left: usize,
+        right: usize,
+        body: &[&[(&str, &str)]],
+    ) -> Vec<String> {
+        let row = |a: &str, b: &str| format!("  │ {a:<left$} │ {b:<right$} │");
+        let rule = |l: char, m: char, r: char| {
+            format!(
+                "  {l}{}{m}{}{r}",
+                "─".repeat(left + 2),
+                "─".repeat(right + 2)
+            )
+        };
+        let mut out = vec![rule('┌', '┬', '┐'), row(head.0, head.1)];
+        for lines in body {
+            out.push(rule('├', '┼', '┤'));
+            out.extend(lines.iter().map(|(a, b)| row(a, b)));
+        }
+        out.push(rule('└', '┴', '┘'));
+        out.iter().map(|l| padded(l, 100)).collect()
+    }
+
+    /// The link of Parker's links table of 2026-10-20, which Claude Code
+    /// broke inside its cell, and the label it broke inside its own.
+    const BEZEL: &str =
+        "file:///home/parker/Work/td-glass-rim/td/reports/2026-10-19-glass-in-a-bezel.html";
+
+    #[test]
+    fn a_links_table_gives_each_link_joined_across_its_cell_and_named_by_what() {
+        let (head, tail) = BEZEL.split_at(48);
+        let screen = claude_table(
+            ("What", "Link"),
+            12,
+            48,
+            &[
+                &[
+                    ("Before-and-a", head),
+                    ("fter page", tail),
+                    ("(this turn)", ""),
+                ],
+                &[("Pull request", "https://github.com/a/b/pull/1")],
+            ],
+        );
+        assert_eq!(
+            table_links(&screen),
+            [
+                (
+                    "Before-and-after page (this turn)".to_string(),
+                    BEZEL.to_string()
+                ),
+                (
+                    "Pull request".into(),
+                    "https://github.com/a/b/pull/1".into()
+                ),
+            ],
+            "the link whole, and the What cell's words joined where the cell broke them"
+        );
+        // The same screen holds no handover: the table is not a Deliverable
+        // line, and the rule for those is unchanged by it.
+        assert!(read(&screen).is_empty());
+    }
+
+    #[test]
+    fn a_link_that_fills_its_cell_on_the_last_row_ended_there() {
+        // A table sized to its widest link draws that link filling its cell,
+        // with only the rule after it. Unlike the pane's edge, that is no cut.
+        let pr = "https://github.com/a/b/pull/1";
+        let screen = claude_table(("What", "Link"), 8, pr.len(), &[&[("The PR", pr)]]);
+        assert_eq!(
+            table_links(&screen),
+            [("The PR".to_string(), pr.to_string())]
+        );
+    }
+
+    #[test]
+    fn a_link_cut_before_its_host_could_be_read_is_still_joined() {
+        let screen = claude_table(
+            ("What", "Link"),
+            6,
+            12,
+            &[&[("PR", "https://gith"), ("", "ub.com/a/b/p"), ("", "ull/9")]],
+        );
+        assert_eq!(
+            table_links(&screen),
+            [(
+                "PR".to_string(),
+                "https://github.com/a/b/pull/9".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn the_what_column_names_the_link_wherever_it_stands() {
+        let screen = claude_table(
+            ("Link", "What"),
+            30,
+            20,
+            &[
+                &[("https://github.com/a/b/pull/2", "the follow-up")],
+                &[("file:///tmp/td/notes.md", "")],
+            ],
+        );
+        assert_eq!(
+            table_links(&screen),
+            [
+                (
+                    "the follow-up".to_string(),
+                    "https://github.com/a/b/pull/2".to_string()
+                ),
+                // Unknown is not zero: no words to read, so the link itself,
+                // never an empty name.
+                (
+                    "file:///tmp/td/notes.md".into(),
+                    "file:///tmp/td/notes.md".into()
+                ),
+            ]
+        );
+        // Past a first column of other words, the What column still names it.
+        let screen = rows(&[
+            "| Kind | What | Link |",
+            "|---|---|---|",
+            "| PR | the follow-up | https://github.com/a/b/pull/2 |",
+        ]);
+        assert_eq!(
+            table_links(&screen),
+            [(
+                "the follow-up".to_string(),
+                "https://github.com/a/b/pull/2".to_string()
+            )]
+        );
+        // With no header saying What, the row's first cell of words.
+        let screen = claude_table(
+            ("Page", "Address"),
+            12,
+            30,
+            &[&[("The brief", "https://example.com/brief")]],
+        );
+        assert_eq!(
+            table_links(&screen),
+            [(
+                "The brief".to_string(),
+                "https://example.com/brief".to_string()
+            )]
+        );
+    }
+
+    #[test]
+    fn rows_drawn_without_rules_between_them_are_each_their_own() {
+        let pr = "https://github.com/a/b/pull/3";
+        let screen = |w: usize| -> Vec<String> {
+            let row = |a: &str, b: &str| format!("  │ {a:<4} │ {b:<w$} │");
+            let rule = |l, m, r| format!("  {l}──────{m}{}{r}", "─".repeat(w + 2));
+            [
+                rule('┌', '┬', '┐'),
+                row("What", "Link"),
+                rule('├', '┼', '┤'),
+                row("PR", pr),
+                row("Plan", "file:///tmp/td/plan.html"),
+                rule('└', '┴', '┘'),
+            ]
+            .iter()
+            .map(|l| padded(l, 100))
+            .collect()
+        };
+        let both = [
+            ("PR".to_string(), pr.to_string()),
+            ("Plan".to_string(), "file:///tmp/td/plan.html".to_string()),
+        ];
+        assert_eq!(table_links(&screen(40)), both);
+        // Sized to the PR, its link fills the cell, and the next line starts a
+        // link of its own: two links that met, never one glued from both.
+        assert_eq!(table_links(&screen(pr.len())), both);
+    }
+
+    #[test]
+    fn a_markdown_table_printed_raw_is_read_too() {
+        let screen = rows(&[
+            "| What | Link |",
+            "|---|---|",
+            "| Brief | https://example.com/brief |",
+        ]);
+        assert_eq!(
+            table_links(&screen),
+            [("Brief".to_string(), "https://example.com/brief".to_string())]
+        );
+    }
+
+    #[test]
+    fn a_box_that_is_not_a_table_is_not_read() {
+        // Claude Code's prompt, with a link pasted into it: two rules, one
+        // cell, and a person's words rather than a reply's.
+        let screen: Vec<String> = [
+            "╭──────────────────────────────────────────╮",
+            "│ > look at https://example.com/page       │",
+            "╰──────────────────────────────────────────╯",
+            "  A sentence with a | in it and https://example.com/x | too",
+        ]
+        .iter()
+        .map(|l| padded(l, 100))
+        .collect();
+        assert!(table_links(&screen).is_empty());
     }
 
     #[test]
