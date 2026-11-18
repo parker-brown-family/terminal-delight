@@ -272,7 +272,13 @@ impl Kind {
 /// typed, including slash commands (`/thread-tie-off`) and pasted paths, which
 /// is why the table is prefixes of machine envelopes and not a heuristic about
 /// what a person's message looks like.
-const SYSTEM_ENVELOPES: [&str; 2] = ["<task-notification>", "<cross-session-message"];
+// `<agent-message` is a subagent's hand-back, which Claude Code also submits as
+// a user turn (issue #846): it is the machine's, not the person's.
+const SYSTEM_ENVELOPES: [&str; 3] = [
+    "<task-notification>",
+    "<cross-session-message",
+    "<agent-message",
+];
 
 /// Whether a prompt the hook reported was typed by a person.
 ///
@@ -1622,6 +1628,9 @@ mod tests {
             "<task-notification>\n<task-id>bm5lyukcz</task-id>\n</task-notification>",
             "<cross-session-message from=\"uds:/run/user/1000/cc-socks/38\">hi</cross-session-message>",
             "\n\n<task-notification>\nlate\n</task-notification>",
+            // A subagent's hand-back (#846). Mutation: dropping the entry
+            // from SYSTEM_ENVELOPES fails here.
+            "<agent-message from=\"reviewer\">the review is done</agent-message>",
         ] {
             assert_eq!(prompt_kind(t), Kind::System, "machine: {t:?}");
         }
@@ -1630,6 +1639,7 @@ mod tests {
             "/tmp/tmp.iCROdsCXQq/agent.sh",
             "ok, you are to get all the terminal delight work into main",
             "<p>some html i pasted</p>",
+            "<pasted_content id=\"x\">a person's paste</pasted_content>",
             "",
             "look at this\n<task-notification>quoted, not sent by the harness</task-notification>",
         ] {

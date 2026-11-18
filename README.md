@@ -185,7 +185,8 @@ The full install page, including the desktop entry and the session host, is
 ## Build from source
 
 ```bash
-# deps (Ubuntu): bash scripts/setup-deps.sh   (Vulkan + build libs)
+# deps, Ubuntu/Debian: bash scripts/setup-deps.sh   (Vulkan + build libs)
+# deps, Arch/Omarchy: none to install; a stock Omarchy box already has them
 bash scripts/prepare-gpui.sh   # clone pinned Zed + apply the td patches
 cd app && cargo run
 ```

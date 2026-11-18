@@ -574,6 +574,24 @@ pub fn parse_tokens(s: &str) -> Option<u64> {
 }
 
 /// Compact a token count for display: `840`, `59.0k`, `1.2M`.
+/// A turn's token count for the agent wall: the number when it was read off
+/// the agent's status line, a dash when it was not. `Δ0` would say the turn
+/// used nothing, which nobody measured (issue #800).
+pub fn fmt_turn_tokens(n: Option<u64>) -> String {
+    n.map_or_else(|| "\u{2014}".to_string(), fmt_tokens)
+}
+
+/// The fleet's turn tokens: the sum of the counts that were read, and how many
+/// agents' counts were not. Unknown turns stay out of the sum (issue #800).
+pub fn fleet_turn_tokens(counts: impl IntoIterator<Item = Option<u64>>) -> (u64, usize) {
+    counts
+        .into_iter()
+        .fold((0, 0), |(sum, unknown), c| match c {
+            Some(n) => (sum + n, unknown),
+            None => (sum, unknown + 1),
+        })
+}
+
 pub fn fmt_tokens(n: u64) -> String {
     if n >= 1_000_000 {
         format!("{:.1}M", n as f64 / 1_000_000.)
@@ -587,6 +605,19 @@ pub fn fmt_tokens(n: u64) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #800: an unknown turn reads as a dash, never Δ0, and the fleet
+    /// sum leaves unknown turns out and counts them. Mutation: mapping None to
+    /// fmt_tokens(0), or adding unknown turns in as 0 with no count, fails here.
+    #[test]
+    fn an_unknown_turn_token_count_reads_as_unknown_not_zero() {
+        assert_eq!(fmt_turn_tokens(None), "\u{2014}");
+        assert_eq!(fmt_turn_tokens(Some(0)), "0");
+        assert_eq!(fmt_turn_tokens(Some(1_500)), fmt_tokens(1_500));
+        assert_eq!(fleet_turn_tokens([Some(10), None, Some(5), None]), (15, 2));
+        assert_eq!(fleet_turn_tokens([None]), (0, 1));
+        assert_eq!(fleet_turn_tokens(std::iter::empty()), (0, 0));
+    }
 
     /// The state's name stays English for the element id and agents; the
     /// person's word comes from the language pack and is that same English

@@ -6,3 +6,12 @@ briefing/, decision-brief/ and fancy-pants-brief/. The binary embeds every
 one (app/src/briefkit.rs) and a test fails if one is missing from its list.
 Do not edit the copied files by hand: change the skill, then run
 scripts/sync-brief-skill and name the new commit above.
+
+Moving the pin: go to agent-skills 9015f94 or later in one change, never to a
+commit between that repository's pull request 84 (the floating section rail) and
+86 (its fix). The scaffolded briefs here carry `svg{display:block;width:100%}`,
+which on such a commit draws the rail's grip as six large circles. 9015f94 adds
+briefing/assets/reading.js, briefing/scripts/reading.py and
+briefing/scripts/review_server.py, which then belong in briefkit.rs's list, and
+the kit's own briefing/tests/browser.mjs, which measures the grip, should pass on
+a brief the bundled copy builds. (terminal-delight issue 1455)

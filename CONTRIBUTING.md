@@ -146,7 +146,8 @@ legible at a glance. Loud is fine; unreadable is not.
 ### Dev setup
 
 ```bash
-bash scripts/setup-deps.sh     # Vulkan + build libs (Ubuntu/Debian)
+bash scripts/setup-deps.sh     # Vulkan + build libs (Ubuntu/Debian only;
+                               # on Arch/Omarchy there is nothing to install)
 bash scripts/prepare-gpui.sh   # clone the pinned Zed + apply the td patches
 cd app && cargo run
 ```
