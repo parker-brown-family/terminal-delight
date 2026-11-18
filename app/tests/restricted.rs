@@ -30,7 +30,8 @@ impl Fixture {
         let home = PathBuf::from(String::from_utf8(home.stdout).unwrap().trim());
         let path = home.join(format!("tr-{:016x}", u64::from_ne_bytes(random)));
         fs::DirBuilder::new().mode(0o700).create(&path).unwrap();
-        for name in ["work"] {
+        {
+            let name = "work";
             fs::DirBuilder::new()
                 .mode(0o700)
                 .create(path.join(name))

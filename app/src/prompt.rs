@@ -1364,6 +1364,7 @@ mod tests {
     /// At rest is not enough: a picker, a person mid-line, or a prompt that
     /// never asked for bracketed paste each hold it back.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn rest_with_a_person_or_a_picker_or_no_paste_waits() {
         let cases: [(&str, fn(&mut Worker)); 3] = [
             ("picker", |w| w.picker = true),

@@ -1099,7 +1099,7 @@ mod tests {
                 h - PANEL_CHROME_H
             );
         }
-        assert!(PANEL_CHROME_H > 250., "the number that shipped the bug");
+        const { assert!(PANEL_CHROME_H > 250., "the number that shipped the bug") };
         assert_eq!(
             panel_height(MAX_ROWS + 50, 4000.),
             panel_height(MAX_ROWS, 4000.),
