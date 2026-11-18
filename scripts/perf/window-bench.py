@@ -152,10 +152,14 @@ def audit_draws(log_path, skin):
     draws = [line for line in complete.splitlines() if line.startswith("td-frame ")]
     if not draws:
         raise RuntimeError(f"renderer audit missing: {log_path}")
-    if skin == "baremetal" and any(
-        line != "td-frame direct=true post=false shadows=0" for line in draws
+    # TERMINIMALIST (BAREMETAL until 2026-11-17) draws directly: never a
+    # shadow. The post pass runs only when a theme switches the CRT glass on,
+    # so it is reported by the frame count rather than refused here.
+    if skin == "terminimalist" and any(
+        not (line.startswith("td-frame direct=true ") and line.endswith(" shadows=0"))
+        for line in draws
     ):
-        raise RuntimeError(f"optional draw with BAREMETAL: {log_path}")
+        raise RuntimeError(f"optional draw with TERMINIMALIST: {log_path}")
 
 
 def run(a, display_env, probe, n, skin, repeat):

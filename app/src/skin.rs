@@ -61,8 +61,6 @@ pub const DEFAULT_SKIN_TOML: &str = include_str!("../skins/default.toml");
 
 /// (id, embedded toml) for every built-in skin, mirroring `theme::BUILTIN_THEMES`.
 const BUILTIN_SKINS: &[(&str, &str)] = &[
-    ("baremetal", include_str!("../skins/baremetal.toml")),
-    ("blueprint", include_str!("../skins/blueprint.toml")),
     ("chalk", include_str!("../skins/chalk.toml")),
     ("default", DEFAULT_SKIN_TOML),
     ("deco", include_str!("../skins/deco.toml")),
@@ -985,8 +983,15 @@ impl Skin {
     /// separate from program-authored cell backgrounds and the legacy grade.
     pub fn terminal_theme(&self, mut th: Theme) -> Theme {
         if self.shape.tube == Tube::Direct {
-            crate::theme::hold_clean(&mut th);
-            th.crawl = false;
+            // Pay only for what is switched on. Without the CRT glass, a direct
+            // skin draws flat: no bend, glow or linger. With it switched on by
+            // a theme or a design (intrusive, say), the glass runs as asked and
+            // costs only itself. Parker, 2026-11-17: "i really love the CRT +
+            // intrusive etc ... We really need to get the best of both worlds."
+            if !th.crt {
+                crate::theme::hold_clean(&mut th);
+                th.crawl = false;
+            }
             th.grade.inactive_blur = Some(0.);
             th.grade.doc_brightness = None;
             th.grade.doc_contrast = None;
@@ -3064,11 +3069,12 @@ pub(crate) fn picker_caption<'a>(
         "chalk" => t.ui.pal_skin_chalk,
         "ops" => t.ui.pal_skin_ops,
         "clean" => t.ui.pal_skin_clean,
-        "blueprint" => t.ui.pal_skin_blueprint,
         "custom" if text_controls => t.parts.ctl_custom_file,
         "custom" => t.ui.pal_skin_custom,
-        "baremetal" => "BAREMETAL",
-        "terminimalist" => "TERMINIMALIST",
+        // Every skin's name is lowercase, as its id is (Parker, 2026-11-17:
+        // "BAREMETAL in all caps, terminimalist in all caps - let's make this
+        // consistent").
+        "terminimalist" => "terminimalist",
         other => other,
     }
 }
@@ -3343,6 +3349,10 @@ fn canonical_id(id: &str) -> &str {
     match id {
         "paper" => "chalk",
         "console" => "ops",
+        // BAREMETAL became TERMINIMALIST, and BLUEPRINT was retired, both on
+        // 2026-11-17; a saved choice of either still opens a skin.
+        "baremetal" => "terminimalist",
+        "blueprint" => "default",
         _ => id,
     }
 }
@@ -3679,13 +3689,28 @@ mod tests {
             // Deliberately non-neutral: the field endpoint must still match.
             th.grade = theme::house_outer().grade;
             let sk = spec.bake(&th, 1.);
-            assert_eq!(sk.ink.panel, th.bg, "{id}");
+            // BAREMETAL's ground, kept in the merge: the palette's own ground,
+            // lifted five percent toward its text.
+            let lifted = th.bg.l + 0.05 * (th.text.l - th.bg.l);
+            assert!(
+                (sk.ink.panel.l - lifted).abs() < 0.01,
+                "{id}: {:?}",
+                sk.ink.panel
+            );
+            assert!(
+                (sk.ink.panel.h - th.bg.h).abs() < 0.03,
+                "{id}: the palette's hue"
+            );
             assert_eq!(sk.ink.ink, th.text, "{id}");
             assert_eq!(sk.ink.mark, th.accent, "{id}");
             let matching = sk.terminal_theme(th.clone());
             assert_eq!(matching.field_background, Some(sk.ink.panel));
             assert_eq!(matching.ansi, th.ansi);
-            assert_eq!(matching.grade, th.grade);
+            // Drawing directly holds the inactive blur at zero and leaves the
+            // rest of the grade as the palette set it.
+            let mut held = th.grade.clone();
+            held.inactive_blur = Some(0.);
+            assert_eq!(matching.grade, held);
             th.grade.set(theme::GradeKey::FieldColour, 0.);
             let black = sk.terminal_theme(th.clone()).field_background.unwrap();
             assert_eq!(black.l, 0.);
@@ -3706,16 +3731,8 @@ mod tests {
             }
             let th = palette();
             let sk = parse(source).unwrap().bake(&th, 1.);
-            assert_eq!(
-                sk.terminal_theme(th.clone()).field_background,
-                (*id == "baremetal").then_some(sk.ink.panel),
-                "{id}"
-            );
-            let field = if *id == "blueprint" {
-                th.bg
-            } else {
-                sk.ink.panel
-            };
+            assert_eq!(sk.terminal_theme(th.clone()).field_background, None, "{id}");
+            let field = sk.ink.panel;
             let mut chosen = th;
             chosen.grade.set(theme::GradeKey::FieldColour, 1.);
             assert_eq!(
@@ -3901,15 +3918,17 @@ mod tests {
             assert_eq!(d.style().border_widths, zero);
         }
         let mut selected = sk.choice(border(), true);
-        let mut expected = div().border(px(0.)).border_l(px(1.));
+        // BAREMETAL's two-pixel rail, kept in the merge.
+        let mut expected = div().border(px(0.)).border_l(px(2.));
         assert_eq!(
             selected.style().border_widths,
             expected.style().border_widths
         );
         let mut warning = sk.finish_edged(border(), sk.ink.danger);
+        let mut hairline = div().border(px(0.)).border_l(px(1.));
         assert_eq!(
             warning.style().border_widths,
-            expected.style().border_widths
+            hairline.style().border_widths
         );
         assert_eq!(warning.style().border_color, Some(sk.ink.danger));
         assert_eq!(sk.box_border(2.), px(0.));
@@ -4036,30 +4055,47 @@ mod tests {
         theme::parse(theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
     }
 
+    /// TERMINIMALIST draws directly and pays only for what is switched on.
+    /// With the CRT glass off, a theme's bend and glow are held flat; with it
+    /// switched on (as the intrusive design does), the glass runs as asked.
+    /// The inactive blur and the document grade stay off either way.
+    ///
+    /// Mutation-tested: holding the theme clean unconditionally fails the
+    /// switched-on half.
     #[test]
-    fn baremetal_holds_the_optional_effects_of_an_explicitly_lit_theme() {
+    fn terminimalist_holds_effects_flat_unless_the_crt_glass_is_switched_on() {
         let mut th = palette();
         th.warp = 2.0;
         th.crawl = true;
+        th.crt = false;
         th.grade.image_glow = Some(0.8);
         th.grade.inactive_image_glow = Some(0.6);
         th.grade.inactive_blur = Some(1.);
         th.grade.doc_brightness = Some(0.8);
-        let skin = parse(builtin_toml("baremetal").unwrap())
+        let skin = parse(builtin_toml("terminimalist").unwrap())
             .unwrap()
             .bake(&th, 1.);
         assert_eq!(skin.shape.tube, Tube::Direct);
-        let projected = skin.terminal_theme(th.clone());
-        assert_eq!(projected.warp, 0.);
-        assert!(!projected.crawl && !projected.crt);
-        assert_eq!(projected.grade.image_glow, Some(0.));
-        assert_eq!(projected.grade.inactive_blur_at_edge(), 0.);
-        assert_eq!(projected.grade.doc_grade(), None);
-        assert_eq!(th.grade.image_glow, Some(0.8));
-        let stock = parse(builtin_toml("terminimalist").unwrap())
-            .unwrap()
-            .bake(&th, 1.);
-        assert_eq!(stock.terminal_theme(th.clone()).warp, 2.);
+        let flat = skin.terminal_theme(th.clone());
+        assert_eq!(flat.warp, 0.);
+        assert!(!flat.crawl && !flat.crt);
+        assert_eq!(flat.grade.image_glow, Some(0.));
+        assert_eq!(flat.grade.inactive_blur_at_edge(), 0.);
+        assert_eq!(flat.grade.doc_grade(), None);
+        assert_eq!(
+            th.grade.image_glow,
+            Some(0.8),
+            "the theme itself is untouched"
+        );
+        th.crt = true;
+        let glass = skin.terminal_theme(th.clone());
+        assert!(glass.crt, "the switched-on glass runs");
+        assert_eq!(glass.warp, 2., "with its bend");
+        assert_eq!(glass.grade.image_glow, Some(0.8), "and its glow");
+        assert!(glass.crawl, "and its crawl");
+        assert_eq!(glass.grade.doc_grade(), None);
+        assert_eq!(builtin_toml("baremetal"), builtin_toml("terminimalist"));
+        assert_eq!(builtin_toml("blueprint"), builtin_toml("default"));
     }
 
     /// The gate on the whole layer. Every ink the shipped default skin resolves
@@ -4183,10 +4219,6 @@ mod tests {
                 assert_eq!(sk.data_family, "Share Tech Mono");
                 assert_eq!(sk.font_family, "Chakra Petch");
                 assert_eq!(sk.heading_text("Jev"), "JEV");
-            } else if *id == "blueprint" {
-                assert_eq!(sk.heading_family, "Share Tech Mono");
-                assert_eq!(sk.data_family, "Share Tech Mono");
-                assert_eq!(sk.font_family, "Chakra Petch");
             } else {
                 assert_eq!(
                     sk.heading_family, sk.font_family,
@@ -4385,42 +4417,6 @@ mod tests {
                 );
             }
         }
-    }
-
-    #[test]
-    fn blueprint_text_clears_its_paper_and_its_selected_control() {
-        let sk = parse(builtin_toml("blueprint").unwrap())
-            .unwrap()
-            .bake(&palette(), 1.);
-        assert_eq!(sk.shape.tube, Tube::Direct);
-        let mut lit = palette();
-        lit.crawl = true;
-        lit.warp = 2.;
-        let flat = sk.terminal_theme(lit);
-        assert!(!flat.crawl && !flat.crt);
-        assert_eq!(flat.warp, 0.);
-        assert_eq!(sk.shape.material, Material::Grid);
-        assert_eq!(sk.shape.boundary, Boundary::Double);
-        assert_eq!(sk.shape.divider, Divider::Dimension);
-        assert_eq!(sk.m.glow, 0.);
-        assert_eq!(sk.m.grain, 0.);
-        for bg in [
-            sk.ink.panel,
-            sk.ink.panel_raised,
-            sk.ink.btn_face,
-            sk.ink.row_active,
-            sk.ink.hover,
-        ] {
-            for fg in [sk.ink.ink, sk.ink.ink_dim, sk.ink.ink_faint, sk.ink.ink_off] {
-                let line = sk.ink.mark.alpha(0.045);
-                let ruled = over(line, bg);
-                for ground in [bg, ruled, over(line, ruled)] {
-                    let ratio = contrast(over(fg, ground), ground);
-                    assert!(ratio >= 4.5, "drafting label has contrast {ratio:.2}");
-                }
-            }
-        }
-        assert!(contrast(sk.ink.ink_on_mark, sk.ink.mark) >= 4.5);
     }
 
     /// A resting control chip reads at the body's dim weight in every skin that

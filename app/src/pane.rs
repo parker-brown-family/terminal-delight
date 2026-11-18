@@ -5510,8 +5510,11 @@ impl TerminalView {
                         }
                     }
                     let th = theme::theme(cx);
-                    let direct =
-                        crate::skin::spec(cx).shape.tube == Some(crate::skin::Tube::Direct);
+                    // A direct skin runs no effects clock, unless the CRT glass is
+                    // switched on: its roll and flicker need the clock.
+                    let direct = crate::skin::spec(cx).shape.tube
+                        == Some(crate::skin::Tube::Direct)
+                        && !view.resolved_theme(cx).crt;
                     if direct
                         || !view.fx_recent()
                         || !view.shown.load(std::sync::atomic::Ordering::Relaxed)
@@ -14030,7 +14033,10 @@ impl Render for TerminalView {
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
-                        let draw_tube = sk.shape.tube != crate::skin::Tube::Direct;
+                        // A direct skin registers no tube, so the renderer has
+                        // nothing to bend, unless this pane's theme has the
+                        // CRT glass switched on: then it pays for the glass.
+                        let draw_tube = sk.shape.tube != crate::skin::Tube::Direct || th.crt;
                         div().absolute().inset_0().child(
                             canvas(
                                 move |bounds, window, cx| {

@@ -646,13 +646,23 @@ mod tests {
                         crate::warp::begin_frame();
                         pane.redraw();
                         let active_glows = crate::warp::rect_glows();
-                        if direct {
+                        // A direct skin draws flat unless the glass is switched
+                        // on; with it on, it lights like any other skin
+                        // (Parker, 2026-11-17: "the best of both worlds").
+                        let flat = direct && !glass;
+                        if flat {
                             assert!(
                                 active_glows.is_empty(),
                                 "direct skin registered a tube: {case}"
                             );
                         }
-                        if direct || design == theme::CLEAN {
+                        if direct && glass && design != theme::CLEAN {
+                            assert!(
+                                !active_glows.is_empty(),
+                                "the switched-on glass registered no tube: {case}"
+                            );
+                        }
+                        if flat || design == theme::CLEAN {
                             // This skin and Clean both hold the light off, whatever the dials say:
                             // nothing glows and nothing erased lingers.
                             assert!(

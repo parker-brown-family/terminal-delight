@@ -30494,7 +30494,18 @@ impl Workspace {
             // scope chip once had, so the buttons stay at the right-hand end.
             // The tree's own buttons (fold all, new project) act on the tree,
             // so the INBOX face leaves them out and carries + NEW instead.
-            .child(self.render_spine_faces(&sk, s, cx))
+            // The faces keep their own width, and the buttons wrap to a second
+            // line when a spine has not room for both. Unboxed, PROJECTS ran
+            // under ADD PROJECT; in chalk, whose handwriting is wide, INBOX was
+            // squeezed to nothing (Parker, 2026-11-17: "our INBOX view on the
+            // spine seems to have gone away ... chalk theme shows it! so we
+            // need to check in with all the themes").
+            .flex_wrap()
+            .gap_y(px(3. * s))
+            .child(
+                self.render_spine_faces(&sk, s, cx)
+                    .flex_basis(gpui::Length::Auto),
+            )
             // The INBOX face ends in a + that opens the composer, where the
             // PROJECTS face ends in the + that makes a project: one glyph in
             // one place, each face's own new thing. It was "+ NEW", which ran
@@ -35025,8 +35036,7 @@ impl Render for Workspace {
                                     "chalk" => t.ui.pal_help_skin_chalk,
                                     "ops" => t.ui.pal_help_skin_ops,
                                     "clean" => t.ui.pal_help_skin_clean,
-                                    "blueprint" => t.ui.pal_help_skin_blueprint,
-                                    "baremetal" => t.ui.pal_help_skin_baremetal,
+                                    "terminimalist" => t.ui.pal_help_skin_terminimalist,
                                     _ => t.ui.pal_help_skin_custom,
                                 },
                                 None,
@@ -42227,6 +42237,64 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Every skin shows the spine's two faces, PROJECTS and INBOX, whole and
+    /// apart. Parker, 2026-11-17: "our INBOX view on the spine seems to have
+    /// gone away at some point ... oh wait - chalk theme shows it! so we need
+    /// to check in with all the themes for all our UX features and surfaces".
+    #[gpui::test]
+    fn every_skin_shows_the_inbox_face_on_the_spine(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |ws, cx| {
+            ws.spine_in_scratch = true;
+            ws.set_left_bar(true, cx);
+        });
+        let ids: Vec<String> = cx.update(|_, cx| {
+            skin::gallery_skins(cx)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        });
+        assert!(ids.len() >= 6, "{ids:?}");
+        let mut missing = vec![];
+        for id in &ids {
+            cx.update(|_, cx| skin::select(cx, id).unwrap());
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            let inbox = cx.debug_bounds("spine-face-inbox");
+            let projects = cx.debug_bounds("spine-face-projects");
+            match (projects, inbox) {
+                (Some(p), Some(i)) if i.size.width >= px(24.) && !p.intersects(&i) => {}
+                other => missing.push(format!("{id}: {other:?}")),
+            }
+        }
+        assert!(missing.is_empty(), "faces missing or crushed: {missing:#?}");
+    }
+
     #[gpui::test]
     fn minimal_header_keeps_model_and_menu_without_an_invisible_trash_target(
         cx: &mut gpui::TestAppContext,
@@ -42287,6 +42355,16 @@ mod tests {
             spine_add.right() <= rule.left(),
             "ADD PROJECT, then the rule"
         );
+        // The faces end before ADD PROJECT begins: in BAREMETAL, PROJECTS ran
+        // under it (Parker, 2026-11-17: "PROJECTS and ADD PROJECT overlap").
+        for face in ["spine-face-projects", "spine-face-inbox"] {
+            let f = cx.debug_bounds(face).expect(face);
+            assert!(
+                !f.intersects(&spine_add),
+                "{face} {f:?} runs under ADD PROJECT {spine_add:?}"
+            );
+            assert!(f.size.width >= px(30.), "{face} keeps its word: {f:?}");
+        }
         assert!(cx.debug_bounds("minimal-add-project").is_none());
         // With the spine open its row menu is a tab's right-click, so the
         // hotkeys are offered there: press "pin a hotkey", type a letter, and
@@ -43943,7 +44021,7 @@ mod tests {
     }
 
     #[gpui::test]
-    fn baremetal_shows_the_marquee_still_and_wakes_for_the_first_expiry(
+    fn terminimalist_shows_the_marquee_still_and_wakes_for_the_first_expiry(
         cx: &mut gpui::TestAppContext,
     ) {
         let _warp = crate::warp::WARP_SERIAL
@@ -43953,7 +44031,7 @@ mod tests {
         cx.update(|cx| {
             theme::init_embedded(cx, theme::house_outer());
             skin::init_embedded(cx);
-            skin::select(cx, "baremetal").unwrap();
+            skin::select(cx, "terminimalist").unwrap();
         });
         let seed = session::PaneRestore {
             program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),

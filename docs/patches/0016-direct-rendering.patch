@@ -15,17 +15,19 @@
  }
  
  fn crt_warp() -> (f32, f32) {
-@@ -1567,10 +1575,11 @@
+@@ -1567,10 +1575,12 @@
              crt_rects();
          let (fb_rect, fb_radius, fb_feather, fb_tint, fb_corner, fb_active) = focus_blur();
          let (doc_rect_arr, doc_grade_arr, doc_count) = doc_grades();
 -        let crt_active = (crt_rect_count > 0
 +        let direct = DIRECT.load(std::sync::atomic::Ordering::Relaxed);
-+        let crt_active = !direct && ((crt_rect_count > 0
++        // Direct rendering skips the passes nobody switched on (the focus
++        // frost, the document grade) but still runs a CRT tube a pane bends.
++        let crt_active = (crt_rect_count > 0
              && (crt_k1.abs() > 0.0005 || crt_k2.abs() > 0.0005 || crt_max_rect_k > 0.0005))
-             || fb_active
+-            || fb_active
 -            || doc_count > 0;
-+            || doc_count > 0);
++            || (!direct && (fb_active || doc_count > 0));
          let crt_scene_view: Option<wgpu::TextureView> = if crt_active {
              if self.crt.is_none() {
                  let pass = CrtPass::new(&self.resources().device, self.surface_config.format);
