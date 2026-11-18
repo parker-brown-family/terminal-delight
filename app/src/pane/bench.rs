@@ -634,7 +634,6 @@ impl TerminalView {
                             .get_or_insert_with(crate::workbench::Line::new);
                     }
                 } else {
-                    self.wb_draft_verb = None;
                     self.bench_act(action, target, cx);
                 }
             }
@@ -720,11 +719,19 @@ impl TerminalView {
             cx.stop_propagation();
             return;
         }
-        let Some((hit, _)) = self.bench_flat(ev.position) else {
+        let Some((hit, flat)) = self.bench_flat(ev.position) else {
             return;
         };
+        let over_rail = crate::workbench::region_of(
+            &self.wb_regions.borrow(),
+            f32::from(flat.x),
+            f32::from(flat.y),
+            0.,
+            0.,
+        ) == crate::workbench::Region::Rail;
         match crate::workbench::wheel_target(
             hit.as_ref(),
+            over_rail,
             self.wb_card_at.is_some(),
             self.wb_mirror,
         ) {
@@ -943,17 +950,19 @@ impl TerminalView {
             return false;
         }
         let zones = self.wb_zones.borrow();
-        let controls: Vec<_> = zones
-            .iter()
-            .filter(|z| {
-                z.w > 0.
-                    && z.h > 0.
-                    && !matches!(z.hit, Hit::Arm | Hit::Nothing)
-                    && self.wb_dial.is_none_or(
-                        |dial| matches!(z.hit, Hit::Dial(d) | Hit::DialPick(d, _) if d == dial),
-                    )
-            })
-            .collect();
+        let mut controls: Vec<&crate::workbench::Zone> = Vec::new();
+        for zone in zones.iter().filter(|z| {
+            z.w > 0.
+                && z.h > 0.
+                && !matches!(z.hit, Hit::Arm | Hit::Nothing)
+                && self.wb_dial.is_none_or(
+                    |dial| matches!(z.hit, Hit::Dial(d) | Hit::DialPick(d, _) if d == dial),
+                )
+        }) {
+            if !controls.iter().any(|prior| prior.hit == zone.hit) {
+                controls.push(zone);
+            }
+        }
         let current = controls
             .iter()
             .position(|z| Some(&z.hit) == self.wb_key_focus.as_ref());
@@ -3540,8 +3549,9 @@ impl TerminalView {
     /// by `ctl bench say`, which is how a caller with no pointer tests the
     /// thing a pointer would do.
     pub fn bench_say(&mut self, line: &str, cx: &mut Context<Self>) {
-        self.wb_compose = Some(crate::workbench::Line::holding(line));
-        self.bench_send(cx);
+        if !line.trim().is_empty() {
+            self.bench_deliver_say(line.to_string(), cx);
+        }
     }
 
     /// Put bytes into the pseudoterminal — or, if nobody is looking at this
@@ -3886,18 +3896,8 @@ impl TerminalView {
     /// bench's usual three (on screen, an agent in the pane, no dial press in
     /// flight), so a held message is recorded as held and goes when it can.
     pub(super) fn bench_send(&mut self, cx: &mut Context<Self>) {
-        if let Some((id, action)) = self.wb_draft_verb.take() {
-            if self
-                .bench
-                .selected()
-                .is_some_and(|s| s.id == id && s.actions.contains(&action))
-            {
-                self.bench_act(action, None, cx);
-            } else {
-                // The absent destination must stay absent on a second submit, too.
-                self.wb_draft_verb = Some((id, action));
-                cx.notify();
-            }
+        if let Some((_, action)) = &self.wb_draft_verb {
+            self.bench_act(action.clone(), None, cx);
             return;
         }
         let Some(text) = self
@@ -3911,6 +3911,10 @@ impl TerminalView {
             cx.notify();
             return;
         };
+        self.bench_deliver_say(text, cx);
+    }
+
+    fn bench_deliver_say(&mut self, text: String, cx: &mut Context<Self>) {
         // ANY message ends a pause, whatever it says and wherever it came
         // from — the composer, `ctl bench say`, or the strip's own resume,
         // which is `bench_say` with one sentence in it. The person is talking
@@ -3982,6 +3986,25 @@ impl TerminalView {
         target: Option<String>,
         cx: &mut Context<Self>,
     ) {
+        if let Some((id, bound)) = &self.wb_draft_verb {
+            if bound != &action
+                || !self
+                    .bench
+                    .selected()
+                    .is_some_and(|s| &s.id == id && s.actions.contains(bound))
+            {
+                return;
+            }
+        }
+        if action.wants_comment()
+            && self
+                .wb_compose
+                .as_ref()
+                .is_none_or(|line| line.text().trim().is_empty())
+        {
+            return;
+        }
+        self.wb_draft_verb = None;
         // A question the channel carried answers THROUGH the channel. Decided
         // before `Bench::act`, which knows nothing about hooks and must not:
         // it would drive a menu that never painted.

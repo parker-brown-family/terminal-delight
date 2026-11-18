@@ -1396,11 +1396,12 @@ pub enum Wheel {
 /// `card` and `mirror` cannot both be true today (the mirror is drawn in the
 /// arm that has no card), and the order here says which would win if that ever
 /// changed: the thing a person is reading beats the debug flag.
-pub fn wheel_target(over: Option<&Hit>, card: bool, mirror: bool) -> Wheel {
+pub fn wheel_target(over: Option<&Hit>, rail: bool, card: bool, mirror: bool) -> Wheel {
     match over {
         Some(Hit::OpenRow(_)) => Wheel::Rail,
         Some(Hit::DialPick(..)) => Wheel::Dial,
         Some(Hit::Composer) => Wheel::Composer,
+        _ if rail => Wheel::Rail,
         _ if card => Wheel::Card,
         _ if mirror => Wheel::Mirror,
         _ => Wheel::Nothing,
@@ -7509,7 +7510,7 @@ mod tests {
             for card in [false, true] {
                 for mirror in [false, true] {
                     assert_eq!(
-                        wheel_target(Some(&Hit::DialPick(dial, 0)), card, mirror),
+                        wheel_target(Some(&Hit::DialPick(dial, 0)), false, card, mirror),
                         Wheel::Dial
                     );
                 }
@@ -7786,25 +7787,31 @@ mod tests {
     fn a_wheel_over_the_composer_moves_the_composer_and_elsewhere_moves_only_the_mirror() {
         // The composer wins whether or not a mirror is showing.
         assert_eq!(
-            wheel_target(Some(&Hit::Composer), false, false),
+            wheel_target(Some(&Hit::Composer), false, false, false),
             Wheel::Composer
         );
         assert_eq!(
-            wheel_target(Some(&Hit::Composer), false, true),
+            wheel_target(Some(&Hit::Composer), false, false, true),
             Wheel::Composer
         );
         // Off the composer with the mirror showing: the mirror, whatever zone
         // the body records there.
-        assert_eq!(wheel_target(Some(&Hit::Arm), false, true), Wheel::Mirror);
-        assert_eq!(wheel_target(None, false, true), Wheel::Mirror);
+        assert_eq!(
+            wheel_target(Some(&Hit::Arm), false, false, true),
+            Wheel::Mirror
+        );
+        assert_eq!(wheel_target(None, false, false, true), Wheel::Mirror);
         // Off the composer with no mirror and no card: nothing moves — and the
         // turn is consumed, so the flat hit-test underneath never sees it.
-        assert_eq!(wheel_target(Some(&Hit::Arm), false, false), Wheel::Nothing);
         assert_eq!(
-            wheel_target(Some(&Hit::Choose(1)), false, false),
+            wheel_target(Some(&Hit::Arm), false, false, false),
             Wheel::Nothing
         );
-        assert_eq!(wheel_target(None, false, false), Wheel::Nothing);
+        assert_eq!(
+            wheel_target(Some(&Hit::Choose(1)), false, false, false),
+            Wheel::Nothing
+        );
+        assert_eq!(wheel_target(None, false, false, false), Wheel::Nothing);
     }
 
     /// The arm that did not exist, which is why a card taller than its pane
@@ -7814,21 +7821,31 @@ mod tests {
         // The body's own zone is `Arm` — the whole body arms the composer — so
         // this is the zone a turn over a card actually lands on, and it used to
         // resolve to `Nothing`.
-        assert_eq!(wheel_target(Some(&Hit::Arm), true, false), Wheel::Card);
-        assert_eq!(wheel_target(None, true, false), Wheel::Card);
+        assert_eq!(
+            wheel_target(Some(&Hit::Arm), false, true, false),
+            Wheel::Card
+        );
+        assert_eq!(wheel_target(None, true, true, false), Wheel::Rail);
+        assert_eq!(wheel_target(None, false, true, false), Wheel::Card);
         // The composer still wins over the card it sits under: the pointer is
         // the thing that decides, not which is more interesting.
         assert_eq!(
-            wheel_target(Some(&Hit::Composer), true, false),
+            wheel_target(Some(&Hit::Composer), false, true, false),
             Wheel::Composer
         );
         // A card beats the mirror. The two cannot both be up today — the
         // mirror is drawn in the arm that has no card — so this pins the order
         // rather than describing a screen that exists.
-        assert_eq!(wheel_target(Some(&Hit::Arm), true, true), Wheel::Card);
+        assert_eq!(
+            wheel_target(Some(&Hit::Arm), false, true, true),
+            Wheel::Card
+        );
         // And with no card the old answer is unchanged, which is the half a
         // regression would break silently.
-        assert_eq!(wheel_target(Some(&Hit::Arm), false, true), Wheel::Mirror);
+        assert_eq!(
+            wheel_target(Some(&Hit::Arm), false, false, true),
+            Wheel::Mirror
+        );
     }
 
     #[test]
