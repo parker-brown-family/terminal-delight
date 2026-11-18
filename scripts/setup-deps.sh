@@ -1,5 +1,7 @@
 #!/usr/bin/env bash
-# terminal-delight — G0a build-dependency setup (Ubuntu 22.04)
+# terminal-delight — G0a build-dependency setup (Ubuntu 22.04, apt only).
+# On Arch and Omarchy there is nothing to install: a stock box already has
+# these (verified on a fresh Omarchy 4.0, issue #162). Go to prepare-gpui.sh.
 # Package list sourced from Zed's script/linux (R1 research, docs/PLAN.md §2).
 set -euo pipefail
 

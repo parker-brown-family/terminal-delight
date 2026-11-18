@@ -72,10 +72,25 @@ pub enum PaneMode {
     Unknown,
 }
 
+/// Whether a process is Claude Code: its name is `claude`, or the program it
+/// runs (the command, or the script an interpreter such as `node` was handed)
+/// is a `claude` executable or Claude Code's own package. The one copy of the
+/// rule, shared by the window, the session host and the resume line. It used
+/// to ask whether the command line merely contained `/claude` anywhere, so
+/// `vim ~/Work/claude-tools/x` read as Claude (issue #901).
+pub(crate) fn runs_claude(comm: &str, cmdline: &str) -> bool {
+    comm.trim() == "claude"
+        || cmdline.split_whitespace().take(2).any(|arg| {
+            arg == "claude"
+                || arg.ends_with("/claude")
+                || arg.contains("/@anthropic-ai/claude-code/")
+        })
+}
+
 impl PaneMode {
     fn classify(comm: &str, cmdline: &str) -> PaneMode {
         let c = comm.trim();
-        if c == "claude" || cmdline.contains("/claude") {
+        if runs_claude(c, cmdline) {
             PaneMode::Claude
         } else if c == "codex" || cmdline.contains("/codex") {
             PaneMode::Codex
@@ -3174,6 +3189,9 @@ pub struct TerminalView {
     /// own scrollback right now. Guards against a second press stacking another
     /// walk on top of the first and doubling every synthetic wheel step.
     seeking: bool,
+    /// Keys the person has pressed in this pane, counted by `on_key`. A prompt
+    /// seek reads it to stop the moment somebody types (issue #322).
+    keys_pressed: u64,
     /// Per-pane memo for `resolved_theme`, keyed on (effective choice, mode,
     /// inherit_theme, theme generation). resolve() deep-clones, recolours and
     /// grade-transforms the palette, and render() calls it every frame; this
@@ -5922,6 +5940,7 @@ impl TerminalView {
             cell_px,
             last_scroll_offset: None,
             seeking: false,
+            keys_pressed: 0,
             theme_cache: RefCell::new(None),
             mirror_doc: RefCell::new(None),
             read_history: RefCell::new(None),
@@ -8057,6 +8076,7 @@ impl TerminalView {
     /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        self.keys_pressed = self.keys_pressed.wrapping_add(1);
         self.rest.touch(Instant::now());
         // Typing into the pane is attention too — covers the frozen-badge case
         // where the pane kept idle keyboard focus across the whole latch, so
@@ -9375,14 +9395,30 @@ impl TerminalView {
         // the agent's own scrollback.
         let max_steps = if coarse { 24 } else { 400 };
         self.seeking = true;
+        let keys0 = self.keys_pressed;
+        let mouse0 = mode.intersects(TermMode::MOUSE_MODE);
         cx.spawn(async move |this, cx| {
             let mut stalls = 0;
             for _ in 0..max_steps {
                 let before = match this.update(cx, |view: &mut TerminalView, _cx| {
+                    // Re-check before every write: the walk can run for half a
+                    // minute, and a person typing or the program leaving its
+                    // mouse mode means the next scroll step is no longer ours
+                    // to send (issue #322).
+                    let mouse = view
+                        .session
+                        .term
+                        .lock()
+                        .mode()
+                        .intersects(TermMode::MOUSE_MODE);
+                    if !seek_may_continue(keys0, view.keys_pressed, mouse0, mouse) {
+                        return None;
+                    }
                     view.session.notifier.notify(step.clone());
-                    view.screen_signature()
+                    Some(view.screen_signature())
                 }) {
-                    Ok(sig) => sig,
+                    Ok(Some(sig)) => sig,
+                    Ok(None) => break,
                     Err(_) => return, // pane closed mid-walk
                 };
                 // Wait for the agent to actually repaint before reading the top
@@ -11173,14 +11209,31 @@ pub(crate) fn chrome_glyph_font(ch: char, th: &Theme) -> Option<String> {
 /// first thing the program says to you, and it was crying wolf. Guarded by
 /// `the_font_diagnostic_is_silent_about_a_family_that_resolves`.
 pub fn font_diagnostic(want: &str) -> Option<String> {
-    let got = resolve_family(want);
+    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
+    font_diagnostic_from(want, &resolve_family(want), font_available(want), n)
+}
+
+/// [`font_diagnostic`] over its inputs, so the case with no fallback at all
+/// can be tested without the process-wide font registry.
+fn font_diagnostic_from(want: &str, got: &str, want_installed: bool, n: usize) -> Option<String> {
+    // Handed back unchanged: either it is installed, or nothing matched and the
+    // system will pick a font itself. The second is the case this diagnostic
+    // exists for, and it used to say nothing (issue #205).
+    if got == want {
+        return (!want_installed).then(|| {
+            format!(
+                "font '{want}' not installed, and no fallback font is installed either \
+                 ({n} families available); the system will choose one. \
+                 Install {want} for the intended look."
+            )
+        });
+    }
     // Same font, other spelling — nothing was substituted, so there is nothing
     // to report. Saying "JetBrains Mono not installed" about a box that has
     // JetBrainsMono Nerd Font is how a true warning gets trained into noise.
-    if got == want || same_family_variant(want, &got) {
+    if same_family_variant(want, got) {
         return None;
     }
-    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
     Some(format!(
         "font '{want}' not installed; falling back to '{got}' ({n} families available). \
          Install {want} for the intended look."
@@ -11596,9 +11649,58 @@ fn read_nav(k: &crate::keylayer::Key) -> Option<ReadNav> {
     })
 }
 
+/// Whether a prompt seek may send its next scroll step: nobody has pressed a
+/// key in the pane since it started, and the program is still in the mouse mode
+/// (or not) that the walk chose its step for (issue #322).
+fn seek_may_continue(keys0: u64, keys_now: u64, mouse0: bool, mouse_now: bool) -> bool {
+    keys_now == keys0 && mouse_now == mouse0
+}
+
+/// A function key's xterm sequence, with its modifiers in the CSI parameter
+/// (1 + shift 1 + alt 2 + ctrl 4). F1 never gets here: the key layer routes it
+/// to Help first. Without these, F2 to F12 reached no program at all, since
+/// they carry no `key_char` (issue #1084).
+fn function_key_bytes(key: &str, m: &gpui::Modifiers) -> Option<Vec<u8>> {
+    let n: u8 = key.strip_prefix('f')?.parse().ok()?;
+    let param = 1 + u8::from(m.shift) + 2 * u8::from(m.alt) + 4 * u8::from(m.control);
+    let ss3 = |c: char| {
+        if param == 1 {
+            format!("\x1bO{c}")
+        } else {
+            format!("\x1b[1;{param}{c}")
+        }
+    };
+    let tilde = |code: u8| {
+        if param == 1 {
+            format!("\x1b[{code}~")
+        } else {
+            format!("\x1b[{code};{param}~")
+        }
+    };
+    let seq = match n {
+        1 => ss3('P'),
+        2 => ss3('Q'),
+        3 => ss3('R'),
+        4 => ss3('S'),
+        5 => tilde(15),
+        6 => tilde(17),
+        7 => tilde(18),
+        8 => tilde(19),
+        9 => tilde(20),
+        10 => tilde(21),
+        11 => tilde(23),
+        12 => tilde(24),
+        _ => return None,
+    };
+    Some(seq.into_bytes())
+}
+
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
+    if let Some(bytes) = function_key_bytes(ks.key.as_str(), m) {
+        return Some(bytes);
+    }
     // Enter: plain submits (CR); shift/alt+enter sends a literal newline (LF) so
     // multi-line input in claude/codex inserts a line break instead of submitting.
     if ks.key.as_str() == "enter" && !m.control {
@@ -16156,6 +16258,27 @@ mod tests {
         );
     }
 
+    /// Issue #205: when the wanted family is missing and no fallback resolves
+    /// either, the diagnostic says so instead of going silent. Mutation:
+    /// returning None for `got == want` regardless fails the first assertion.
+    #[test]
+    fn the_font_diagnostic_speaks_when_no_fallback_resolves_either() {
+        let msg = font_diagnostic_from("Ghost Mono", "Ghost Mono", false, 3)
+            .expect("nothing resolved, so it must warn");
+        assert!(
+            msg.contains("Ghost Mono") && msg.contains("no fallback"),
+            "{msg}"
+        );
+        assert_eq!(
+            font_diagnostic_from("Real Mono", "Real Mono", true, 3),
+            None
+        );
+        assert!(
+            font_diagnostic_from("Ghost Mono", "DejaVu Sans Mono", false, 3)
+                .is_some_and(|m| m.contains("falling back to 'DejaVu Sans Mono'"))
+        );
+    }
+
     #[test]
     fn highlight_tints_only_the_selected_span() {
         // one 5-byte run "hello"; select glyphs [1,3) → three runs, middle tinted
@@ -17630,6 +17753,47 @@ mod tests {
                 Some(format!("{home}/a.md").as_str())
             );
         }
+    }
+
+    #[test]
+    fn a_prompt_seek_stops_when_a_key_is_pressed_or_the_mode_changes() {
+        // Issue #322. Mutation: making seek_may_continue ignore either input
+        // fails one of these.
+        assert!(seek_may_continue(4, 4, true, true));
+        assert!(!seek_may_continue(4, 5, true, true), "a key was pressed");
+        assert!(
+            !seek_may_continue(4, 4, true, false),
+            "the program left mouse mode"
+        );
+        assert!(
+            !seek_may_continue(4, 4, false, true),
+            "the program entered mouse mode"
+        );
+    }
+
+    /// Issue #901: one rule decides Claude for the window, the host and the
+    /// resume line, and it reads the program, not any path that happens to
+    /// contain `/claude`. Mutation: restoring `cmdline.contains("/claude")`
+    /// fails the vim case.
+    #[test]
+    fn a_path_that_merely_mentions_claude_is_not_claude_code() {
+        assert!(!runs_claude("vim", "vim /tmp/claude-probe/x.txt"));
+        assert!(!runs_claude("vim", "vim /home/p/Work/claude-tools/x"));
+        assert!(runs_claude(
+            "node",
+            "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        ));
+        assert!(runs_claude("node", "node /home/x/.local/bin/claude"));
+        assert!(runs_claude("claude", ""));
+        assert!(runs_claude("2.1.3", "claude --resume abc"));
+        assert_ne!(
+            PaneMode::classify("bash", "/bin/bash /tmp/claude-1000/x/bin/codex resume 0199"),
+            PaneMode::Claude
+        );
+        assert_ne!(
+            PaneMode::classify("vim", "vim /tmp/claude-probe/x.txt"),
+            PaneMode::Claude
+        );
     }
 
     #[test]
@@ -19158,6 +19322,14 @@ mod tests {
         // workspace-owned chords must NOT reach the shell
         assert_eq!(bytes("alt-left"), None);
         assert_eq!(bytes("ctrl-pageup"), None);
+        // Function keys reach the program as xterm sends them (#1084).
+        // Mutation: dropping the function_key_bytes call fails every one.
+        assert_eq!(bytes("f2"), Some(b"\x1bOQ".to_vec()));
+        assert_eq!(bytes("f5"), Some(b"\x1b[15~".to_vec()));
+        assert_eq!(bytes("f11"), Some(b"\x1b[23~".to_vec()));
+        assert_eq!(bytes("f12"), Some(b"\x1b[24~".to_vec()));
+        assert_eq!(bytes("shift-f12"), Some(b"\x1b[24;2~".to_vec()));
+        assert_eq!(bytes("ctrl-f3"), Some(b"\x1b[1;5R".to_vec()));
         // alt+<char> needs a key_char to encode, and Keystroke::parse doesn't
         // synthesise one — gpui fills it at runtime. Supply it, or an assertion
         // here passes for the wrong reason.

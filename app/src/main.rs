@@ -3550,8 +3550,19 @@ fn persist_primary_state(body: &str, new_leaves: usize, new_tabs: usize, allow_s
         );
         return;
     }
-    rotate_state_backup(&path);
-    let _ = session::write_atomic(&path, body);
+    write_with_backup(&path, body);
+}
+
+/// Write a session body, rotating a backup first, unless the file on disk
+/// already holds these exact bytes. A no-op save used to take a backup slot
+/// like a real one, so the ring of ten held under two minutes of history on a
+/// busy session (issue #476).
+fn write_with_backup(path: &std::path::Path, body: &str) {
+    if fs::read(path).is_ok_and(|disk| disk == body.as_bytes()) {
+        return;
+    }
+    rotate_state_backup(path);
+    let _ = session::write_atomic(path, body);
 }
 
 /// The layout for a demo window: the throwaway state file named by
@@ -37086,7 +37097,7 @@ impl Render for Workspace {
             // over the bordered chips that say the same six things with their
             // words on, and two rows of the same fact disagreeing whenever a
             // filter was on is worse than either row alone. ----
-            let mut turn_tok_total = 0u64;
+            let mut turn_counts: Vec<Option<u64>> = Vec::new();
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
             let mut visible_agent_total = 0u32;
@@ -37127,7 +37138,7 @@ impl Render for Workspace {
                         .is_none_or(|program| program == mode_lbl.as_str());
                     if p.counts_as_agent() {
                         let st = p.agent_status();
-                        turn_tok_total += st.turn_tokens.unwrap_or(0);
+                        turn_counts.push(st.turn_tokens);
                         sess_tok_total += p.session_tokens();
                         if show_group && program_matches {
                             visible_agent_total += 1;
@@ -37729,7 +37740,7 @@ impl Render for Workspace {
                         }
                     });
                     let agentic = is_agent && !feed.is_empty();
-                    let turn_tok = status.turn_tokens.unwrap_or(0);
+                    let turn_tok = status.turn_tokens;
                     // Bottom-right status chip: the glyph and label share one
                     // colour, so ✓/✕/○ read as the state source of truth.
                     let pip_glyph = if !is_agent || status.state == hud::AgentState::Idle {
@@ -38362,7 +38373,7 @@ impl Render for Workspace {
                                                 .text_color(status_glow.alpha(0.85))
                                                 .child(format!(
                                                     "\u{0394}{}",
-                                                    hud::fmt_tokens(turn_tok)
+                                                    hud::fmt_turn_tokens(turn_tok)
                                                 )),
                                         )
                                         .child(div().child(format!(
@@ -38512,11 +38523,22 @@ impl Render for Workspace {
                                 .child(ui.mcp_hdr_agent_wall),
                         )
                         .child(div().flex_1().min_w(px(0.)))
-                        .child(div().text_color(th.text.alpha(0.7)).child(format!(
-                            "\u{0394} {} \u{00b7} \u{03a3} {}",
-                            hud::fmt_tokens(turn_tok_total),
-                            hud::fmt_tokens(sess_tok_total)
-                        )))
+                        .child(div().text_color(th.text.alpha(0.7)).child({
+                            // Unknown turns stay out of the sum, and the header
+                            // says how many it left out (issue #800).
+                            let (known, unknown) =
+                                hud::fleet_turn_tokens(turn_counts.iter().copied());
+                            let left_out = if unknown > 0 {
+                                format!(" (+{unknown}\u{00d7}\u{2014})")
+                            } else {
+                                String::new()
+                            };
+                            format!(
+                                "\u{0394} {}{left_out} \u{00b7} \u{03a3} {}",
+                                hud::fmt_tokens(known),
+                                hud::fmt_tokens(sess_tok_total)
+                            )
+                        }))
                         // </> LeanCTX savings: read lean-ctx's precomputed
                         // token-savings rollup over the leanctx-savings plugin
                         // and pop the </> overlay. Own handler + stop_propagation.
@@ -42235,6 +42257,30 @@ mod tests {
             "and the document it was reading goes with it"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Issue #476: a save that changes nothing takes no backup slot and writes
+    /// nothing; a real change still rotates one. Mutation: removing the
+    /// unchanged-bytes check leaves two backups after the repeated saves.
+    #[test]
+    fn a_save_that_changes_nothing_takes_no_backup_slot() {
+        let dir = std::env::temp_dir().join(format!("td-ring-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("7.toml");
+        let backups = || {
+            fs::read_dir(dir.join("backups").join("7"))
+                .map(|d| d.count())
+                .unwrap_or(0)
+        };
+        write_with_backup(&path, "panes = 3\n");
+        write_with_backup(&path, "panes = 3\n");
+        write_with_backup(&path, "panes = 3\n");
+        assert_eq!(backups(), 0, "three identical saves rotated nothing");
+        write_with_backup(&path, "panes = 4\n");
+        assert_eq!(backups(), 1, "a real change still keeps the old body");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "panes = 4\n");
+        let _ = fs::remove_dir_all(&dir);
     }
 
     /// Every skin shows the spine's two faces, PROJECTS and INBOX, whole and

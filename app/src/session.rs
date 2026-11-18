@@ -244,7 +244,7 @@ fn agent_resume(
     pid: u32,
 ) -> Option<String> {
     let c = comm.trim();
-    if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
+    if crate::pane::runs_claude(c, cmdline) {
         let id = pick_session(
             // Everything the process itself says about which conversation it is
             // in: a pushed ledger entry, a descriptor it holds, its own command
