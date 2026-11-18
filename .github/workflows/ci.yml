@@ -399,6 +399,8 @@ jobs:
         run: |
           python3 scripts/test_i18n_batch.py
           python3 scripts/test_translation_suggest.py
+      - name: The close-fixed-issues keyword reader
+        run: python3 scripts/test_close_fixed_issues.py -v
       - name: Verify the completed batch against all nine installed tables
         run: python3 scripts/i18n-batch.py docs/plans/complete-translations/complete.json --verify
 
