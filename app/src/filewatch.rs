@@ -22,44 +22,47 @@ impl Watch {
     fn new(paths: &[PathBuf]) -> io::Result<Self> {
         let fd = inotify::init(CreateFlags::CLOEXEC | CreateFlags::NONBLOCK)?;
         let mut names: HashMap<i32, Option<HashSet<OsString>>> = HashMap::new();
-        let flags = WatchFlags::CLOSE_WRITE
+        let content = WatchFlags::CLOSE_WRITE
             | WatchFlags::CREATE
             | WatchFlags::DELETE
             | WatchFlags::MOVE
             | WatchFlags::ATTRIB
             | WatchFlags::MOVE_SELF
             | WatchFlags::DELETE_SELF;
-        let mut add = |dir: &Path, name: Option<&std::ffi::OsStr>| -> io::Result<()> {
-            match inotify::add_watch(&fd, dir, flags) {
-                Ok(wd) => {
-                    let watched = names.entry(wd).or_insert_with(|| Some(HashSet::new()));
-                    match name {
-                        Some(name) => {
-                            if let Some(set) = watched {
-                                set.insert(name.to_owned());
+        let inode = WatchFlags::MOVE_SELF | WatchFlags::DELETE_SELF;
+        let mut add =
+            |dir: &Path, name: Option<&std::ffi::OsStr>, flags: WatchFlags| -> io::Result<()> {
+                match inotify::add_watch(&fd, dir, flags | WatchFlags::MASK_ADD) {
+                    Ok(_) if flags == inode => {}
+                    Ok(wd) => {
+                        let watched = names.entry(wd).or_insert_with(|| Some(HashSet::new()));
+                        match name {
+                            Some(name) => {
+                                if let Some(set) = watched {
+                                    set.insert(name.to_owned());
+                                }
                             }
+                            None => *watched = None,
                         }
-                        None => *watched = None,
                     }
+                    Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => {}
+                    Err(err) => return Err(err.into()),
                 }
-                Err(rustix::io::Errno::NOENT | rustix::io::Errno::NOTDIR) => {}
-                Err(err) => return Err(err.into()),
-            }
-            Ok(())
-        };
+                Ok(())
+            };
         for path in paths {
             let path = std::path::absolute(path)?;
+            // Existing ancestors can report their own removal or move. Asking
+            // for all their child events makes a write anywhere in /tmp wake
+            // every window, even if userspace subsequently discards the name.
+            // A symlink swap changes the directory entry, not its target inode.
             for part in path.ancestors() {
-                if let (Some(dir), Some(name)) = (part.parent(), part.file_name()) {
-                    add(dir, Some(name))?;
+                if part == path || part.is_symlink() || !part.exists() {
+                    if let (Some(dir), Some(name)) = (part.parent(), part.file_name()) {
+                        add(dir, Some(name), content)?;
+                    }
                 }
-            }
-            if path.is_dir() {
-                add(&path, None)?;
-            }
-            // A symlink to a file can be edited through the target's name.
-            if path.is_file() {
-                add(&path, None)?;
+                add(part, None, if part == path { content } else { inode })?;
             }
         }
         Ok(Self {
@@ -125,6 +128,32 @@ impl Changes {
 mod tests {
     use super::*;
     use futures::FutureExt;
+
+    #[test]
+    fn idle_file_watch_leaves_sibling_traffic_in_the_kernel() {
+        use std::os::fd::AsRawFd;
+        let root = std::env::temp_dir().join(format!("td-watch-ancestor-{}", std::process::id()));
+        let child = root.join("active");
+        std::fs::create_dir_all(&child).unwrap();
+        let path = child.join("skin.toml");
+        std::fs::write(&path, "one").unwrap();
+        let watch = Watch::new(&[path]).unwrap();
+        std::fs::write(root.join("other-window"), "noise").unwrap();
+        let mut fd = libc::pollfd {
+            fd: watch.fd.get_ref().as_raw_fd(),
+            events: libc::POLLIN,
+            revents: 0,
+        };
+        // SAFETY: one initialized pollfd; timeout zero only samples readiness.
+        assert_eq!(
+            unsafe { libc::poll(&mut fd, 1, 0) },
+            0,
+            "ancestor delivered an unrelated child event"
+        );
+        std::fs::rename(&child, root.join("retired")).unwrap();
+        assert!(watch.changed().now_or_never().unwrap().is_ok());
+        std::fs::remove_dir_all(root).unwrap();
+    }
 
     #[test]
     fn idle_file_watch_ignores_unrelated_writes_and_observes_atomic_replacement() {
