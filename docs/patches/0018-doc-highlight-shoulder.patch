@@ -1,0 +1,108 @@
+diff --git a/crates/gpui_wgpu/src/crt_pass.wgsl b/crates/gpui_wgpu/src/crt_pass.wgsl
+--- a/crates/gpui_wgpu/src/crt_pass.wgsl
++++ b/crates/gpui_wgpu/src/crt_pass.wgsl
+@@ -26,7 +26,7 @@
+     // td-doc-grade: a floating document's rect and its gains. Its own list, not
+     // a tube's lanes: a document is graded whether or not any tube is registered.
+     doc_rects: array<vec4<f32>, 32>,  // x, y, w, h (physical px)
+-    doc_grade: array<vec4<f32>, 32>,  // brightness gain, contrast gain, reserved
++    doc_grade: array<vec4<f32>, 32>,  // brightness gain, contrast gain, document 1|0 (td-doc-shoulder)
+ }
+ 
+ @group(0) @binding(0) var<uniform> crt: CrtParams;
+@@ -228,6 +228,48 @@
+     return col;
+ }
+ 
++// td-doc-shoulder: where a document's highlights on a CURVED tube start to
++// roll off, and the light grey they approach instead of white. The curved path
++// draws its screen 35% hotter after the document grade (`tube = lit_col * ...
++// * 1.35`), so everything a person's gauges left above about 0.74 went past
++// white and clipped: the glow pane ignored the top of the brightness and
++// contrast sliders. Below the knee nothing changes.
++const DOC_SHOULDER_KNEE: f32 = 0.78;
++const DOC_SHOULDER_CEILING: f32 = 0.9;
++
++// td-doc-shoulder: whether source pixel `p` is a document's, by the same rule
++// as `doc_graded`: the last rect holding it decides, so a panel kept out of a
++// document's grade is not a document either.
++fn in_document(p: vec2<f32>) -> bool {
++    for (var i = u32(crt.k.w); i > 0u; i = i - 1u) {
++        let r = crt.doc_rects[i - 1u];
++        if (p.x >= r.x && p.x < r.x + r.z && p.y >= r.y && p.y < r.y + r.w) {
++            return crt.doc_grade[i - 1u].z > 0.5;
++        }
++    }
++    return false;
++}
++
++// td-doc-shoulder: a document's colour on the curved tube. A pixel whose
++// luminance is at or under the knee is returned as it came, bit for bit; a
++// brighter one is scaled down as a whole so its luminance rolls off toward the
++// ceiling, continuous and with slope 1 at the knee. Scaling the whole colour
++// keeps its hue: a cyan header stays cyan instead of going pale, and a
++// saturated mid-tone (a purple card whose blue alone is bright) is untouched.
++// Anything that is not a document passes through.
++fn doc_shoulder(col: vec3<f32>, p: vec2<f32>) -> vec3<f32> {
++    if (!in_document(p)) {
++        return col;
++    }
++    let l = dot(col, vec3<f32>(0.2126, 0.7152, 0.0722));
++    if (l <= DOC_SHOULDER_KNEE) {
++        return col;
++    }
++    let span = DOC_SHOULDER_CEILING - DOC_SHOULDER_KNEE;
++    let rolled = DOC_SHOULDER_KNEE + span * (1.0 - exp(-(l - DOC_SHOULDER_KNEE) / span));
++    return col * (rolled / l);
++}
++
+ @fragment
+ fn fs_crt(in: CrtVsOut) -> @location(0) vec4<f32> {
+     let dims = vec2<f32>(textureDimensions(screen_tex));
+@@ -375,7 +417,7 @@
+             let glare_color = vec3<f32>(0.72, 1.0, 0.78);
+             // sub-terminal phosphor runs +35% hotter than the raw sample so the
+             // warped tube doesn't read dim against flat chrome / flat panes.
+-            let tube = lit_col * falloff * 1.35 * shade + glare_color * glare_amount;
++            let tube = doc_shoulder(lit_col * falloff * 1.35 * shade + glare_color * glare_amount, g * dims);
+             // td-tube-alpha: the glass keeps what the screen left of its alpha, so
+             // a see-through pane stays see-through. The bezel is always solid.
+             return vec4<f32>(tube * inb + vec3<f32>(lip) + bezel, mix(1.0, screen.a, inb));
+diff --git a/crates/gpui_wgpu/src/wgpu_renderer.rs b/crates/gpui_wgpu/src/wgpu_renderer.rs
+--- a/crates/gpui_wgpu/src/wgpu_renderer.rs
++++ b/crates/gpui_wgpu/src/wgpu_renderer.rs
+@@ -268,25 +268,29 @@
+ // A document's rect (physical px) and its brightness and contrast gains around
+ // 1.0. Beside the tubes rather than in them: the app flattens the glass while an
+ // overlay is up, and a document's grade has to stay on the screen through that.
+-static DOC_GRADES: std::sync::Mutex<Vec<([f32; 4], f32, f32)>> =
++//
++// td-doc-shoulder: the fourth field says whether the rect is a document (true)
++// or something drawn over one and kept out of its grade (false). Only a
++// document's pixels take the curved tube's highlight shoulder.
++static DOC_GRADES: std::sync::Mutex<Vec<([f32; 4], f32, f32, bool)>> =
+     std::sync::Mutex::new(Vec::new());
+ 
+ /// Grade these rects this frame, the last on top where they overlap. Empty
+ /// leaves the pass to the tubes; any entry keeps it live on a flat screen.
+-pub fn set_doc_grades(grades: &[([f32; 4], f32, f32)]) {
++pub fn set_doc_grades(grades: &[([f32; 4], f32, f32, bool)]) {
+     let mut guard = DOC_GRADES.lock().unwrap();
+     guard.clear();
+     guard.extend(grades.iter().take(32).copied());
+ }
+ 
+-/// Returns (rects, gains [brightness, contrast, _, _], count).
++/// Returns (rects, gains [brightness, contrast, document 1|0, _], count).
+ fn doc_grades() -> ([[f32; 4]; 32], [[f32; 4]; 32], u32) {
+     let guard = DOC_GRADES.lock().unwrap();
+     let mut rects = [[0.0f32; 4]; 32];
+     let mut gains = [[0.0f32; 4]; 32];
+-    for (i, (r, b, c)) in guard.iter().take(32).enumerate() {
++    for (i, (r, b, c, document)) in guard.iter().take(32).enumerate() {
+         rects[i] = *r;
+-        gains[i] = [*b, *c, 0.0, 0.0];
++        gains[i] = [*b, *c, if *document { 1.0 } else { 0.0 }, 0.0];
+     }
+     (rects, gains, guard.len().min(32) as u32)
+ }

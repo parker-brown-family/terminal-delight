@@ -144,6 +144,31 @@ fn float_zone(
     .inset_0()
 }
 
+/// Whether a pane shows its screen through a CURVED tube: it draws a tube at all
+/// (`pane.rs`, `draw_tube`), and the shader does not take its flat path, which
+/// it takes when both warp coefficients are under 0.0005 and the crawl is off
+/// (`crt_pass.wgsl`, `fs_crt`). A document there is drawn 35% hotter after its
+/// grade, which is what the highlight shoulder is for.
+pub(crate) fn doc_on_curved_tube(
+    tube: crate::skin::Tube,
+    crt: bool,
+    warp: f32,
+    crawl: bool,
+) -> bool {
+    let (k1, k2) = crate::theme::warp_coeffs(warp);
+    (tube != crate::skin::Tube::Direct || crt)
+        && (k1.abs() >= 0.0005 || k2.abs() >= 0.0005 || crawl)
+}
+
+/// The gains a floating document hands the renderer this frame. Its gauges'
+/// when they are off neutral. At neutral, nothing, so a document that needs no
+/// grade never turns the pass on; except on a curved tube, where the pass is on
+/// anyway and the document must still be named one, or the shoulder that keeps
+/// its highlights from clipping could not find it.
+pub(crate) fn doc_zone_gains(gauges: Option<(f32, f32)>, curved: bool) -> Option<(f32, f32)> {
+    gauges.or(curved.then_some((1.0, 1.0)))
+}
+
 /// Hands a floating document's body to the renderer's grade for this frame,
 /// `grade` being [`crate::theme::Grade::doc_grade`]'s gains. Measured as the pane
 /// measures its tube, so the rect is the one the document was laid out in.
@@ -437,6 +462,9 @@ impl TerminalView {
     ) -> gpui::AnyElement {
         use crate::docopen::FloatHit;
         let sk = crate::skin::for_theme(cx, th, th.grade.scale);
+        // Read before the chrome theme stands in for `th`: the curve is the
+        // pane's, the same `th.warp` its tube is registered with.
+        let curved = doc_on_curved_tube(sk.shape.tube, th.crt, th.warp, th.crawl);
         let chrome = sk.chrome_theme(th);
         let th = &chrome;
         let s = crate::lang::current().strings();
@@ -565,8 +593,7 @@ impl TerminalView {
                     .children(zone(FloatHit::Body))
                     .when(clear > 0.0, |d| d.opacity(1.0 - clear))
                     .children(
-                        th.grade
-                            .doc_grade()
+                        doc_zone_gains(th.grade.doc_grade(), curved)
                             .filter(|_| !self.lends(&float.view))
                             .map(doc_grade_zone),
                     )
@@ -2018,6 +2045,42 @@ impl TerminalView {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A curved glow pane names its document to the renderer even at neutral
+    /// gauges, so the highlight shoulder can find it; a flat pane at neutral
+    /// does not, so an undressed document never turns the pass on.
+    #[test]
+    fn a_document_on_a_curved_tube_is_named_even_at_neutral_gauges() {
+        use crate::skin::Tube;
+        assert!(doc_on_curved_tube(Tube::Glass, false, 1.37, false));
+        assert!(
+            doc_on_curved_tube(Tube::Glass, false, 0.0, true),
+            "the crawl bends it too"
+        );
+        assert!(
+            !doc_on_curved_tube(Tube::Glass, false, 0.0, false),
+            "flat glass"
+        );
+        assert!(
+            !doc_on_curved_tube(Tube::Direct, false, 1.37, false),
+            "no tube at all"
+        );
+        assert!(
+            doc_on_curved_tube(Tube::Direct, true, 1.37, false),
+            "unless the CRT switch is on"
+        );
+        // The shader's own flat threshold: 0.14 × warp under 0.0005.
+        assert!(!doc_on_curved_tube(Tube::Glass, false, 0.003, false));
+        assert!(doc_on_curved_tube(Tube::Glass, false, 0.004, false));
+
+        assert_eq!(doc_zone_gains(None, true), Some((1.0, 1.0)));
+        assert_eq!(doc_zone_gains(None, false), None);
+        assert_eq!(
+            doc_zone_gains(Some((1.17, 1.23)), false),
+            Some((1.17, 1.23))
+        );
+        assert_eq!(doc_zone_gains(Some((1.17, 1.23)), true), Some((1.17, 1.23)));
+    }
 
     /// Parker: "gotta be able to RESIZE the floating box". An edge's grip
     /// outranks the strip and the document under it, and never a button: the
