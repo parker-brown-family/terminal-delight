@@ -5235,6 +5235,12 @@ struct Workspace {
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
+    /// A gauge was shown changed and not yet saved: a slider drag saves once,
+    /// when it ends, rather than on every move.
+    grade_unsaved: bool,
+    /// How many times `save` was asked for, so a test can see a drag save once.
+    #[cfg(test)]
+    saves_asked: std::cell::Cell<usize>,
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     badge_timer: bool,
     prompt_timer: bool,
@@ -7139,6 +7145,9 @@ impl Workspace {
             track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
+            grade_unsaved: false,
+            #[cfg(test)]
+            saves_asked: std::cell::Cell::new(0),
             scrub_bounds: Arc::new(Mutex::new(None)),
             badge_timer: false,
             prompt_timer: false,
@@ -9527,6 +9536,8 @@ impl Workspace {
     }
 
     fn save(&self, cx: &App) {
+        #[cfg(test)]
+        self.saves_asked.set(self.saves_asked.get() + 1);
         if self.save_blocked().is_some() {
             return;
         }
@@ -24116,7 +24127,11 @@ impl Workspace {
             self.scrubbing = false;
             self.take_wheel_drag();
             self.take_light_drag();
-            self.take_slider_drag();
+            // A slider released outside the window ends here, not in the
+            // mouse-up: save what the drag showed.
+            if self.take_slider_drag().is_some() && std::mem::take(&mut self.grade_unsaved) {
+                self.save(cx);
+            }
             self.take_track_drag();
             self.take_tab_wheel_drag();
             self.take_tab_light_drag();
@@ -24328,9 +24343,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.take_slider_drag().is_some() {
-            self.save(cx);
-            cx.notify();
+        if self.finish_slider_drag(cx) {
             return;
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
@@ -25102,7 +25115,13 @@ impl Workspace {
         // A human just dialled THIS channel here: it becomes the pane's own and
         // stops tracking outer. Every other channel is untouched and keeps
         // following outer, so one slider nudge no longer detaches the pane.
-        self.write_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
+        //
+        // Shown at once, saved when the drag ends. A slider reports every mouse
+        // move, and saving on each one rebuilt the whole session and waited on
+        // the host's write on the UI thread, dozens of times a second, until
+        // the desktop asked whether to force-quit the window (Parker,
+        // 2026-11-18). The drag's end saves (`take_slider_drag`).
+        self.show_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
     }
 
     /// Reset the active OSD scope's MAIN gauges to the neutral identity — no
@@ -25176,6 +25195,31 @@ impl Workspace {
         channels: theme::GradePins,
         cx: &mut Context<Self>,
     ) {
+        self.show_grade(scope, grade, channels, cx);
+        self.save(cx);
+    }
+
+    /// End a gauge slider's drag: the one save for everything it showed.
+    fn finish_slider_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.take_slider_drag().is_none() {
+            return false;
+        }
+        self.grade_unsaved = false;
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// [`Self::write_grade`] without the save: what a slider drag does on each
+    /// move, so the look follows the hand and the session is written once.
+    fn show_grade(
+        &mut self,
+        scope: &MenuScope,
+        grade: theme::Grade,
+        channels: theme::GradePins,
+        cx: &mut Context<Self>,
+    ) {
+        self.grade_unsaved = true;
         match scope {
             MenuScope::Pane(pane) => {
                 pane.update(cx, |view, cx| {
@@ -25189,7 +25233,6 @@ impl Workspace {
                 theme::select_outer(cx, choice);
             }
         }
-        self.save(cx);
         cx.notify();
     }
 
@@ -42267,6 +42310,48 @@ mod tests {
             "and the document it was reading goes with it"
         );
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// Dragging a gauge shows every move and saves once, when the drag ends.
+    /// Saving on every move blocked the UI thread until the desktop offered to
+    /// force-quit the window (Parker, 2026-11-18). Mutation: saving in
+    /// `show_grade` makes the count follow the moves.
+    #[gpui::test]
+    fn a_gauge_drag_shows_every_move_and_saves_once(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(900.), px(600.)), |w, cx| {
+                Workspace::build(true, true, None, None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let key = theme::GradeKey::Brightness;
+        ws.update(cx, |ws, cx| {
+            ws.open_osd(MenuScope::Outer, None);
+            ws.drag = Some(Drag::Slider(key));
+            let before = ws.saves_asked.get();
+            for ratio in [0.2, 0.4, 0.6, 0.8] {
+                ws.apply_grade(key, ratio, cx);
+            }
+            assert_eq!(ws.saves_asked.get(), before, "no save while the hand moves");
+            let (min, max, _) = key.range();
+            let shown = theme::outer_choice(cx).grade.get(key).unwrap();
+            assert!(
+                (shown - (min + 0.8 * (max - min))).abs() < 1e-4,
+                "each move is shown"
+            );
+            assert!(ws.finish_slider_drag(cx));
+            assert_eq!(ws.saves_asked.get(), before + 1, "one save when it ends");
+        });
     }
 
     /// Issue #1295: the undo holds are swept by the loop that runs whether or
