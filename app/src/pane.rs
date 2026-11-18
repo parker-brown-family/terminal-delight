@@ -6338,7 +6338,7 @@ impl TerminalView {
     /// What this pane costs: everything its group holds in RAM and swap, or,
     /// while it rests, what is left in RAM and what went out. `unmeasured`
     /// where the group could not be made or read, never a smaller number.
-    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+    pub(crate) fn memory_label(&self) -> Option<String> {
         use crate::agentrest::short_bytes;
         let parts = crate::lang::current().strings().parts;
         let u = self.rest.usage;
@@ -6361,6 +6361,11 @@ impl TerminalView {
             // Not looked at yet: a blank, not a guess.
             (false, _) => return None,
         };
+        Some(text)
+    }
+
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        let text = self.memory_label()?;
         Some(
             div()
                 .flex_none()

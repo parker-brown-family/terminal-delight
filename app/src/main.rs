@@ -5979,6 +5979,14 @@ struct RestCensus {
     refusals: Vec<(agentrest::RefusalClass, u32)>,
 }
 
+impl RestCensus {
+    fn display_changed(&self, next: &Self) -> bool {
+        self.sampled_at.is_some() != next.sampled_at.is_some()
+            || self.memory != next.memory
+            || self.refusals != next.refusals
+    }
+}
+
 /// What to do with one saved leaf when a host is holding the terminals.
 #[derive(Debug, PartialEq)]
 enum LeafPlan {
@@ -8296,11 +8304,16 @@ impl Workspace {
         let mut census = RestCensus::default();
         let mut reasons: std::collections::BTreeMap<agentrest::RefusalClass, u32> =
             Default::default();
+        let mut pane_changed = false;
         for o in outcomes {
             let Some(e) = views.iter().find(|e| e.read(cx).pane_id() == Some(o.pane)) else {
                 continue;
             };
-            e.update(cx, |v, cx| {
+            pane_changed |= e.update(cx, |v, cx| {
+                let label = v.memory_label();
+                let dormancy = v.rest.dormancy.clone();
+                let previous_refusal = v.rest.refusal.clone();
+
                 match &o.group {
                     Ok(g) => {
                         v.rest.group = Some(g.clone());
@@ -8387,7 +8400,11 @@ impl Workspace {
                 };
                 // A request is answered once, slept or refused, never retried.
                 v.rest.sleep_now = false;
-                cx.notify();
+                let changed = label != v.memory_label()
+                    || dormancy != v.rest.dormancy
+                    || previous_refusal != v.rest.refusal;
+                if changed { cx.notify(); }
+                changed
             });
             let v = e.read(cx);
             if let Some(class) = v.rest.refusal.as_ref().and_then(|r| r.class()) {
@@ -8404,13 +8421,16 @@ impl Workspace {
         }
         census.sampled_at = Some(looked);
         census.refusals = reasons.into_iter().collect();
+        let census_changed = self.rest_census.display_changed(&census);
         self.rest_census = census;
         let store = self.rest_store(cx);
         if store != self.rest_store_saved {
             agentrest_io::save_store(session, &store);
             self.rest_store_saved = store;
         }
-        cx.notify();
+        if pane_changed || census_changed {
+            cx.notify();
+        }
     }
 
     /// What must outlive this window, read off the panes.
@@ -48429,6 +48449,24 @@ mod tests {
         let badge = live_fn("fn agent_badge_el(");
         assert!(!badge.contains(".with_animation("), "{badge}");
         assert!(badge.contains("badge_phase("));
+    }
+
+    #[test]
+    fn idle_rest_sampling_only_repaints_changed_figures() {
+        let empty = RestCensus::default();
+        let first = RestCensus {
+            sampled_at: Some(Instant::now()),
+            ..empty.clone()
+        };
+        assert!(empty.display_changed(&first));
+        let mut next = first.clone();
+        next.sampled_at = first.sampled_at.map(|t| t + Duration::from_secs(15));
+        assert!(!first.display_changed(&next));
+        next.refusals.push((agentrest::RefusalClass::Busy, 1));
+        assert!(first.display_changed(&next));
+        let apply = live_fn("fn apply_rest(");
+        assert!(apply.contains("if pane_changed || census_changed"));
+        assert!(apply.contains("label != v.memory_label()"));
     }
 
     #[test]
