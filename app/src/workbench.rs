@@ -5134,7 +5134,8 @@ mod tests {
         );
         assert_eq!(
             b.rows_for(Shelf::Overview)[0].badge.as_deref(),
-            Some("1 doubt")
+            None,
+            "a reply's row carries no doubt count; the doubts are on its card"
         );
         // Looking at the overview marks the replies seen, and only them.
         b.set_shelf(Shelf::Overview);
