@@ -1,20 +1,27 @@
-# TERMINIMALIST — open furniture, following the selected Omarchy palette.
-# Native furniture only. Terminal cells and semantic status ink keep their owners.
-name = "TERMINIMALIST"
+# terminimalist — the bare-metal look, following the selected Omarchy palette.
+# Draws directly: opaque surfaces, words for glyphs, square corners and a
+# two-pixel focus rail, with no frost, shadow or decorative pass. The CRT glass
+# still runs when a theme or design turns it on, and costs only itself.
+# The rules between panes take the palette accent, as TERMINIMALIST always drew
+# them. Merged from BAREMETAL on 2026-11-17 at Parker's word: "BAREMETAL IS THE
+# GOLD STANDARD, let's SLIGHTLY improve it with TERMINIMALIST — then we RENAME
+# baremetal to TERMINIMALIST". A saved `baremetal` choice reads as this skin.
+name = "terminimalist"
 icon = ""
+# Use text labels on opaque surfaces. Reserve the palette accent for focus.
 
 [font]
 family = "JetBrainsMono Nerd Font"
 heading = "JetBrainsMono Nerd Font"
 data = "JetBrainsMono Nerd Font"
 scale = 1.0
-min_px = 11.0
+min_px = 12.0
 line_height = 1.15
 
 [shape]
 controls = "text"
 material = "plain"
-tube = "stock"
+tube = "direct"
 corner = "square"
 boundary = "none"
 emphasis = "rail"
@@ -32,14 +39,14 @@ corner_cap = 0.0
 hairline = 1.0
 border = 0.0
 rule_gap = 1.0
-gap = 6.0
+gap = 5.0
 pad_x = 10.0
 pad_y = 5.0
 chip_px = 7.0
 chip_py = 2.0
-row_h = 20.0
+row_h = 21.0
 label_size = 11.0
-rail = 1.0
+rail = 2.0
 glow = 0.0
 glow_a = 0.0
 grain = 0.0
@@ -49,21 +56,21 @@ lift = 0.0
 marker_alpha = 0.0
 
 [ink]
-panel = { from = "bg" }
-panel_raised = { from = "bg" }
+panel = { from = "bg", toward = "text", t = 0.05 }
+panel_raised = { from = "bg", toward = "text", t = 0.10 }
 panel_sunken = { from = "bg" }
 panel_glass = { from = "bg" }
 btn_face = { from = "bg" }
 rule = { from = "accent", a = 0.24 }
 rule_strong = { from = "accent", a = 0.40 }
 edge = { from = "accent", a = 0.32 }
-edge_strong = { from = "accent", a = 0.60 }
+edge_strong = { from = "accent", a = 0.90 }
 edge_rest = { from = "accent", a = 0.24 }
 focus = { from = "accent" }
 ink = { from = "text" }
 ink_lit = { from = "text" }
 ink_dim = { from = "text", a = 0.80 }
-ink_faint = { from = "text", a = 0.68 }
+ink_faint = { from = "text", a = 0.76 }
 ink_off = { from = "text", a = 0.60 }
 ink_ghost = { from = "text", a = 0.20 }
 ink_on_mark = { from = "bg" }
@@ -73,7 +80,7 @@ mark_soft = { from = "accent", a = 0.85 }
 mark_dim = { from = "accent", a = 0.45 }
 mark_wash = { from = "accent", a = 0.10 }
 select = { from = "accent" }
-row_active = { from = "accent", a = 0.06 }
+row_active = { from = "accent", a = 0.14 }
 hover = { from = "text", a = 0.06 }
 
 [note]

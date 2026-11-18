@@ -3260,18 +3260,9 @@ mod tests {
         cx.simulate_resize(size(px(600.), px(950.)));
         ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
         redraw(cx);
-        assert!(count() >= closed + 8);
+        assert!(count() >= closed + 6);
         let page = cx.debug_bounds("st-page").unwrap();
-        for id in [
-            "default",
-            "chalk",
-            "clean",
-            "deco",
-            "ops",
-            "terminimalist",
-            "baremetal",
-            "blueprint",
-        ] {
+        for id in ["default", "chalk", "clean", "deco", "ops", "terminimalist"] {
             let card = cx
                 .debug_bounds(Box::leak(format!("st-skin-{id}").into_boxed_str()))
                 .unwrap();
@@ -3282,23 +3273,23 @@ mod tests {
                 "{id}: {card:?} outside {page:?}"
             );
         }
-        let blue = cx.debug_bounds("st-skin-blueprint").unwrap();
-        cx.simulate_click(blue.center(), gpui::Modifiers::none());
+        let pick = cx.debug_bounds("st-skin-ops").unwrap();
+        cx.simulate_click(pick.center(), gpui::Modifiers::none());
         redraw(cx);
-        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
-        assert!(blue.contains(&cx.debug_bounds("st-current-skin").unwrap().center()));
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "ops");
+        assert!(pick.contains(&cx.debug_bounds("st-current-skin").unwrap().center()));
         cx.simulate_keystrokes("left");
         redraw(cx);
-        assert_ne!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
+        assert_ne!(cx.update(|_, cx| skin::active_id(cx)), "ops");
         cx.simulate_keystrokes("right");
         redraw(cx);
-        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "blueprint");
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "ops");
         cx.simulate_keystrokes("escape");
         redraw(cx);
         let closed = count();
         redraw(cx);
         assert_eq!(count(), closed);
-        assert!(cx.debug_bounds("st-skin-blueprint").is_none());
+        assert!(cx.debug_bounds("st-skin-ops").is_none());
     }
 
     #[gpui::test]
@@ -3324,7 +3315,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx) = book_window(cx);
-        cx.update(|_, cx| skin::select(cx, "baremetal").unwrap());
+        cx.update(|_, cx| skin::select(cx, "terminimalist").unwrap());
         ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
         for width in [900., 600.] {
             cx.simulate_resize(size(px(width), px(600.)));
@@ -3361,7 +3352,7 @@ mod tests {
             .lock()
             .unwrap_or_else(|p| p.into_inner());
         let (ws, cx) = book_window(cx);
-        cx.update(|_, cx| skin::select(cx, "baremetal").unwrap());
+        cx.update(|_, cx| skin::select(cx, "terminimalist").unwrap());
         ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
         cx.simulate_resize(size(px(900.), px(600.)));
         redraw(cx);

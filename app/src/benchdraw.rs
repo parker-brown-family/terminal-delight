@@ -905,7 +905,14 @@ pub fn body(
     // every row of the shelf, which is a line that has stopped carrying
     // anything. Its subtitle stays, because the stamp under a note is the one
     // fact a chronological board is sorted by.
-    let unweighable = matches!(surface.kind, Kind::Question(_) | Kind::Comment(_));
+    // A reply's weight is not drawn either. On the Overview, a feed of
+    // nothing but replies, the line under every card ("A middling, involved
+    // job … Measured.") was the same furniture twenty times. Parker,
+    // 2026-11-17, of that feed: "we are getting a bunch of noise in the
+    // overview.... yuk". A decision, a changeset or an architecture keeps its
+    // weight, where it is what a reviewer weighs.
+    let unweighable =
+        matches!(surface.kind, Kind::Question(_) | Kind::Comment(_)) || quiet_meta(&surface.kind);
     // ABOVE THE TITLE, and above everything.
     //
     // The position is the point, not the colour: an escalation sorted among six
@@ -948,6 +955,15 @@ pub fn body(
         .when(how == Embodiment::Full && !unweighable, |frame| {
             frame.child(weights(&surface.weight, sk, th))
         })
+}
+
+/// Whether a card leaves out its origin and weight lines. A reply does: it is
+/// the pane's own end-of-turn summary, the Overview is a feed of nothing else,
+/// and those two lines were the same furniture under every card (Parker,
+/// 2026-11-17: "a bunch of noise in the overview.... yuk"). Anything that can
+/// be acted on keeps both.
+pub(crate) fn quiet_meta(kind: &Kind) -> bool {
+    matches!(kind, Kind::Response(_))
 }
 
 fn summary_line(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
@@ -1037,17 +1053,25 @@ fn heading(surface: &Surface, sk: &Skin, th: &Theme) -> Div {
         // `th.faint.alpha(0.7)` — grey on grey, and then a fainter grey on the
         // same grey, so both cases were illegible and the distinction between
         // them carried nothing to anyone who could not read either.
-        .child(micro(
-            surface.origin.label(),
-            Step::Fine,
-            if surface.origin.is_unattributed() {
-                crate::emphasis::meta(th)
-            } else {
-                sk.ink.ink_faint
-            },
-            sk,
-            th,
-        ))
+        //
+        // Except on a reply. A reply is the pane's own end-of-turn summary and
+        // asks the window to act on nothing, and every reply restored from the
+        // record reads "origin unknown", so on the Overview the loud line was
+        // on every card and warned of nothing (Parker, 2026-11-17: "a bunch of
+        // noise in the overview"). What can be acted on keeps it.
+        .when(!quiet_meta(&surface.kind), |d| {
+            d.child(micro(
+                surface.origin.label(),
+                Step::Fine,
+                if surface.origin.is_unattributed() {
+                    crate::emphasis::meta(th)
+                } else {
+                    sk.ink.ink_faint
+                },
+                sk,
+                th,
+            ))
+        })
 }
 
 /// The shape of the thing, for a pane too small to hold the thing.
@@ -5866,5 +5890,24 @@ mod tests {
             "the value's ink goes through dial_ink: {}",
             inked.trim()
         );
+    }
+
+    /// A reply's card is quiet; what can be acted on keeps its origin and
+    /// weight. Mutation-tested: `quiet_meta` returning false for a reply, or
+    /// true for a decision, fails here.
+    #[test]
+    fn a_reply_card_leaves_out_its_origin_and_weight_and_a_decision_keeps_them() {
+        let reply = crate::surface::parse_lenient(
+            &serde_json::json!({"td":"0.4","kind":"response","title":"t","model":{"layman":"x"}}),
+            1,
+            "r",
+        );
+        let decision = crate::surface::parse_lenient(
+            &serde_json::json!({"td":"0.4","kind":"decision","title":"d","model":{"question":"q","options":[{"name":"a"}]}}),
+            1,
+            "d",
+        );
+        assert!(quiet_meta(&reply.surface.unwrap().kind));
+        assert!(!quiet_meta(&decision.surface.unwrap().kind));
     }
 }

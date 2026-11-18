@@ -14,11 +14,11 @@ class FrameAuditTest(unittest.TestCase):
             good = "td-frame direct=true post=false shadows=0\n"
             partial = "td-frame direct=true post="
             log.write_text(good + partial)
-            audit_draws(log, "baremetal")
+            audit_draws(log, "terminimalist")
             log.write_text(partial)
             with self.assertRaisesRegex(RuntimeError, "audit missing"):
-                audit_draws(log, "baremetal")
+                audit_draws(log, "terminimalist")
             for wrong in ["td-frame direct=false post=true shadows=0", "td-frame direct=true post=false shadows=1"]:
                 log.write_text(good + wrong + "\n" + partial)
                 with self.assertRaisesRegex(RuntimeError, "optional draw"):
-                    audit_draws(log, "baremetal")
+                    audit_draws(log, "terminimalist")
