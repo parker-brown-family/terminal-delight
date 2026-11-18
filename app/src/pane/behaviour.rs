@@ -1213,7 +1213,8 @@ fn a_dressed_square_asks_for_its_body_to_be_graded(cx: &mut TestAppContext) {
     let body = pane.float_zone(FloatHit::Body).expect("the square's body");
     let graded = crate::warp::doc_grades();
     assert_eq!(graded.len(), 1, "one square, one grade: {graded:?}");
-    let ([x, y, w, h], brightness, contrast) = graded[0];
+    let ([x, y, w, h], brightness, contrast, document) = graded[0];
+    assert!(document, "named a document, not a panel kept out of one");
     let sf = pane.cx.update(|window, _| window.scale_factor());
     assert_eq!(
         (x / sf, y / sf, w / sf, h / sf),
@@ -1228,6 +1229,23 @@ fn a_dressed_square_asks_for_its_body_to_be_graded(cx: &mut TestAppContext) {
     crate::warp::begin_frame();
     pane.redraw();
     assert_eq!(crate::warp::doc_grades(), vec![], "the middle is neutral");
+
+    // Curved, the same neutral square is named a document all the same: the
+    // tube draws it 35% hotter after its grade, and the highlight shoulder
+    // that keeps its whites from clipping finds it by that name (patch 0018).
+    dial(&mut pane, GradeKey::Warp, 1.0);
+    crate::warp::begin_frame();
+    pane.redraw();
+    // A curved frame can paint the square twice; each paint names the same
+    // rect, and the shader takes the last that holds a pixel.
+    let curved = crate::warp::doc_grades();
+    assert!(!curved.is_empty(), "a curved neutral square is named");
+    assert!(
+        curved
+            .iter()
+            .all(|g| g == &curved[0] && (g.1, g.2, g.3) == (1.0, 1.0, true)),
+        "every entry is the document at neutral gains: {curved:?}"
+    );
 }
 
 /// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
