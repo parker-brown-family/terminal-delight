@@ -5705,3 +5705,39 @@ fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut Test
         );
     }
 }
+
+#[gpui::test]
+fn menu_clarity_pane_shows_the_clipboard_shortcuts_when_they_apply(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let open = |pane: &mut Pane| {
+        pane.view.update(pane.cx, |v, cx| {
+            v.ctx_menu = Some(point(px(140.), px(100.)));
+            cx.notify();
+        });
+        pane.redraw();
+    };
+    open(&mut pane);
+    let hint = |pane: &mut Pane, chord: &'static str| pane.cx.debug_bounds(chord);
+    assert!(hint(&mut pane, "ctx-hint-Ctrl+Shift+C").is_none());
+    let paste = hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap();
+    let clear = hint(&mut pane, "ctx-hint-Ctrl+Shift+K").unwrap();
+    assert!(paste.size.width > px(0.) && paste.bottom() <= clear.top());
+    pane.view.update(pane.cx, |v, cx| {
+        v.ctx_menu = None;
+        cx.notify();
+    });
+    pane.redraw();
+    type_line(&mut pane, "echo hello world foo");
+    let a = pane.point_at("world");
+    let b = pane.point_at("ld");
+    pane.press(a);
+    pane.drag_to(b);
+    pane.release(b);
+    assert!(pane.read(|v| v.has_selection()));
+    open(&mut pane);
+    let copy = hint(&mut pane, "ctx-hint-Ctrl+Shift+C").unwrap();
+    assert!(
+        copy.size.width > px(0.)
+            && copy.bottom() <= hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap().top()
+    );
+}
