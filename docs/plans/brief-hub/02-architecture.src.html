@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en"><head><title>Brief hub · architecture</title><!-- briefing: {"id": "brief-hub-gate2", "purpose": "decision"} --><!--BRIEF:head-->
+<style>
+.small{font-size:13px;color:var(--dim)}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="eyebrow">Terminal Delight · briefing · Gate 2 of 4 · architecture · Gate 1 approved 2026-11-19</div><div class="opening" id="top" data-brief-anchor="top"><h1>The hub has two doors: a private one for opening a brief, a public one for reading and saving it</h1> <p class="lede">Terminal Delight asks the hub for a brief's address through a socket only your user can open; the browser then reads and saves through 127.0.0.1:8781. Four choices below decide how it is built. Each has a recommendation.</p></div><nav class="sections"></nav></div></header>
+<main class="wrap">
+
+<section class="pane"><h2 id="sec-asks" data-brief-anchor="sec-asks"><span class="n">01</span> Four architecture choices</h2>
+<div class="grill">
+<div class="ask" id="ask-home" data-brief-anchor="ask-home"><h3>The hub lives in the briefing skill, in Python, grown from today's review server. Terminal Delight only asks it for an address.</h3><p class="small">Recommended. The skill owns the notes format and already has the tested save path; writing it again in Rust would mean two servers to keep in step.</p></div>
+<div class="ask" id="ask-idle" data-brief-anchor="ask-idle"><h3>An idle hub stops after 15 minutes and systemd starts it again on the next click.</h3><p class="small">Recommended. The first click after a quiet spell waits well under a second.</p></div>
+<div class="ask" id="ask-grace" data-brief-anchor="ask-grace"><h3>The per-brief servers keep running for 7 days after the hub is installed, then are stopped.</h3><p class="small">A browser page left open on an old address flushes its unsaved notes within seconds of any activity, so a week is generous. The three running today would be stopped then.</p></div>
+<div class="ask" id="ask-fallback" data-brief-anchor="ask-fallback"><h3>If the hub cannot be reached, Terminal Delight opens the file as it does today and says why in the pane.</h3><p class="small">Recommended. A link never fails silently and never silently loses saving.</p></div>
+</div>
+</section>
+
+<section class="pane"><h2 id="sec-shape" data-brief-anchor="sec-shape"><span class="n">02</span> The shape</h2>
+<figure id="fig-doors" data-brief-anchor="fig-doors"><span class="lbl">01 · Two doors into one hub · proposed</span>
+<svg viewBox="0 0 780 300" role="img" aria-label="Clients use a private Unix socket to get a brief's address; the browser uses TCP 8781 to read and save; the hub writes only the notes and reading sections of registered briefs">
+<rect class="box struct" x="20" y="20" width="200" height="46" rx="10"/><text class="ink" x="120" y="48" text-anchor="middle" font-size="14">Terminal Delight windows</text>
+<rect class="box struct" x="20" y="76" width="200" height="46" rx="10"/><text class="ink" x="120" y="104" text-anchor="middle" font-size="14">brief.py review</text>
+<path class="wire" d="M220 43 L330 75 M220 99 L330 85" fill="none"/>
+<rect class="box rec" x="330" y="55" width="150" height="50" rx="8"/><text class="ink" x="405" y="76" text-anchor="middle" font-size="13">private door</text><text class="ink" x="405" y="95" text-anchor="middle" font-size="11">Unix socket, your user only</text>
+<rect class="box rec" x="520" y="40" width="240" height="140" rx="12"/><text class="ink" x="640" y="68" text-anchor="middle" font-size="15">brief hub</text><text class="ink" x="640" y="92" text-anchor="middle" font-size="12">registry: path → address</text><text class="ink" x="640" y="112" text-anchor="middle" font-size="12">serves page + its folder</text><text class="ink" x="640" y="132" text-anchor="middle" font-size="12">writes notes + reading only</text><text class="ink" x="640" y="152" text-anchor="middle" font-size="12">systemd, starts on first use</text>
+<path class="wire" d="M480 80 H520" fill="none"/>
+<rect class="box struct" x="20" y="200" width="200" height="50" rx="10"/><text class="ink" x="120" y="230" text-anchor="middle" font-size="14">your browser</text>
+<path class="wire" d="M220 225 H330" fill="none"/>
+<rect class="box rec" x="330" y="200" width="150" height="50" rx="8"/><text class="ink" x="405" y="221" text-anchor="middle" font-size="13">public door</text><text class="ink" x="405" y="240" text-anchor="middle" font-size="11">127.0.0.1:8781</text>
+<path class="wire" d="M480 225 L520 160" fill="none"/>
+<rect class="box struct" x="560" y="220" width="200" height="50" rx="10"/><text class="ink" x="660" y="250" text-anchor="middle" font-size="13">the .html, same lock as TD</text>
+<path class="wire" d="M640 180 V220" fill="none"/>
+</svg>
+<figcaption><b>Only the private door can add a brief, so no web page can make the hub serve a file it chose.</b></figcaption><p class="small">Proposed. The lock is a fact: the review server's <code>reading.review_lock()</code> and Terminal Delight's <code>docview/reading.rs</code> <code>review_lock()</code> take the same <code>.&lt;name&gt;.brief-review.lock</code> file today.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-click" data-brief-anchor="sec-click"><span class="n">03</span> One click, start to finish</h2>
+<figure id="fig-click" data-brief-anchor="fig-click"><span class="lbl">02 · The desktop link on a brief floating in a pane · proposed</span>
+<svg viewBox="0 0 780 200" role="img" aria-label="Five steps: is it a brief, ask the hub, get the address, open the browser, every note saved">
+<rect class="box struct" x="10" y="60" width="140" height="70" rx="10"/><text class="ink" x="80" y="90" text-anchor="middle" font-size="13">1 · is it a brief?</text><text class="ink" x="80" y="110" text-anchor="middle" font-size="11">has a notes section</text>
+<path class="wire" d="M150 95 H165" fill="none"/>
+<rect class="box struct" x="165" y="60" width="140" height="70" rx="10"/><text class="ink" x="235" y="90" text-anchor="middle" font-size="13">2 · ask the hub</text><text class="ink" x="235" y="110" text-anchor="middle" font-size="11">private door</text>
+<path class="wire" d="M305 95 H320" fill="none"/>
+<rect class="box struct" x="320" y="60" width="140" height="70" rx="10"/><text class="ink" x="390" y="90" text-anchor="middle" font-size="13">3 · same address</text><text class="ink" x="390" y="110" text-anchor="middle" font-size="11">as last time</text>
+<path class="wire" d="M460 95 H475" fill="none"/>
+<rect class="box struct" x="475" y="60" width="140" height="70" rx="10"/><text class="ink" x="545" y="90" text-anchor="middle" font-size="13">4 · open browser</text><text class="ink" x="545" y="110" text-anchor="middle" font-size="11">at that address</text>
+<path class="wire" d="M615 95 H630" fill="none"/>
+<rect class="box rec" x="630" y="60" width="140" height="70" rx="10"/><text class="ink" x="700" y="90" text-anchor="middle" font-size="13">5 · notes saved</text><text class="ink" x="700" y="110" text-anchor="middle" font-size="11">into the file</text>
+<rect class="box unk" x="165" y="150" width="295" height="36" rx="8"/><text class="ink" x="312" y="173" text-anchor="middle" font-size="12">hub unreachable → open the file, say why</text>
+<path class="wire" d="M235 130 V150" fill="none"/>
+</svg>
+<figcaption><b>A page that is not a brief skips straight to opening the file, as today.</b></figcaption><p class="small">Proposed. Step 1 reuses Terminal Delight's own island finder (<code>docview/notes.rs</code> <code>find_island</code>). The same function serves all three routes you approved: the floating pane's hand-off, the attention rail and clicked file links.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-safe" data-brief-anchor="sec-safe"><span class="n">04</span> What keeps it safe</h2>
+<table><thead><tr><th>Threat</th><th>Answer</th></tr></thead><tbody>
+<tr><td>A web page asks the hub to serve your files</td><td>Briefs are added only through the private door; the public door serves only briefs already added, and only the folder beside each</td></tr>
+<tr><td>A web page guesses an address</td><td>Each brief's address carries a 32-byte random capability</td></tr>
+<tr><td>A web page reads a brief cross-site</td><td>Host checked against 127.0.0.1:8781, no cross-origin reads, saves only from the brief's own page</td></tr>
+<tr><td>A save rewrites what the agent wrote</td><td>Only the notes and reading sections may change; the content revision is checked before every write, with a backup kept</td></tr>
+<tr><td>Hub and Terminal Delight write at once</td><td>The shared lock file, already used by both</td></tr>
+</tbody></table>
+</section>
+
+<section class="pane"><h2 id="sec-next" data-brief-anchor="sec-next"><span class="n">05</span> Next</h2>
+<p>Gate 3 names the files: the hub and its systemd units in the briefing skill, <code>brief.py review</code> becoming a client, and one Terminal Delight function that turns a path into what the desktop should open. Gate 4 starts with the tracer slice: one brief, desktop link, one note saved through the hub.</p>
+</section>
+
+<footer><p>Primary artifact: this brief. Plan state: <code>docs/plans/brief-hub/00-status.md</code> in terminal-delight.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>

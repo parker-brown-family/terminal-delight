@@ -950,14 +950,132 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Terminal Delight saves submitted annotations here in the original file. Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-11-19T18:27:27.296Z">{}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-11-19T18:27:27.296Z">{
+ "ask-shape": "2026-11-19 18:27",
+ "ask-desktop": "2026-11-19 18:27",
+ "ask-retire": "2026-11-19 18:27",
+ "ask-index": "2026-11-19 18:27"
+}</script>
 
 
 <!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->
 <script type="application/json" id="report-reading" data-format="1">{
   "format": 1,
-  "sessions": []
+  "sessions": [
+    {
+      "session": "td-b419382f353a73f6a4797aac060c5633",
+      "document": "brief-hub-gate1",
+      "revision": "sha256:96b9f0c85ccb2a63a03168b5900e9edf5075e43ee208f7c6e5aa3f6d045b9e08",
+      "host": "terminal-delight",
+      "method": 1,
+      "targets": [
+        {
+          "anchor": "top",
+          "title": "One brief server for the whole box, started by systemd, opened by every link",
+          "kind": "opening",
+          "parent": null,
+          "visible_ms": 8292
+        },
+        {
+          "anchor": "sec-today",
+          "title": "01 Today: one server per brief, and the desktop link skips them all",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 19763
+        },
+        {
+          "anchor": "fig-today",
+          "title": "01 · Today, measured on this machine 2026-11-19",
+          "kind": "figure",
+          "parent": "sec-today",
+          "visible_ms": 12785
+        },
+        {
+          "anchor": "sec-proposal",
+          "title": "02 The proposal: one hub, always there, never owned by a window",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 13547
+        },
+        {
+          "anchor": "fig-hub",
+          "title": "02 · Proposed · yellow = what this page asks you to approve",
+          "kind": "figure",
+          "parent": "sec-proposal",
+          "visible_ms": 13481
+        },
+        {
+          "anchor": "sec-feel",
+          "title": "03 What you would notice",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 1201
+        },
+        {
+          "anchor": "sec-safe",
+          "title": "04 What stays safe",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 18980
+        },
+        {
+          "anchor": "sec-asks",
+          "title": "05 What I need from you",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 25893
+        },
+        {
+          "anchor": "ask-shape",
+          "title": "Approve the shape: one hub per machine, owned by systemd, started on first use, with Terminal Delight as a client rather than its host?",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 18515
+        },
+        {
+          "anchor": "ask-desktop",
+          "title": "Should every route to the desktop go through the hub for a brief: the floating pane's desktop hand-off, the attention rail, and clicked file:// links to a brief in the terminal?",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 25859
+        },
+        {
+          "anchor": "ask-index",
+          "title": "Do you want the index page of every brief the hub has opened?",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 25825
+        },
+        {
+          "anchor": "ask-retire",
+          "title": "Retire the per-brief services once the hub works, after each has saved anything still waiting in its browser?",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 7378
+        },
+        {
+          "anchor": "sec-next",
+          "title": "06 What follows",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 7378
+        }
+      ],
+      "gaps": [
+        {
+          "sequence": 1,
+          "reason": "activity_unknown",
+          "elapsed_ms": 33
+        },
+        {
+          "sequence": 2,
+          "reason": "activity_unknown",
+          "elapsed_ms": 207
+        }
+      ]
+    }
+  ]
 }</script><script type="application/json" id="brief-meta">{
   "id": "brief-hub-gate1",
   "medium": "html",
@@ -2123,4 +2241,18 @@ dialog#d-export { max-width: 780px; }
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })(globalThis);
-</script></body></html>
+</script><!--
+READER NOTES —
+NOTES — brief-hub-gate1-96b9f0c85ccb
+0 notes on 0 elements · 4 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-shape] Approve the shape: one hub per machine, owned by systemd, started on …  ✓ concur
+
+[ask-desktop] Should every route to the desktop go through the hub for a brief: the…  ✓ concur
+
+[ask-index] Do you want the index page of every brief the hub has opened?  ✓ concur
+
+[ask-retire] Retire the per-brief services once the hub works, after each has save…  ✓ concur
+
+--></body></html>

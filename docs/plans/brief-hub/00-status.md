@@ -6,8 +6,8 @@ Asked by Parker, 2026-11-19, after browser notes on the CS329Z clip library need
 
 Context already landed: agent-skills PR 97 (notes survive rebuilds, drafts save as typed) and PR 99 (review mode serves the files beside a brief).
 
-- [ ] Gate 1, product: `01-product.html` — waiting on Parker. Recommends one hub per machine owned by systemd and socket-activated on 127.0.0.1:8781, Terminal Delight as a client, registration only over a user-only Unix socket.
-- [ ] Gate 2, architecture
+- [x] Gate 1, product: `01-product.html` — **APPROVED 2026-11-19**: all four asks concurred (shape, every desktop route through the hub, the index page, retiring per-brief services), no notes; Parker: *"great work - simple elegant solution"*. Reading time: he read the asks and safety and scrolled past the background, so Gate 2 leads with its choices. It recommends one hub per machine owned by systemd and socket-activated on 127.0.0.1:8781, Terminal Delight as a client, registration only over a user-only Unix socket.
+- [ ] Gate 2, architecture: `02-architecture.html` — waiting on Parker. Two doors (private Unix socket to add a brief and get its address; public 127.0.0.1:8781 to read and save), four choices: hub in the briefing skill in Python, idle stop after 15 minutes, a 7-day grace for per-brief servers, and Terminal Delight falling back to the file with a stated reason
 - [ ] Gate 3, program design
 - [ ] Gate 4, vertical slices (tracer: the floating pane's desktop link opens one brief through the hub and saves one note)
 
