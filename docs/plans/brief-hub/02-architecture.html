@@ -949,14 +949,137 @@ dialog#d-export { max-width: 780px; }
 
 <!-- Terminal Delight saves submitted annotations here in the original file. Leave them empty and leave them in,
      with their data-format: it names the format notes.js writes, and other writers check it. -->
-<script type="application/json" id="report-notes" data-format="1">{}</script>
-<script type="application/json" id="report-concurs" data-format="1">{}</script>
+<script type="application/json" id="report-notes" data-format="1" data-rev="2026-11-19T19:41:29.877Z">{
+ "ask-grace": [
+  {
+   "text": "1hr\nno 7 day",
+   "title": "The per-brief servers keep running for 7 days after the hub is instal…",
+   "ts": "2026-11-19 19:41"
+  }
+ ]
+}</script>
+<script type="application/json" id="report-concurs" data-format="1" data-rev="2026-11-19T19:41:29.877Z">{
+ "ask-home": "2026-11-19 19:40",
+ "ask-idle": "2026-11-19 19:41",
+ "ask-fallback": "2026-11-19 19:41"
+}</script>
 
 
 <!-- then paste the contents of assets/notes.js inline, inside a <script> tag -->
 <script type="application/json" id="report-reading" data-format="1">{
   "format": 1,
-  "sessions": []
+  "sessions": [
+    {
+      "session": "td-0185630b8a3ba5be69f047da00219c69",
+      "document": "brief-hub-gate2",
+      "revision": "sha256:6d3d06698c8892fa1b9d6bdfd4615a8b9e996150970ad36670de9d147648093d",
+      "host": "terminal-delight",
+      "method": 1,
+      "targets": [
+        {
+          "anchor": "top",
+          "title": "The hub has two doors: a private one for opening a brief, a public one for reading and saving it",
+          "kind": "opening",
+          "parent": null,
+          "visible_ms": 33860
+        },
+        {
+          "anchor": "sec-asks",
+          "title": "01 Four architecture choices",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 44452
+        },
+        {
+          "anchor": "ask-home",
+          "title": "The hub lives in the briefing skill, in Python, grown from today's review server. Terminal Delight only asks it for an address.",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 42279
+        },
+        {
+          "anchor": "ask-idle",
+          "title": "An idle hub stops after 15 minutes and systemd starts it again on the next click.",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 35031
+        },
+        {
+          "anchor": "ask-grace",
+          "title": "The per-brief servers keep running for 7 days after the hub is installed, then are stopped.",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 35631
+        },
+        {
+          "anchor": "ask-fallback",
+          "title": "If the hub cannot be reached, Terminal Delight opens the file as it does today and says why in the pane.",
+          "kind": "entry",
+          "parent": "sec-asks",
+          "visible_ms": 18667
+        },
+        {
+          "anchor": "sec-shape",
+          "title": "02 The shape",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 2173
+        },
+        {
+          "anchor": "fig-doors",
+          "title": "01 · Two doors into one hub · proposed",
+          "kind": "figure",
+          "parent": "sec-shape",
+          "visible_ms": 2173
+        },
+        {
+          "anchor": "sec-click",
+          "title": "03 One click, start to finish",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 824
+        },
+        {
+          "anchor": "fig-click",
+          "title": "02 · The desktop link on a brief floating in a pane · proposed",
+          "kind": "figure",
+          "parent": "sec-click",
+          "visible_ms": 0
+        },
+        {
+          "anchor": "sec-safe",
+          "title": "04 What keeps it safe",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 0
+        },
+        {
+          "anchor": "sec-next",
+          "title": "05 Next",
+          "kind": "section",
+          "parent": null,
+          "visible_ms": 0
+        }
+      ],
+      "gaps": [
+        {
+          "sequence": 1,
+          "reason": "activity_unknown",
+          "elapsed_ms": 33
+        },
+        {
+          "sequence": 2,
+          "reason": "activity_unknown",
+          "elapsed_ms": 16
+        },
+        {
+          "sequence": 3,
+          "reason": "activity_unknown",
+          "elapsed_ms": 403
+        }
+      ]
+    }
+  ]
 }</script><script type="application/json" id="brief-meta">{
   "id": "brief-hub-gate2",
   "medium": "html",
@@ -2122,4 +2245,19 @@ dialog#d-export { max-width: 780px; }
   }
   if(document.readyState==='loading')document.addEventListener('DOMContentLoaded',init);else init();
 })(globalThis);
-</script></body></html>
+</script><!--
+READER NOTES —
+NOTES — brief-hub-gate2-6d3d06698c88
+1 notes on 1 elements · 3 concurs.
+Each [anchor] is an element id in that file — search it to find the passage.
+
+[ask-home] The hub lives in the briefing skill, in Python, grown from today's re…  ✓ concur
+
+[ask-idle] An idle hub stops after 15 minutes and systemd starts it again on the…  ✓ concur
+
+[ask-grace] The per-brief servers keep running for 7 days after the hub is instal…
+  · 1hr no 7 day
+
+[ask-fallback] If the hub cannot be reached, Terminal Delight opens the file as it d…  ✓ concur
+
+--></body></html>

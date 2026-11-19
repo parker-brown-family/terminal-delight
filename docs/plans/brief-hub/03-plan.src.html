@@ -1,0 +1,39 @@
+<!doctype html>
+<html lang="en"><head><title>Brief hub · build plan</title><!-- briefing: {"id": "brief-hub-gate3-4", "purpose": "decision"} --><!--BRIEF:head-->
+<style>
+.small{font-size:13px;color:var(--dim)}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="eyebrow">Terminal Delight · briefing · Gates 3 and 4, combined · Gate 2 approved with a 1-hour grace</div><div class="opening" id="top" data-brief-anchor="top"><h1>Build it in five slices, and change Terminal Delight in one function every link already goes through</h1> <p class="lede">Gates 1 and 2 came back as approvals with one number changed, so the last two gates are one page: three questions, then the slices. Approve and the tracer slice starts.</p></div><nav class="sections"></nav></div></header>
+<main class="wrap">
+
+<section class="pane"><h2 id="sec-asks" data-brief-anchor="sec-asks"><span class="n">01</span> Three questions</h2>
+<div class="grill">
+<div class="ask" id="ask-choke" data-brief-anchor="ask-choke"><h3>Change Terminal Delight inside <code>open_with_system</code>, the one function all 27 desktop hand-offs already call, so a brief opens at the hub from every route at once?</h3><p class="small">Recommended. It covers the floating pane, the attention rail, clicked links and the flyout without touching each caller.</p></div>
+<div class="ask" id="ask-install" data-brief-anchor="ask-install"><h3>Install the hub with <code>brief.py hub install</code>, and have dev-box-survival-kit run it on a rebuilt box, as it does for <code>apes-mcp</code>?</h3><p class="small">Recommended. The skill stays usable on any machine; this box gets it back after a rebuild.</p></div>
+<div class="ask" id="ask-slices" data-brief-anchor="ask-slices"><h3>Approve the five slices below, tracer first?</h3></div>
+</div>
+</section>
+
+<section class="pane"><h2 id="sec-slices" data-brief-anchor="sec-slices"><span class="n">02</span> The slices</h2>
+<table><thead><tr><th>#</th><th>Slice</th><th>Done when</th></tr></thead><tbody>
+<tr><td>1</td><td><b>Tracer.</b> A minimal hub (private door, public door, one brief), its systemd socket, and the change in <code>open_with_system</code></td><td>The floating pane's desktop link opens a brief at the hub, and one note added in the browser is in the file</td></tr>
+<tr><td>2</td><td><b>Every route, and the fallback.</b> Tests for the rail, clicked links and the flyout; hub down means the file opens and the pane says why</td><td>A test per route; a test with the hub stopped</td></tr>
+<tr><td>3</td><td><b>The hub grows up.</b> Media beside each brief, idle stop at 15 minutes, a rebuilt brief served at its new revision, the security refusals</td><td>The refusal tests from review mode pass against the hub; the clip library plays and saves there</td></tr>
+<tr><td>4</td><td><b>Index and handover.</b> The index page; <code>brief.py review</code> becomes a client; per-brief servers stopped one hour after install</td><td>The three running today are gone an hour after install, with nothing pending</td></tr>
+<tr><td>5</td><td><b>Install and docs.</b> <code>brief.py hub install</code>, the dev-box-survival-kit line, the skill's docs</td><td>A fresh install from the docs alone works, checked in a clean shell</td></tr>
+</tbody></table>
+</section>
+
+<section class="pane"><h2 id="sec-files" data-brief-anchor="sec-files"><span class="n">03</span> Where the code goes</h2>
+<table><thead><tr><th>Repository</th><th>Files</th></tr></thead><tbody>
+<tr><td>agent-skills (briefing)</td><td><code>scripts/hub.py</code> new, sharing the document, folder and save logic with <code>review_server.py</code>; <code>brief.py hub serve|install|open</code>; tests beside the review-server tests</td></tr>
+<tr><td>terminal-delight</td><td><code>app/src/briefhub.rs</code> new (is this a brief? ask the hub over the socket, one-second timeout); <code>open_with_system</code> in <code>app/src/pane.rs</code> calls it</td></tr>
+<tr><td>dev-box-survival-kit</td><td>one line in <code>install.sh</code></td></tr>
+</tbody></table>
+<p class="small">Measured in the code: <code>open_with_system</code> has 27 callers in 7 files, and its test mode already records the command it would run, so a test can see which address was opened.</p>
+</section>
+
+<footer><p>Primary artifact: this brief. Plan state: <code>docs/plans/brief-hub/00-status.md</code> in terminal-delight.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>
