@@ -1,0 +1,74 @@
+<!doctype html>
+<html lang="en"><head><title>One brief server for the whole box</title><!-- briefing: {"id": "brief-hub-gate1", "purpose": "decision"} --><!--BRIEF:head-->
+<style>
+.small{font-size:13px;color:var(--dim)}
+</style></head><body>
+<!--brief-content-->
+<header class="top"><div class="wrap"><div class="eyebrow">Terminal Delight · briefing · Gate 1 of 4 · product · difficulty 7/10</div><div class="opening" id="top" data-brief-anchor="top"><h1>One brief server for the whole box, started by systemd, opened by every link</h1> <p class="lede">Every brief you open, from Terminal Delight's desktop link or anywhere else, should land on one local server that saves your notes into the file as you type them. Today each brief gets its own server and Terminal Delight never uses them. This page asks you to approve what that should feel like before anything is designed.</p></div><nav class="sections"></nav></div></header>
+<main class="wrap">
+
+<section class="pane"><h2 id="sec-today" data-brief-anchor="sec-today"><span class="n">01</span> Today: one server per brief, and the desktop link skips them all</h2>
+<p>Saving notes into a brief from a browser works only through <code>brief.py review</code>, which starts a separate service on its own port for each brief and keeps that port forever so the browser's unsaved notes stay reachable. Three are running right now at about 9 MB each, with four ports remembered. Forty briefs would be forty services, forty ports and about 350 MB, none of them stopped when you are done.</p>
+<p>Terminal Delight's document pane never uses any of them. When a brief is handed from the pane to the desktop, it passes the file path to <code>xdg-open</code>, so the browser opens <code>file://</code>, which can only keep notes in that browser's storage. That is the path your clip-library notes took.</p>
+<figure id="fig-today" data-brief-anchor="fig-today"><span class="lbl">01 · Today, measured on this machine 2026-11-19</span>
+<svg viewBox="0 0 760 230" role="img" aria-label="Today: Terminal Delight hands file paths to the browser; brief.py review starts one service per brief on its own port">
+<rect class="box struct" x="20" y="30" width="190" height="60" rx="10"/><text class="ink" x="115" y="58" text-anchor="middle" font-size="15">Terminal Delight</text><text class="ink" x="115" y="78" text-anchor="middle" font-size="12">document pane</text>
+<path class="wire" d="M210 60 H330" fill="none"/><text class="ink" x="270" y="50" text-anchor="middle" font-size="12">file://</text>
+<rect class="box fail" x="330" y="30" width="190" height="60" rx="10"/><text class="ink" x="425" y="58" text-anchor="middle" font-size="15">browser</text><text class="ink" x="425" y="78" text-anchor="middle" font-size="12">notes stay in the browser</text>
+<rect class="box struct" x="20" y="140" width="190" height="60" rx="10"/><text class="ink" x="115" y="168" text-anchor="middle" font-size="15">brief.py review</text><text class="ink" x="115" y="188" text-anchor="middle" font-size="12">run by hand, per brief</text>
+<path class="wire" d="M210 170 H330" fill="none"/>
+<rect class="box struct" x="330" y="125" width="120" height="30" rx="6"/><text class="ink" x="390" y="145" text-anchor="middle" font-size="12">service :41089</text>
+<rect class="box struct" x="460" y="125" width="120" height="30" rx="6"/><text class="ink" x="520" y="145" text-anchor="middle" font-size="12">service :4xxxx</text>
+<rect class="box struct" x="590" y="125" width="120" height="30" rx="6"/><text class="ink" x="650" y="145" text-anchor="middle" font-size="12">service :4xxxx</text>
+<rect class="box unk" x="330" y="170" width="380" height="30" rx="6"/><text class="ink" x="520" y="190" text-anchor="middle" font-size="12">… one more per brief, never stopped (40 briefs ≈ 350 MB)</text>
+</svg>
+<figcaption><b>The saving path and the path you actually click never meet.</b></figcaption><p class="small">Drawn from the code: <code>review_server.review()</code> starts <code>brief-review-&lt;hash&gt;.service</code> per file; Terminal Delight's <code>open_with_system()</code> in <code>app/src/pane.rs</code> passes the path. Memory measured with <code>systemctl --user show -p MemoryCurrent</code> on the three running units; the 350 MB is that average times forty.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-proposal" data-brief-anchor="sec-proposal"><span class="n">02</span> The proposal: one hub, always there, never owned by a window</h2>
+<p>One brief hub serves every brief on this machine at one fixed address, <code>http://127.0.0.1:8781/</code>. It belongs to systemd, not to Terminal Delight, because several Terminal Delight windows run at once and the house rule is that a shared service never lives in a pane (the APES daemon and lean-ctx moved out of panes for this reason). systemd listens on the port and starts the hub on the first request, so it costs nothing until a brief is opened, and restarts it if it dies.</p>
+<p>Terminal Delight, <code>brief.py review</code> and anything else ask the hub for a brief's address, then open that. The browser always sees one origin, so its storage never has to be chased across ports again.</p>
+<figure id="fig-hub" data-brief-anchor="fig-hub"><span class="lbl">02 · Proposed · yellow = what this page asks you to approve</span>
+<svg viewBox="0 0 760 240" role="img" aria-label="Proposed: Terminal Delight windows and brief.py ask one hub for a brief's address; the browser opens it and every note is saved into the file">
+<rect class="box struct" x="20" y="20" width="180" height="50" rx="10"/><text class="ink" x="110" y="50" text-anchor="middle" font-size="14">TD window 1</text>
+<rect class="box struct" x="20" y="80" width="180" height="50" rx="10"/><text class="ink" x="110" y="110" text-anchor="middle" font-size="14">TD window 2</text>
+<rect class="box struct" x="20" y="140" width="180" height="50" rx="10"/><text class="ink" x="110" y="170" text-anchor="middle" font-size="14">brief.py review</text>
+<path class="wire" d="M200 45 L300 110 M200 105 L300 110 M200 165 L300 110" fill="none"/>
+<rect class="box rec" x="300" y="70" width="210" height="80" rx="12"/><text class="ink" x="405" y="100" text-anchor="middle" font-size="15">brief hub :8781</text><text class="ink" x="405" y="120" text-anchor="middle" font-size="12">systemd, started on first use</text><text class="ink" x="405" y="138" text-anchor="middle" font-size="12">one per machine</text>
+<path class="wire" d="M510 110 H600" fill="none"/>
+<rect class="box rec" x="600" y="70" width="140" height="80" rx="12"/><text class="ink" x="670" y="100" text-anchor="middle" font-size="14">browser</text><text class="ink" x="670" y="120" text-anchor="middle" font-size="12">saves into</text><text class="ink" x="670" y="138" text-anchor="middle" font-size="12">the .html</text>
+<rect class="box amend" x="300" y="185" width="440" height="40" rx="8"/><text class="ink" x="520" y="210" text-anchor="middle" font-size="13">yellow = the amendments: fixed port, desktop link, index page, retiring per-brief services</text>
+</svg>
+<figcaption><b>One service, one address, every link goes through it.</b></figcaption><p class="small">A proposal, not built. The hub would be today's review server made multi-document: same Host and Origin checks, same per-brief capability in the address, same locks, backups and "only the notes changed" check before every write.</p></figure>
+</section>
+
+<section class="pane"><h2 id="sec-feel" data-brief-anchor="sec-feel"><span class="n">03</span> What you would notice</h2>
+<ul>
+<li><b>Terminal Delight's desktop link opens the hub.</b> A brief floating in a pane, handed to the desktop, opens in your browser at its hub address and saves every note into the file. A plain HTML page that is not a brief still opens as a file.</li>
+<li><b>Nothing to start.</b> No <code>brief.py review</code> by hand; the first click starts the hub.</li>
+<li><b>One address per brief that never changes</b>, so a bookmark or a link pasted in chat keeps working.</li>
+<li><b>An index at <code>http://127.0.0.1:8781/</code></b> listing the briefs the hub has opened, newest first, with how many notes each holds. Optional; see the questions.</li>
+<li><b>Briefs with video and pictures work</b>, since the hub serves the files beside each brief the way review mode now does.</li>
+</ul>
+</section>
+
+<section class="pane"><h2 id="sec-safe" data-brief-anchor="sec-safe"><span class="n">04</span> What stays safe</h2>
+<p>A port on 127.0.0.1 is reachable by any web page open in your browser, so the hub keeps today's rules and adds one. Pages are served only at an address carrying an unguessable capability for that brief. Writes are accepted only from the brief's own page, and only into its notes and reading-time sections. <b>A brief is registered with the hub only through a socket on disk that only your user can open, never over HTTP</b>, so no web page can make the hub serve a file of its choosing.</p>
+</section>
+
+<section class="pane"><h2 id="sec-asks" data-brief-anchor="sec-asks"><span class="n">05</span> What I need from you</h2>
+<div class="grill">
+<div class="ask" id="ask-shape" data-brief-anchor="ask-shape"><h3>Approve the shape: one hub per machine, owned by systemd, started on first use, with Terminal Delight as a client rather than its host?</h3><p class="small">Recommended. Started by Terminal Delight, it would belong to one of several windows.</p></div>
+<div class="ask" id="ask-desktop" data-brief-anchor="ask-desktop"><h3>Should every route to the desktop go through the hub for a brief: the floating pane's desktop hand-off, the attention rail, and clicked file:// links to a brief in the terminal?</h3><p class="small">Recommended: all three, for any file that carries a notes section.</p></div>
+<div class="ask" id="ask-index" data-brief-anchor="ask-index"><h3>Do you want the index page of every brief the hub has opened?</h3><p class="small">Cheap; a taste call.</p></div>
+<div class="ask" id="ask-retire" data-brief-anchor="ask-retire"><h3>Retire the per-brief services once the hub works, after each has saved anything still waiting in its browser?</h3><p class="small">Recommended. Each stops only once nothing is waiting, so no unsaved note is stranded.</p></div>
+</div>
+</section>
+
+<section class="pane"><h2 id="sec-next" data-brief-anchor="sec-next"><span class="n">06</span> What follows</h2>
+<p>With these answered, Gate 2 draws the architecture: the hub's routes and registration socket, how Terminal Delight decides a file is a brief and asks for its address, and the migration from per-brief services. Gate 3 lays out the code in both repositories, and Gate 4 cuts it into slices, starting with a tracer: the floating pane's desktop link opening one brief through the hub and saving one note.</p>
+</section>
+
+<footer><p>Primary artifact: this brief. Plan state: <code>docs/plans/brief-hub/00-status.md</code> in terminal-delight.</p></footer></main>
+<!--/brief-content-->
+<!--BRIEF:notes--></body></html>
