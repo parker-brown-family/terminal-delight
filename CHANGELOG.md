@@ -7,6 +7,63 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+### Upgrading from 0.5.4
+
+- **The launcher's project folders come from `launch.toml`** (`roots`, in order,
+  `~` for home). With no list it looks in `~/Work`, `~/work`, `~/src`, `~/code`,
+  `~/projects`, `~/Projects`, `~/dev` and home. Folders that are not there are
+  skipped. If projects you used to see are missing, list their folders there.
+- **A machine reaching in from another must come over ssh.** The far door now
+  opens only for a call whose parents include a root `sshd`. Two homes on one
+  computer need `TD_FAR_DOOR_LOCAL=1` on the window being reached.
+
+### Documents and the right bar
+
+- An Alt+clicked GitHub issue opens in the right bar. Space pages a document
+  down and Shift+Space pages it up.
+- The right bar's + page lists and searches every link an agent put in a
+  reply's Links table, beside its handovers.
+- A brief's sections are small buttons beside the progress rail. The fixed
+  panel over the page is gone.
+- A click on a link to a file that is not there says so.
+
+### Look
+
+- TERMINIMALIST draws directly, with opaque surfaces and a focus rail. With the
+  CRT glass off it draws flat, and with it on only what is switched on runs.
+- Settings › Appearance shows the skins as thumbnails. Click one, or walk them
+  with ← and →.
+- Dragging a gauge saves the session once, when the drag ends. Before, each
+  move saved it and the window could stop responding.
+- In a curved glow pane a document's whites roll off to light grey instead of
+  clipping.
+- Terminal blur, backdrop frost and glow cost less to draw.
+
+### Agents
+
+- A finished Claude or Codex in a narrow pane is recognised at rest, and a
+  Codex still working in one is not taken for idle.
+- A prompt whose worker cannot be read for fifteen minutes ends, freeing the
+  line. `prompt_status` says a prompt sent before the window was replaced is
+  unknown, where it used to say there was no such prompt.
+- A Codex pane started through a wrapper comes back into its own conversation.
+- The `whoami` tool answers with the caller's verified pane, seat and Floor
+  lines, and `list_panes` takes filters.
+- Pictures are refused, with the reason, when the agent chosen is on another
+  machine.
+- A first prompt that starts with a dash is no longer read as the agent
+  program's own flag.
+- The workbench keeps a decision's question and costs, patches and table
+  headings in a narrow pane, and its buttons work while a comment is open.
+
+### Fixes
+
+- F2 to F12 reach programs, with modifiers.
+- A window's push feed from the session host reconnects when it drops.
+- A closed tab's panes end when its undo time runs out, in a window that is not
+  drawing too.
+- Revoking a machine listed twice in `sharing.toml` can no longer open it.
+
 ## [0.5.4] — 2026-11-17
 
 ### Upgrading from 0.5.3
