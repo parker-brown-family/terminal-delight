@@ -831,6 +831,14 @@ pub enum ReadKey {
     Escape,
 }
 
+impl ReadKey {
+    /// Whether it writes on the page: a note, or the CONCUR stamp an agent
+    /// reads as approval.
+    pub fn marks(self) -> bool {
+        matches!(self, ReadKey::Note | ReadKey::Concur)
+    }
+}
+
 /// The reading keys. `None` is a key the document swallows and does nothing
 /// with: nothing reaches the shell while a document is read.
 ///
@@ -885,6 +893,16 @@ pub fn read_key(key: &str, control: bool, shift: bool, alt: bool) -> Option<Read
     })
 }
 
+/// Whether a key, pressed over a page an agent opened, shows that a person is
+/// reading that page rather than still typing the prompt it opened over.
+///
+/// The keys nobody types in a sentence: the arrows up and down, the paging keys
+/// and Home and End. A letter, Space, Tab, Enter and `]` are all typed in
+/// prompts, so none of them counts, however much it moves the page.
+pub fn reading_hand(key: &str, alt: bool) -> bool {
+    !alt && matches!(key, "up" | "down" | "pageup" | "pagedown" | "home" | "end")
+}
+
 /// `shift+pgup` / `shift+pgdn`: page this pane's scrollback, in EVERY pane.
 ///
 /// Plain PgUp/PgDn page only agent panes, because a shell keeps them (Arch's
@@ -906,6 +924,36 @@ pub fn shift_page(k: &Key) -> Option<Paging> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// A hand on an agent's page is a key no prompt is typed with: never a
+    /// letter, a digit, a sign, Space, Tab, Enter or Escape, with or without
+    /// Shift or Ctrl.
+    #[test]
+    fn no_key_a_prompt_is_typed_with_is_a_hand_on_a_page() {
+        let typed = "abcdefghijklmnopqrstuvwxyz0123456789-=[]{};',./\\`+"
+            .chars()
+            .map(String::from)
+            .chain(
+                [
+                    "space",
+                    "tab",
+                    "enter",
+                    "escape",
+                    "backspace",
+                    "delete",
+                    "left",
+                    "right",
+                ]
+                .map(String::from),
+            );
+        for key in typed {
+            assert!(!reading_hand(&key, false), "{key}");
+        }
+        for key in ["up", "down", "pageup", "pagedown", "home", "end"] {
+            assert!(reading_hand(key, false), "{key}");
+            assert!(!reading_hand(key, true), "alt+{key}");
+        }
+    }
 
     /// A plain, unmodified key that types a character.
     fn ch(key: &str) -> Key<'_> {

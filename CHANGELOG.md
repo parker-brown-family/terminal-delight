@@ -7,6 +7,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+- **Typing cannot approve a page an agent opens.** A page an agent opens over its
+  pane writes no note and no CONCUR stamp from the keyboard until you press ↑, ↓,
+  PgUp, PgDn, Home or End, or use the pointer on it. The strip under the page says
+  so. In 0.5.5, `]` and `c` typed as it opened saved an approval.
+
 ## [0.5.5] — 2026-11-25
 
 ### Upgrading from 0.5.4
