@@ -22245,8 +22245,8 @@ impl Workspace {
             _ => self.focused_leaf(window, cx),
         });
         if let Some(pane) = pane {
-            // Only what is being read moves between the two: a small square
-            // an agent opened stays small, and keeps leaving the keys alone.
+            // Only what is being read moves between the two, whoever opened
+            // it: a picture, a PDF or a clip stays where it is.
             if glow {
                 if reader.as_ref() == Some(&pane)
                     && pane.update(cx, |v, cx| v.set_float_to_read(false, cx))
@@ -42825,8 +42825,53 @@ mod tests {
             "the brief waits"
         );
 
-        // An agent's small square is nobody's read, whichever way the gauge
-        // is switched over it.
+        // A page an agent opens over its own pane is read there, and moves no
+        // focus: the pane beside it keeps the keyboard, and its keys.
+        second.update(cx, |v, cx| v.close_float(cx));
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx)));
+        // Switching tabs hands the keyboard back to the pane that had it, so
+        // the person moves to the other pane only once it has.
+        draw(cx);
+        cx.update(|w, cx| w.focus(&beside.focus_handle(cx), cx));
+        draw(cx);
+        assert!(
+            cx.update(|w, cx| beside.focus_handle(cx).is_focused(w)),
+            "the person is in the pane beside it before the agent opens anything"
+        );
+        let said = second.update(cx, |v, cx| {
+            let target = crate::docopen::drawable_document(&doc).expect("a Markdown file");
+            v.open_here(target, cx)
+        });
+        assert!(said.starts_with("ok float"), "{said}");
+        draw(cx);
+        assert!(
+            cx.update(|w, cx| beside.focus_handle(cx).is_focused(w)),
+            "the keyboard stays where the person is typing"
+        );
+        assert!(
+            second.read_with(cx, |v, cx| v.reading_view(cx).is_some()),
+            "the agent's page is being read in its own pane"
+        );
+        assert!(
+            ws.read_with(cx, |ws, _| ws.focus_read.is_none()),
+            "with no frame"
+        );
+        let untouched = zoom(cx);
+        cx.simulate_keystrokes("ctrl-=");
+        draw(cx);
+        assert_eq!(
+            zoom(cx),
+            untouched,
+            "another pane's keys are not the page's"
+        );
+        cx.update(|w, cx| w.focus(&second.focus_handle(cx), cx));
+        draw(cx);
+        cx.simulate_keystrokes("ctrl-=");
+        draw(cx);
+        assert_ne!(zoom(cx), untouched, "its own pane's keys are");
+
+        // A square nobody opened to read is nobody's read, whichever way the
+        // gauge is switched over it.
         cx.update(|w, cx| {
             ws.update(cx, |ws, cx| ws.activate_tab(1, w, cx));
             w.focus(&second.focus_handle(cx), cx);

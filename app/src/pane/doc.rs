@@ -301,9 +301,9 @@ impl TerminalView {
     /// glow pane from the saved gauge preference. Parker, 2026-11-02: *"If we
     /// open an artifact, we intend to read it."* Anything else opens in the
     /// square as [`Self::open_float`] opens it. An agent opening its own
-    /// deliverable (`open_document`) keeps the small square beside the
-    /// prompt: Parker, the same day, *"agents will AUTO-OPEN artifacts, and
-    /// THOSE should be small"*.
+    /// deliverable (`open_document`) never asks for the frame; a page or a
+    /// Markdown file of its own is read in the glow pane over its pane
+    /// ([`Self::open_here`]).
     pub(crate) fn open_to_read(
         &mut self,
         target: crate::docopen::DocTarget,
@@ -979,9 +979,24 @@ impl TerminalView {
                  open it again."
             );
         }
+        let reads = target.kind.reads();
         match self.open_float(target, None, cx) {
             Err(why) => format!("desktop {why}"),
-            Ok(()) if showing(self, cx) => format!("ok float pane {pane}"),
+            Ok(()) if showing(self, cx) => {
+                // A page or a Markdown file is READ in the glow pane, whoever
+                // opened it: it takes the reader's keys while this pane has the
+                // keyboard, as a person's open does (`Layer::Reading`). Parker,
+                // 2026-11-20: *"when I have a glow pane up, I expect focus to be
+                // given to that glow pane so that when I press up and down
+                // arrows … it actually interacts with that"*. The keyboard is
+                // not moved here — an agent's open never pulls focus off the
+                // pane a person is typing in. Pictures, PDFs and clips are not
+                // read and still leave every key to the shell.
+                if reads {
+                    self.set_float_to_read(false, cx);
+                }
+                format!("ok float pane {pane}")
+            }
             Ok(()) => "err the square over your pane holds notes not yet saved, so it stays — they have to be saved or dropped first".into(),
         }
     }

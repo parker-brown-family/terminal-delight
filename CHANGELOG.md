@@ -7,6 +7,12 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+- **A page an agent opens over its pane takes the reading keys** while that
+  pane has the keyboard, as a page you open does: the arrows, PgUp/PgDn, Space
+  and the rest move the page instead of the agent's prompt. It never moves the
+  keyboard off the pane you are in. Pictures, PDFs and clips still leave every
+  key to the shell.
+
 ## [0.5.4] — 2026-11-17
 
 ### Upgrading from 0.5.3
