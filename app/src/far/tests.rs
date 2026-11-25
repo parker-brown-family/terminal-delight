@@ -89,13 +89,10 @@ fn the_probe_script_reports_a_real_runtime_folder() {
     std::fs::create_dir_all(home.join(".local/bin")).unwrap();
     // A stand-in build that answers the two questions the probe asks.
     let bin = home.join(".local/bin/terminal-delight");
-    std::fs::write(
+    crate::testsync::write_program(
         &bin,
         "#!/bin/sh\ncase $1 in --version) echo 'terminal-delight 0.5.3 (terminal core: rio-vt 0.5.29, commit abc)';; --build-info) echo '{\"schema\":\"td-build/1\",\"version\":\"0.5.3\",\"wire_proto\":\"7acb\"}';; esac\n",
-    )
-    .unwrap();
-    use std::os::unix::fs::PermissionsExt;
-    std::fs::set_permissions(&bin, std::fs::Permissions::from_mode(0o755)).unwrap();
+    );
     // Session 2 has a window whose process is alive (this test); session 10
     // names a pid that is not; session 7 has no record at all.
     let _a = UnixListener::bind(td.join("session-2.sock")).unwrap();
@@ -333,7 +330,6 @@ fn a_machine_reads_as_a_few_plain_lines_with_the_command_that_opens_it() {
 /// different runtime folder and config folder: two machines' worth of state
 /// in one test.
 pub(crate) fn stand_in_ssh(root: &Path, far_rt: &Path, far_cfg: &Path) -> PathBuf {
-    use std::os::unix::fs::PermissionsExt;
     let path = root.join("ssh");
     // Everything up to and including `--` and the destination is ssh's own;
     // what follows is the command the far login shell would be handed.
@@ -342,8 +338,7 @@ pub(crate) fn stand_in_ssh(root: &Path, far_rt: &Path, far_cfg: &Path) -> PathBu
         far_rt.display(),
         far_cfg.display()
     );
-    std::fs::write(&path, script).unwrap();
-    std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o755)).unwrap();
+    crate::testsync::write_program(&path, &script);
     path
 }
 
