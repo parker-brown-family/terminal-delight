@@ -57,7 +57,7 @@ work going in for manual testing and cut the next RC after each wave."* Every
 change waiting on a 37-minute CI run against the newest branch head had made
 eight small changes take about five hours to land, one after another.
 
-- **Landing does not wait for CI.** `dev/0.5.1` has no required checks, no
+- **Landing does not wait for CI.** `dev/0.5.5` has no required checks, no
   up-to-date rule and no required review; it still refuses force-pushes and
   deletion. Land with a merge commit once your own gates pass: for anything
   under `app/`, `cargo fmt --check`, `cargo clippy --locked -- -D warnings` and
