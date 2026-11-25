@@ -142,7 +142,7 @@ theme, programs included. The 0.5 releases also brought:
 
 Stable releases, and previews of the next one, are on the
 [releases page](https://github.com/parker-brown-family/terminal-delight/releases).
-0.5.4 is the latest stable. What changed, release by release, is
+0.5.5 is the latest stable. What changed, release by release, is
 in [CHANGELOG.md](CHANGELOG.md), and the plain-language notes are in
 [docs/release-notes/](docs/release-notes/).
 
