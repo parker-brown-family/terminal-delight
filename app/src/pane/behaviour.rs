@@ -4356,6 +4356,94 @@ fn an_agents_page_takes_the_reading_keys_while_its_pane_has_them(cx: &mut TestAp
     );
 }
 
+/// A brief with a decision in it, opened by the agent over its own pane.
+fn an_agents_decision_page(cx: &mut TestAppContext, tag: &str) -> (Pane, Scratch, String) {
+    use super::harness::FakeDecisionEngine;
+    let (mut pane, dir, brief, _png) = pane_showing_a_brief(cx, tag);
+    pane.html_engine(Ok(std::sync::Arc::new(FakeDecisionEngine)));
+    let target = crate::docopen::drawable_document(std::path::Path::new(&brief)).expect("a page");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    pane.redraw();
+    assert!(said.starts_with("ok float"), "{said}");
+    pane.settle();
+    (pane, dir, brief)
+}
+
+/// A page an agent opened over a prompt somebody may be typing writes nothing
+/// from that typing. On 2026-11-25, in a real window, `]` and `c` at one saved a
+/// CONCUR stamp nobody had given.
+#[gpui::test]
+fn keys_typed_as_an_agents_page_opens_mark_nothing(cx: &mut TestAppContext) {
+    let (mut pane, _dir, brief) = an_agents_decision_page(cx, "agent-marks");
+    let bytes = std::fs::read(&brief).expect("the page");
+    // What a person types, and the pair that did it.
+    pane.keys("f o o [ 0 ] c space tab enter c ] enter y");
+    pane.redraw();
+    let report = pane.doc_notes().expect("notes");
+    assert_eq!(report["concurs"], 0, "no stamp: {report}");
+    assert_eq!(report["notes"], 0, "no note: {report}");
+    assert_eq!(report["open"], serde_json::Value::Null, "no note box");
+    assert_eq!(
+        std::fs::read(&brief).expect("the page"),
+        bytes,
+        "and nothing written to the file"
+    );
+    assert!(pane.float_path().is_some(), "the page stays up");
+}
+
+/// A key nobody types in a prompt is the hand on the page: from then on it is
+/// marked from the keyboard like any other.
+#[gpui::test]
+fn an_agents_page_is_marked_once_a_hand_has_been_on_it(cx: &mut TestAppContext) {
+    let (mut pane, _dir, _brief) = an_agents_decision_page(cx, "agent-hand");
+    pane.keys("down ] c");
+    pane.redraw();
+    assert_eq!(
+        pane.doc_notes().expect("notes")["concurs"],
+        1,
+        "c stamps it"
+    );
+    pane.keys("enter");
+    pane.redraw();
+    assert_ne!(
+        pane.doc_notes().expect("notes")["open"],
+        serde_json::Value::Null,
+        "and Enter opens a note"
+    );
+}
+
+/// The pointer is a hand too: a press on the page's strip, or a wheel turn over
+/// it. Neither can be typed into a prompt.
+#[gpui::test]
+fn a_wheel_turn_or_a_press_is_a_hand_on_an_agents_page(cx: &mut TestAppContext) {
+    let (mut pane, _dir, _brief) = an_agents_decision_page(cx, "agent-wheel");
+    let body = Pane::middle(pane.float_zone(FloatHit::Body).expect("its body"));
+    pane.wheel(body, -1.0, gpui::Modifiers::default());
+    pane.keys("] c");
+    pane.redraw();
+    assert_eq!(pane.doc_notes().expect("notes")["concurs"], 1, "the wheel");
+
+    let (mut pane, _dir, _brief) = an_agents_decision_page(cx, "agent-press");
+    let strip = Pane::middle(pane.float_zone(FloatHit::Strip).expect("its strip"));
+    pane.click(strip, gpui::Modifiers::default());
+    pane.keys("] c");
+    pane.redraw();
+    assert_eq!(pane.doc_notes().expect("notes")["concurs"], 1, "the press");
+}
+
+/// A person's own open needs no hand first: opening it was one.
+#[gpui::test]
+fn a_page_a_person_opens_is_marked_at_once(cx: &mut TestAppContext) {
+    use super::harness::FakeDecisionEngine;
+    let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "person-marks");
+    pane.html_engine(Ok(std::sync::Arc::new(FakeDecisionEngine)));
+    read_the_brief_in_the_glow_pane(&mut pane, &brief);
+    pane.settle();
+    pane.keys("] c");
+    pane.redraw();
+    assert_eq!(pane.doc_notes().expect("notes")["concurs"], 1);
+}
+
 /// A picture an agent opens is looked at, never read: every key still reaches
 /// the shell, however long it stays up.
 #[gpui::test]

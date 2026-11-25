@@ -525,6 +525,10 @@ pub(crate) struct FloatingDoc {
     /// ([`TerminalView::set_float_to_read`]): it takes the keys the frame
     /// would ([`crate::keylayer::Layer::Reading`]).
     in_glow: bool,
+    /// An agent opened this over its pane, and no hand has been on it yet: it
+    /// takes the reading keys, but writes no note and no CONCUR stamp
+    /// ([`TerminalView::reading_key`]). `]` and `c` are letters of a prompt.
+    untouched: bool,
     /// Still where the glow pane put it, so it keeps its place as the pane
     /// changes size ([`crate::docopen::glow_home`]). Moving or resizing it by
     /// hand ends that, and it stays where it was put.
@@ -554,6 +558,7 @@ impl FloatingDoc {
             below: None,
             to_read: false,
             in_glow: false,
+            untouched: false,
             seated: false,
         }
     }
@@ -566,6 +571,7 @@ impl FloatingDoc {
             rect: self.rect,
             note: self.note,
             in_glow: self.in_glow,
+            untouched: self.untouched,
             seated: self.seated,
             below: self.below.as_ref().map(|b| Box::new(b.carry())),
         }
@@ -3009,6 +3015,7 @@ pub(crate) struct FloatCarry {
     rect: crate::docopen::FloatRect,
     note: Option<crate::docopen::FloatNote>,
     in_glow: bool,
+    untouched: bool,
     seated: bool,
     /// The square a clip covers, carried with it.
     below: Option<Box<FloatCarry>>,

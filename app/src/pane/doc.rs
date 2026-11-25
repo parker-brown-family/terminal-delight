@@ -316,6 +316,7 @@ impl TerminalView {
         if reads && self.float_path(cx).as_deref() == Some(path.as_path()) {
             if let Some(float) = self.float.as_mut() {
                 float.to_read = true;
+                float.untouched = false;
             }
             cx.emit(OpenDocumentRead);
         }
@@ -349,6 +350,9 @@ impl TerminalView {
         doc.to_read = on;
         doc.in_glow = !on;
         doc.seated = !on;
+        // A person moved it: their hand is on it. An agent's open sets this
+        // itself, after ([`Self::open_here`]).
+        doc.untouched = false;
         cx.notify();
         true
     }
@@ -627,7 +631,11 @@ impl TerminalView {
                         .text_color(th.text.alpha(0.6))
                         .when(clear > 0.0, |d| d.bg(th.bg))
                         .children(zone(FloatHit::Strip))
-                        .child(s.ui.focus_read_keys),
+                        .child(if float.untouched {
+                            s.ui.float_hand_first
+                        } else {
+                            s.ui.focus_read_keys
+                        }),
                 )
             })
             // Under a clip: dimmed, so the eye goes to the box on top, and
@@ -683,6 +691,7 @@ impl TerminalView {
         let mut float = Self::float_of(carry.view, carry.rect, cx);
         float.note = carry.note;
         float.in_glow = carry.in_glow;
+        float.untouched = carry.untouched;
         float.seated = carry.seated;
         float.below = carry.below.map(|b| Box::new(Self::float_back(*b, cx)));
         float
@@ -994,6 +1003,9 @@ impl TerminalView {
                 // read and still leave every key to the shell.
                 if reads {
                     self.set_float_to_read(false, cx);
+                    if let Some(float) = self.float.as_mut() {
+                        float.untouched = true;
+                    }
                 }
                 format!("ok float pane {pane}")
             }
@@ -1495,6 +1507,11 @@ impl TerminalView {
     ///
     /// Escape puts away one thing a press: the selection, then a clip
     /// playing over the page, then the document, with its frame if it has one.
+    ///
+    /// A page an agent opened writes no note and no stamp from the keyboard
+    /// until a hand has been on it ([`crate::keylayer::reading_hand`], a press
+    /// or a wheel turn on it). On 2026-11-25 `]` and `c`, typed at one in a
+    /// real window, saved an approval nobody had given.
     pub(super) fn reading_key(&mut self, ks: &Keystroke, cx: &mut Context<Self>) -> Handled {
         use crate::docview::{notes_ui::Pick, ReadAct, ZoomStep};
         use crate::keylayer::{GlowMove, Paging, ReadKey};
@@ -1508,6 +1525,15 @@ impl TerminalView {
         let Some(key) = crate::keylayer::read_key(&ks.key, m.control, m.shift, m.alt) else {
             return Handled::Consumed;
         };
+        // A page an agent opened over a prompt somebody may be typing: its
+        // letters move the page and mark nothing until a key nobody types in a
+        // prompt, or the pointer, shows the person is reading it. In the frame
+        // a person brought it up, which is that already.
+        if self.being_read || crate::keylayer::reading_hand(&ks.key, m.alt) {
+            self.take_hand();
+        } else if key.marks() && self.float_untouched() {
+            return Handled::Consumed;
+        }
         let act = |a: ReadAct, cx: &mut Context<Self>| {
             view.update(cx, |v, cx| v.read_act(a, cx));
         };
@@ -1693,6 +1719,28 @@ impl TerminalView {
         hit
     }
 
+    /// A person's hand on the square: what it shows may now be marked from the
+    /// keyboard, as any page a person opened may.
+    fn take_hand(&mut self) {
+        let mut float = self.float.as_mut();
+        while let Some(f) = float {
+            f.untouched = false;
+            float = f.below.as_deref_mut();
+        }
+    }
+
+    /// The page being read is an agent's, and nobody's hand has been on it.
+    fn float_untouched(&self) -> bool {
+        let mut float = self.float.as_ref();
+        while let Some(f) = float {
+            if f.untouched {
+                return true;
+            }
+            float = f.below.as_deref();
+        }
+        false
+    }
+
     /// A press on the floating square: one of its controls, its strip, or the
     /// document in it. Every press on the square is the square's, whatever it
     /// lands on, so none of them starts a selection in the grid behind it.
@@ -1712,6 +1760,7 @@ impl TerminalView {
         let Some(float) = self.float.as_mut() else {
             return;
         };
+        float.untouched = false;
         let view = float.view.clone();
         match zone.hit {
             FloatHit::Close => {
@@ -2051,7 +2100,8 @@ impl TerminalView {
         if self.float_hit(ev.position).is_none() {
             return false;
         }
-        if let Some(float) = self.float.as_ref() {
+        if let Some(float) = self.float.as_mut() {
+            float.untouched = false;
             let delta = ev.delta;
             float.view.update(cx, |v, cx| v.wheel(delta, cx));
         }
