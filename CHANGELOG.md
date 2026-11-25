@@ -7,6 +7,8 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 
 ## [Unreleased]
 
+## [0.5.5] — 2026-11-25
+
 ### Upgrading from 0.5.4
 
 - **The launcher's project folders come from `launch.toml`** (`roots`, in order,
