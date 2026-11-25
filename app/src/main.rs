@@ -24917,14 +24917,23 @@ impl Workspace {
             }
         }
         let had = self.pane_count();
+        // Read before anything goes: the pane holding the keyboard, and which
+        // tabs are about to lose their last one.
+        let typing = self.focused_pane_tab(window, cx).map(|(_, id)| id);
+        let mut emptied: Vec<usize> = vec![];
         let tabs = std::mem::take(&mut self.tabs);
         self.tabs = tabs
             .into_iter()
-            .filter_map(|t| {
+            .enumerate()
+            .filter_map(|(i, t)| {
                 // rebuild around the live subtree but CARRY the tab's identity —
                 // name, colour overrides, and where it sits in the tree all
                 // survive a reap
-                t.root.reap(cx).map(|root| Tab {
+                let root = t.root.reap(cx);
+                if root.is_none() {
+                    emptied.push(i);
+                }
+                root.map(|root| Tab {
                     // A reap rebuilds the tab around its surviving panes and
                     // must carry every part of its identity across, this
                     // included: a task that loses a pane has not stopped being
@@ -24949,8 +24958,16 @@ impl Workspace {
             }
             // a reaped-away tab may have emptied a group
             self.prune_groups();
-            self.active = self.active.min(self.tabs.len() - 1);
-            self.focus_active(window, cx);
+            // A process ending is nobody's request to go anywhere, least of all
+            // when an agent ended it: the tab on screen stays the tab on screen,
+            // wherever it now sits in the list.
+            self.active = tree::active_after_removal(self.active, &emptied, self.tabs.len());
+            // And the keyboard moves only off a pane that is gone. Where nothing
+            // in a pane held it, a rename or a search did, and that is still
+            // being typed into; `plan_focus` covers the rest of this frame.
+            if typing.is_some_and(|id| self.pane_by_id(id).is_none()) {
+                self.focus_active(window, cx);
+            }
             // D: an auto-reap (a shell/agent exited) shrinks the live tree, but
             // we do NOT persist it here. Mark the session degraded so the 30s
             // checkpoint holds off — the rich on-disk session (with the now-dead
@@ -42711,6 +42728,118 @@ mod tests {
             !screen.contains("mark"),
             "the sheet let typing through:\n{screen}"
         );
+    }
+
+    /// A pane that ends in the background moves nobody. Parker, 2026-11-25:
+    /// "I keep getting switched to different panes while I'm trying to do
+    /// work"; an agent was ending finished panes in tabs above his, and each
+    /// one slid the window along a tab, because the active index was clamped
+    /// to the shorter list and never shifted.
+    #[gpui::test]
+    fn a_pane_ending_in_another_tab_moves_neither_the_tab_nor_the_keyboard(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.update(|w, cx| {
+                ws.update(cx, |ws, cx| {
+                    for _ in 0..4 {
+                        ws.new_tab_in(tree::Place::default(), Naming::Quiet, w, cx);
+                    }
+                })
+            });
+        }
+        let panes = ws.read_with(cx, |ws, _| ws.every_view());
+        let stops: Vec<_> = panes
+            .iter()
+            .map(|p| p.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|s| s()));
+        let draw = |cx: &mut gpui::VisualTestContext| {
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            cx.run_until_parked();
+        };
+        assert_eq!(panes.len(), 5, "one pane to a tab");
+        let mine = panes[2].clone();
+        let shown = |cx: &mut gpui::VisualTestContext| {
+            ws.read_with(cx, |ws, _| {
+                let mut leaves = vec![];
+                ws.tabs[ws.active].root.leaves(&mut leaves);
+                leaves[0].clone()
+            })
+        };
+        cx.update(|w, cx| ws.update(cx, |ws, cx| ws.activate_tab(2, w, cx)));
+        draw(cx);
+        assert!(cx.update(|w, cx| mine.focus_handle(cx).is_focused(w)));
+
+        // A tab before this one ends, then a tab after it.
+        for ended in [0, 4] {
+            panes[ended].update(cx, |v, cx| v.mark_ended(cx));
+            draw(cx);
+            assert!(shown(cx) == mine, "pane {ended} ending changed the tab");
+            assert!(
+                cx.update(|w, cx| mine.focus_handle(cx).is_focused(w)),
+                "pane {ended} ending moved the keyboard"
+            );
+        }
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.tabs.len()),
+            3,
+            "both were reaped"
+        );
+
+        // Something that is not a pane holds the keyboard, and keeps it.
+        cx.update(|w, cx| {
+            ws.update(cx, |ws, cx| {
+                let at = ws.active;
+                ws.start_tab_rename(at, w, cx)
+            })
+        });
+        draw(cx);
+        let held = |cx: &mut gpui::VisualTestContext| {
+            cx.update(|w, cx| ws.read(cx).focus_handle.is_focused(w))
+        };
+        assert!(held(cx), "the rename box has the keyboard");
+        panes[3].update(cx, |v, cx| v.mark_ended(cx));
+        draw(cx);
+        assert!(
+            held(cx),
+            "a pane ending elsewhere took it from the rename box"
+        );
+        ws.update(cx, |ws, cx| ws.commit_rename(cx));
+        draw(cx);
+
+        // The control: the pane being typed in ends, and the keyboard lands in
+        // what is left, because there is nowhere else for it to be.
+        assert_eq!(ws.read_with(cx, |ws, _| ws.tabs.len()), 2);
+        mine.update(cx, |v, cx| v.mark_ended(cx));
+        draw(cx);
+        assert!(shown(cx) == panes[1]);
+        assert!(cx.update(|w, cx| panes[1].focus_handle(cx).is_focused(w)));
     }
 
     /// One keystroke reaches a tab: Alt+N by place in the spine's order and
