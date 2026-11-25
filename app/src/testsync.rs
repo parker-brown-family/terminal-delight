@@ -60,6 +60,34 @@ pub fn soon(mut done: impl FnMut() -> bool) -> bool {
     }
 }
 
+/// Write a program a test is about to run, without this process ever holding
+/// it open for writing.
+///
+/// The kernel refuses to run a file anything has open for writing (`ETXTBSY`,
+/// "Text file busy"). `fs::write` closes its descriptor before returning, but a
+/// test on another thread that forks in between has a copy of it until its own
+/// exec, so the run straight after is refused now and then: twice in CI, on
+/// 2026-11-17 and 2026-11-25. A shell of its own holds it here instead, and
+/// that has ended before this returns.
+#[cfg(test)]
+pub fn write_program(path: &std::path::Path, text: &str) {
+    use std::io::Write as _;
+    let mut sh = std::process::Command::new("/bin/sh")
+        .arg("-c")
+        .arg(r#"cat > "$0" && chmod 755 "$0""#)
+        .arg(path)
+        .stdin(std::process::Stdio::piped())
+        .spawn()
+        .expect("a shell to write the program");
+    sh.stdin
+        .take()
+        .expect("its input")
+        .write_all(text.as_bytes())
+        .expect("the program's text");
+    let ended = sh.wait().expect("the shell to end");
+    assert!(ended.success(), "writing {} failed", path.display());
+}
+
 /// A directory of this test's own, taken away when the test ends.
 ///
 /// Removed on **drop**, not at the end of a test body, and that is the whole
@@ -120,5 +148,70 @@ impl AsRef<std::path::Path> for Scratch {
 impl Drop for Scratch {
     fn drop(&mut self) {
         let _ = std::fs::remove_dir_all(&self.root);
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::atomic::{AtomicBool, Ordering};
+
+    /// Runs `write`-then-run over and over while other threads fork, and counts
+    /// the runs the kernel refused because the file was still open for writing.
+    fn refused(write: impl Fn(&std::path::Path), rounds: usize) -> usize {
+        let dir = std::env::temp_dir().join(format!(
+            "td-etxtbsy-{}-{:?}",
+            std::process::id(),
+            std::thread::current().id()
+        ));
+        std::fs::create_dir_all(&dir).unwrap();
+        let stop = AtomicBool::new(false);
+        let count = std::thread::scope(|s| {
+            for _ in 0..8 {
+                s.spawn(|| {
+                    while !stop.load(Ordering::Relaxed) {
+                        let _ = std::process::Command::new("/bin/true").status();
+                    }
+                });
+            }
+            let mut count = 0;
+            for n in 0..rounds {
+                let program = dir.join(format!("p{n}"));
+                write(&program);
+                if let Err(e) = std::process::Command::new(&program).status() {
+                    assert_eq!(e.raw_os_error(), Some(26), "only ETXTBSY is counted: {e}");
+                    count += 1;
+                }
+            }
+            stop.store(true, Ordering::Relaxed);
+            count
+        });
+        let _ = std::fs::remove_dir_all(&dir);
+        count
+    }
+
+    /// A program written this way can always be run at once, whatever the rest
+    /// of the suite is starting.
+    #[test]
+    fn a_program_written_for_a_test_is_never_busy() {
+        assert_eq!(refused(|p| write_program(p, "#!/bin/sh\nexit 0\n"), 150), 0);
+    }
+
+    /// The control, run by hand: the ordinary way is refused often enough here
+    /// for the test above to mean something. Not in the suite, because what it
+    /// asserts is a race.
+    #[test]
+    #[ignore = "asserts a race; run by hand as the control"]
+    fn a_program_written_by_this_process_is_sometimes_busy() {
+        use std::os::unix::fs::PermissionsExt as _;
+        let busy = refused(
+            |p| {
+                std::fs::write(p, "#!/bin/sh\nexit 0\n").unwrap();
+                std::fs::set_permissions(p, std::fs::Permissions::from_mode(0o755)).unwrap();
+            },
+            600,
+        );
+        eprintln!("refused {busy} of 600");
+        assert!(busy > 0);
     }
 }
