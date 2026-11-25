@@ -4664,8 +4664,8 @@ impl TerminalView {
     /// The page or Markdown file being READ, in the FOCUS frame or the glow
     /// pane, while one is: the document that takes every key
     /// ([`crate::keylayer::Layer::Reading`]). A picture or a PDF lent to the
-    /// reader is only being looked at. So is a square an agent opened, until
-    /// a person opens it to read.
+    /// reader is only being looked at. A page an agent opened over its own
+    /// pane is read like any other ([`Self::open_here`]).
     pub(crate) fn reading_view(
         &self,
         cx: &App,

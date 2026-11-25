@@ -4318,16 +4318,59 @@ fn a_brief_in_the_glow_pane_is_still_read_after_a_repair_and_a_link(cx: &mut Tes
     assert!(reading(&mut new), "and what it opens is read too");
 }
 
-/// An agent's square leaves the keyboard where it was, however long it stays
-/// up: a prompt being typed beside it still reaches the shell.
+/// A page an agent opens over its pane takes the reader's keys while that pane
+/// has the keyboard, as a person's open does: nothing typed reaches the shell.
+/// Parker, 2026-11-20: the glow pane should *"interrupt those keystrokes for all
+/// of the keys that we use on glow pane navigation or document navigation,
+/// specifically for the HTML documents"*. Until then an agent's square left
+/// every key to the prompt beside it.
 #[gpui::test]
-fn an_agents_square_leaves_typing_with_the_shell(cx: &mut TestAppContext) {
+fn an_agents_page_takes_the_reading_keys_while_its_pane_has_them(cx: &mut TestAppContext) {
     let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "agent-keys");
     let target = crate::docopen::drawable_document(std::path::Path::new(&brief)).expect("a page");
     let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
     pane.redraw();
     assert!(said.starts_with("ok float"), "{said}");
     pane.settle();
+    let page = pane.float_view().expect("the page floats");
+    let place = page.read_with(pane.cx, |v, _| v.reading_now());
+    pane.keys("space");
+    pane.redraw();
+    assert_ne!(
+        page.read_with(pane.cx, |v, _| v.reading_now()),
+        place,
+        "Space pages the page"
+    );
+    pane.keys("w x w x enter");
+    pane.keys("escape");
+    assert_eq!(pane.float_path(), None, "Escape puts the page away");
+
+    // The control: with the page gone, typing reaches `cat`, and what was
+    // typed at the page would have arrived before it.
+    pane.keys("z q z q enter");
+    pane.wait_for("zqzq");
+    let screen = pane.rows().join("\n");
+    assert!(
+        !screen.contains("wxwx"),
+        "nothing typed at the page reached the shell: {screen}"
+    );
+}
+
+/// A picture an agent opens is looked at, never read: every key still reaches
+/// the shell, however long it stays up.
+#[gpui::test]
+fn an_agents_picture_leaves_typing_with_the_shell(cx: &mut TestAppContext) {
+    let (mut pane, _dir, _brief, png) = pane_showing_a_brief(cx, "agent-picture");
+    let target = crate::docopen::drawable_document(std::path::Path::new(&png)).expect("a picture");
+    let said = pane.view.update(pane.cx, |v, cx| v.open_here(target, cx));
+    pane.redraw();
+    assert!(said.starts_with("ok float"), "{said}");
+    pane.settle();
+    assert!(
+        pane.view
+            .read_with(pane.cx, |v, cx| v.reading_view(cx).is_none()),
+        "a picture is not read"
+    );
     pane.keys("z q z q enter");
     pane.wait_for("zqzq");
     assert!(pane.float_path().is_some(), "and the square stays up");
@@ -4513,11 +4556,11 @@ fn alt_o_on_a_web_artifact_asks_before_the_browser(cx: &mut TestAppContext) {
     );
 }
 
-/// An agent opening its own deliverable keeps the small square beside its
-/// prompt: Parker, 2026-11-02, *"agents will AUTO-OPEN artifacts, and THOSE
-/// should be small"*. Only a person's open asks for the reading frame.
+/// An agent opening its own page is read in the glow pane over its own pane.
+/// It never asks for the reading frame, which is a person's open alone: Parker,
+/// 2026-11-02, *"agents will AUTO-OPEN artifacts, and THOSE should be small"*.
 #[gpui::test]
-fn an_agent_opening_a_brief_keeps_the_small_square(cx: &mut TestAppContext) {
+fn an_agent_opening_a_brief_is_read_in_the_glow_pane_and_not_the_frame(cx: &mut TestAppContext) {
     let (mut pane, _dir, brief, _png) = pane_showing_a_brief(cx, "agent-opens");
     let asks = std::rc::Rc::new(std::cell::Cell::new(0usize));
     let seen = asks.clone();
@@ -4533,11 +4576,16 @@ fn an_agent_opening_a_brief_keeps_the_small_square(cx: &mut TestAppContext) {
     pane.redraw();
     assert!(said.starts_with("ok float"), "{said}");
     assert_eq!(asks.get(), 0, "no reading frame for an agent's open");
-    assert!(!pane.read(|v| v.float_to_read()));
+    assert!(!pane.read(|v| v.float_to_read()), "not the frame");
+    assert!(
+        pane.view
+            .read_with(pane.cx, |v, cx| v.reading_view(cx).is_some()),
+        "and it is being read where it sits"
+    );
     assert_eq!(
         pane.float_path().as_deref(),
         Some(std::path::Path::new(&brief)),
-        "it floats in the square"
+        "it floats over the pane"
     );
 }
 
