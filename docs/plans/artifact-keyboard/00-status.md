@@ -40,7 +40,7 @@ Parker, the day the FLOATING DOCUMENT toggle landed: *"keyboard only --- needs t
 
 Calls made without Parker (overturn any):
 
-- An agent's own square is not read: it stays small and leaves typing with the shell, because an auto-open must not take a prompt being typed (*"agents will AUTO-OPEN artifacts, and THOSE should be small"*). Alt+R reads it in the frame, and choosing it from the Alt+O list reopens it to read.
+- **Superseded 2026-11-20 for a page or Markdown file an agent opens over its own pane:** it is read in the glow pane and takes the reading keys while that pane has the keyboard. Parker: the glow pane should *"interrupt those keystrokes for all of the keys that we use on glow pane navigation or document navigation, specifically for the HTML documents"*. Focus is never moved. The rule below stood until then. An agent's own square is not read: it stays small and leaves typing with the shell, because an auto-open must not take a prompt being typed (*"agents will AUTO-OPEN artifacts, and THOSE should be small"*). Alt+R reads it in the frame, and choosing it from the Alt+O list reopens it to read.
 - Switching GAUGES to glow pane moves only a document being read. A small agent square stays what it is.
 - Ctrl+F and Ctrl+X stay swallowed as they are in the frame, and so does Ctrl+C. Ctrl+Shift+F still finds across panes.
 - The padding is measured from the pane's screen, below its header, because that is the space a square is drawn in.

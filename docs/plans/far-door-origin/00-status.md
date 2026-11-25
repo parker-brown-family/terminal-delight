@@ -1,6 +1,6 @@
 # The far door: telling another machine from a process on this one
 
-Status: **recommendation implemented as a draft pull request, waiting for Parker's stamp.** Issue #1467. Difficulty 5/10: one rule and one switch, but the rule decides who may type into an agent, and a wrong one fails silently in either direction.
+Status: **approved by Parker, 2026-11-25 (option A), and shipped in 0.5.5.** Issue #1467. Difficulty 5/10: one rule and one switch, but the rule decides who may type into an agent, and a wrong one fails silently in either direction.
 
 ## The door, and what is wrong with it
 
@@ -77,5 +77,5 @@ What A deliberately does not do:
 
 ## Needs Parker
 
-- The stamp on A, or another letter.
+- Nothing. Parker approved A on 2026-11-25.
 - Whether to add D's sentence in Settings › Machines next to the prompt chip (nine languages).

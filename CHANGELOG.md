@@ -26,6 +26,11 @@ reaches 1.0. Until then, `0.x` minor bumps may include breaking changes.
 - A brief's sections are small buttons beside the progress rail. The fixed
   panel over the page is gone.
 - A click on a link to a file that is not there says so.
+- **A page an agent opens over its pane takes the reading keys** while that
+  pane has the keyboard, as a page you open does: the arrows, PgUp/PgDn, Space
+  and the rest move the page instead of the agent's prompt. It never moves the
+  keyboard off the pane you are in. Pictures, PDFs and clips still leave every
+  key to the shell.
 
 ### Look
 
