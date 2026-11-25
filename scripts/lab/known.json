@@ -167,6 +167,18 @@
       "issue": null
     },
     {
+      "id": "sync-opened-by-dcs-is-lost-at-a-close",
+      "kind": "chunk",
+      "core": "rio",
+      "neutralize": {
+        "strip": "(?<=\\x1b\\[\\?2026l)\\x1bP=1s(?:\\x1b\\\\)?"
+      },
+      "wrong": "rio-vt",
+      "reason": "The same cause as sync-opened-in-a-mode-list-is-lost-at-a-close, with the legacy DCS = 1 s opener in place of the mode list: an update opened in the read that closes another sets its deadline during the replay and the close then clears it. The entry covers only an opener directly after the close; one anywhere else still fails the run.",
+      "evidence": "size 2x1: writes \"\\x1b[?2026\", \"h\", \"\\x1b[?2026l\\x1bP=1s\", \"\\x1b\\\\1\" joined into one read -> update lost; as separate reads -> update open (run 45708322124, gen-2/3853)",
+      "issue": 1531
+    },
+    {
       "id": "primary-device-attributes-differ",
       "neutralize": {
         "strip": "\\x1b\\[0?c"
