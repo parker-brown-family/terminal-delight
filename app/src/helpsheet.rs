@@ -220,6 +220,7 @@ pub fn shortcuts(s: &Strings) -> Vec<Section> {
                 row("Alt+R", s.focus),
                 row(s.k_focus_inherit_key, s.focus_inherit),
                 row(s.parts.help_marks_off, s.bench_shelf),
+                row("← / → · Enter", s.parts.help_bench_controls),
                 row("Alt+M", s.bench_note),
                 row("Alt+S", s.sticky),
                 row("Alt+Backspace", s.sticky_peel),

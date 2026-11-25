@@ -347,7 +347,7 @@ pub(crate) struct Pending {
     pub(crate) over: Option<String>,
 }
 
-fn choices_path(roots: &Roots) -> PathBuf {
+pub(crate) fn choices_path(roots: &Roots) -> PathBuf {
     roots.config.join("updates.toml")
 }
 
@@ -2441,6 +2441,7 @@ mod tests {
     /// rollback restores it exactly; a launcher moved by someone else in the
     /// meantime is refused rather than overwritten.
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn a_launcher_install_keeps_the_old_build_and_rolls_back() {
         let home = tmp("launcher");
         let r = roots(&home);
@@ -2497,6 +2498,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn an_appimage_install_keeps_the_previous_image_beside_it() {
         let home = tmp("appimage");
         let r = roots(&home);
@@ -2597,6 +2599,7 @@ mod tests {
     /// A staged build is installed only when no session host is alive, and a
     /// staged file that changed is dropped, not installed.
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn a_staged_build_waits_for_a_cold_start_and_must_be_unchanged() {
         let home = tmp("pending");
         let r = roots(&home);

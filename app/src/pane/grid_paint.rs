@@ -592,11 +592,17 @@ mod tests {
             cx.global::<crate::skin::SkinRegistry>()
                 .builtins
                 .iter()
-                .map(|(id, _)| id.clone())
+                .map(|(id, spec)| {
+                    (
+                        id.clone(),
+                        spec.shape.tube == Some(crate::skin::Tube::Direct),
+                    )
+                })
                 .collect::<Vec<_>>()
         });
         assert!(!skins.is_empty());
-        for skin in &skins {
+        for (skin, direct) in &skins {
+            let direct = *direct;
             for design in theme::builtin_ids() {
                 for glass in [false, true] {
                     for crawl in [false, true] {
@@ -640,8 +646,24 @@ mod tests {
                         crate::warp::begin_frame();
                         pane.redraw();
                         let active_glows = crate::warp::rect_glows();
-                        if design == theme::CLEAN {
-                            // Clean holds the light off, whatever the dials say:
+                        // A direct skin draws flat unless the glass is switched
+                        // on; with it on, it lights like any other skin
+                        // (Parker, 2026-11-17: "the best of both worlds").
+                        let flat = direct && !glass;
+                        if flat {
+                            assert!(
+                                active_glows.is_empty(),
+                                "direct skin registered a tube: {case}"
+                            );
+                        }
+                        if direct && glass && design != theme::CLEAN {
+                            assert!(
+                                !active_glows.is_empty(),
+                                "the switched-on glass registered no tube: {case}"
+                            );
+                        }
+                        if flat || design == theme::CLEAN {
+                            // This skin and Clean both hold the light off, whatever the dials say:
                             // nothing glows and nothing erased lingers.
                             assert!(
                                 active_glows.iter().all(|g| g.abs() < 1e-5),

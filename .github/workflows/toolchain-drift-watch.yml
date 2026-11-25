@@ -63,8 +63,8 @@ jobs:
           echo "stable=$stable" >>"$GITHUB_OUTPUT"
           failed=0
           cargo +stable fmt -- --check >../fmt.log 2>&1 || failed=1
-          cargo +stable clippy --locked -- -D warnings >../clippy.log 2>&1 || failed=1
-          cargo +stable clippy --locked --features core-alacritty -- -D warnings >../clippy-alacritty.log 2>&1 || failed=1
+          cargo +stable clippy --locked --all-targets -- -D warnings >../clippy.log 2>&1 || failed=1
+          cargo +stable clippy --locked --all-targets --features core-alacritty -- -D warnings >../clippy-alacritty.log 2>&1 || failed=1
           echo "failed=$failed" >>"$GITHUB_OUTPUT"
           # The lint names, once each, are what a person needs to read first.
           grep -ohE '#[a-z_]+$|clippy::[a-z_]+|`-D [a-z:_-]+`' ../clippy.log ../clippy-alacritty.log | sort | uniq -c | sort -rn >../lints.txt || true

@@ -90,6 +90,40 @@ fn lines(p: &Theme, size: Pixels, ink: impl Fn(Hsla) -> Hsla) -> gpui::Div {
         ]))
 }
 
+#[cfg(test)]
+thread_local! { pub(super) static SKIN_SAMPLE_COUNT: std::cell::Cell<usize> = const { std::cell::Cell::new(0) }; }
+
+/// The same panel, tab, divider, font and graded terminal colours a full pane uses.
+pub(super) fn skin_sample(th: &Theme, spec: &skin::SkinSpec) -> gpui::Div {
+    #[cfg(test)]
+    SKIN_SAMPLE_COUNT.set(SKIN_SAMPLE_COUNT.get() + 1);
+    let sk = spec.bake(th, 0.55);
+    let pane = pane::graded_palette(&sk.terminal_theme(th.clone()));
+    sk.spine_panel()
+        .w_full()
+        .h(px(43.))
+        .p(px(2.))
+        .overflow_hidden()
+        .child(
+            sk.bar().h(px(10.)).p_0().child(
+                sk.tab(div().px(px(4.)).h_full(), true, sk.ink.mark)
+                    .text_size(px(7.))
+                    .line_height(px(9.))
+                    .text_color(sk.ink.mark)
+                    .child("~/work"),
+            ),
+        )
+        .child(sk.rule_h())
+        .child(
+            div()
+                .w_full()
+                .bg(pane.field_background.unwrap_or(pane.bg))
+                .overflow_hidden()
+                .px(px(3.))
+                .child(lines(&pane, px(6.), |c| c)),
+        )
+}
+
 /// What stands behind a see-through pane: a wallpaper-ish sweep, so a
 /// field that lets it through shows it.
 fn desktop() -> gpui::Background {

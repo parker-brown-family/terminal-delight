@@ -1,0 +1,100 @@
+name: Nightly AppImage
+
+# Every night, the AppImage built from the integration branch, started the way
+# a person starts it: on a display (Xvfb on the runner), where it must say its
+# version, open a window, take typing into its shell, and quit with status 0
+# when `exit` is typed into the last shell (scripts/appimage-smoke.sh). CI
+# builds this file on every pull request and nothing ever opens it, so a build
+# that compiles and does not start would otherwise reach the Dev channel.
+#
+# Nightly at 04:41 UTC, by hand, and on a pull request that edits this file or
+# the smoke script. GitHub runs a schedule only from the default branch, so the
+# nightly run starts once this file reaches main; it builds the branch named
+# in BRANCH, not main.
+
+on:
+  schedule:
+    - cron: "41 4 * * *"
+  workflow_dispatch:
+    inputs:
+      ref:
+        description: Branch, tag or commit to build
+        default: dev/0.5.5
+  pull_request:
+    paths:
+      - .github/workflows/nightly-appimage.yml
+      - scripts/appimage-smoke.sh
+
+permissions:
+  contents: read
+
+concurrency:
+  group: nightly-appimage-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  RUST_TOOLCHAIN: "1.99.1"
+  # The integration branch the nightly build follows. Move it when the next
+  # dev/0.5.x branch opens.
+  BRANCH: dev/0.5.5
+
+jobs:
+  smoke:
+    name: Build the AppImage and start it on Xvfb
+    # The oldest glibc the AppImage supports, as ci.yml's package job.
+    runs-on: ubuntu-22.04
+    timeout-minutes: 60
+    steps:
+      - uses: actions/checkout@v5
+        with:
+          ref: ${{ github.event_name == 'pull_request' && github.sha || inputs.ref || env.BRANCH }}
+
+      - name: Install build, display and Vulkan dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libasound2-dev libfontconfig1-dev libwayland-dev libx11-dev libxcb1-dev \
+            libxkbcommon-dev libxkbcommon-x11-dev pkg-config \
+            xvfb xdotool imagemagick mesa-vulkan-drivers libvulkan1
+
+      - uses: dtolnay/rust-toolchain@df2a88e9fe4098bad09cb42c3dec7187f15861fc # master, 2026-11
+        with:
+          toolchain: ${{ env.RUST_TOOLCHAIN }}
+
+      - name: Prepare patched gpui
+        run: ./scripts/prepare-gpui.sh
+
+      # Its own cache: the job id keys it, and the image is named, as in
+      # ci.yml's package job.
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2.9.3
+        with:
+          workspaces: app
+          key: ubuntu-22.04
+          save-if: ${{ github.event_name != 'pull_request' }}
+
+      - uses: taiki-e/install-action@ab49d3c64680143e184118bed66a46419fc15519 # v2
+        with:
+          tool: cargo-about@0.6
+
+      - name: Build AppImage
+        run: ./scripts/build-appimage.sh
+
+      - name: Start it on Xvfb and use it
+        run: |
+          bash scripts/appimage-smoke.sh dist/terminal-delight-x86_64.AppImage "$RUNNER_TEMP/smoke" | tee smoke.txt
+          {
+            echo "### AppImage smoke, $(git rev-parse --short HEAD)"
+            echo '```'
+            cat smoke.txt
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: appimage-smoke
+          path: |
+            ${{ runner.temp }}/smoke/*.png
+            ${{ runner.temp }}/smoke/*.log
+          retention-days: 14
+          if-no-files-found: ignore

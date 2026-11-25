@@ -82,9 +82,10 @@ pub struct PointerReq {
     pub control: bool,
 }
 
-/// A queued control request, applied on the UI thread by the ticker.
+/// A queued control request, applied on the UI thread by the bridge.
 #[derive(Debug)]
 pub(crate) enum Req {
+    ReadMirrors(mpsc::Sender<()>),
     Set(bool),
     Toggle,
     Adopt(AdoptReq),
@@ -132,8 +133,8 @@ pub(crate) enum Req {
     DocNote(crate::docview::NotesCommand, mpsc::Sender<String>),
 }
 
-/// Wait for the window to say what a bench verb actually did. The ticker
-/// drains the queue every 150ms, so two seconds is many chances; past that
+/// Wait for the window to say what a bench verb actually did. The bridge
+/// wakes when a request arrives. After two seconds,
 /// the window is not answering and the socket should say so rather than `ok`.
 fn bench_outcome(rx: mpsc::Receiver<String>) -> String {
     rx.recv_timeout(Duration::from_secs(2))
@@ -464,7 +465,7 @@ pub(crate) enum BenchFace {
     Toggle,
 }
 
-// The `mcp status` mirror, refreshed by the ticker each pass (same pattern as
+// The `mcp status` mirror, refreshed when requested (same pattern as
 // the paint mirror): a policy read never touches the main thread.
 const MCP_ON: u8 = 1 << 0;
 const MCP_WRITES: u8 = 1 << 1;
@@ -812,12 +813,39 @@ impl SkinMirror {
     }
 }
 
+trait ControlQueue {
+    fn send(&self, req: Req) -> Result<(), ()>;
+    fn refresh_mirrors(&self) -> bool;
+}
+
+impl ControlQueue for futures::channel::mpsc::UnboundedSender<Req> {
+    fn send(&self, req: Req) -> Result<(), ()> {
+        self.unbounded_send(req).map_err(|_| ())
+    }
+
+    fn refresh_mirrors(&self) -> bool {
+        let (tx, rx) = mpsc::channel();
+        self.send(Req::ReadMirrors(tx)).is_ok() && rx.recv_timeout(Duration::from_secs(2)).is_ok()
+    }
+}
+
+#[cfg(test)]
+impl ControlQueue for mpsc::Sender<Req> {
+    fn send(&self, req: Req) -> Result<(), ()> {
+        mpsc::Sender::send(self, req).map_err(|_| ())
+    }
+    // Socket protocol fixtures own their mirrors, with no gpui thread.
+    fn refresh_mirrors(&self) -> bool {
+        true
+    }
+}
+
 fn handle_conn(
     stream: UnixStream,
     mirror: &AtomicBool,
     mcp_mirror: &AtomicU8,
     skin_mirror: &Mutex<SkinMirror>,
-    tx: &mpsc::Sender<Req>,
+    tx: &impl ControlQueue,
     policy_control: PolicyControl,
 ) {
     let _ = stream.set_read_timeout(Some(Duration::from_millis(400)));
@@ -842,6 +870,14 @@ fn handle_conn(
                 return;
             }
         }
+    }
+    if matches!(
+        &parsed,
+        Ok(Cmd::PaintStatus | Cmd::McpStatus | Cmd::SkinStatus | Cmd::Skin(_))
+    ) && !tx.refresh_mirrors()
+    {
+        let _ = writeln!(&stream, "err ui unavailable");
+        return;
     }
     let reply = match parsed {
         // `mcp rpc` is the one verb that waits on the gpui main thread (up to
@@ -954,7 +990,7 @@ fn handle_conn(
                 )
             }
         }
-        // Refused before the queue: the ticker applies whatever reaches it, so
+        // Refused before the queue: the bridge applies whatever reaches it, so
         // this is where an unauthorized policy mutation must be stopped.
         Ok(Cmd::McpPolicy(p)) if policy_control == PolicyControl::Refused => p.refusal(),
         Ok(Cmd::McpPolicy(p)) => {
@@ -1117,7 +1153,8 @@ pub fn start(cx: &mut Context<Workspace>) {
         }
     };
 
-    let (tx, rx) = mpsc::channel::<Req>();
+    use futures::StreamExt;
+    let (tx, mut rx) = futures::channel::mpsc::unbounded::<Req>();
     let mirror = Arc::new(AtomicBool::new(false));
     let mcp_mirror = Arc::new(AtomicU8::new(0));
     // Not an atomic: the skin mirror is a name plus a list, and it is read once
@@ -1145,26 +1182,30 @@ pub fn start(cx: &mut Context<Workspace>) {
         });
     }
 
-    // Ticker: applies queued commands on the main thread and re-mirrors the
-    // live paint flag every pass — Esc flips the global without going through
-    // this queue, and `paint status` must not report around that.
-    cx.spawn(async move |this, cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(150))
-            .await;
-        let mut cmds = Vec::new();
-        while let Ok(c) = rx.try_recv() {
-            cmds.push(c);
-        }
-        let applied = this.update(cx, |ws, cx| {
-            for c in cmds {
+    cx.spawn(async move |this, cx| {
+        while let Some(c) = rx.next().await {
+            let applied = this.update(cx, |ws, cx| {
                 match c {
+                    Req::ReadMirrors(reply) => {
+                        mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
+                        mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
+                        if let Ok(mut m) = skin_mirror.lock() {
+                            *m = SkinMirror {
+                                active: crate::skin::active_id(cx),
+                                known: crate::skin::all_skins(cx)
+                                    .into_iter()
+                                    .map(|(id, _, _)| id)
+                                    .collect(),
+                            };
+                        }
+                        let _ = reply.send(());
+                    }
                     Req::Set(v) => theme::set_paint_mode(cx, v),
                     Req::Toggle => {
                         let v = !theme::paint_mode(cx);
                         theme::set_paint_mode(cx, v);
                     }
-                    // Adoption needs a Window to build the pane; this ticker is
+                    // Adoption needs a Window to build the pane; this bridge is
                     // window-less, so park it — render() drains next frame.
                     Req::Adopt(a) => ws.queue_adopt(a, cx),
                     // Tab edits need no Window — the strip is workspace state.
@@ -1194,7 +1235,7 @@ pub fn start(cx: &mut Context<Workspace>) {
                     Req::DocHere(path, reply) => {
                         let _ = reply.send(ws.doc_here(&path, cx));
                     }
-                    // The split needs a Window, which this ticker has none
+                    // The split needs a Window, which this bridge has none
                     // of: the pane is asked, as a click asks it, and the
                     // workspace answers from the subscription that has one.
                     Req::DocBeside(path, reply) => ws.doc_beside(&path, reply, cx),
@@ -1242,21 +1283,10 @@ pub fn start(cx: &mut Context<Workspace>) {
                         cx.notify();
                     }
                 }
+            });
+            if applied.is_err() {
+                return; // UI gone
             }
-            mirror.store(theme::paint_mode(cx), Ordering::Relaxed);
-            mcp_mirror.store(mcp_bits(&ws.mcp), Ordering::Relaxed);
-            if let Ok(mut m) = skin_mirror.lock() {
-                *m = SkinMirror {
-                    active: crate::skin::active_id(cx),
-                    known: crate::skin::all_skins(cx)
-                        .into_iter()
-                        .map(|(id, _, _)| id)
-                        .collect(),
-                };
-            }
-        });
-        if applied.is_err() {
-            return; // UI gone — the listener thread dies with the process
         }
     })
     .detach();
@@ -1784,17 +1814,81 @@ pub(crate) fn ppid_of(pid: u32) -> Option<u32> {
 /// parent chain on this box is a dozen deep at most and `/proc` can lie about
 /// a pid that was recycled mid-walk.
 pub(crate) fn descends_from(pid: u32, ancestor: u32) -> bool {
+    peer_ancestry(Some(pid)).any(|p| p == ancestor)
+}
+
+/// One bounded walk is enough to authenticate a peer against every pane.
+pub(crate) fn peer_ancestry(pid: Option<u32>) -> impl Iterator<Item = u32> {
+    std::iter::successors(pid, |at| ppid_of(*at).filter(|p| *p > 1 && p != at)).take(24)
+}
+
+/// One process on the way up from a connection's peer: who owns it and what
+/// it is called (`/proc/<pid>/status` Uid, `/proc/<pid>/comm`).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub(crate) struct Hop {
+    pub uid: u32,
+    pub comm: String,
+}
+
+/// Whether a chain of processes, the peer first and its parents after it,
+/// passed through the system's ssh daemon.
+///
+/// The mark is a process owned by root and named `sshd` or `sshd-session`
+/// (OpenSSH 9.8 and later run each connection as `sshd-session`). Measured on
+/// the far box, 2026-11-17: a command delivered over ssh runs under
+/// `sshd-session` (the user's) ← `sshd-session` (root) ← `sshd` (root). A
+/// process on this machine that never came through ssh has no root ancestor
+/// but pid 1, and nothing it does without root can give it one: renaming
+/// itself `sshd-session` leaves it owned by the user. That is the whole of
+/// the check, and why it holds where the pane-ancestry test does not (#1467).
+pub(crate) fn chain_arrived_over_ssh(chain: &[Hop]) -> bool {
+    chain
+        .iter()
+        .any(|h| h.uid == 0 && matches!(h.comm.as_str(), "sshd" | "sshd-session"))
+}
+
+/// The hop `/proc` describes for `pid`, and its parent. `None` when either
+/// file cannot be read, which is a process that went or one this user may
+/// not read: unknown, never a hop that is not there.
+fn hop_of(pid: u32) -> Option<(Hop, u32)> {
+    let status = std::fs::read_to_string(format!("/proc/{pid}/status")).ok()?;
+    let field = |name: &str| {
+        status
+            .lines()
+            .find_map(|l| l.strip_prefix(name))
+            .and_then(|v| v.split_whitespace().next())
+            .and_then(|v| v.parse::<u32>().ok())
+    };
+    let (uid, ppid) = (field("Uid:")?, field("PPid:")?);
+    let comm = std::fs::read_to_string(format!("/proc/{pid}/comm")).ok()?;
+    Some((
+        Hop {
+            uid,
+            comm: comm.trim_end_matches('\n').to_string(),
+        },
+        ppid,
+    ))
+}
+
+/// Whether the process `pid` arrived over ssh ([`chain_arrived_over_ssh`]),
+/// walking its parents in `/proc` up to pid 1. `None`: the walk could not be
+/// finished (a parent went, or `/proc` refused a read), so where it came
+/// from is not known. A caller that needs `Some(true)` treats that as no.
+pub(crate) fn arrived_over_ssh(pid: u32) -> Option<bool> {
+    let mut chain = Vec::new();
     let mut at = pid;
-    for _ in 0..24 {
-        if at == ancestor {
-            return true;
+    for _ in 0..64 {
+        let (hop, parent) = hop_of(at)?;
+        chain.push(hop);
+        if chain_arrived_over_ssh(&chain) {
+            return Some(true);
         }
-        match ppid_of(at) {
-            Some(p) if p > 1 && p != at => at = p,
-            _ => return false,
+        if parent <= 1 || parent == at {
+            return Some(false);
         }
+        at = parent;
     }
-    false
+    None
 }
 
 /// The control-socket twin of the Threshing Floor's chart — fail-closed.
@@ -1876,12 +1970,11 @@ fn person_acting_refusal(cmd: &Cmd) -> String {
 /// the current pane shell. Unknown identity never becomes a guessed pane.
 pub(crate) fn verify_caller(
     mut caller: Caller,
-    peer: Option<u32>,
+    ancestry: &[u32],
     shell_for: impl Fn(u64) -> Option<u32>,
 ) -> Caller {
     caller.pane = caller.pane.filter(|pane| {
-        peer.zip(shell_for(*pane))
-            .is_some_and(|(pid, shell)| shell > 1 && descends_from(pid, shell))
+        shell_for(*pane).is_some_and(|shell| shell > 1 && ancestry.contains(&shell))
     });
     caller
 }
@@ -2447,17 +2540,32 @@ mod tests {
             pane: Some(9),
         };
         assert_eq!(
-            verify_caller(claim(), peer, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                std::process::id()
+            ))
+            .pane,
             Some(9)
         );
         assert_eq!(
-            verify_caller(claim(), peer, |_| ppid_of(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| {
+                ppid_of(std::process::id())
+            })
+            .pane,
             Some(9)
         );
-        assert_eq!(verify_caller(claim(), peer, |_| Some(u32::MAX)).pane, None);
-        assert_eq!(verify_caller(claim(), peer, |_| None).pane, None);
         assert_eq!(
-            verify_caller(claim(), None, |_| Some(std::process::id())).pane,
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| Some(
+                u32::MAX
+            ))
+            .pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &peer_ancestry(peer).collect::<Vec<_>>(), |_| None).pane,
+            None
+        );
+        assert_eq!(
+            verify_caller(claim(), &[], |_| Some(std::process::id())).pane,
             None
         );
     }
@@ -2508,6 +2616,143 @@ mod tests {
         }
     }
     use super::*;
+
+    /// Issue #1472, from the 2026-11-17 cargo-mutants run. Each assertion is
+    /// one of the mutants that survived, now caught (mutation runs named in
+    /// the commit).
+    ///
+    /// The ancestry walk stops before pid 1: init is every process's
+    /// ancestor, so "descends from 1" would prove nothing about anyone.
+    /// Catches the guard `p > 1 && p != at` replaced by `true`, its `&&` by
+    /// `||`, and its `>` by `>=`.
+    #[test]
+    fn the_ancestry_walk_never_reaches_init() {
+        let me = std::process::id();
+        let chain: Vec<u32> = peer_ancestry(Some(me)).collect();
+        assert_eq!(chain.first(), Some(&me), "the walk starts at the peer");
+        assert!(!chain.contains(&1), "init is no one's proof: {chain:?}");
+        assert!(!descends_from(me, 1));
+        let parent = std::os::unix::process::parent_id();
+        if parent > 1 {
+            assert!(descends_from(me, parent), "{chain:?}");
+        }
+    }
+
+    /// A pane whose shell reads as pid 1 never vouches for a caller, even if
+    /// pid 1 is in the caller's chain. Catches `shell > 1` replaced by
+    /// `shell >= 1` in verify_caller.
+    #[test]
+    fn a_pane_whose_shell_is_init_vouches_for_no_caller() {
+        let caller = |pane| Caller {
+            session: "1".into(),
+            pane: Some(pane),
+        };
+        let shell = |pane: u64| Some(if pane == 5 { 1 } else { 300 });
+        let ancestry = [900, 300, 1];
+        assert_eq!(verify_caller(caller(5), &ancestry, shell).pane, None);
+        assert_eq!(verify_caller(caller(7), &ancestry, shell).pane, Some(7));
+    }
+
+    /// A word that starts with `-` is a flag unless it is a number, so
+    /// `doc scroll -2400` scrolls and `doc scroll -x` is refused. Catches the
+    /// number guard replaced by `true`.
+    #[test]
+    fn a_negative_number_is_a_word_and_any_other_dash_is_a_flag() {
+        let (line, _) = parse_cli(&["doc".into(), "scroll".into(), "-2400".into()]).unwrap();
+        assert!(line.contains("-2400"), "{line}");
+        let err = parse_cli(&["doc".into(), "scroll".into(), "-x".into()]).unwrap_err();
+        assert!(err.contains("unknown flag"), "{err}");
+    }
+
+    fn hop(uid: u32, comm: &str) -> Hop {
+        Hop {
+            uid,
+            comm: comm.into(),
+        }
+    }
+
+    /// Issue #1467: the far door took any process outside a pane for another
+    /// machine. The chains here are real: the first was walked on the far
+    /// box over ssh, the second from a Claude pane on the Legion, both on
+    /// 2026-11-17.
+    #[test]
+    fn only_a_chain_through_roots_sshd_arrived_over_ssh() {
+        let over_ssh = [
+            hop(1000, "terminal-deligh"),
+            hop(1000, "sh"),
+            hop(1000, "sshd-session"),
+            hop(0, "sshd-session"),
+            hop(0, "sshd"),
+        ];
+        assert!(chain_arrived_over_ssh(&over_ssh));
+        // OpenSSH before 9.8 names every hop `sshd`.
+        assert!(chain_arrived_over_ssh(&[
+            hop(1000, "bash"),
+            hop(1000, "sshd"),
+            hop(0, "sshd")
+        ]));
+        let pane = [
+            hop(1000, "bash"),
+            hop(1000, "claude"),
+            hop(1000, "bash"),
+            hop(1000, "td-a47eabf8-wav"),
+            hop(1000, "systemd"),
+        ];
+        assert!(!chain_arrived_over_ssh(&pane));
+        // A process an agent names `sshd-session` is still the agent's.
+        let forged = [
+            hop(1000, "terminal-deligh"),
+            hop(1000, "sshd-session"),
+            hop(1000, "systemd"),
+        ];
+        assert!(!chain_arrived_over_ssh(&forged), "a name is not an owner");
+        // Root alone is not ssh: pid 1 is root too.
+        assert!(!chain_arrived_over_ssh(&[
+            hop(1000, "bash"),
+            hop(0, "systemd")
+        ]));
+        assert!(!chain_arrived_over_ssh(&[]));
+    }
+
+    /// The bypass the issue measured: `setsid -f` leaves the pane's tree, and
+    /// the window must still see that the process never came through ssh.
+    /// And this test's own process reads as over ssh exactly when it runs in
+    /// an ssh session, which is how the real path was checked on the far box.
+    #[test]
+    fn a_detached_process_did_not_arrive_over_ssh_and_this_one_did_only_if_ssh_started_it() {
+        let out = std::process::Command::new("sh")
+            .args(["-c", "setsid sleep 30 >/dev/null 2>&1 & echo $!"])
+            .output()
+            .expect("sh");
+        let pid: u32 = String::from_utf8_lossy(&out.stdout)
+            .trim()
+            .parse()
+            .expect("a pid");
+        let parent = ppid_of(pid);
+        assert_ne!(
+            parent,
+            Some(std::process::id()),
+            "the child left the test's tree"
+        );
+        let origin = arrived_over_ssh(pid);
+        let _ = std::process::Command::new("kill")
+            .arg(pid.to_string())
+            .status();
+        assert_eq!(
+            origin,
+            Some(false),
+            "a detached process came through no ssh"
+        );
+        let here = arrived_over_ssh(std::process::id());
+        let in_ssh = std::env::var_os("SSH_CONNECTION").is_some();
+        assert_eq!(here, Some(in_ssh), "SSH_CONNECTION set: {in_ssh}");
+    }
+
+    #[test]
+    fn a_process_that_is_gone_is_unknown_not_local() {
+        // pid_max is at most 2^22; this pid cannot exist.
+        assert_eq!(arrived_over_ssh(u32::MAX - 7), None);
+    }
 
     #[test]
     fn a_scoped_note_needs_explicit_success_for_the_pinned_recipient() {
@@ -3055,7 +3300,7 @@ mod tests {
             }
             other => panic!("expected the adopt on the queue, got {other:?}"),
         }
-        mirror.store(true, Ordering::Relaxed); // the UI ticker's job
+        mirror.store(true, Ordering::Relaxed); // the UI bridge's job
         assert_eq!(send(&sock, "paint status").unwrap(), "on");
         server.join().unwrap();
     }

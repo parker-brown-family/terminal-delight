@@ -1532,7 +1532,7 @@ fn classify_foreground(master: &File, shell_pid: u32) -> Option<WireMode> {
 /// vocabulary the window has always used (pane.rs's `PaneMode::classify`).
 fn classify(comm: &str, cmdline: &str) -> WireMode {
     let comm = comm.trim();
-    if comm == "claude" || cmdline.contains("/claude") {
+    if crate::pane::runs_claude(comm, cmdline) {
         WireMode::Claude
     } else if comm == "codex" || cmdline.contains("/codex") {
         WireMode::Codex

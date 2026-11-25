@@ -37,7 +37,7 @@ use gpui::{App, Global, Hsla};
 use serde::Deserialize;
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
-use std::time::{Duration, SystemTime};
+use std::time::SystemTime;
 
 /// A desktop colour scheme, resolved far enough to draw its own preview.
 pub struct Palette {
@@ -415,12 +415,21 @@ fn signature() -> Vec<(PathBuf, Option<SystemTime>)> {
 /// retuned shows the new colours without anyone touching it.
 pub fn init(cx: &mut App) {
     cx.set_global(Library { items: scan() });
+    let arm = |sig: &[(PathBuf, Option<SystemTime>)]| {
+        crate::filewatch::Changes::new(&sig.iter().map(|(p, _)| p.clone()).collect::<Vec<_>>())
+    };
     let mut last = signature();
+    let mut changes = arm(&last);
     cx.spawn(async move |cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(500))
-            .await;
-        let now = cx.background_executor().spawn(async { signature() }).await;
+        changes.wait(cx.background_executor()).await;
+        // Arm before rescanning. If a new theme appeared, install its child
+        // watches and take one more signature to cover the binding interval.
+        changes = arm(&last);
+        let mut now = cx.background_executor().spawn(async { signature() }).await;
+        if now.iter().map(|(p, _)| p).ne(last.iter().map(|(p, _)| p)) {
+            changes = arm(&now);
+            now = cx.background_executor().spawn(async { signature() }).await;
+        }
         if now == last {
             continue;
         }

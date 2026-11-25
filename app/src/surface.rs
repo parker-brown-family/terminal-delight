@@ -1716,12 +1716,11 @@ impl Shelf {
             // The state chip says everything a decision row needs.
             (_, Kind::Decision(_)) | (_, Kind::Question(_)) => None,
             // On a shelf of nothing but replies, the word `response` is the
-            // shelf's name again. What the row wears instead is its doubt
-            // count, which is the one thing about a reply worth a glance.
-            (_, Kind::Response(r)) => match r.doubts.len() {
-                0 => None,
-                n => Some(l.count(&l.strings().parts.surface_badge_doubts, n)),
-            },
+            // shelf's name again. The row used to wear its doubt count instead,
+            // and since nearly every reply has doubts, nearly every row carried
+            // a line saying so: Parker, 2026-11-17, "a bunch of noise in the
+            // overview.... yuk". The doubts are on the card, under evidence.
+            (_, Kind::Response(_)) => None,
             (Shelf::Artifacts, Kind::Artifact(a)) => Some(a.format_word_in(l)),
             (Shelf::Overview, Kind::Artifact(a)) if lettered => Some(a.format_word_in(l)),
             // On the comments board every row is a comment, so the word says
@@ -4360,12 +4359,9 @@ mod tests {
              advertising a reading the card does not open on is a bait"
         );
         assert_eq!(s.kind.shelf(), Shelf::Overview);
-        assert_eq!(
-            Shelf::Overview
-                .badge_in(&s.kind, false, Lang::En)
-                .as_deref(),
-            Some("2 doubts")
-        );
+        // The row carries no doubt count: on a feed of replies nearly every
+        // row had one (Parker, 2026-11-17: "noise in the overview").
+        assert_eq!(Shelf::Overview.badge_in(&s.kind, false, Lang::En), None);
     }
 
     /// Pull the response out of a parsed surface, or fail loudly.
@@ -4562,7 +4558,7 @@ mod tests {
     #[test]
     fn a_response_without_a_plain_brief_is_refused_by_the_verb_and_kept_by_the_file() {
         let bare = json!({ "td": "0.3", "kind": "response", "model": { "eli5": "only this" } });
-        let err = parse(&bare, NOW).err().expect("refused");
+        let err = parse(&bare, NOW).expect_err("refused");
         assert!(err.contains("layman"), "{err}");
         let landed = parse_lenient(&bare, NOW, "x.json").surface.unwrap();
         assert!(

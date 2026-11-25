@@ -1213,7 +1213,8 @@ fn a_dressed_square_asks_for_its_body_to_be_graded(cx: &mut TestAppContext) {
     let body = pane.float_zone(FloatHit::Body).expect("the square's body");
     let graded = crate::warp::doc_grades();
     assert_eq!(graded.len(), 1, "one square, one grade: {graded:?}");
-    let ([x, y, w, h], brightness, contrast) = graded[0];
+    let ([x, y, w, h], brightness, contrast, document) = graded[0];
+    assert!(document, "named a document, not a panel kept out of one");
     let sf = pane.cx.update(|window, _| window.scale_factor());
     assert_eq!(
         (x / sf, y / sf, w / sf, h / sf),
@@ -1228,6 +1229,23 @@ fn a_dressed_square_asks_for_its_body_to_be_graded(cx: &mut TestAppContext) {
     crate::warp::begin_frame();
     pane.redraw();
     assert_eq!(crate::warp::doc_grades(), vec![], "the middle is neutral");
+
+    // Curved, the same neutral square is named a document all the same: the
+    // tube draws it 35% hotter after its grade, and the highlight shoulder
+    // that keeps its whites from clipping finds it by that name (patch 0018).
+    dial(&mut pane, GradeKey::Warp, 1.0);
+    crate::warp::begin_frame();
+    pane.redraw();
+    // A curved frame can paint the square twice; each paint names the same
+    // rect, and the shader takes the last that holds a pixel.
+    let curved = crate::warp::doc_grades();
+    assert!(!curved.is_empty(), "a curved neutral square is named");
+    assert!(
+        curved
+            .iter()
+            .all(|g| g == &curved[0] && (g.1, g.2, g.3) == (1.0, 1.0, true)),
+        "every entry is the document at neutral gains: {curved:?}"
+    );
 }
 
 /// ctrl+↓ steps the document in a floating square and ctrl+shift+↓ pages
@@ -4703,6 +4721,70 @@ fn a_printed_handover_is_read_off_the_screen_and_becomes_the_needs_me_link(
     assert_eq!(pane.read(|v| v.handovers.newest_first().len()), 1);
 }
 
+/// A reply that prints a `Deliverable:` line and then its `## Links` table:
+/// the line is still the one handover and the needs-me link, and the table's
+/// links — the wrapped one joined — go to the pane's list of listed links and
+/// nowhere else.
+#[gpui::test]
+fn a_links_table_is_listed_beside_the_handover_and_never_becomes_one(cx: &mut TestAppContext) {
+    let brief = "file:///tmp/td-links-test/brief.html";
+    let pr = "https://github.com/parker-brown-family/terminal-delight/pull/1465";
+    let (head, tail) = pr.split_at(40);
+    let row = |a: &str, b: &str| format!("  │ {a:<8} │ {b:<40} │");
+    let rule =
+        |l: char, m: char, r: char| format!("  {l}{}{m}{}{r}", "─".repeat(10), "─".repeat(42));
+    let lines = [
+        "  Deliverable: The brief —".to_string(),
+        format!("  {brief}"),
+        rule('┌', '┬', '┐'),
+        row("What", "Link"),
+        rule('├', '┼', '┤'),
+        row("The PR", head),
+        row("", tail),
+        rule('├', '┼', '┤'),
+        row("Brief", brief),
+        rule('└', '┴', '┘'),
+    ];
+    let quoted: Vec<String> = lines.iter().map(|l| format!("'{l}'")).collect();
+    let mut pane = Pane::running(
+        cx,
+        &format!("printf '%s\\n' {} 'ready'; exec cat", quoted.join(" ")),
+    );
+    pane.wait_for("ready");
+    pane.view.update(pane.cx, |v, cx| {
+        v.mode = super::PaneMode::Claude;
+        v.scan_handovers(cx);
+    });
+    let handed: Vec<String> = pane.read(|v| {
+        v.handovers
+            .newest_first()
+            .iter()
+            .map(|h| h.href.clone())
+            .collect()
+    });
+    assert_eq!(handed, [brief], "the Deliverable line is the only handover");
+    assert_eq!(
+        pane.read(|v| v.deliverable()).map(|d| d.href),
+        Some(brief.to_string())
+    );
+    let mut linked: Vec<(String, String)> = pane.read(|v| {
+        v.linked
+            .newest_first()
+            .iter()
+            .map(|h| (h.label.clone(), h.href.clone()))
+            .collect()
+    });
+    linked.sort();
+    assert_eq!(
+        linked,
+        [
+            ("Brief".to_string(), brief.to_string()),
+            ("The PR".to_string(), pr.to_string()),
+        ],
+        "the table's links, the PR joined across its cell"
+    );
+}
+
 /// A link longer than the pane, printed as one line, is wrapped by the
 /// terminal itself and carried on at the left edge with the row flagged. An
 /// agent that does not draw fullscreen hands things over in this shape, and
@@ -5651,4 +5733,509 @@ while True:
     }
     pane.keys("q");
     assert!(!pane.read(|v| v.scroll_mode));
+}
+
+/// A collected text run can be laid out below a clip. Only accept it once
+/// the reader can reach the whole run inside the card's scroll viewport.
+fn read_card_phrase(pane: &mut Pane, phrase: &str) {
+    let visible = |v: &super::TerminalView| {
+        let b = v.wb_card_scroll.bounds();
+        let drawn = v.wb_atoms.borrow();
+        drawn.0.iter().zip(&drawn.1).any(|(atom, layout)| {
+            let Some(start) = atom
+                .text
+                .to_ascii_lowercase()
+                .find(&phrase.to_ascii_lowercase())
+            else {
+                return false;
+            };
+            phrase
+                .char_indices()
+                .map(|(i, _)| i)
+                .chain(std::iter::once(phrase.len()))
+                .all(|i| {
+                    layout.position_for_index(start + i).is_some_and(|at| {
+                        at.x >= b.left()
+                            && at.x <= b.right() + px(1.)
+                            && at.y >= b.top()
+                            && at.y + layout.line_height() <= b.bottom() + px(1.)
+                    })
+                })
+        })
+    };
+    while !pane.read(visible) {
+        let before = pane.read(|v| v.wb_card_scroll.offset().y);
+        pane.keys("pagedown");
+        pane.redraw();
+        let after = pane.read(|v| v.wb_card_scroll.offset().y);
+        if after >= before {
+            let evidence = pane.read(|v| {
+                (
+                    v.wb_card_scroll.bounds(),
+                    v.wb_atoms
+                        .borrow()
+                        .0
+                        .iter()
+                        .filter(|a| a.text.to_ascii_lowercase().contains(phrase))
+                        .cloned()
+                        .collect::<Vec<_>>(),
+                )
+            });
+            panic!("cannot scroll {phrase:?} into the visible card: {evidence:?}");
+        }
+    }
+}
+
+#[gpui::test]
+fn workbench_decision_keeps_its_question_and_costs_in_a_tiled_pane(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    let (_, doc) = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(name, _)| *name == "01-decision")
+        .unwrap();
+    pane.view.update(pane.cx, |v, cx| {
+        let id = v
+            .bench
+            .apply(crate::surface::parse(&doc, 1).unwrap())
+            .unwrap();
+        v.bench.select(&id);
+        v.set_face(Face::Workbench, cx);
+    });
+    for width in [1600., 600.] {
+        pane.cx.simulate_resize(gpui::size(px(width), px(900.)));
+        pane.redraw();
+        pane.redraw();
+        pane.read(|v| {
+            let atoms = v.wb_atoms.borrow();
+            let option = |name: &str| {
+                atoms
+                    .0
+                    .iter()
+                    .find(|atom| atom.text == name)
+                    .expect("drawn option")
+            };
+            let first = option("In the pane");
+            let second = option("In the window");
+            if width > 1000. {
+                assert!(
+                    (first.y - second.y).abs() < 4. && second.x > first.x + 200.,
+                    "wide options should be side by side"
+                );
+            } else {
+                assert!(
+                    second.y > first.y + 15.,
+                    "tiled options should read down the page"
+                );
+            }
+        });
+        let model = &doc["model"];
+        read_card_phrase(&mut pane, model["question"].as_str().unwrap());
+        assert!(
+            pane.read(|v| v.wb_zones.borrow().iter().any(|zone| zone.w > 0.
+                && zone.h > 0.
+                && matches!(
+                    zone.hit,
+                    crate::workbench::Hit::Verb {
+                        action: crate::surface::Action::Approve,
+                        ..
+                    }
+                )))
+        );
+        for option in model["options"].as_array().unwrap() {
+            for key in ["case", "cost"] {
+                read_card_phrase(&mut pane, option[key].as_str().unwrap());
+            }
+        }
+        for consequence in model["consequences"].as_array().unwrap() {
+            read_card_phrase(&mut pane, consequence.as_str().unwrap());
+        }
+    }
+}
+
+fn open_bench_fixture(pane: &mut Pane, doc: &serde_json::Value) {
+    pane.view.update(pane.cx, |v, cx| {
+        let post = crate::surface::parse_lenient(doc, 1, "Fixture");
+        let id = post.id.clone();
+        v.bench.apply(post);
+        v.bench.select(&id);
+        v.set_face(Face::Workbench, cx);
+    });
+    pane.redraw();
+    pane.redraw();
+}
+
+#[gpui::test]
+fn workbench_evidence_survives_the_tiled_layout(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    let mut docs = crate::surfacefeed::demo_surfaces();
+    docs.push((
+        "markdown",
+        serde_json::json!({
+            "td":"0.4", "kind":"markdown", "id":"long-doc", "title":"Review",
+            "model":{"body":"# Evidence\n\none\n\ntwo\n\nthree\n\nEnd of handoff"}
+        }),
+    ));
+    for width in [600., 1600.] {
+        pane.cx.simulate_resize(gpui::size(px(width), px(950.)));
+        for (name, needle) in [
+            ("02-architecture", "one JSON document"),
+            ("03-changeset", "(0.0, 0.0)"),
+            ("04-report", "Eleven figures"),
+            ("05-table", "what it needs"),
+            ("06-unclassified", "spin"),
+            ("07-response", "the effort row"),
+            ("markdown", "End of handoff"),
+        ] {
+            open_bench_fixture(
+                &mut pane,
+                &docs.iter().find(|(id, _)| *id == name).unwrap().1,
+            );
+            read_card_phrase(&mut pane, needle);
+        }
+    }
+}
+
+#[gpui::test]
+fn workbench_keys_review_the_named_hunk_and_open_evidence(cx: &mut TestAppContext) {
+    use crate::workbench::Hit;
+    let mut pane = Pane::running(cx, "exec cat");
+    pane.cx.simulate_resize(gpui::size(px(600.), px(950.)));
+    let docs = crate::surfacefeed::demo_surfaces();
+    for name in ["03-changeset", "07-response"] {
+        open_bench_fixture(
+            &mut pane,
+            &docs.iter().find(|(id, _)| *id == name).unwrap().1,
+        );
+        for _ in 0..70 {
+            pane.keys("right");
+            pane.redraw();
+            let wanted = pane.read(|v| match &v.wb_key_focus {
+                Some(Hit::Verb {
+                    action: crate::surface::Action::RejectPart,
+                    target: Some(id),
+                }) => id == "pane.rs#body",
+                Some(Hit::PickTab {
+                    group: crate::surface::Group::Evidence,
+                    ..
+                }) => true,
+                _ => false,
+            });
+            if wanted {
+                break;
+            }
+        }
+        assert!(
+            pane.read(|v| matches!(v.wb_key_focus, Some(Hit::Verb { .. } | Hit::PickTab { .. }))),
+            "no target on {name}"
+        );
+        pane.keys("enter");
+        pane.redraw();
+        pane.read(|v| {
+            let surface = v.bench.selected().unwrap();
+            match &surface.kind {
+                crate::surface::Kind::Changeset(c) => {
+                    assert_eq!(c.hunks[0].verdict, crate::surface::Verdict::Undecided);
+                    assert_eq!(c.hunks[1].verdict, crate::surface::Verdict::Rejected);
+                }
+                crate::surface::Kind::Response(_) => assert_eq!(
+                    v.bench.picked_tab(&surface.id),
+                    Some(crate::surface::Group::Evidence)
+                ),
+                _ => unreachable!(),
+            }
+        });
+    }
+}
+
+#[gpui::test]
+fn workbench_twenty_replies_and_a_long_document_can_be_read_by_key(cx: &mut TestAppContext) {
+    let mut pane = Pane::running(cx, "exec cat");
+    pane.cx.simulate_resize(gpui::size(px(600.), px(740.)));
+    for i in 0..20 {
+        let doc = serde_json::json!({
+            "td":"0.4","kind":"response","id":format!("turn-{i}"),"title":format!("Review {i}"),
+            "model":{"layman":format!("The reviewer finished check {i} and recorded the result.")}
+        });
+        pane.view.update(pane.cx, |v, _| {
+            v.bench.apply(crate::surface::parse(&doc, i + 1).unwrap());
+        });
+    }
+    pane.view
+        .update(pane.cx, |v, cx| v.set_face(Face::Workbench, cx));
+    pane.redraw();
+    for _ in 0..19 {
+        pane.keys("down");
+    }
+    pane.redraw();
+    pane.redraw();
+    pane.read(|v| {
+        let selected = &v.bench.selected().expect("oldest reply").id;
+        assert_eq!(selected.0, "turn-0");
+        assert!(
+            v.wb_zones.borrow().iter().any(|z| z.hit
+                == crate::workbench::Hit::OpenRow(selected.clone())
+                && z.w > 0.
+                && z.h > 0.),
+            "the selected reply must remain visible in the shelf"
+        );
+    });
+    let body = (0..150)
+        .map(|i| format!("Paragraph {i}."))
+        .collect::<Vec<_>>()
+        .join("\n\n");
+    open_bench_fixture(
+        &mut pane,
+        &serde_json::json!({
+            "td":"0.4","kind":"markdown","id":"long","title":"Report","model":{"body":body}
+        }),
+    );
+    pane.keys("pagedown");
+    pane.redraw();
+    assert!(pane.read(|v| f32::from(v.wb_card_scroll.offset().y) < 0.));
+    pane.keys("pageup");
+    pane.redraw();
+    assert_eq!(pane.read(|v| f32::from(v.wb_card_scroll.offset().y)), 0.);
+}
+
+#[gpui::test]
+fn workbench_comment_draft_stays_with_its_card(cx: &mut TestAppContext) {
+    use crate::surface::Action;
+    use crate::workbench::Hit;
+    let mut pane = Pane::running(cx, "exec cat");
+    let docs = crate::surfacefeed::demo_surfaces();
+    let mut doc = docs
+        .iter()
+        .find(|(key, _)| *key == "01-decision")
+        .unwrap()
+        .1
+        .clone();
+    doc["actions"] = serde_json::json!(["comment"]);
+    open_bench_fixture(&mut pane, &doc);
+    for _ in 0..60 {
+        pane.keys("right");
+        pane.redraw();
+        if pane.read(|v| {
+            matches!(
+                v.wb_key_focus,
+                Some(Hit::Verb {
+                    action: Action::Comment,
+                    ..
+                })
+            )
+        }) {
+            break;
+        }
+    }
+    pane.keys("enter");
+    assert!(pane.read(|v| v
+        .wb_draft_verb
+        .as_ref()
+        .is_some_and(|(_, a)| a == &Action::Comment)));
+    pane.keys("x");
+    pane.view.update(pane.cx, |v, _| {
+        v.bench.close_card();
+    });
+    pane.keys("enter");
+    pane.keys("enter");
+    assert!(pane.read(|v| v.wb_compose.as_ref().is_some_and(|line| line.text() == "x")));
+}
+
+#[gpui::test]
+fn workbench_collapsed_shelf_does_not_trap_focus(cx: &mut TestAppContext) {
+    use crate::workbench::Hit;
+    let mut pane = Pane::running(cx, "exec cat");
+    let doc = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(k, _)| *k == "01-decision")
+        .unwrap()
+        .1;
+    open_bench_fixture(&mut pane, &doc);
+    pane.view.update(pane.cx, |v, cx| {
+        v.bench.toggle_rail();
+        cx.notify();
+    });
+    pane.redraw();
+    assert!(pane.read(|v| v
+        .wb_zones
+        .borrow()
+        .iter()
+        .filter(|z| z.hit == Hit::ToggleRail && z.w > 0. && z.h > 0.)
+        .count()
+        >= 2));
+    for _ in 0..60 {
+        pane.keys("right");
+        if pane.read(|v| v.wb_key_focus == Some(Hit::ToggleRail)) {
+            break;
+        }
+    }
+    assert!(pane.read(|v| v.wb_key_focus == Some(Hit::ToggleRail)));
+    pane.keys("right");
+    assert!(pane.read(|v| v.wb_key_focus != Some(Hit::ToggleRail)));
+}
+
+#[gpui::test]
+fn workbench_draft_survives_other_cards_and_scripted_speech(cx: &mut TestAppContext) {
+    use crate::{surface::Action, workbench::Hit};
+    let mut pane = Pane::running(cx, "exec cat");
+    let mut doc = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(k, _)| *k == "01-decision")
+        .unwrap()
+        .1;
+    doc["actions"] = serde_json::json!(["comment", "approve"]);
+    open_bench_fixture(&mut pane, &doc);
+    let press = |pane: &mut Pane, action| {
+        let view = pane.view.clone();
+        pane.cx.update(|w, cx| {
+            view.update(cx, |v, cx| {
+                v.bench_hit(
+                    Hit::Verb {
+                        action,
+                        target: None,
+                    },
+                    point(px(0.), px(0.)),
+                    w,
+                    cx,
+                )
+            })
+        });
+    };
+    press(&mut pane, Action::Comment);
+    let pending = pane.read(|v| v.wb_draft_verb.clone());
+    assert!(pending.is_some());
+    pane.keys("space enter");
+    assert_eq!(
+        pane.read(|v| v.wb_draft_verb.clone()),
+        pending,
+        "blank comment consumed"
+    );
+    pane.keys("x");
+    let draft = pane.read(|v| v.wb_compose.as_ref().unwrap().text().to_string());
+    doc["id"] = serde_json::json!("other-review");
+    open_bench_fixture(&mut pane, &doc);
+    press(&mut pane, Action::Comment);
+    press(&mut pane, Action::Approve);
+    assert_eq!(
+        pane.read(|v| v.wb_draft_verb.clone()),
+        pending,
+        "a different card consumed the draft"
+    );
+    pane.view
+        .update(pane.cx, |v, cx| v.bench_say("ordinary message", cx));
+    assert!(pane.read(|v| v.wb_sent.iter().any(|s| s == "ordinary message")));
+    assert_eq!(pane.read(|v| v.wb_draft_verb.clone()), pending);
+    assert_eq!(
+        pane.read(|v| v.wb_compose.as_ref().unwrap().text().to_string()),
+        draft
+    );
+}
+
+#[gpui::test]
+fn menu_clarity_pane_shows_the_clipboard_shortcuts_when_they_apply(cx: &mut TestAppContext) {
+    let mut pane = pane_at_a_prompt(cx, false);
+    let open = |pane: &mut Pane| {
+        pane.view.update(pane.cx, |v, cx| {
+            v.ctx_menu = Some(point(px(140.), px(100.)));
+            cx.notify();
+        });
+        pane.redraw();
+    };
+    open(&mut pane);
+    let hint = |pane: &mut Pane, chord: &'static str| pane.cx.debug_bounds(chord);
+    assert!(hint(&mut pane, "ctx-hint-Ctrl+Shift+C").is_none());
+    let paste = hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap();
+    let clear = hint(&mut pane, "ctx-hint-Ctrl+Shift+K").unwrap();
+    assert!(paste.size.width > px(0.) && paste.bottom() <= clear.top());
+    pane.view.update(pane.cx, |v, cx| {
+        v.ctx_menu = None;
+        cx.notify();
+    });
+    pane.redraw();
+    type_line(&mut pane, "echo hello world foo");
+    let a = pane.point_at("world");
+    let b = pane.point_at("ld");
+    pane.press(a);
+    pane.drag_to(b);
+    pane.release(b);
+    assert!(pane.read(|v| v.has_selection()));
+    open(&mut pane);
+    let copy = hint(&mut pane, "ctx-hint-Ctrl+Shift+C").unwrap();
+    assert!(
+        copy.size.width > px(0.)
+            && copy.bottom() <= hint(&mut pane, "ctx-hint-Ctrl+Shift+V").unwrap().top()
+    );
+}
+
+/// Issue #1483 (found by the Claude reviewer, whose test this is): an armed
+/// comment made every other workbench button do nothing until Esc. Approve now
+/// acts and the draft stays armed on its own card. Mutation: restoring the old
+/// early return for any other action fails the 1 -> 1 case.
+#[gpui::test]
+fn an_armed_comment_does_not_swallow_another_buttons_action(cx: &mut TestAppContext) {
+    use crate::{surface::Action, workbench::Hit};
+    let mut pane = Pane::running(cx, "exec cat");
+    let mut doc = crate::surfacefeed::demo_surfaces()
+        .into_iter()
+        .find(|(k, _)| *k == "01-decision")
+        .unwrap()
+        .1;
+    doc["actions"] = serde_json::json!(["comment", "approve"]);
+    let press = |pane: &mut Pane, action| {
+        let view = pane.view.clone();
+        pane.cx.update(|w, cx| {
+            view.update(cx, |v, cx| {
+                v.bench_hit(
+                    Hit::Verb {
+                        action,
+                        target: None,
+                    },
+                    point(px(0.), px(0.)),
+                    w,
+                    cx,
+                )
+            })
+        });
+    };
+    // What reached the agent: echoed on screen, or queued for it.
+    let approvals = |pane: &mut Pane| {
+        for _ in 0..20 {
+            pane.redraw();
+        }
+        let shown = pane
+            .rows()
+            .iter()
+            .filter(|r| r.to_lowercase().contains("approve"))
+            .count();
+        shown + pane.read(|v| v.wb_queued.len())
+    };
+    // Control: Approve on a card with nothing armed reaches the agent.
+    doc["id"] = serde_json::json!("first");
+    open_bench_fixture(&mut pane, &doc);
+    let before = approvals(&mut pane);
+    press(&mut pane, Action::Approve);
+    let after_plain = approvals(&mut pane);
+    let queued = pane.read(|v| v.wb_queued.len());
+    let rows = pane.rows().join("|");
+    assert!(
+        after_plain > before || queued > 0,
+        "control: a plain Approve is seen ({before} -> {after_plain}, queued {queued}): {rows}"
+    );
+    // The case: Comment armed (nothing typed), then the same card's Approve.
+    doc["id"] = serde_json::json!("second");
+    open_bench_fixture(&mut pane, &doc);
+    press(&mut pane, Action::Comment);
+    assert!(pane.read(|v| v.wb_draft_verb.is_some()));
+    let before = approvals(&mut pane);
+    press(&mut pane, Action::Approve);
+    let after = approvals(&mut pane);
+    assert!(
+        after > before,
+        "Approve after arming Comment was swallowed ({before} -> {after})"
+    );
+    // And the draft is still armed, on the card it was armed on.
+    let armed = pane.read(|v| v.wb_draft_verb.clone());
+    assert!(
+        armed.is_some_and(|(id, verb)| id.as_str() == "second" && verb == Action::Comment),
+        "Approve left the armed comment where it was"
+    );
 }

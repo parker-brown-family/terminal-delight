@@ -1123,6 +1123,7 @@ mod tests {
 
     /// Every surface, alone, with a key it claims.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn a_surface_that_is_alone_gets_what_it_claims() {
         let cases: [(fn(&mut Up), Key, Layer); 9] = [
             (|u| u.paint = true, ch("r"), Layer::Paint),

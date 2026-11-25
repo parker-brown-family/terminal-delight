@@ -244,7 +244,7 @@ fn agent_resume(
     pid: u32,
 ) -> Option<String> {
     let c = comm.trim();
-    if c == "claude" || cmdline.contains("/claude") || cmdline.starts_with("claude ") {
+    if crate::pane::runs_claude(c, cmdline) {
         let id = pick_session(
             // Everything the process itself says about which conversation it is
             // in: a pushed ledger entry, a descriptor it holds, its own command
@@ -711,12 +711,59 @@ pub fn declared_session(
         .filter(|id| safe_resume_id(id))
 }
 
-/// Codex equivalent: the rollout `<uuid>.jsonl` the live process holds open.
+/// Codex equivalent: the rollout `<uuid>.jsonl` the live process holds open,
+/// or one of its descendants does. A pane's foreground process is often not
+/// `codex` itself but a wrapper that runs it as a child (the skills bridge's
+/// skill-manager, `mise` shims), and reading only the wrapper's descriptors
+/// found nothing, so every such pane was saved as `codex resume --last` and two
+/// in one folder could not both come back (issue #1447).
 fn codex_session_from_fds(pid: u32, home: &Path) -> Option<String> {
     let root = home.join(".codex/sessions");
-    open_jsonl_under(pid, &root)
+    std::iter::once(pid)
+        .chain(descendants(pid, 3))
+        .find_map(|p| open_jsonl_under(p, &root))
         .as_deref()
         .and_then(rollout_uuid)
+}
+
+/// The live descendants of `pid`, nearest first, at most `depth` generations
+/// down. Read from `/proc/<n>/stat`'s parent field; a process that ends during
+/// the walk is simply missed.
+fn descendants(pid: u32, depth: usize) -> Vec<u32> {
+    let parents: Vec<(u32, u32)> = std::fs::read_dir("/proc")
+        .into_iter()
+        .flatten()
+        .flatten()
+        .filter_map(|e| {
+            let n: u32 = e.file_name().to_str()?.parse().ok()?;
+            let stat = std::fs::read_to_string(format!("/proc/{n}/stat")).ok()?;
+            // The command name is in parentheses and may hold spaces; the
+            // parent pid is the second field after the last ')'.
+            let ppid = stat
+                .rsplit_once(')')?
+                .1
+                .split_whitespace()
+                .nth(1)?
+                .parse()
+                .ok()?;
+            Some((n, ppid))
+        })
+        .collect();
+    let mut out = vec![];
+    let mut frontier = vec![pid];
+    for _ in 0..depth {
+        let next: Vec<u32> = parents
+            .iter()
+            .filter(|(_, pp)| frontier.contains(pp))
+            .map(|(n, _)| *n)
+            .collect();
+        if next.is_empty() {
+            break;
+        }
+        out.extend(&next);
+        frontier = next;
+    }
+    out
 }
 
 /// The conversation a live Codex is in right now: the rollout it holds open,
@@ -902,6 +949,44 @@ pub(crate) fn collect_jsonl(dir: &Path, out: &mut Vec<PathBuf>, depth: u8) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    /// Issue #1447: the rollout a Codex child holds open is found from the
+    /// pane's foreground wrapper, so the pane is saved as `codex resume <id>`.
+    /// The wrapper here is a real `sh` whose child holds the file. Mutation:
+    /// reading only the wrapper's own descriptors (dropping `descendants`)
+    /// fails it.
+    #[test]
+    fn a_wrapped_codex_is_resumed_by_the_rollout_its_child_holds() {
+        let home = std::env::temp_dir().join(format!("td-codex-wrap-{}", std::process::id()));
+        let day = home.join(".codex/sessions/2026/11/18");
+        std::fs::create_dir_all(&day).unwrap();
+        let id = "0199aaaa-bbbb-4ccc-8ddd-eeeeeeeeeeee";
+        let rollout = day.join(format!("rollout-2026-11-18T01-00-00-{id}.jsonl"));
+        std::fs::write(&rollout, "{}\n").unwrap();
+        let mut wrapper = std::process::Command::new("sh")
+            .arg("-c")
+            .arg(format!("sleep 30 3<'{}' & wait", rollout.display()))
+            .spawn()
+            .unwrap();
+        let pid = wrapper.id();
+        let mut found = None;
+        for _ in 0..50 {
+            found = codex_session_from_fds(pid, &home);
+            if found.is_some() {
+                break;
+            }
+            std::thread::sleep(std::time::Duration::from_millis(20));
+        }
+        for child in descendants(pid, 3) {
+            let _ = std::process::Command::new("kill")
+                .arg(child.to_string())
+                .status();
+        }
+        let _ = wrapper.kill();
+        let _ = wrapper.wait();
+        let _ = std::fs::remove_dir_all(&home);
+        assert_eq!(found.as_deref(), Some(id));
+    }
 
     #[test]
     fn a_codex_rollout_is_matched_by_its_conversation_and_its_home() {

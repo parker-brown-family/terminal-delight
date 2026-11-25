@@ -596,7 +596,7 @@ mod tests {
         let (found, _) = discover(
             &roots,
             &move |k| (k == "GEMINI_CLI_HOME").then(|| w.clone()),
-            &[build.clone()],
+            std::slice::from_ref(&build),
         );
         let g = found.iter().find(|e| e.client == Client::Gemini).unwrap();
         assert_eq!(g.file, work.join(".gemini/settings.json"));

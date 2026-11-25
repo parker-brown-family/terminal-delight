@@ -72,8 +72,11 @@ mod far_floor_view;
 mod farfloor;
 mod fav;
 mod feedback;
+mod filewatch;
 mod flyout;
 mod flyout_view;
+#[cfg(test)]
+mod fuzz;
 mod glyph;
 mod gridwire;
 mod handover;
@@ -514,6 +517,13 @@ type Node = Tree<Entity<TerminalView>>;
 type BoundTranscript = (u64, PathBuf, Option<(u64, u64)>);
 
 impl<L: Clone> Tree<L> {
+    fn any_leaf(&self, predicate: &impl Fn(&L) -> bool) -> bool {
+        match self {
+            Self::Leaf(leaf) => predicate(leaf),
+            Self::Split { a, b, .. } => a.any_leaf(predicate) || b.any_leaf(predicate),
+        }
+    }
+
     fn leaves<'a>(&'a self, out: &mut Vec<&'a L>) {
         match self {
             Tree::Leaf(e) => out.push(e),
@@ -1611,9 +1621,14 @@ const MARQUEE_SECS: f32 = 6.0;
 fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> gpui::Div {
     // Fade the last second rather than vanishing on a frame boundary.
     let fade = ((MARQUEE_SECS - age) / 1.0).clamp(0.0, 1.0);
-    let t = anim_clock();
     let bulbs = |phase: i64| {
-        let mut m = div().flex().flex_row().items_center().gap_1();
+        let t = anim_clock();
+        let mut m = div()
+            .debug_selector(|| "marquee-bulbs".into())
+            .flex()
+            .flex_row()
+            .items_center()
+            .gap_1();
         for k in 0..6 {
             let lit = (((t * 6.0) as i64 + k + phase) % 3) == 0;
             m = m.child(div().w(px(6.)).h(px(6.)).rounded_full().bg(if lit {
@@ -1625,6 +1640,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
         m
     };
     div()
+        .debug_selector(|| "marquee-banner".into())
         .absolute()
         .top(px(8.))
         .left_0()
@@ -1646,7 +1662,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                 .bg(th.bg.alpha(0.88 * fade))
                 .shadow(float_shadows(th.accent, th.grade.phosphor))
                 .map(|d| sk.finish(d))
-                .child(bulbs(0))
+                .when(sk.shape.tube != skin::Tube::Direct, |d| d.child(bulbs(0)))
                 .child(
                     div()
                         .text_size(px(11.))
@@ -1654,7 +1670,7 @@ fn marquee_banner(text: &str, age: f32, th: &theme::Theme, sk: &skin::Skin) -> g
                         .text_color(th.text.alpha(fade))
                         .child(SharedString::from(text.to_string())),
                 )
-                .child(bulbs(1)),
+                .when(sk.shape.tube != skin::Tube::Direct, |d| d.child(bulbs(1))),
         )
 }
 
@@ -2665,6 +2681,21 @@ impl BaySays {
 /// How long the bay keeps saying it.
 const BAY_SAYS_FOR: Duration = Duration::from_secs(6);
 
+/// Advance the drop target's doors and say whether its flame needs another frame.
+fn bay_frame(position: &mut f32, target: f32, direct: bool) -> bool {
+    if direct {
+        *position = target;
+        return false;
+    }
+    let distance = target - *position;
+    if distance.abs() < 0.004 {
+        *position = target;
+    } else {
+        *position += distance * 0.28;
+    }
+    *position > 0.
+}
+
 /// The trash tray's offer for one holding, `{label}` still to fill.
 ///
 /// The tray offers projects, groups, tabs and panes in one list, and
@@ -3519,8 +3550,19 @@ fn persist_primary_state(body: &str, new_leaves: usize, new_tabs: usize, allow_s
         );
         return;
     }
-    rotate_state_backup(&path);
-    let _ = session::write_atomic(&path, body);
+    write_with_backup(&path, body);
+}
+
+/// Write a session body, rotating a backup first, unless the file on disk
+/// already holds these exact bytes. A no-op save used to take a backup slot
+/// like a real one, so the ring of ten held under two minutes of history on a
+/// busy session (issue #476).
+fn write_with_backup(path: &std::path::Path, body: &str) {
+    if fs::read(path).is_ok_and(|disk| disk == body.as_bytes()) {
+        return;
+    }
+    rotate_state_backup(path);
+    let _ = session::write_atomic(path, body);
 }
 
 /// The layout for a demo window: the throwaway state file named by
@@ -3530,52 +3572,6 @@ fn load_demo_state() -> StateFile {
         .and_then(|p| fs::read_to_string(p).ok())
         .and_then(|s| toml::from_str(&s).ok())
         .unwrap_or_default()
-}
-
-/// Frame-wide jiggle: the whole device hops ±1px every so often.
-struct FrameJiggle {
-    started: Instant,
-    rng: u64,
-    px: f32,
-    until: f32,
-    next_at: f32,
-}
-
-impl FrameJiggle {
-    fn new() -> Self {
-        let seed = std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .map(|d| d.subsec_nanos() as u64)
-            .unwrap_or(3);
-        Self {
-            started: Instant::now(),
-            rng: 0x9E3779B97F4A7C15 ^ seed,
-            px: 0.,
-            until: 0.,
-            next_at: 5.0,
-        }
-    }
-    fn rand(&mut self) -> f32 {
-        self.rng = self
-            .rng
-            .wrapping_mul(6364136223846793005)
-            .wrapping_add(1442695040888963407);
-        ((self.rng >> 33) as f32) / (u32::MAX as f32 / 2.0)
-    }
-    fn tick(&mut self) -> bool {
-        let t = self.started.elapsed().as_secs_f32();
-        if self.px != 0. && t >= self.until {
-            self.px = 0.;
-            return true;
-        }
-        if self.px == 0. && t >= self.next_at {
-            self.px = if self.rand() > 1.0 { 1.0 } else { -1.0 };
-            self.until = t + 0.07;
-            self.next_at = t + 7.0 + self.rand() * 5.0;
-            return true;
-        }
-        false
-    }
 }
 
 /// The GAUGES tray's two collapsed sections: the text crawl, and the CRT.
@@ -5082,6 +5078,8 @@ struct Workspace {
     /// The in-window marquee banner: what it says, and when it was raised. It
     /// fades itself out; nothing needs to clear it.
     marquee_says: Option<(String, Instant)>,
+    /// One wake to remove the next expiring static notice in direct mode.
+    static_notice_deadline: Option<Instant>,
     /// Last plugin action result line (e.g. "wrote …/<id>.cdx"), shown as a
     /// transient toast in the graveyard / plugins panel.
     harvest_status: Option<String>,
@@ -5237,8 +5235,18 @@ struct Workspace {
     /// Live colour-wheel rect, for polar hit-testing during a drag.
     wheel_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
     scrubbing: bool,
+    /// A gauge was shown changed and not yet saved: a slider drag saves once,
+    /// when it ends, rather than on every move.
+    grade_unsaved: bool,
+    /// How many times `save` was asked for, so a test can see a drag save once.
+    #[cfg(test)]
+    saves_asked: std::cell::Cell<usize>,
     scrub_bounds: Arc<Mutex<Option<Bounds<Pixels>>>>,
-    jiggle: FrameJiggle,
+    badge_timer: bool,
+    prompt_timer: bool,
+    flyout_timer: bool,
+    tool_clock: bool,
+    vitals_clock: bool,
     last_action: Instant,
     split_bounds: Arc<Mutex<std::collections::HashMap<u64, Bounds<Pixels>>>>,
     /// Last seen window bounds (x, y, w, h), refreshed each render for save().
@@ -5986,6 +5994,14 @@ struct RestCensus {
     sampled_at: Option<Instant>,
     /// Why panes are not resting, by kind.
     refusals: Vec<(agentrest::RefusalClass, u32)>,
+}
+
+impl RestCensus {
+    fn display_changed(&self, next: &Self) -> bool {
+        self.sampled_at.is_some() != next.sampled_at.is_some()
+            || self.memory != next.memory
+            || self.refusals != next.refusals
+    }
 }
 
 /// What to do with one saved leaf when a host is holding the terminals.
@@ -6943,6 +6959,9 @@ impl Workspace {
             }
         };
         let ask_seq = prompts.latest_receipt_id();
+        // Stamp the window's start before any prompt can be minted, so an id
+        // an earlier window minted reads as older than this one.
+        prompt::window_started_ms();
         let mut ws = Self {
             drag: None,
             tabs: vec![],
@@ -7042,6 +7061,7 @@ impl Workspace {
             bug_unseen: diag::unseen_crashes(),
             notif: notifpref::load(),
             marquee_says: None,
+            static_notice_deadline: None,
             harvest_status: None,
             savings_menu: false,
             savings_view: None,
@@ -7125,8 +7145,15 @@ impl Workspace {
             track_bounds: Default::default(),
             wheel_bounds: Arc::new(Mutex::new(None)),
             scrubbing: false,
+            grade_unsaved: false,
+            #[cfg(test)]
+            saves_asked: std::cell::Cell::new(0),
             scrub_bounds: Arc::new(Mutex::new(None)),
-            jiggle: FrameJiggle::new(),
+            badge_timer: false,
+            prompt_timer: false,
+            flyout_timer: false,
+            tool_clock: false,
+            vitals_clock: false,
             last_action: Instant::now() - Duration::from_secs(1),
             split_bounds: Arc::new(Mutex::new(std::collections::HashMap::new())),
             last_win: None,
@@ -7347,65 +7374,47 @@ impl Workspace {
         if ws.eng_table {
             window.focus(&ws.focus_handle, cx);
         }
-        // frame jiggle clock (cheap idle poll). MUST stop when this window's
-        // Workspace is dropped — otherwise every opened-then-closed window
-        // (scratch, tear-off) leaves an orphan 60ms task waking forever on a
-        // dead entity, and idle CPU climbs over a session.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(60))
-                .await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| {
-                    if ws.jiggle.tick() {
-                        cx.notify();
-                    }
-                })
-                .is_err()
-            {
+        // A cwd change needs polling only while a directory has a logo. Both
+        // external preference files can change even when the window is hidden.
+        let dir_preferences = cx.spawn(async move |this, cx| loop {
+            use futures::FutureExt;
+            let files =
+                filewatch::Changes::new(&[dirlogo::config_path(), notifpref::config_path()]);
+            let Ok(track_cwd) = this.update(cx, |ws: &mut Workspace, cx| {
+                ws.notif = notifpref::load();
+                ws.refresh_dir_logos(cx);
+                !ws.dir_logos.is_empty()
+            }) else {
                 break;
+            };
+            let exec = cx.background_executor().clone();
+            let changed = files.wait(&exec).fuse();
+            futures::pin_mut!(changed);
+            if track_cwd {
+                futures::select! {
+                    () = changed => {},
+                    () = exec.timer(Duration::from_secs(2)).fuse() => {},
+                }
+            } else {
+                changed.await;
             }
+        });
+        cx.on_release(move |_, _| drop(dir_preferences)).detach();
+        // A request can arrive while the compositor has stopped drawing this
+        // window. Workspace notifications activate clocks independently of paint.
+        cx.observe_in(&cx.entity(), window, |ws: &mut Workspace, _, w, cx| {
+            ws.team_drain(w, cx);
+            ws.arm_feature_timers(w, cx);
+            ws.watch_far_floor(w, cx);
         })
         .detach();
-        // dir-logo sweep: a `cd` changes which per-directory default applies,
-        // and no structural event fires for it — poll the cheap /proc cwd
-        // every 2s. Scratch windows sweep too (they wear logos like any other;
-        // they just never persist layout).
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(2)).await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| {
-                    // The notification switches ride this tick too: one tiny
-                    // file read, so an edit from $EDITOR or a second window
-                    // lands without a restart.
-                    ws.notif = notifpref::load();
-                    ws.refresh_dir_logos(cx)
-                })
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
+        ws.arm_feature_timers(window, cx);
+        ws.watch_far_floor(window, cx);
         // Other machines: asked only while the Floor is open on them, a line
         // to one of their agents is drawn, or a prompt sent across is open.
         if !scratch && !demo {
             ws.far_reload_machines();
-            Self::watch_far_floor(window, cx);
-            Self::watch_teams(window, cx);
         }
-        // The right-bar flyout's poll: the tab on screen is read again when
-        // it is due, and nothing is read while the flyout is shut.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(1)).await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| ws.flyout_kick(false, cx))
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
         // usage sweep: the bottom slot's allowance rows, kept current with
         // nobody opening anything. The slot is the one number surface in TD
         // that is never dismissed, so it is also the only one whose staleness
@@ -7418,20 +7427,37 @@ impl Workspace {
         // UPDATES. Off unless they did; when on, it looks five minutes after
         // the window opens and every six hours after, asks GitHub at most once
         // a day, and never does more than raise a notification.
-        cx.spawn(async move |this, cx| {
+        let daily_check = cx.spawn(async move |this, cx| {
+            use futures::FutureExt;
+            let Ok(roots) = uninstall::roots::Roots::current() else {
+                return;
+            };
+            let path = update::choices_path(&roots);
             let mut wait = Duration::from_secs(300);
             loop {
-                cx.background_executor().timer(wait).await;
-                wait = Duration::from_secs(6 * 3600);
+                let files = filewatch::Changes::new(std::slice::from_ref(&path));
+                let exec = cx.background_executor().clone();
+                if update::load_choices(&roots).check_daily != Some(true) {
+                    files.wait(&exec).await;
+                    wait = Duration::from_secs(300);
+                    continue;
+                }
+                let changed = files.wait(&exec).fuse();
+                futures::pin_mut!(changed);
+                futures::select! {
+                    () = changed => continue,
+                    () = exec.timer(wait).fuse() => {},
+                }
                 if this
                     .update(cx, |ws: &mut Workspace, cx| ws.update_daily_tick(cx))
                     .is_err()
                 {
-                    break; // window gone
+                    break;
                 }
+                wait = Duration::from_secs(6 * 3600);
             }
-        })
-        .detach();
+        });
+        cx.on_release(move |_, _| drop(daily_check)).detach();
         cx.spawn(async move |this, cx| {
             let mut wait = Duration::from_secs(USAGE_FIRST_SWEEP_SECS);
             loop {
@@ -7443,80 +7469,6 @@ impl Workspace {
                 {
                     break; // window gone
                 }
-            }
-        })
-        .detach();
-        // tool sweep: an agent's logo follows the tool in its hands, read off
-        // its own transcript. Same 2s cadence as the dir-logo sweep and the same
-        // reason — a tool call fires no structural event either — but the read
-        // is real I/O (up to 256KB of JSONL per pane), so it goes to the
-        // background executor between two short main-thread hops rather than
-        // being done inline the way the cheap `/proc` readlink is.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(Duration::from_secs(2)).await;
-            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| ws.tool_probe_requests(cx))
-            else {
-                break; // window gone
-            };
-            if reqs.is_empty() {
-                continue; // no agent panes, or the feature is switched off
-            }
-            let probes = cx
-                .background_executor()
-                .spawn(async move { toolprop::resolve_probes(reqs) })
-                .await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| ws.apply_tool_faces(probes, cx))
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
-        // vitals sweep: the three bars on each agent card. Slower cadence than
-        // the tool sweep because this reads whole transcripts — measured at
-        // 560ms for a seventeen-agent fleet, and only for files that grew — and
-        // because a context window does not move fast enough to be worth
-        // watching at 2s. Same shape as the sweeps above: gather on the main
-        // thread, do the I/O on the pool, apply back.
-        let mut vitals_tick: u32 = 0;
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_secs(10))
-                .await;
-            vitals_tick = vitals_tick.wrapping_add(1);
-            let Ok(reqs) = this.update(cx, |ws: &mut Workspace, cx| {
-                // Every ten seconds while the wall is on screen; once a minute
-                // behind a closed one. The sweep re-reads every transcript that
-                // grew, and a working agent's always has, so ticking at the
-                // wall's pace behind a closed overlay was tens of megabytes of
-                // reads every ten seconds, permanently. The slow pass is still
-                // owed: each pane's header leads with its model and effort, and
-                // a `/model` switch must reach it within a minute, not wait for
-                // someone to open the wall.
-                let wall = ws.mcp_menu || ws.threshing_floor;
-                if (!wall && !vitals_tick.is_multiple_of(6)) || ws.vitals_refreshing {
-                    return Vec::new(); // not this tick, or a pass is still out
-                }
-                let reqs = ws.vitals_requests(cx);
-                ws.vitals_refreshing = !reqs.is_empty();
-                reqs
-            }) else {
-                break; // window gone
-            };
-            if reqs.is_empty() {
-                continue; // no agent panes
-            }
-            let home = session::home_dir();
-            let found = cx
-                .background_executor()
-                .spawn(async move { vitals::sweep(&reqs, &home) })
-                .await;
-            if this
-                .update(cx, |ws: &mut Workspace, cx| ws.apply_vitals(found, cx))
-                .is_err()
-            {
-                break;
             }
         })
         .detach();
@@ -7550,40 +7502,6 @@ impl Workspace {
             }
         })
         .detach();
-        // The badge clock (#964): one frame per BADGE_STEP while a pulsing or
-        // blinking badge was drawn, and none once they have all stopped.
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor().timer(BADGE_STEP).await;
-            let moving = BADGES_MOVING.swap(false, std::sync::atomic::Ordering::Relaxed);
-            let alive = this.update(cx, |_: &mut Workspace, cx| {
-                if moving {
-                    cx.notify();
-                }
-            });
-            if alive.is_err() {
-                break;
-            }
-        })
-        .detach();
-        // THRESHING FLOOR: the prompt clock. Half a second, because a prompt
-        // pastes on one look and presses Enter on a later one (`prompt.rs`),
-        // and a worker that finished should be reported while its sender is
-        // still waiting on `prompt_status`. A tick with no open prompt returns
-        // before it reads a pane.
-        cx.spawn_in(window, async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(500))
-                .await;
-            if this
-                .update_in(cx, |ws: &mut Workspace, window, cx| {
-                    ws.prompt_tick(window, cx);
-                })
-                .is_err()
-            {
-                break;
-            }
-        })
-        .detach();
         // WORKBENCH: the surface feed.
         //
         // One second, because this is a person waiting to see the thing they
@@ -7598,10 +7516,37 @@ impl Workspace {
         // passes would corrupt, and an `Option` that is `None` while a pass is
         // out is a guard that cannot be forgotten.
         let mut demo_seeded = std::env::var_os("TD_WORKBENCH_DEMO").is_none();
-        cx.spawn(async move |this, cx| loop {
-            cx.background_executor()
-                .timer(Duration::from_millis(1000))
-                .await;
+        let (mut consumers_tx, mut consumers_rx) = futures::channel::mpsc::channel(1);
+        let mut had_agents = ws.agent_monitor_needed(cx);
+        cx.observe(&cx.entity(), move |ws, _, cx| {
+            let has_agents = ws.agent_monitor_needed(cx);
+            if has_agents != had_agents {
+                had_agents = has_agents;
+                let _ = consumers_tx.try_send(());
+            }
+        })
+        .detach();
+        let workbench_feed = cx.spawn(async move |this, cx| loop {
+            use futures::{FutureExt, StreamExt};
+            let exec = cx.background_executor().clone();
+            // Install before scanning. Register the session first, so a new pane
+            // directory created while enumerating its siblings stays observable.
+            let root = surfacefeed::session_dir();
+            let Ok(has_agents) = this.update(cx, |ws, cx| ws.agent_monitor_needed(cx)) else {
+                break;
+            };
+            let watches = root.as_ref().filter(|_| !has_agents).map(|root| {
+                let session = filewatch::Changes::new(std::slice::from_ref(root));
+                let panes = std::fs::read_dir(root)
+                    .into_iter()
+                    .flatten()
+                    .flatten()
+                    .map(|p| p.path())
+                    .filter(|p| p.is_dir())
+                    .collect::<Vec<_>>();
+                let contents = (!panes.is_empty()).then(|| filewatch::Changes::new(&panes));
+                (session, contents)
+            });
             // TD_WORKBENCH_DEMO: put one of every kind on the first pane's
             // bench, by writing ordinary files into the ordinary directory.
             // Nothing about the demo is special-cased downstream — a
@@ -7752,7 +7697,8 @@ impl Workspace {
                 break; // window gone
             };
             let Some((mut feed, dir)) = taken else {
-                continue; // no session key yet, or a pass is still out
+                exec.timer(Duration::from_secs(1)).await;
+                continue;
             };
             let (feed, arrivals) = cx
                 .background_executor()
@@ -7770,8 +7716,27 @@ impl Workspace {
             {
                 break;
             }
-        })
-        .detach();
+            let Some((session, contents)) = watches else {
+                exec.timer(Duration::from_secs(1)).await;
+                continue;
+            };
+            let pane_write = async {
+                if let Some(files) = contents {
+                    files.wait(&exec).await
+                } else {
+                    futures::future::pending().await
+                }
+            }
+            .fuse();
+            let session_write = session.wait(&exec).fuse();
+            futures::pin_mut!(pane_write, session_write);
+            futures::select! {
+                () = session_write => {},
+                () = pane_write => {},
+                event = consumers_rx.next().fuse() => if event.is_none() { break; },
+            }
+        });
+        cx.on_release(move |_, _| drop(workbench_feed)).detach();
         // WORKBENCH: retention.
         //
         // Ten minutes, with the first pass immediate. The growth this bounds is
@@ -7853,7 +7818,7 @@ impl Workspace {
             if std::env::var_os("TD_MCP_WRITE").is_some() {
                 ws.mcp.writable = true;
             }
-            mcp_transport::start(cx);
+            mcp_transport::start(&ws.mcp, cx);
         }
         // The paint/control socket is NOT opt-in the way the MCP surface is:
         // the bar's palette widget can only ring terminals that listen, and a
@@ -7867,7 +7832,7 @@ impl Workspace {
         // reach. A no-op when `mcp_transport::start` already brought it up.
         // Starting it grants nothing on its own: `ws.mcp` is off by default and
         // still gates every read, with writes behind a second toggle.
-        mcp_transport::start_bridge(cx, None);
+        mcp_transport::start_bridge(cx);
         ws
     }
 
@@ -8362,11 +8327,16 @@ impl Workspace {
         let mut census = RestCensus::default();
         let mut reasons: std::collections::BTreeMap<agentrest::RefusalClass, u32> =
             Default::default();
+        let mut pane_changed = false;
         for o in outcomes {
             let Some(e) = views.iter().find(|e| e.read(cx).pane_id() == Some(o.pane)) else {
                 continue;
             };
-            e.update(cx, |v, cx| {
+            pane_changed |= e.update(cx, |v, cx| {
+                let label = v.memory_label();
+                let dormancy = v.rest.dormancy.clone();
+                let previous_refusal = v.rest.refusal.clone();
+
                 match &o.group {
                     Ok(g) => {
                         v.rest.group = Some(g.clone());
@@ -8453,7 +8423,11 @@ impl Workspace {
                 };
                 // A request is answered once, slept or refused, never retried.
                 v.rest.sleep_now = false;
-                cx.notify();
+                let changed = label != v.memory_label()
+                    || dormancy != v.rest.dormancy
+                    || previous_refusal != v.rest.refusal;
+                if changed { cx.notify(); }
+                changed
             });
             let v = e.read(cx);
             if let Some(class) = v.rest.refusal.as_ref().and_then(|r| r.class()) {
@@ -8470,13 +8444,16 @@ impl Workspace {
         }
         census.sampled_at = Some(looked);
         census.refusals = reasons.into_iter().collect();
+        let census_changed = self.rest_census.display_changed(&census);
         self.rest_census = census;
         let store = self.rest_store(cx);
         if store != self.rest_store_saved {
             agentrest_io::save_store(session, &store);
             self.rest_store_saved = store;
         }
-        cx.notify();
+        if pane_changed || census_changed {
+            cx.notify();
+        }
     }
 
     /// What must outlive this window, read off the panes.
@@ -9229,6 +9206,12 @@ impl Workspace {
             cx.background_executor().timer(Duration::from_secs(2)).await;
             if this
                 .update_in(cx, |ws: &mut Workspace, window, cx| {
+                    // An undo hold that has run out ends its panes in the host
+                    // here too, not only when a frame is drawn: a quiet or
+                    // hidden window may draw nothing for hours, so the shells
+                    // of a tab closed and never reopened lived on in the host
+                    // and came back with the next window (issue #1295).
+                    ws.sweep_trash(cx);
                     ws.reclaim_abandoned_streams(window, cx);
                 })
                 .is_err()
@@ -9553,6 +9536,8 @@ impl Workspace {
     }
 
     fn save(&self, cx: &App) {
+        #[cfg(test)]
+        self.saves_asked.set(self.saves_asked.get() + 1);
         if self.save_blocked().is_some() {
             return;
         }
@@ -9667,14 +9652,27 @@ impl Workspace {
     }
 
     fn mcp_snapshot(&self, cx: &App) -> Vec<mcp::PaneInfo> {
+        self.mcp_panes(cx, true, false)
+    }
+
+    fn mcp_panes(&self, cx: &App, runtime: bool, filter_facts: bool) -> Vec<mcp::PaneInfo> {
         let mut out = vec![];
         let outer = theme::outer_choice(cx);
         for (ti, tab) in self.tabs.iter().enumerate() {
+            let spine = self.spine_path(ti);
+            let project = filter_facts
+                .then(|| {
+                    self.place_of(ti)
+                        .project
+                        .and_then(|id| self.project_at(id))
+                        .map(|p| p.english_label())
+                })
+                .flatten();
             let mut leaves = vec![];
             tab.root.leaves(&mut leaves);
             for leaf in leaves {
                 let p = leaf.read(cx);
-                let rt = p.runtime();
+                let rt = runtime.then(|| p.runtime());
                 // Asleep agents too: they run a shell in the foreground, and
                 // judged by mode alone they read as gone (#1160).
                 let is_agent = p.counts_as_agent();
@@ -9696,6 +9694,8 @@ impl Workspace {
                 let Some(pid) = p.shell_pid() else { continue };
                 out.push(mcp::PaneInfo {
                     tab: ti,
+                    project: project.clone(),
+                    state: filter_facts.then(|| p.agent_status().state.label()),
                     title,
                     mode: p.mode.label().to_string(),
                     is_agent,
@@ -9704,8 +9704,8 @@ impl Workspace {
                     // That is a real state, not a missing reading, and the wire
                     // keeps the two apart.
                     pane_id: p.pane_id(),
-                    cwd: rt.cwd,
-                    session: rt.resume,
+                    cwd: rt.as_ref().and_then(|r| r.cwd.clone()),
+                    session: rt.and_then(|r| r.resume),
                     tool: p.tool_face.as_ref().map(|f| f.tool.clone()),
                     note: p.saved_note().map(|n| mcp::NoteReport {
                         title: n.title,
@@ -9720,7 +9720,7 @@ impl Workspace {
                     // the pane, from the same helper, so the listing and the
                     // Floor can never name one pane two ways. A pane with no
                     // words to its name is unnamed (null), never "".
-                    name: Some(self.pane_name(leaf, cx))
+                    name: Some(threshing_floor::PaneName::new(&spine, &p.header_title()))
                         .filter(|n| !n.full().is_empty())
                         .map(|n| mcp::PaneNameReport::from(&n)),
                     // Which conversation, proven. An asleep agent's is its sleep
@@ -11386,8 +11386,11 @@ impl Workspace {
             // Shown when the panel has nothing to read and nothing that could
             // write it. Stored finished, so it speaks the language of the moment
             // it was found and the next refresh speaks the current one.
-            self.usage_status = Some(self.lang.strings().ui.use_no_collector.into());
-            cx.notify();
+            let message = self.lang.strings().ui.use_no_collector;
+            if self.usage_status.as_deref() != Some(message) {
+                self.usage_status = Some(message.into());
+                cx.notify();
+            }
             return;
         }
         self.usage_refreshing = true;
@@ -14977,21 +14980,38 @@ impl Workspace {
         }
     }
 
-    /// Ease the doors toward where they should be, and say whether they moved.
-    ///
-    /// Returns true while still travelling, which the render pass turns into
-    /// another frame. Easing toward a target rather than storing one means a
-    /// drag that leaves mid-open closes from wherever it got to instead of
-    /// snapping shut — the difference between a door and a light switch.
-    fn ease_bay(&mut self) -> bool {
-        let want = self.bay_target();
-        let d = want - self.bay;
-        if d.abs() < 0.004 {
-            self.bay = want;
-            return false;
+    /// A direct-rendered notice needs one wake at expiry, including if a
+    /// newer notice replaces it or two different notices overlap.
+    fn wake_for_static_notices(&mut self, cx: &mut Context<Self>) {
+        let now = Instant::now();
+        let next = [
+            self.marquee_says
+                .as_ref()
+                .map(|(_, at)| *at + Duration::from_secs_f32(MARQUEE_SECS)),
+            self.bay_says.map(|(_, at)| at + BAY_SAYS_FOR),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|at| *at > now)
+        .min();
+        if self.static_notice_deadline == next {
+            return;
         }
-        self.bay += d * 0.28;
-        true
+        self.static_notice_deadline = next;
+        if let Some(at) = next {
+            cx.spawn(async move |this, cx| {
+                cx.background_executor()
+                    .timer(at.saturating_duration_since(now))
+                    .await;
+                let _ = this.update(cx, |ws: &mut Workspace, cx| {
+                    if ws.static_notice_deadline == Some(at) {
+                        ws.static_notice_deadline = None;
+                        cx.notify();
+                    }
+                });
+            })
+            .detach();
+        }
     }
 
     /// A drag was released over the bay.
@@ -16369,6 +16389,12 @@ impl Workspace {
     /// every twenty-second refresh snap the ticker back to its first frame.
     fn apply_eng(&mut self, key: EngKey, state: engstate::ProjectState, cx: &mut Context<Self>) {
         self.eng_scanning = false;
+        let old_version = self.coord_operator.snapshot.fact_version;
+        let changed = self
+            .eng
+            .get(&key)
+            .is_none_or(|r| !r.state.same_facts(&state));
+        let mut afterglow_changed = false;
         if std::env::var_os("TD_RAIL_DEBUG").is_some() {
             eprintln!(
                 "rail: {} checkouts, {} repos, {} foreign, {} visitors in {:?}",
@@ -16387,7 +16413,9 @@ impl Workspace {
             let fresh = engstate::events(prev, &state);
             let log = self.eng_events.entry(key).or_default();
             log.extend(fresh.into_iter().map(|e| (now, e)));
+            let before = log.len();
             log.retain(|(at, _)| now.duration_since(*at) < ENG_AFTERGLOW);
+            afterglow_changed = before != log.len();
             // the newest twelve; older ones have had their fifteen minutes
             let excess = log.len().saturating_sub(12);
             log.drain(..excess);
@@ -16410,7 +16438,10 @@ impl Workspace {
             }
         }
         self.eng.insert(key, Reading::of(state));
-        cx.notify();
+        if changed || afterglow_changed || old_version != self.coord_operator.snapshot.fact_version
+        {
+            cx.notify();
+        }
     }
 
     /// Every project's reading, for the MCP snapshot — the active one flagged,
@@ -24096,7 +24127,11 @@ impl Workspace {
             self.scrubbing = false;
             self.take_wheel_drag();
             self.take_light_drag();
-            self.take_slider_drag();
+            // A slider released outside the window ends here, not in the
+            // mouse-up: save what the drag showed.
+            if self.take_slider_drag().is_some() && std::mem::take(&mut self.grade_unsaved) {
+                self.save(cx);
+            }
             self.take_track_drag();
             self.take_tab_wheel_drag();
             self.take_tab_light_drag();
@@ -24308,9 +24343,7 @@ impl Workspace {
             cx.notify();
             return;
         }
-        if self.take_slider_drag().is_some() {
-            self.save(cx);
-            cx.notify();
+        if self.finish_slider_drag(cx) {
             return;
         }
         // FOCUS text-size: live-only, never persisted, so just drop the latch.
@@ -25082,7 +25115,13 @@ impl Workspace {
         // A human just dialled THIS channel here: it becomes the pane's own and
         // stops tracking outer. Every other channel is untouched and keeps
         // following outer, so one slider nudge no longer detaches the pane.
-        self.write_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
+        //
+        // Shown at once, saved when the drag ends. A slider reports every mouse
+        // move, and saving on each one rebuilt the whole session and waited on
+        // the host's write on the UI thread, dozens of times a second, until
+        // the desktop asked whether to force-quit the window (Parker,
+        // 2026-11-18). The drag's end saves (`take_slider_drag`).
+        self.show_grade(&scope, grade, theme::GradePins::only(key.into()), cx);
     }
 
     /// Reset the active OSD scope's MAIN gauges to the neutral identity — no
@@ -25156,6 +25195,31 @@ impl Workspace {
         channels: theme::GradePins,
         cx: &mut Context<Self>,
     ) {
+        self.show_grade(scope, grade, channels, cx);
+        self.save(cx);
+    }
+
+    /// End a gauge slider's drag: the one save for everything it showed.
+    fn finish_slider_drag(&mut self, cx: &mut Context<Self>) -> bool {
+        if self.take_slider_drag().is_none() {
+            return false;
+        }
+        self.grade_unsaved = false;
+        self.save(cx);
+        cx.notify();
+        true
+    }
+
+    /// [`Self::write_grade`] without the save: what a slider drag does on each
+    /// move, so the look follows the hand and the session is written once.
+    fn show_grade(
+        &mut self,
+        scope: &MenuScope,
+        grade: theme::Grade,
+        channels: theme::GradePins,
+        cx: &mut Context<Self>,
+    ) {
+        self.grade_unsaved = true;
         match scope {
             MenuScope::Pane(pane) => {
                 pane.update(cx, |view, cx| {
@@ -25169,7 +25233,6 @@ impl Workspace {
                 theme::select_outer(cx, choice);
             }
         }
-        self.save(cx);
         cx.notify();
     }
 
@@ -27480,7 +27543,9 @@ impl Workspace {
         // another, so the flicker never settles into a visible loop the way a
         // single wave does. Cheap: one `sin` a frame, no state, no timer — the
         // bay is already repainting while it is open.
-        let flicker = {
+        let flicker = if open == 0. || sk.shape.tube == skin::Tube::Direct {
+            1.
+        } else {
             let t = anim_clock();
             let wobble = (t * 7.3).sin() * 0.11 + (t * 2.9).sin() * 0.06;
             (0.86 + wobble).clamp(0., 1.)
@@ -30492,7 +30557,18 @@ impl Workspace {
             // scope chip once had, so the buttons stay at the right-hand end.
             // The tree's own buttons (fold all, new project) act on the tree,
             // so the INBOX face leaves them out and carries + NEW instead.
-            .child(self.render_spine_faces(&sk, s, cx))
+            // The faces keep their own width, and the buttons wrap to a second
+            // line when a spine has not room for both. Unboxed, PROJECTS ran
+            // under ADD PROJECT; in chalk, whose handwriting is wide, INBOX was
+            // squeezed to nothing (Parker, 2026-11-17: "our INBOX view on the
+            // spine seems to have gone away ... chalk theme shows it! so we
+            // need to check in with all the themes").
+            .flex_wrap()
+            .gap_y(px(3. * s))
+            .child(
+                self.render_spine_faces(&sk, s, cx)
+                    .flex_basis(gpui::Length::Auto),
+            )
             // The INBOX face ends in a + that opens the composer, where the
             // PROJECTS face ends in the + that makes a project: one glyph in
             // one place, each face's own new thing. It was "+ NEW", which ran
@@ -33008,10 +33084,153 @@ impl Workspace {
     }
 }
 
+impl Workspace {
+    fn agent_monitor_needed(&self, cx: &App) -> bool {
+        self.tabs
+            .iter()
+            .any(|tab| tab.root.any_leaf(&|leaf| leaf.read(cx).counts_as_agent()))
+    }
+
+    fn arm_agent_clocks(&mut self, cx: &mut Context<Self>) {
+        if (self.tool_clock && self.vitals_clock) || !self.agent_monitor_needed(cx) {
+            return;
+        }
+        if !self.tool_clock {
+            self.tool_clock = true;
+            // tool sweep: an agent's logo follows the tool in its hands, read off
+            // its own transcript. Same 2s cadence as the dir-logo sweep and the same
+            // reason — a tool call fires no structural event either — but the read
+            // is real I/O (up to 256KB of JSONL per pane), so it goes to the
+            // background executor between two short main-thread hops rather than
+            // being done inline the way the cheap `/proc` readlink is.
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(2)).await;
+                let Ok(Some(reqs)) = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.tool_clock = ws.agent_monitor_needed(cx);
+                    ws.tool_clock.then(|| ws.tool_probe_requests(cx))
+                }) else {
+                    break; // window gone
+                };
+                if reqs.is_empty() {
+                    continue; // no agent panes, or the feature is switched off
+                }
+                let probes = cx
+                    .background_executor()
+                    .spawn(async move { toolprop::resolve_probes(reqs) })
+                    .await;
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.apply_tool_faces(probes, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            })
+            .detach();
+        }
+        if !self.vitals_clock {
+            self.vitals_clock = true;
+            // vitals sweep: the three bars on each agent card. Slower cadence than
+            // the tool sweep because this reads whole transcripts — measured at
+            // 560ms for a seventeen-agent fleet, and only for files that grew — and
+            // because a context window does not move fast enough to be worth
+            // watching at 2s. Same shape as the sweeps above: gather on the main
+            // thread, do the I/O on the pool, apply back.
+            let mut vitals_tick: u32 = 0;
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_secs(10))
+                    .await;
+                vitals_tick = vitals_tick.wrapping_add(1);
+                let Ok(Some(reqs)) = this.update(cx, |ws: &mut Workspace, cx| {
+                    ws.vitals_clock = ws.agent_monitor_needed(cx);
+                    if !ws.vitals_clock {
+                        return None;
+                    }
+                    // Every ten seconds while the wall is on screen; once a minute
+                    // behind a closed one. The sweep re-reads every transcript that
+                    // grew, and a working agent's always has, so ticking at the
+                    // wall's pace behind a closed overlay was tens of megabytes of
+                    // reads every ten seconds, permanently. The slow pass is still
+                    // owed: each pane's header leads with its model and effort, and
+                    // a `/model` switch must reach it within a minute, not wait for
+                    // someone to open the wall.
+                    let wall = ws.mcp_menu || ws.threshing_floor;
+                    if (!wall && !vitals_tick.is_multiple_of(6)) || ws.vitals_refreshing {
+                        return Some(Vec::new()); // not this tick, or a pass is still out
+                    }
+                    let reqs = ws.vitals_requests(cx);
+                    ws.vitals_refreshing = !reqs.is_empty();
+                    Some(reqs)
+                }) else {
+                    break; // window gone
+                };
+                if reqs.is_empty() {
+                    continue; // no agent panes
+                }
+                let home = session::home_dir();
+                let found = cx
+                    .background_executor()
+                    .spawn(async move { vitals::sweep(&reqs, &home) })
+                    .await;
+                if this
+                    .update(cx, |ws: &mut Workspace, cx| ws.apply_vitals(found, cx))
+                    .is_err()
+                {
+                    break;
+                }
+            })
+            .detach();
+        }
+    }
+
+    fn arm_feature_timers(&mut self, window: &Window, cx: &mut Context<Self>) {
+        self.arm_agent_clocks(cx);
+        if !self.prompt_timer && self.prompts.open().next().is_some() {
+            self.prompt_timer = true;
+            cx.spawn_in(window, async move |this, cx| loop {
+                cx.background_executor()
+                    .timer(Duration::from_millis(500))
+                    .await;
+                if this
+                    .update_in(cx, |ws, window, cx| {
+                        ws.prompt_tick(window, cx);
+                        ws.prompt_timer = ws.prompts.open().next().is_some();
+                        ws.prompt_timer
+                    })
+                    .ok()
+                    != Some(true)
+                {
+                    break;
+                }
+            })
+            .detach();
+        }
+        if self.flyout.open && !self.flyout_timer {
+            self.flyout_timer = true;
+            cx.spawn(async move |this, cx| loop {
+                cx.background_executor().timer(Duration::from_secs(1)).await;
+                if this
+                    .update(cx, |ws, cx| {
+                        ws.flyout_kick(false, cx);
+                        ws.flyout_timer = ws.flyout.open;
+                        ws.flyout_timer
+                    })
+                    .ok()
+                    != Some(true)
+                {
+                    break;
+                }
+            })
+            .detach();
+        }
+    }
+}
 impl Render for Workspace {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         // A new pass, so the attention projection is recomputed once for it and
         // then shared by every surface that asks. See [`Workspace::rail_memo`].
+
+        self.arm_agent_clocks(cx);
         self.rail_frame = self.rail_frame.wrapping_add(1);
         // What a pane's own menu shows of promotion, for the panes to read as
         // they draw (see `team_view::publish`).
@@ -33041,36 +33260,25 @@ impl Render for Workspace {
         // Who each brief's ↪ sends to, before any pane in this pass draws its
         // notes bar.
         self.label_note_sends(cx);
-        // The bay doors, eased toward wherever the drag says they should be —
-        // and the fire behind them.
-        //
-        // The `|| self.bay > 0.0` half is what makes the bonfire burn. gpui
-        // advances a GIF's frame during PAINT and never schedules the next one,
-        // so an animated image in a surface nobody is repainting draws once and
-        // freezes. Easing alone asks for frames only while the doors travel, so
-        // the fire ran for a third of a second and then stood still — a
-        // photograph of a fire, which is the failure that looks most like
-        // success. The bay is only ever open while a drag is in flight, so this
-        // is a bounded burst rather than a window that never sleeps.
-        let travelling = self.ease_bay();
-        if travelling || self.bay > 0.0 {
+        let direct = skin::spec(cx).shape.tube == Some(skin::Tube::Direct);
+        let target = self.bay_target();
+        if bay_frame(&mut self.bay, target, direct) {
             cx.notify();
         }
-        // A line the bay is saying needs frames for the same reason: it expires
-        // on a clock, and a clock nobody repaints for is a message that stays up
-        // until something else happens to redraw. Dropped here, at its deadline,
-        // so the count underneath comes back on its own.
+        if direct {
+            self.wake_for_static_notices(cx);
+        }
         if let Some((_, at)) = self.bay_says {
-            if at.elapsed() < BAY_SAYS_FOR {
-                cx.notify();
-            } else {
+            if at.elapsed() >= BAY_SAYS_FOR {
                 self.bay_says = None;
+            } else if !direct {
+                cx.notify();
             }
         }
         // Tubes still going dark. Aged out here rather than on a timer: a ghost
         // that outlives its animation would keep an overlay tube registered.
         self.ghosts
-            .retain(|g| g.born.elapsed() < Duration::from_millis(crt::IGNITION_MS));
+            .retain(|g| !direct && g.born.elapsed() < Duration::from_millis(crt::IGNITION_MS));
         let shutdown_ghosts: Vec<AnyElement> = self
             .ghosts
             .iter()
@@ -33162,6 +33370,8 @@ impl Render for Workspace {
             tab.root.leaves(&mut leaves);
             leaves.iter().any(|p| p.read(cx).popup_open())
         });
+        #[cfg(target_os = "linux")]
+        gpui_wgpu::set_direct_rendering(direct);
         warp::begin_frame(); // visible panes re-register their tube rects below
                              // An open overlay (theme breakout / confirm dialog) flattens the glass:
                              // the warp is a pixel post-process, so a panel over a tube would bow out
@@ -33726,7 +33936,6 @@ impl Render for Workspace {
             .map(|p| p.entity_id());
         let pane_count = self.pane_count();
         let tab_count = self.tabs.len();
-        let jiggle = self.jiggle.px;
 
         // ---- tabs + browser-style group bands ----
         // Adjacent tabs sharing a group render under one coloured rail with a
@@ -34420,7 +34629,8 @@ impl Render for Workspace {
                 }),
             );
         let art_door_is_glyph = ui_glyph[6] && !chrome_narrow;
-        let (art_dot, art_bumps) = (self.art_unseen, self.art_bumps);
+        let art_dot = self.art_unseen;
+        let art_bumps = if direct { 0 } else { self.art_bumps };
         // The corner's news, for ⚙ Settings to wear when the glyphs that
         // carry it are put away: a hidden element never hides its news, so
         // the bug report's dot moves onto ⚙, and so does the Git notice's
@@ -34872,17 +35082,7 @@ impl Render for Workspace {
                 // The id is the skin's file name and stays as it is; only the
                 // caption under the icon speaks the reader's language, and a
                 // skin somebody wrote themselves keeps the name they gave it.
-                let caption = match id.as_str() {
-                    "default" => t.ui.pal_skin_default,
-                    "deco" => t.ui.pal_skin_deco,
-                    "chalk" => t.ui.pal_skin_chalk,
-                    "ops" => t.ui.pal_skin_ops,
-                    "clean" => t.ui.pal_skin_clean,
-                    "custom" if sk.text_controls() => t.parts.ctl_custom_file,
-                    "custom" => t.ui.pal_skin_custom,
-                    "terminimalist" => "TERMINIMALIST",
-                    other => other,
-                };
+                let caption = skin::picker_caption(&id, t, sk.text_controls());
                 skin_row = skin_row.child(
                     theme_icon_btn_wide(&th, &sk, &icon, caption, lit, skin::picker_cells(&id))
                         .id(SharedString::from(format!("skin-btn-{id}")))
@@ -34899,6 +35099,7 @@ impl Render for Workspace {
                                     "chalk" => t.ui.pal_help_skin_chalk,
                                     "ops" => t.ui.pal_help_skin_ops,
                                     "clean" => t.ui.pal_help_skin_clean,
+                                    "terminimalist" => t.ui.pal_help_skin_terminimalist,
                                     _ => t.ui.pal_help_skin_custom,
                                 },
                                 None,
@@ -36874,9 +37075,10 @@ impl Render for Workspace {
         // the fade actually runs.
         let marquee = self.marquee_says.as_ref().and_then(|(text, at)| {
             let age = at.elapsed().as_secs_f32();
-            (age < MARQUEE_SECS).then(|| marquee_banner(text, age, &th, &sk))
+            (age < MARQUEE_SECS)
+                .then(|| marquee_banner(text, if direct { 0. } else { age }, &th, &sk))
         });
-        if marquee.is_some() {
+        if !direct && marquee.is_some() {
             window.request_animation_frame();
         }
         let far_notice = self.render_far_notice(&th, &sk);
@@ -36947,7 +37149,7 @@ impl Render for Workspace {
             // over the bordered chips that say the same six things with their
             // words on, and two rows of the same fact disagreeing whenever a
             // filter was on is worse than either row alone. ----
-            let mut turn_tok_total = 0u64;
+            let mut turn_counts: Vec<Option<u64>> = Vec::new();
             let mut sess_tok_total = 0u64;
             let mut total_panes = 0u32;
             let mut visible_agent_total = 0u32;
@@ -36988,7 +37190,7 @@ impl Render for Workspace {
                         .is_none_or(|program| program == mode_lbl.as_str());
                     if p.counts_as_agent() {
                         let st = p.agent_status();
-                        turn_tok_total += st.turn_tokens.unwrap_or(0);
+                        turn_counts.push(st.turn_tokens);
                         sess_tok_total += p.session_tokens();
                         if show_group && program_matches {
                             visible_agent_total += 1;
@@ -37590,7 +37792,7 @@ impl Render for Workspace {
                         }
                     });
                     let agentic = is_agent && !feed.is_empty();
-                    let turn_tok = status.turn_tokens.unwrap_or(0);
+                    let turn_tok = status.turn_tokens;
                     // Bottom-right status chip: the glyph and label share one
                     // colour, so ✓/✕/○ read as the state source of truth.
                     let pip_glyph = if !is_agent || status.state == hud::AgentState::Idle {
@@ -38223,7 +38425,7 @@ impl Render for Workspace {
                                                 .text_color(status_glow.alpha(0.85))
                                                 .child(format!(
                                                     "\u{0394}{}",
-                                                    hud::fmt_tokens(turn_tok)
+                                                    hud::fmt_turn_tokens(turn_tok)
                                                 )),
                                         )
                                         .child(div().child(format!(
@@ -38373,11 +38575,22 @@ impl Render for Workspace {
                                 .child(ui.mcp_hdr_agent_wall),
                         )
                         .child(div().flex_1().min_w(px(0.)))
-                        .child(div().text_color(th.text.alpha(0.7)).child(format!(
-                            "\u{0394} {} \u{00b7} \u{03a3} {}",
-                            hud::fmt_tokens(turn_tok_total),
-                            hud::fmt_tokens(sess_tok_total)
-                        )))
+                        .child(div().text_color(th.text.alpha(0.7)).child({
+                            // Unknown turns stay out of the sum, and the header
+                            // says how many it left out (issue #800).
+                            let (known, unknown) =
+                                hud::fleet_turn_tokens(turn_counts.iter().copied());
+                            let left_out = if unknown > 0 {
+                                format!(" (+{unknown}\u{00d7}\u{2014})")
+                            } else {
+                                String::new()
+                            };
+                            format!(
+                                "\u{0394} {}{left_out} \u{00b7} \u{03a3} {}",
+                                hud::fmt_tokens(known),
+                                hud::fmt_tokens(sess_tok_total)
+                            )
+                        }))
                         // </> LeanCTX savings: read lean-ctx's precomputed
                         // token-savings rollup over the leanctx-savings plugin
                         // and pop the </> overlay. Own handler + stop_propagation.
@@ -40747,7 +40960,10 @@ impl Render for Workspace {
         let focus_on = self.focus_read.as_ref().and_then(|w| w.upgrade()).is_some();
         let focus_ramp = {
             let mut guard = FOCUS_OPEN_AT.lock().unwrap();
-            if focus_on {
+            if direct {
+                *guard = None;
+                f32::from(focus_on)
+            } else if focus_on {
                 let t0 = *guard.get_or_insert_with(std::time::Instant::now);
                 let e = t0.elapsed().as_secs_f32();
                 let f = (e / 0.22).clamp(0.0, 1.0);
@@ -41514,15 +41730,13 @@ impl Render for Workspace {
         let bug_overlay = self.host_or_root(H::Bug, bug_overlay, &mut hosted);
         let plugins_overlay = self.host_or_root(H::Plugins, plugins_overlay, &mut hosted);
         let dead_overlay = self.host_or_root(H::Recover, dead_overlay, &mut hosted);
-        let settings_overlay = self.render_settings(&th, hosted, cx);
+        let settings_overlay = self.render_settings(&th, hosted, window, cx);
         let root = div()
             .size_full()
             .relative()
             .bg(sk.region_face(darken(bezel, 0.5)))
             .children(sk.grain())
-            .px(px(5.))
-            .pt(px(5. + jiggle.max(0.)))
-            .pb(px(5. + (-jiggle).max(0.)))
+            .p(px(5.))
             .font_family(skin::for_theme(cx, &th, 1.0).font_family)
             .track_focus(&self.focus_handle)
             // Esc closes whatever popup floats above the workspace — caught in the
@@ -41748,6 +41962,17 @@ impl Render for Workspace {
                     // space that no longer belongs to any pane
                     .children(shutdown_ghosts),
             );
+        if BADGES_MOVING.swap(false, std::sync::atomic::Ordering::Relaxed) && !self.badge_timer {
+            self.badge_timer = true;
+            cx.spawn(async move |this, cx| {
+                cx.background_executor().timer(BADGE_STEP).await;
+                let _ = this.update(cx, |ws, cx| {
+                    ws.badge_timer = false;
+                    cx.notify();
+                });
+            })
+            .detach();
+        }
         // Frameless: wrap the cabinet in client-side decorations (shadow margin,
         // rounded clip, live resize edges) so it runs with no system titlebar.
         csd::decorate(root, window)
@@ -41850,6 +42075,7 @@ mod tests {
     }
 
     #[test]
+    #[allow(clippy::field_reassign_with_default)]
     fn a_selected_surface_survives_state_serialisation_without_rewriting_the_theme() {
         let mut saved = StateFile::default();
         saved.skin = Some("chalk".into());
@@ -42086,6 +42312,141 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// Dragging a gauge shows every move and saves once, when the drag ends.
+    /// Saving on every move blocked the UI thread until the desktop offered to
+    /// force-quit the window (Parker, 2026-11-18). Mutation: saving in
+    /// `show_grade` makes the count follow the moves.
+    #[gpui::test]
+    fn a_gauge_drag_shows_every_move_and_saves_once(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(900.), px(600.)), |w, cx| {
+                Workspace::build(true, true, None, None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let key = theme::GradeKey::Brightness;
+        ws.update(cx, |ws, cx| {
+            ws.open_osd(MenuScope::Outer, None);
+            ws.drag = Some(Drag::Slider(key));
+            let before = ws.saves_asked.get();
+            for ratio in [0.2, 0.4, 0.6, 0.8] {
+                ws.apply_grade(key, ratio, cx);
+            }
+            assert_eq!(ws.saves_asked.get(), before, "no save while the hand moves");
+            let (min, max, _) = key.range();
+            let shown = theme::outer_choice(cx).grade.get(key).unwrap();
+            assert!(
+                (shown - (min + 0.8 * (max - min))).abs() < 1e-4,
+                "each move is shown"
+            );
+            assert!(ws.finish_slider_drag(cx));
+            assert_eq!(ws.saves_asked.get(), before + 1, "one save when it ends");
+        });
+    }
+
+    /// Issue #1295: the undo holds are swept by the loop that runs whether or
+    /// not the window draws, so an expired hold ends its panes in the host on
+    /// time. Mutation: removing the sweep from that loop fails this.
+    #[test]
+    fn expired_holds_are_swept_by_the_loop_that_runs_without_a_frame() {
+        let src = include_str!("main.rs");
+        let start = src.find("fn watch_for_abandoned_streams").unwrap();
+        let body = &src[start..start + src[start..].find("\n    }\n").unwrap()];
+        assert!(body.contains("ws.sweep_trash(cx);"), "{body}");
+    }
+
+    /// Issue #476: a save that changes nothing takes no backup slot and writes
+    /// nothing; a real change still rotates one. Mutation: removing the
+    /// unchanged-bytes check leaves two backups after the repeated saves.
+    #[test]
+    fn a_save_that_changes_nothing_takes_no_backup_slot() {
+        let dir = std::env::temp_dir().join(format!("td-ring-{}", std::process::id()));
+        let _ = fs::remove_dir_all(&dir);
+        fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("7.toml");
+        let backups = || {
+            fs::read_dir(dir.join("backups").join("7"))
+                .map(|d| d.count())
+                .unwrap_or(0)
+        };
+        write_with_backup(&path, "panes = 3\n");
+        write_with_backup(&path, "panes = 3\n");
+        write_with_backup(&path, "panes = 3\n");
+        assert_eq!(backups(), 0, "three identical saves rotated nothing");
+        write_with_backup(&path, "panes = 4\n");
+        assert_eq!(backups(), 1, "a real change still keeps the old body");
+        assert_eq!(fs::read_to_string(&path).unwrap(), "panes = 4\n");
+        let _ = fs::remove_dir_all(&dir);
+    }
+
+    /// Every skin shows the spine's two faces, PROJECTS and INBOX, whole and
+    /// apart. Parker, 2026-11-17: "our INBOX view on the spine seems to have
+    /// gone away at some point ... oh wait - chalk theme shows it! so we need
+    /// to check in with all the themes for all our UX features and surfaces".
+    #[gpui::test]
+    fn every_skin_shows_the_inbox_face_on_the_spine(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(968.), px(800.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let pane = ws.read_with(cx, |ws, _| ws.every_view()[0].clone());
+        let stop = pane.read_with(cx, |v, _| v.fixture_shutdown());
+        cx.on_quit(stop);
+        ws.update(cx, |ws, cx| {
+            ws.spine_in_scratch = true;
+            ws.set_left_bar(true, cx);
+        });
+        let ids: Vec<String> = cx.update(|_, cx| {
+            skin::gallery_skins(cx)
+                .into_iter()
+                .map(|(id, _)| id)
+                .collect()
+        });
+        assert!(ids.len() >= 6, "{ids:?}");
+        let mut missing = vec![];
+        for id in &ids {
+            cx.update(|_, cx| skin::select(cx, id).unwrap());
+            cx.run_until_parked();
+            cx.update(|w, cx| {
+                w.refresh();
+                w.draw(cx).clear();
+            });
+            let inbox = cx.debug_bounds("spine-face-inbox");
+            let projects = cx.debug_bounds("spine-face-projects");
+            match (projects, inbox) {
+                (Some(p), Some(i)) if i.size.width >= px(24.) && !p.intersects(&i) => {}
+                other => missing.push(format!("{id}: {other:?}")),
+            }
+        }
+        assert!(missing.is_empty(), "faces missing or crushed: {missing:#?}");
+    }
+
     #[gpui::test]
     fn minimal_header_keeps_model_and_menu_without_an_invisible_trash_target(
         cx: &mut gpui::TestAppContext,
@@ -42146,6 +42507,16 @@ mod tests {
             spine_add.right() <= rule.left(),
             "ADD PROJECT, then the rule"
         );
+        // The faces end before ADD PROJECT begins: in BAREMETAL, PROJECTS ran
+        // under it (Parker, 2026-11-17: "PROJECTS and ADD PROJECT overlap").
+        for face in ["spine-face-projects", "spine-face-inbox"] {
+            let f = cx.debug_bounds(face).expect(face);
+            assert!(
+                !f.intersects(&spine_add),
+                "{face} {f:?} runs under ADD PROJECT {spine_add:?}"
+            );
+            assert!(f.size.width >= px(30.), "{face} keeps its word: {f:?}");
+        }
         assert!(cx.debug_bounds("minimal-add-project").is_none());
         // With the spine open its row menu is a tab's right-click, so the
         // hotkeys are offered there: press "pin a hotkey", type a letter, and
@@ -43790,17 +44161,67 @@ mod tests {
     /// nobody repaints is a picture.
     #[test]
     fn the_bay_asks_for_frames_the_whole_time_it_is_open() {
-        let src = shipped_src();
-        let at = src.find("let travelling = self.ease_bay();").expect(
-            "the bay's frame pump — if this moved, the flame may have stopped moving with it",
+        let mut position = 0.;
+        assert!(bay_frame(&mut position, 1., false));
+        assert!(position > 0. && position < 1.);
+        position = 1.;
+        assert!(bay_frame(&mut position, 1., false));
+        assert!(!bay_frame(&mut position, 0., true));
+        assert_eq!(position, 0.);
+        assert!(!bay_frame(&mut position, 1., true));
+        assert_eq!(position, 1.);
+    }
+
+    #[gpui::test]
+    fn terminimalist_shows_the_marquee_still_and_wakes_for_the_first_expiry(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        cx.executor().allow_parking();
+        cx.update(|cx| {
+            theme::init_embedded(cx, theme::house_outer());
+            skin::init_embedded(cx);
+            skin::select(cx, "terminimalist").unwrap();
+        });
+        let seed = session::PaneRestore {
+            program: Some(("/bin/sh".into(), vec!["-c".into(), "exec /bin/cat".into()])),
+            ..Default::default()
+        };
+        let window = {
+            let _fork = crate::testsync::forks_and_locks();
+            cx.open_window(size(px(900.), px(600.)), |w, cx| {
+                Workspace::build(true, true, Some(seed), None, w, cx)
+            })
+        };
+        let ws = window.root(cx).unwrap();
+        let cx = gpui::VisualTestContext::from_window(window.into(), cx).into_mut();
+        let stops: Vec<_> = ws
+            .read_with(cx, |ws, _| ws.every_view())
+            .into_iter()
+            .map(|pane| pane.read_with(cx, |v, _| v.fixture_shutdown()))
+            .collect();
+        cx.on_quit(move || stops.into_iter().for_each(|stop| stop()));
+        let now = Instant::now();
+        ws.update(cx, |ws, cx| {
+            ws.marquee_says = Some(("ready".into(), now));
+            ws.bay_says = Some((BaySays::Empty, now - Duration::from_secs(1)));
+            cx.notify();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("marquee-banner").is_some());
+        assert!(cx.debug_bounds("marquee-bulbs").is_none());
+        assert_eq!(
+            ws.read_with(cx, |ws, _| ws.static_notice_deadline),
+            Some(now - Duration::from_secs(1) + BAY_SAYS_FOR)
         );
-        let after = &src[at..at + 200];
-        assert!(
-            after.contains("self.bay > 0.0"),
-            "the render pass asks for another frame only while the doors are TRAVELLING. \
-             The flame then freezes at whichever phase the doors finished on, and every \
-             other check still passes"
-        );
+        cx.update(|w, cx| {
+            skin::select(cx, "default").unwrap();
+            w.refresh();
+        });
+        cx.run_until_parked();
+        assert!(cx.debug_bounds("marquee-bulbs").is_some());
     }
 
     /// A task row clears the disclosure triangle its parent wears.
@@ -45868,7 +46289,7 @@ mod tests {
     #[test]
     fn a_folded_row_opens_on_a_short_hover_or_any_click() {
         assert_eq!(FOLD_OPEN_MS, 750, "the hover reveal Parker asked for");
-        assert!(FOLD_CLOSE_MS < 1000);
+        const { assert!(FOLD_CLOSE_MS < 1000) };
         let src = shipped_code();
         let at = src.find("let fold = |row").expect("the fold wrapper");
         let wrapper = &src[at..at + src[at..].find("};").expect("end")];
@@ -45932,7 +46353,7 @@ mod tests {
             !top_bar_is_empty(false, false, false, false, false),
             "with the left bar shut the tabs are the top bar's"
         );
-        assert!(TOP_BAR_EMPTY_H < TOP_BAR_H);
+        const { assert!(TOP_BAR_EMPTY_H < TOP_BAR_H) };
         // And the bar reads it: its height, padding and corner all follow.
         let src = shipped_code();
         // Every skin folds, unboxed ones included: their ADD PROJECT is on the
@@ -46093,10 +46514,12 @@ mod tests {
             !row.contains("scoped") && !row.contains("border_l_2()"),
             "no row wears a pinned light any more"
         );
-        assert!(
-            STANDING_WASH < 0.12,
-            "fainter than the hover, or it stops being a faint indicator"
-        );
+        const {
+            assert!(
+                STANDING_WASH < 0.12,
+                "fainter than the hover, or it stops being a faint indicator"
+            )
+        };
     }
 
     /// A click on a branch row goes there — the strip's chips' act — and pins
@@ -48189,7 +48612,7 @@ mod tests {
             "the write gate rechecks the LIVE chart with the pane's position and the own-pane \
              exception at the effect: {writes}"
         );
-        let snapshot = live_fn("fn mcp_snapshot(");
+        let snapshot = live_fn("fn mcp_panes(");
         assert!(
             snapshot.contains("access: p.agent_access") && snapshot.contains("seat: p.seat"),
             "the snapshot carries what the rules need: {snapshot}"
@@ -48261,6 +48684,48 @@ mod tests {
         let badge = live_fn("fn agent_badge_el(");
         assert!(!badge.contains(".with_animation("), "{badge}");
         assert!(badge.contains("badge_phase("));
+    }
+
+    #[test]
+    fn idle_rest_sampling_only_repaints_changed_figures() {
+        let empty = RestCensus::default();
+        let first = RestCensus {
+            sampled_at: Some(Instant::now()),
+            ..empty.clone()
+        };
+        assert!(empty.display_changed(&first));
+        let mut next = first.clone();
+        next.sampled_at = first.sampled_at.map(|t| t + Duration::from_secs(15));
+        assert!(!first.display_changed(&next));
+        next.refusals.push((agentrest::RefusalClass::Busy, 1));
+        assert!(first.display_changed(&next));
+        let apply = live_fn("fn apply_rest(");
+        assert!(apply.contains("if pane_changed || census_changed"));
+        assert!(apply.contains("label != v.memory_label()"));
+    }
+
+    #[test]
+    fn idle_workspace_arms_only_the_clocks_with_consumers() {
+        let timers = live_fn("fn arm_feature_timers(");
+        assert!(timers.contains("self.prompts.open().next().is_some()"));
+        assert!(timers.contains("self.flyout.open && !self.flyout_timer"));
+        let build = live_fn("fn build(");
+        assert!(!build.contains("ws.jiggle.tick()"));
+        assert!(!build.contains("timer(BADGE_STEP)"));
+        let render = live_fn("fn render(&mut self, window: &mut Window");
+        assert!(render.contains("BADGES_MOVING.swap("));
+        let ctl = include_str!("ctl.rs")
+            .split("// ---------------------------------------------------------------- client")
+            .next()
+            .unwrap();
+        assert!(ctl.contains("rx.next().await"));
+        assert!(!ctl.contains(".timer("));
+        let bridge = include_str!("mcp_transport.rs")
+            .split("/// Build a fresh snapshot")
+            .next()
+            .unwrap();
+        assert!(bridge.contains("req_rx.next().await"));
+        assert!(!bridge.contains(".timer("));
     }
 
     /// This file's own code, cut at its test module, and the body of one
@@ -52538,6 +53003,7 @@ node = "Leaf"
     /// and the dark shadows that lift them are the same shadows — so a panel
     /// turned all the way down is still bordered and still raised.
     #[test]
+    #[allow(clippy::type_complexity)]
     fn the_phosphor_gauge_moves_the_halos_and_leaves_the_rims_and_the_lift() {
         let ink = hsla(0.33, 0.9, 0.6, 1.0);
         // Light is a coloured, blurred, outer shadow. A rim has no blur and a

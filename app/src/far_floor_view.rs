@@ -63,6 +63,7 @@ pub(crate) struct FarFloor {
     pub(crate) lines: farfloor::FarLines,
     /// The machines in `machines.toml`, as last read.
     pub(crate) machines: Vec<entry::Machine>,
+    pub(super) clock_armed: bool,
     pub(crate) machines_trouble: Option<String>,
     pub(crate) census: std::collections::HashMap<String, MachineView>,
     /// Machines being asked right now, so one is never asked twice at once.
@@ -99,11 +100,17 @@ const STATUS_SECS: u64 = 3;
 /// book, which keys every sender by a pane. Far above any pane a session host
 /// mints, and one per machine, so "one prompt at a time from this sender to
 /// that worker" holds per machine as it holds per pane.
+///
+/// The number is written to the prompt-key ledger on disk, so it must come
+/// out the same from every build: a retry that arrives after an upgrade is
+/// matched by it. std's `DefaultHasher` promises no such thing across Rust
+/// releases, so this is the first eight bytes of a SHA-256.
 pub(crate) fn far_sender_pane(host: &str) -> u64 {
-    use std::hash::{Hash, Hasher};
-    let mut h = std::collections::hash_map::DefaultHasher::new();
-    host.to_ascii_lowercase().hash(&mut h);
-    FAR_SENDER_BASE | (h.finish() & 0x0000_ffff_ffff_ffff)
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(host.to_ascii_lowercase().as_bytes());
+    let mut first = [0u8; 8];
+    first.copy_from_slice(&digest[..8]);
+    FAR_SENDER_BASE | (u64::from_be_bytes(first) & 0x0000_ffff_ffff_ffff)
 }
 
 pub(crate) const FAR_SENDER_BASE: u64 = 1 << 62;
@@ -125,8 +132,8 @@ fn far_ok(text: String, structured: serde_json::Value) -> mcp::AskReply {
     mcp::AskReply::Said(mcp::tool_ok(text, structured))
 }
 
-fn far_no(text: &str) -> mcp::AskReply {
-    mcp::AskReply::Said(mcp::tool_err(text))
+fn far_no(code: &str, text: &str) -> mcp::AskReply {
+    mcp::AskReply::Said(mcp::tool_err(code, text))
 }
 
 /// A far stage in one sentence, for the agent that sent the prompt.
@@ -172,7 +179,10 @@ impl Workspace {
                     crate::prompt::now_ms(),
                 ) {
                     Some(status) => mcp::AskReply::Said(mcp::prompt_said(&status)),
-                    None => far_no("no prompt by that number came from your machine."),
+                    None => far_no(
+                        "prompt_unavailable",
+                        "no prompt by that number came from your machine.",
+                    ),
                 }
             }
             mcp::FarCall::AskOut {
@@ -291,7 +301,10 @@ impl Workspace {
         let brief = crate::prompt::clean(&p.prompt);
         let brief_len = brief.chars().count();
         let Some(target) = self.leaf_by_shell_pid(target_pid, cx) else {
-            return far_no("that agent is no longer in this window.");
+            return far_no(
+                "target_unavailable",
+                "that agent is no longer in this window.",
+            );
         };
         let (party, to_seat, program, returns) = {
             let tv = target.read(cx);
@@ -344,7 +357,7 @@ impl Workspace {
         if let Some((code, why)) = refusal {
             entry.refusal = Some(code.into());
             self.record(&entry);
-            return far_no(why);
+            return far_no("permission_denied", why);
         }
         self.far_floor.senders.insert(sender_pane, p.from.clone());
         let sender = format!("{} (on {})", crate::prompt::clean(&p.sender), p.from);
@@ -383,7 +396,7 @@ impl Workspace {
                     .ok()
                     .and_then(|v| v.as_str().map(str::to_string));
                 self.record(&entry);
-                far_no(r.why())
+                mcp::AskReply::Said(mcp::floor_refusal(r))
             }
         }
     }
@@ -511,7 +524,7 @@ impl Workspace {
         let Some((_, agent)) = found.filter(|_| reach >= threshing_floor::Reach::Ask) else {
             let why = self.far_refusal_out(seat, machine, to, threshing_floor::Rung::Ask);
             self.far_mark_stale(machine);
-            return far_no(&why);
+            return far_no("permission_denied", &why);
         };
         let heard = self
             .far_floor
@@ -567,13 +580,16 @@ impl Workspace {
         let brief = crate::prompt::clean(brief);
         let chars = brief.chars().count();
         if chars == 0 || chars > threshing_floor::PROMPT_MAX_CHARS {
-            return far_no("the prompt is empty or longer than 32,000 characters.");
+            return far_no(
+                "invalid_arguments",
+                "the prompt is empty or longer than 32,000 characters.",
+            );
         }
         let (reach, found) = self.far_reach_out(seat, machine, to);
         let Some((census, _)) = found.filter(|_| reach >= threshing_floor::Reach::Prompt) else {
             let why = self.far_refusal_out(seat, machine, to, threshing_floor::Rung::Prompt);
             self.far_mark_stale(machine);
-            return far_no(&why);
+            return far_no("permission_denied", &why);
         };
         let far_window = census.window;
         // A retry with a key this agent already used is answered with the
@@ -594,6 +610,7 @@ impl Workspace {
         }
         if self.far_floor.book.busy(caller_pane, machine, to) {
             return far_no(
+                "prompt_pending",
                 "an earlier prompt from you to that agent has not finished. Read it with \
                  prompt_status first.",
             );
@@ -605,9 +622,10 @@ impl Workspace {
             .find(|m| m.name == machine)
             .and_then(|m| m.ssh.clone())
         else {
-            return far_no(&format!(
-                "no machine named {machine:?} is in machines.toml."
-            ));
+            return far_no(
+                "machine_unavailable",
+                &format!("no machine named {machine:?} is in machines.toml."),
+            );
         };
         let now = crate::prompt::now_ms();
         self.ask_seq = (self.ask_seq + 1).max(now);
@@ -750,13 +768,27 @@ impl Workspace {
     /// Keep what this window knows of other machines current, while anything
     /// needs it: the Floor is open, a far line is drawn, or a far prompt is
     /// open. A window none of those is true of asks nobody anything.
-    pub(crate) fn watch_far_floor(window: &Window, cx: &mut Context<Self>) {
+    fn far_clock_needed(&self) -> bool {
+        self.threshing_floor
+            || self.far_machines_page_open()
+            || !self.far_floor.lines.is_empty()
+            || !self.far_floor.book.open_ones().is_empty()
+    }
+
+    pub(crate) fn watch_far_floor(&mut self, window: &Window, cx: &mut Context<Self>) {
+        if self.scratch || self.far_floor.clock_armed || !self.far_clock_needed() {
+            return;
+        }
+        self.far_floor.clock_armed = true;
         cx.spawn_in(window, async move |this, cx| loop {
             cx.background_executor()
                 .timer(Duration::from_secs(STATUS_SECS))
                 .await;
-            let Ok((asks, statuses)) = this.update(cx, |ws: &mut Workspace, cx| {
-                (ws.far_due(cx), ws.far_open_prompts())
+            let Ok(Some((asks, statuses))) = this.update(cx, |ws: &mut Workspace, cx| {
+                ws.far_floor.clock_armed = ws.far_clock_needed();
+                ws.far_floor
+                    .clock_armed
+                    .then(|| (ws.far_due(cx), ws.far_open_prompts()))
             }) else {
                 break;
             };

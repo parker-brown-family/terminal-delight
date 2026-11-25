@@ -196,14 +196,27 @@ impl Sharing {
 
     /// The most `host`'s agents may do here. `None`: nothing, whether the
     /// machine was never listed or its word is one this build cannot read.
+    ///
+    /// The file is a person's to edit, so it can name one machine twice
+    /// (`legion` and `Legion`). Every entry for it counts, and the least of
+    /// them holds: a duplicate never widens what another entry allows, and an
+    /// entry this build cannot read closes the machine as it would alone.
     pub fn ceiling(&self, host: &str) -> Option<Rung> {
-        self.entries
+        let mut least: Option<Rung> = None;
+        for m in self
+            .entries
             .iter()
-            .find(|m| m.host.eq_ignore_ascii_case(host))
-            .and_then(|m| m.reach.known())
+            .filter(|m| m.host.eq_ignore_ascii_case(host))
+        {
+            let r = m.reach.known()?;
+            least = Some(least.map_or(r, |l| l.min(r)));
+        }
+        least
     }
 
     /// Set or clear a machine's ceiling. Says whether anything changed.
+    /// Every entry naming the machine is replaced, so a revocation cannot
+    /// leave behind a second entry for the same machine that still grants.
     pub fn set(&mut self, host: &str, reach: Option<Rung>) -> bool {
         let host = host.trim();
         if host.is_empty() {
@@ -213,6 +226,15 @@ impl Sharing {
             .entries
             .iter()
             .position(|m| m.host.eq_ignore_ascii_case(host));
+        let before = self.entries.len();
+        if let Some(i) = at {
+            let mut n = 0;
+            self.entries.retain(|m| {
+                n += 1;
+                n - 1 == i || !m.host.eq_ignore_ascii_case(host)
+            });
+        }
+        let dropped = self.entries.len() != before;
         match (at, reach) {
             (Some(i), None) => {
                 self.entries.remove(i);
@@ -220,7 +242,7 @@ impl Sharing {
             }
             (Some(i), Some(r)) => {
                 let word = RungWord::Known(r);
-                let changed = self.entries[i].reach != word;
+                let changed = dropped || self.entries[i].reach != word;
                 self.entries[i].reach = word;
                 changed
             }
@@ -245,7 +267,10 @@ impl Sharing {
 /// that machine's ceiling in place of a line. A seated pane and an unseated
 /// one are the same to it: a machine with no ceiling sees neither.
 pub fn inbound_reach(cfg: &McpConfig, ceiling: Option<Rung>, target: &Party) -> Reach {
-    if !cfg.enabled || target.access.is_off_limits() || !policy_admits(cfg, target.is_agent) {
+    // MCP switched off is refused by `policy_admits`, which begins with
+    // `cfg.enabled`; the separate check this line once had was the same test
+    // twice, and the mutation run could not tell them apart (issue #1472).
+    if target.access.is_off_limits() || !policy_admits(cfg, target.is_agent) {
         return Reach::Hidden;
     }
     let Some(ceiling) = ceiling else {

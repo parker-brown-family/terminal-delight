@@ -34,6 +34,10 @@ pub struct Prefs {
     pub harness: Option<String>,
     pub model: Option<String>,
     pub effort: Option<String>,
+    /// The folders the launcher lists projects from, one level down, in
+    /// order; `~` is your home. `None` = nobody chose, and the shipped list
+    /// applies ([`crate::launcher::default_roots`]).
+    pub roots: Option<Vec<String>>,
 }
 
 impl Prefs {
@@ -85,7 +89,18 @@ pub fn save(p: &Prefs) {
     save_to(&config_path(), p);
 }
 
+/// The window writes the file whole with what it loaded at start, but the
+/// folder list is only ever edited by hand. Keep whatever list is on disk, so a
+/// press on the usage card cannot put back a list somebody has since changed.
+fn with_roots_on_disk(path: &Path, p: &Prefs) -> Prefs {
+    Prefs {
+        roots: load_from(path).roots,
+        ..p.clone()
+    }
+}
+
 fn save_to(path: &Path, p: &Prefs) {
+    let p = &with_roots_on_disk(path, p);
     if let Ok(body) = toml::to_string(p) {
         let _ = crate::session::write_atomic(path, &body);
     }
@@ -130,18 +145,26 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("td-launchpref-{}", std::process::id()));
         std::fs::create_dir_all(&dir).unwrap();
         let path = dir.join("launch.toml");
+        std::fs::write(&path, "roots = [\"~/code\"]\n").unwrap();
         save_to(
             &path,
             &Prefs {
                 harness: Some("codex".into()),
                 model: Some("gpt-6-astra".into()),
                 effort: Some("high".into()),
+                // A stale list the window loaded earlier: the one on disk wins.
+                roots: Some(vec!["~/old".into()]),
             },
         );
         let back = load_from(&path);
         assert_eq!(back.harness(), Some(Harness::Codex));
         assert_eq!(back.model_ix(&models(Harness::Codex)), Some(1));
         assert_eq!(back.effort.as_deref(), Some("high"));
+        assert_eq!(
+            back.roots,
+            Some(vec!["~/code".to_string()]),
+            "a save keeps the hand-edited folders on disk"
+        );
         std::fs::remove_dir_all(&dir).ok();
     }
 
@@ -175,6 +198,7 @@ mod tests {
             harness: Some("gemini".into()),
             model: Some("o3".into()),
             effort: Some("standard".into()),
+            roots: None,
         };
         assert_eq!(p.harness(), None);
         assert_eq!(p.model_ix(&models(Harness::Claude)), None);

@@ -200,6 +200,7 @@ impl TerminalView {
             return;
         }
         let (rows, wraps) = self.screen_rows();
+        self.scan_linked(&rows, cx);
         if !rows.iter().any(|r| r.contains("Deliverable:")) {
             return;
         }
@@ -215,6 +216,38 @@ impl TerminalView {
                 }
             }
         }
+    }
+
+    /// Read the screen's tables for the links a reply listed, into the list
+    /// the flyout's `+` page searches and nothing else reads. A link seen
+    /// again keeps the time it was first seen.
+    pub(crate) fn scan_linked(&mut self, rows: &[String], cx: &mut Context<Self>) {
+        let tabled = rows
+            .iter()
+            .any(|r| matches!(r.trim_start().chars().next(), Some('│' | '┃' | '|')));
+        if !tabled {
+            return;
+        }
+        let now = crate::surfacefeed::now_ms();
+        let mut grew = false;
+        for (label, href) in handover::table_links(rows) {
+            let seen = Handover {
+                label,
+                href,
+                at_ms: now,
+                source: Source::Said,
+            };
+            grew |= self.linked.record(seen) == Recorded::New;
+        }
+        if grew {
+            cx.notify();
+        }
+    }
+
+    /// The links this pane's agent listed in its replies' tables, for the
+    /// flyout's `+` page. Not handovers: see `linked` on the pane.
+    pub(crate) fn linked(&self) -> &crate::handover::Ledger {
+        &self.linked
     }
 
     /// The live screen as the screen rule wants it: each row as drawn, padded
@@ -357,7 +390,10 @@ impl TerminalView {
     /// One handover, by its key, on Alt+O's terms: from the pane's own row of
     /// artifacts, where Enter or its number picks one.
     pub(crate) fn ask_handover_by_key(&mut self, key: &str, cx: &mut Context<Self>) {
-        if let Some(h) = self.handovers.get(key).cloned() {
+        // A link a reply only listed opens by the same road; marking it
+        // opened finds nothing in the ledger and changes nothing.
+        let found = self.handovers.get(key).or_else(|| self.linked.get(key));
+        if let Some(h) = found.cloned() {
             self.ask_handover(&h, cx);
         }
     }

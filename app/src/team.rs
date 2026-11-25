@@ -340,6 +340,34 @@ mod tests {
         }
     }
 
+    /// The limits hold at their edges. The first cargo-mutants run
+    /// (2026-11-17) found `>` turned `>=` survived on the member count and
+    /// the first prompt's length, and `+` turned `*` on the live count.
+    #[test]
+    fn a_team_at_each_limit_is_allowed_and_one_past_it_is_not() {
+        let member = |n: usize| json!({ "role": format!("r{n}"), "harness": "claude" });
+        let team = |n: usize| json!({ "name": "t", "project": "/tmp", "agents": (0..n).map(member).collect::<Vec<_>>() });
+        assert_eq!(
+            parse(&team(MAX_MEMBERS), None).unwrap().members.len(),
+            MAX_MEMBERS
+        );
+        assert!(parse(&team(MAX_MEMBERS + 1), None).is_err());
+        let with_prompt = |chars: usize| {
+            json!({ "name": "t", "project": "/tmp", "agents": [
+                { "role": "r", "harness": "claude", "prompt": "x".repeat(chars) } ] })
+        };
+        let longest = crate::threshing_floor::PROMPT_MAX_CHARS;
+        assert!(parse(&with_prompt(longest), None).is_ok());
+        assert!(parse(&with_prompt(longest + 1), None).is_err());
+        let live = |live| Asker { live, ..asker() };
+        assert!(
+            decide(&live(MAX_LIVE - 2), 2).is_ok(),
+            "exactly full is allowed"
+        );
+        assert!(decide(&live(MAX_LIVE - 1), 2).is_err());
+        assert!(decide(&live(3), 3).is_ok(), "3 live and 3 more is 6, not 9");
+    }
+
     #[test]
     fn a_team_is_read_with_the_defaults_a_coordinator_would_expect() {
         let spec = parse(

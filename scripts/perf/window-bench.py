@@ -1,0 +1,533 @@
+#!/usr/bin/env python3
+"""Measure a production window on a new Xvfb with lavapipe. One visible tab,
+N open PTYs. Raw samples are retained. CPU is percent of one logical core."""
+
+import argparse
+import contextlib
+import json
+import os
+from pathlib import Path
+import shlex
+import signal
+import statistics
+import subprocess as sp
+import sys
+import tempfile
+import time
+import tty
+
+HERE = Path(__file__).resolve()
+ROOT = HERE.parents[2]
+CLOCK = time.monotonic
+
+
+def wait_for(predicate, seconds, label):
+    deadline = CLOCK() + seconds
+    while CLOCK() < deadline:
+        value = predicate()
+        if value:
+            return value
+        time.sleep(0.005)
+    raise TimeoutError(label)
+
+
+def worker(directory, index, history, size):
+    # OPOST is off so our byte count is the count written to the PTY.
+    tty.setraw(0)
+    for n in range(history):
+        os.write(1, f"pane {index} history {n:05d} 0123456789abcdef\r\n".encode())
+    if index == 0 and os.getenv("TD_BENCH_CAPTURE"):
+        # Populate the photograph with the checkout's actual release work.
+        rows = sp.check_output(["git", "-C", str(ROOT), "log", "-4", "--format=%h  %s"])
+        os.write(
+            1, b"\033[2J\033[H$ git log -4 --oneline\r\n" + rows.replace(b"\n", b"\r\n")
+        )
+    Path(directory, f"ready-{index}").touch()
+    if index == 0:
+        with open(Path(directory, "go"), "rb") as trigger:
+            trigger.read(1)
+        if os.getenv("TD_BENCH_MCP"):
+            from mcp_calls import measure
+            measure(directory, int(os.environ["TD_BENCH_MCP"]))
+        block = b"".join(
+            f"\033[38;5;{n}mrow {n:03} 0123456789abcdef\033[0m\r\n".encode()
+            for n in range(256)
+        )
+        start = CLOCK()
+        sent = 0
+        while sent < size:
+            sent += os.write(1, block[: min(len(block), size - sent)])
+        # A cursor-position report fences the final byte at the parser.
+        os.write(1, b"\033[0m\r\n\033[6n")
+        response = b""
+        while not response.endswith(b"R"):
+            response += os.read(0, 64)
+        # Written whole, then renamed: the parent polls for `done` and must
+        # never read it half written.
+        partial = Path(directory, "done.partial")
+        partial.write_text(json.dumps([start, CLOCK(), sent]))
+        os.replace(partial, Path(directory, "done"))
+    signal.pause()
+
+
+def proc_stats(pid):
+    # /proc stat's command field may contain spaces or parentheses.
+    fields = Path(f"/proc/{pid}/stat").read_text().rsplit(")", 1)[1].split()
+    return (
+        (int(fields[11]) + int(fields[12])) / os.sysconf("SC_CLK_TCK"),
+        int(fields[21]) * os.sysconf("SC_PAGE_SIZE") / 1048576,
+    )
+
+
+def thread_sleeps(pid):
+    """Voluntary switches count blocking sleeps. Keep thread IDs for deltas."""
+    result = {}
+    for task in Path(f"/proc/{pid}/task").iterdir():
+        try:
+            fields = dict(line.split(":", 1) for line in (task / "status").read_text().splitlines() if ":" in line)
+            result[task.name] = (fields["Name"].strip(), int(fields["voluntary_ctxt_switches"]))
+        except (FileNotFoundError, ProcessLookupError):
+            continue
+    return result
+
+
+def idle_window(pid, sample):
+    before = thread_sleeps(pid)
+    cpu0, _ = proc_stats(pid)
+    start = CLOCK()
+    epoch_us = time.time_ns() // 1000
+    time.sleep(sample)
+    end = CLOCK()
+    cpu1, rss = proc_stats(pid)
+    after = thread_sleeps(pid)
+    duration = end - start
+    by_name = {}
+    for tid in before.keys() & after.keys():
+        name, count = after[tid]
+        by_name[name] = by_name.get(name, 0) + count - before[tid][1]
+    return start, end, rss, {
+        "idle_window_cpu_pct": 100 * (cpu1 - cpu0) / duration,
+        "voluntary_switches_s": sum(by_name.values()) / duration,
+        "voluntary_switches_by_thread_name": by_name,
+        "threads_started": len(after.keys() - before.keys()),
+        "threads_exited": len(before.keys() - after.keys()),
+        "idle_sample_s": duration,
+        "idle_start_epoch_us": epoch_us,
+    }
+
+
+def tagged(directory):
+    marker = f"TD_BENCH_RUN={directory}".encode()
+    for item in Path("/proc").glob("[0-9]*/environ"):
+        try:
+            if marker in item.read_bytes().split(b"\0"):
+                yield int(item.parent.name)
+        except (FileNotFoundError, PermissionError, ProcessLookupError):
+            pass
+
+
+def clean(directory):
+    for sig in (signal.SIGTERM, signal.SIGKILL):
+        for pid in tagged(directory):
+            with contextlib.suppress(ProcessLookupError):
+                os.kill(pid, sig)
+        time.sleep(0.15)
+
+
+def summary(values):
+    if not values:
+        return None
+    return dict(
+        n=len(values),
+        median=statistics.median(values),
+        minimum=min(values),
+        maximum=max(values),
+    )
+
+
+def audit_draws(log_path, skin):
+    # The renderer can be writing the next record while the window is open.
+    # Only the part through the last newline is a complete observation.
+    complete, _, _ = log_path.read_text().rpartition("\n")
+    draws = [line for line in complete.splitlines() if line.startswith("td-frame ")]
+    if not draws:
+        raise RuntimeError(f"renderer audit missing: {log_path}")
+    # TERMINIMALIST (BAREMETAL until 2026-11-17) draws directly: never a
+    # shadow. The post pass runs only when a theme switches the CRT glass on,
+    # so it is reported by the frame count rather than refused here.
+    if skin == "terminimalist" and any(
+        not (line.startswith("td-frame direct=true ") and line.endswith(" shadows=0"))
+        for line in draws
+    ):
+        raise RuntimeError(f"optional draw with TERMINIMALIST: {log_path}")
+
+
+def run(a, display_env, probe, n, skin, repeat):
+    with tempfile.TemporaryDirectory(prefix="td-window-") as temp:
+        d = Path(temp)
+        env = dict(
+            display_env,
+            HOME=temp,
+            TD_BENCH_RUN=temp,
+            TD_SESSION="bench",
+            TD_SKIN=str(a.skin_file or ROOT / "app/skins" / f"{skin}.toml"),
+            SHELL="/bin/bash",
+            TD_HOST_SHELL="/bin/bash",
+            LP_NUM_THREADS=str(a.threads),
+        )
+        if a.capture:
+            env["TD_BENCH_CAPTURE"] = "1"
+        if a.mcp:
+            env["TD_BENCH_MCP"] = str(a.mcp)
+            env["TD_MCP_AUDIT"] = "1"
+        if a.timer_audit:
+            env["TD_TIMER_AUDIT"] = "1"
+        if a.audit:
+            env["TD_FRAME_AUDIT"] = "1"
+        if a.scene == "floor":
+            env["TD_THRESHING_FLOOR_DEMO"] = "1"
+        elif a.scene:
+            env["TD_SKIN_SCENE"] = a.scene
+        for key, sub in [
+            ("XDG_CONFIG_HOME", ".config"),
+            ("XDG_RUNTIME_DIR", "run"),
+            ("XDG_STATE_HOME", "state"),
+            ("XDG_DATA_HOME", "data"),
+            ("XDG_CACHE_HOME", "cache"),
+        ]:
+            (d / sub).mkdir(mode=0o700)
+            env[key] = str(d / sub)
+        sessions = d / ".config/terminal-delight/sessions"
+        sessions.mkdir(parents=True)
+        os.mkfifo(d / "go")
+        layout = f"active = 0\npanes = {n}\nwin = [0,0,{a.width},600]\n"
+        if a.mcp:
+            layout += '[mcp]\nenabled = true\nexpose = "all"\nevents = true\nwritable = false\n'
+        for i in range(n):
+            cmd = shlex.join(
+                [
+                    "exec",
+                    sys.executable,
+                    str(HERE),
+                    "worker",
+                    temp,
+                    str(i),
+                    str(a.history),
+                    str(a.bytes),
+                ]
+            )
+            layout += f'[[tabs]]\n[tabs.node.Leaf]\nname = "pane {i}"\ncwd = {json.dumps(temp)}\nresume = {json.dumps(cmd)}\n'
+        (sessions / "bench.toml").write_text(layout)
+        events_path = d / "frames"
+        log_path = a.out / f"{skin}-{n}-{repeat}.log"
+        with events_path.open("w") as events, log_path.open("w") as log:
+            listener = sp.Popen([probe], env=env, stdout=events, stderr=log)
+            try:
+                wait_for(
+                    lambda: events_path.read_text().startswith("ready"),
+                    4,
+                    "X11 observer",
+                )
+                start = CLOCK()
+                win = sp.Popen([a.binary], env=env, cwd=temp, stdout=log, stderr=log)
+                (d / "window-pid").write_text(str(win.pid))
+                try:
+                    # Xvfb has no window manager. Supply the ConfigureNotify that
+                    # starts gpui drawing here. Keep the final fixture size fixed.
+                    xid = sp.check_output(
+                        [
+                            "timeout",
+                            "30",
+                            "xdotool",
+                            "search",
+                            "--sync",
+                            "--onlyvisible",
+                            "--name",
+                            "terminal-delight",
+                        ],
+                        env=env,
+                        text=True,
+                    ).splitlines()[0]
+                    for width in [a.width - 1, a.width]:
+                        sp.run(
+                            ["xdotool", "windowsize", "--sync", xid, str(width), "600"],
+                            env=env,
+                            check=True,
+                            timeout=5,
+                        )
+
+                    def first_paint():
+                        if win.poll() is not None:
+                            raise RuntimeError(
+                                f"window exited {win.returncode}: {log_path}"
+                            )
+                        return next(
+                            (
+                                float(l.split()[2])
+                                for l in events_path.read_text().splitlines()
+                                if l.startswith("paint ")
+                            ),
+                            None,
+                        )
+
+                    first_ms = 1000 * (
+                        wait_for(first_paint, 30, "first coloured frame") - start
+                    )
+                    wait_for(
+                        lambda: all((d / f"ready-{i}").exists() for i in range(n)),
+                        80,
+                        "restored PTYs",
+                    )
+                    time.sleep(a.quiet)
+                    if a.capture:
+                        sp.run(
+                            [
+                                "import",
+                                "-window",
+                                xid,
+                                str(a.out / f"{skin}-{n}-{repeat}.png"),
+                            ],
+                            env=env,
+                            check=True,
+                            timeout=20,
+                        )
+                    host = [
+                        p
+                        for p in tagged(temp)
+                        if b"serve"
+                        in Path(f"/proc/{p}/cmdline").read_bytes().split(b"\0")
+                    ]
+                    if len(host) != 1:
+                        raise RuntimeError(f"expected one private host, found {host}")
+                    idle_start, idle_end, rss, idle = idle_window(win.pid, a.sample)
+                    host_rss = proc_stats(host[0])[1]
+                    if a.profile:
+                        record = sp.Popen(
+                            [
+                                "perf",
+                                "record",
+                                "-q",
+                                "-e",
+                                "cpu-clock:u",
+                                "-F",
+                                "99",
+                                "-p",
+                                str(win.pid),
+                                "-o",
+                                str(a.out / f"{skin}-{n}-{repeat}.perf.data"),
+                            ]
+                        )
+                    try:
+                        with (d / "go").open("wb", buffering=0) as trigger:
+                            trigger.write(b"1")
+                        wait_for((d / "done").exists, 240, "stream parser fence")
+                        begin, end, sent = json.loads((d / "done").read_text())
+                    finally:
+                        if a.profile:
+                            record.send_signal(signal.SIGINT)
+                            record.wait(timeout=15)
+                    window_id = int(xid)
+                    time.sleep(0.05)
+                    lines = events_path.read_text().splitlines()[1:]
+                    frames = [
+                        int(ust) / 1e6
+                        for kind, xid, ts, ust in map(str.split, lines)
+                        if kind == "present"
+                        and int(xid) == window_id
+                        and begin <= float(ts) <= end
+                    ]
+                    intervals = [1000 * (y - x) for x, y in zip(frames, frames[1:])]
+                    damages = [
+                        float(ts)
+                        for kind, xid, ts, _ in map(str.split, lines)
+                        if kind == "damage"
+                        and int(xid) == window_id
+                        and begin <= float(ts) <= end
+                    ]
+                    (a.out / f"{skin}-{n}-{repeat}.frames").write_text(
+                        "\n".join(lines) + "\n"
+                    )
+                    if a.mcp:
+                        rows = json.loads((d / "calls.json").read_text())
+                        timings = [line.split() for line in log_path.read_text().splitlines() if line.startswith("td-mcp-time ")]
+                        # Catalogue is static. The setup census and each measured
+                        # tools/call build one snapshot and encode one response.
+                        snapshots = [int(row[2]) for row in timings if row[1] == "snapshot"]
+                        encoded = [int(row[2]) for row in timings if row[1] == "serialize"]
+                        if len(snapshots) != len(rows) + 1 or len(encoded) != len(rows) + 2:
+                            raise RuntimeError(f"incomplete MCP attribution: {len(rows)} calls, {len(snapshots)} snapshots, {len(encoded)} encodes")
+                        for row, snap, enc in zip(rows, snapshots[1:], encoded[2:], strict=True):
+                            row.update(snapshot_ns=snap, serialization_ns=enc)
+                        (a.out / f"mcp-{repeat}.json").write_text(json.dumps(rows, indent=2))
+                    if a.audit:
+                        audit_draws(log_path, skin)
+                    return dict(
+                        repeat=repeat,
+                        skin=skin,
+                        panes=n,
+                        history_lines_per_pane=a.history,
+                        cold_process_paint_ms=first_ms,
+                        **idle,
+                        idle_redraws_s=sum(
+                            1 for kind, xid, ts, _ in map(str.split, lines)
+                            if kind == "damage" and int(xid) == window_id
+                            and idle_start <= float(ts) < idle_end
+                        ) / (idle_end - idle_start),
+                        window_rss_mib=rss,
+                        host_rss_mib=host_rss,
+                        stream_mib_s=sent / 1048576 / (end - begin),
+                        present_interval_ms=summary(intervals),
+                        damage_events=len(damages),
+                        full_update_interval_ms=summary(
+                            [1000 * (b - a) for a, b in zip(damages, damages[1:])]
+                        ),
+                        stream_begin=begin,
+                        stream_end=end,
+                    )
+                finally:
+                    clean(temp)
+                    win.wait(timeout=5)
+            finally:
+                listener.terminate()
+                listener.wait(timeout=5)
+
+
+def main():
+    p = argparse.ArgumentParser(description=__doc__)
+    p.add_argument("--binary", type=Path, required=True)
+    p.add_argument("--icd", type=Path, required=True, help="lavapipe Vulkan ICD JSON")
+    p.add_argument("--out", type=Path, required=True)
+    p.add_argument("--mcp", type=int, default=0, help="repetitions per advertised tool from inside a private 20-pane fixture")
+    p.add_argument("--timer-audit", action="store_true", help="log each fired GPUI timer with a realtime timestamp and source location")
+    p.add_argument("--display", type=int, default=96)
+    p.add_argument("--panes", type=int, nargs="+", default=[1, 8, 16])
+    p.add_argument("--skins", nargs="+", default=["default"])
+    p.add_argument("--runs", type=int, default=5)
+    p.add_argument("--quiet", type=float, default=60)
+    p.add_argument("--sample", type=float, default=8)
+    p.add_argument("--history", type=int, default=0)
+    p.add_argument("--bytes", type=int, default=50 * 1024 * 1024)
+    p.add_argument("--threads", type=int, default=4)
+    p.add_argument("--profile", action="store_true")
+    p.add_argument(
+        "--smoke",
+        action="store_true",
+        help="permit debug binary for rig qualification only",
+    )
+    p.add_argument(
+        "--audit", action="store_true", help="verify actual optional draw submissions"
+    )
+    p.add_argument(
+        "--capture",
+        action="store_true",
+        help="save the settled native window before streaming",
+    )
+    p.add_argument(
+        "--scene",
+        choices=["settings", "help", "floor"],
+        help="show a native built-in capture fixture",
+    )
+    p.add_argument(
+        "--skin-file",
+        type=Path,
+        help="override the one named skin, for a matched control",
+    )
+    p.add_argument("--width", type=int, default=900, help="window width on the private 1000px display")
+    a = p.parse_args()
+    if a.mcp and a.panes != [20]:
+        p.error("--mcp requires --panes 20")
+    if not 320 <= a.width <= 1000:
+        p.error("--width must be between 320 and 1000")
+    if a.skin_file:
+        if len(a.skins) != 1:
+            p.error("--skin-file needs exactly one named skin")
+        a.skin_file = a.skin_file.resolve(strict=True)
+    a.binary = a.binary.resolve(strict=True)
+    a.icd = a.icd.resolve(strict=True)
+    a.out = a.out.resolve()
+    if "lvp" not in json.loads(a.icd.read_text())["ICD"]["library_path"]:
+        p.error("expected a lavapipe ICD")
+    if (
+        min(a.panes) < 1
+        or min(a.sample, a.runs, a.bytes, a.threads) <= 0
+        or min(a.history, a.quiet) < 0
+    ):
+        p.error("invalid benchmark dimensions")
+    for skin in a.skins:
+        if not (ROOT / "app/skins" / f"{skin}.toml").is_file():
+            p.error(f"unknown skin {skin}")
+    info = json.loads(sp.check_output([a.binary, "--build-info"]))
+    if not a.smoke and info["opt_level"] not in ["2", "3"]:
+        p.error("expected optimized release binary")
+    a.out.mkdir(parents=True, exist_ok=False)
+    (a.out / "method.json").write_text(
+        json.dumps(dict(build=info, argv=sys.argv), indent=2)
+    )
+    env = dict(
+        PATH="/usr/bin:/bin",
+        DISPLAY=f":{a.display}",
+        LANG="C.UTF-8",
+        VK_DRIVER_FILES=str(a.icd),
+        VK_ICD_FILENAMES=str(a.icd),
+    )
+    with tempfile.TemporaryDirectory() as temp:
+        probe = Path(temp) / "observe"
+        sp.run(
+            [
+                "cc",
+                "-O2",
+                "-Wall",
+                "-Werror",
+                HERE.with_name("x11-frames.c"),
+                "-lxcb",
+                "-lxcb-damage",
+                "-lxcb-present",
+                "-o",
+                probe,
+            ],
+            check=True,
+        )
+        xv = sp.Popen(
+            [
+                "Xvfb",
+                env["DISPLAY"],
+                "-screen",
+                "0",
+                "1000x700x24",
+                "-fbdir",
+                temp,
+                "-nolisten",
+                "tcp",
+                "-noreset",
+            ],
+            env=env,
+        )
+        try:
+            fbfile = Path(temp) / "Xvfb_screen0"
+            wait_for(
+                lambda: (
+                    xv.poll() is None
+                    and fbfile.exists()
+                    and fbfile.stat().st_size >= 1000 * 700 * 4
+                    and Path(f"/tmp/.X11-unix/X{a.display}").exists()
+                ),
+                5,
+                "owned Xvfb",
+            )
+            with (a.out / "samples.jsonl").open("w", buffering=1) as output:
+                for rep in range(a.runs):
+                    for n in a.panes:
+                        for skin in a.skins[:: 1 if rep % 2 == 0 else -1]:
+                            row = run(a, env, probe, n, skin, rep)
+                            print(json.dumps(row), file=output)
+                            print(json.dumps(row), flush=True)
+        finally:
+            xv.terminate()
+            xv.wait(timeout=5)
+
+
+if __name__ == "__main__":
+    if sys.argv[1:2] == ["worker"]:
+        worker(sys.argv[2], *map(int, sys.argv[3:]))
+    else:
+        main()

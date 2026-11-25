@@ -103,6 +103,7 @@ pub mod pref;
 pub mod prepare;
 pub mod progress;
 pub mod reading;
+pub mod sections;
 pub mod snapshot;
 pub mod video;
 
@@ -1560,6 +1561,10 @@ mod tests {
             (
                 "docview/reading.rs",
                 strip(include_str!("docview/reading.rs")),
+            ),
+            (
+                "docview/sections.rs",
+                strip(include_str!("docview/sections.rs")),
             ),
             (
                 "docview/md_notes.rs",

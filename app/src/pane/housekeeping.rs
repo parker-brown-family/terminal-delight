@@ -44,23 +44,42 @@ impl TerminalView {
         .then_some(end + Duration::from_millis(300))
     }
 
-    pub(super) fn housekeeping_delay(&self) -> Duration {
+    /// A quiet visible shell receives output, mode changes and resizes through
+    /// independent channels. Hidden streams intentionally suppress output events
+    /// and still need the slow generation check for the workspace's previews.
+    pub(super) fn housekeeping_delay(&self) -> Option<Duration> {
         let shown = self.shown.load(std::sync::atomic::Ordering::Relaxed);
-        let mut delay = if shown && self.fx.active() {
-            Duration::from_millis(33)
-        } else if shown {
-            Duration::from_millis(150)
+        let mut delay = if !shown {
+            if self.hosts_agent() {
+                // An unrelated wake must not postpone the next scan by a full interval.
+                Some(HIDDEN_INTERVAL.saturating_sub(self.last_think_scan.elapsed()))
+            } else if self.offscreen_dirty {
+                Some(OFFSCREEN_REFRESH.saturating_sub(self.offscreen_flushed.elapsed()))
+            } else {
+                None
+            }
+        } else if self.fx.active() {
+            Some(Duration::from_millis(33))
+        } else if self.hosts_agent() || self.fx_recent() {
+            Some(Duration::from_millis(150))
         } else {
-            HIDDEN_INTERVAL.saturating_sub(self.last_think_scan.elapsed())
+            None
         };
-        if let Some((_, since)) = self.pending_pty {
-            delay = delay.min(RESIZE_SETTLE.saturating_sub(since.elapsed()));
+        for deadline in [
+            self.pending_pty.map(|(_, since)| since + RESIZE_SETTLE),
+            self.completion_deadline(),
+        ]
+        .into_iter()
+        .flatten()
+        {
+            let wait = deadline.saturating_duration_since(Instant::now());
+            delay = Some(delay.map_or(wait, |d| d.min(wait)));
         }
-        if let Some(at) = self.completion_deadline() {
-            delay = delay.min(at.saturating_duration_since(Instant::now()));
-        }
-        // A due bell may still be held by scroll-settle. Retry at a bounded
-        // rate rather than spinning on an already expired deadline.
-        delay.max(Duration::from_millis(33))
+        delay.map(|d| d.max(Duration::from_millis(33)))
+    }
+
+    pub(super) fn fx_recent(&self) -> bool {
+        self.last_screen_output
+            .is_some_and(|t| t.elapsed() < Duration::from_millis(750))
     }
 }

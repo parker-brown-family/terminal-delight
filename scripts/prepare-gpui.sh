@@ -54,6 +54,7 @@
 #                             rather than forcing it to 1, so a pane's opacity
 #                             gauges show the desktop through the CRT. Identical
 #                             wherever the screen is opaque.
+#   0015-constant-filter-taps — fixed blur offsets and interior glow sampling.
 # Idempotent; safe to re-run.
 set -euo pipefail
 
@@ -77,7 +78,11 @@ patch_doc_grade="$repo_root/docs/patches/0013-doc-grade.patch"
 patch_tube_alpha="$repo_root/docs/patches/0014-tube-alpha.patch"
 
 [ -n "$zed_rev" ] || { echo "zed_rev not found in app/Cargo.toml" >&2; exit 1; }
-for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha"; do
+patch_filter="$repo_root/docs/patches/0015-constant-filter-taps.patch"
+patch_direct="$repo_root/docs/patches/0016-direct-rendering.patch"
+patch_demand="$repo_root/docs/patches/0017-demand-driven-frames.patch"
+patch_shoulder="$repo_root/docs/patches/0018-doc-highlight-shoulder.patch"
+for p in "$patch_crt" "$patch_blur" "$patch_crawl" "$patch_tubes" "$patch_glyph" "$patch_gpl" "$patch_lazy" "$patch_fit" "$patch_rim" "$patch_image_glow" "$patch_glow_taps" "$patch_cutout" "$patch_tube_blur" "$patch_doc_grade" "$patch_tube_alpha" "$patch_filter" "$patch_direct" "$patch_demand" "$patch_shoulder"; do
     [ -f "$p" ] || { echo "missing $p" >&2; exit 1; }
 done
 
@@ -174,3 +179,19 @@ apply_patch "$patch_doc_grade" "doc-grade" \
 
 apply_patch "$patch_tube_alpha" "tube-alpha" \
     'grep -qF "td-tube-alpha" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_filter" "constant-filter-taps" \
+    'grep -qF "fn disk_sample" crates/gpui_wgpu/src/crt_pass.wgsl'
+
+apply_patch "$patch_direct" "direct-rendering" \
+    'grep -qF "pub fn set_direct_rendering" crates/gpui_wgpu/src/wgpu_renderer.rs'
+
+apply_patch "$patch_demand" "demand-driven-frames" \
+    'grep -qF "fn frame_requester(" crates/gpui/src/platform.rs'
+
+# 0018 is a delta on the shader and renderer as 0013-0016 leave them: on a
+# CURVED tube, a document's highlights roll off toward a light grey instead of
+# clipping to white after the tube's 35% boost, and each document grade rect
+# says whether it is a document or a panel kept out of one's grade.
+apply_patch "$patch_shoulder" "doc-highlight-shoulder" \
+    'grep -qF "td-doc-shoulder" crates/gpui_wgpu/src/crt_pass.wgsl'

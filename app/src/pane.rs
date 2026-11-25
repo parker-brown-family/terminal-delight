@@ -72,10 +72,25 @@ pub enum PaneMode {
     Unknown,
 }
 
+/// Whether a process is Claude Code: its name is `claude`, or the program it
+/// runs (the command, or the script an interpreter such as `node` was handed)
+/// is a `claude` executable or Claude Code's own package. The one copy of the
+/// rule, shared by the window, the session host and the resume line. It used
+/// to ask whether the command line merely contained `/claude` anywhere, so
+/// `vim ~/Work/claude-tools/x` read as Claude (issue #901).
+pub(crate) fn runs_claude(comm: &str, cmdline: &str) -> bool {
+    comm.trim() == "claude"
+        || cmdline.split_whitespace().take(2).any(|arg| {
+            arg == "claude"
+                || arg.ends_with("/claude")
+                || arg.contains("/@anthropic-ai/claude-code/")
+        })
+}
+
 impl PaneMode {
     fn classify(comm: &str, cmdline: &str) -> PaneMode {
         let c = comm.trim();
-        if c == "claude" || cmdline.contains("/claude") {
+        if runs_claude(c, cmdline) {
             PaneMode::Claude
         } else if c == "codex" || cmdline.contains("/codex") {
             PaneMode::Codex
@@ -1634,6 +1649,25 @@ pub(crate) fn launch_gui(program: &str, args: &[&str]) {
 /// host. Accepts what `link_under` hands back: an already-absolute path, or a
 /// URL. The tricky half (percent-decoding, which authorities mean this
 /// machine) is [`reveal_target_on`], testable without a file manager.
+/// The file name a link names when it is a local file that is not on disk,
+/// for saying so; `None` for a file that is there, or for anything that is not
+/// a local path (a web link, another machine's file).
+fn missing_local_file(target: &str) -> Option<String> {
+    let path = reveal_target(target)?;
+    // A link into a page carries its #section (or a ?query): the file is the
+    // part before it, and a file that is there is not missing.
+    let bare = path.split(['#', '?']).next().unwrap_or(&path);
+    if std::path::Path::new(&path).exists() || std::path::Path::new(bare).exists() {
+        return None;
+    }
+    let path = std::path::Path::new(bare);
+    Some(
+        path.file_name()
+            .map(|n| n.to_string_lossy().into_owned())
+            .unwrap_or_else(|| path.to_string_lossy().into_owned()),
+    )
+}
+
 fn reveal_target(target: &str) -> Option<String> {
     reveal_target_on(target, this_host())
 }
@@ -3174,6 +3208,9 @@ pub struct TerminalView {
     /// own scrollback right now. Guards against a second press stacking another
     /// walk on top of the first and doubling every synthetic wheel step.
     seeking: bool,
+    /// Keys the person has pressed in this pane, counted by `on_key`. A prompt
+    /// seek reads it to stop the moment somebody types (issue #322).
+    keys_pressed: u64,
     /// Per-pane memo for `resolved_theme`, keyed on (effective choice, mode,
     /// inherit_theme, theme generation). resolve() deep-clones, recolours and
     /// grade-transforms the palette, and render() calls it every frame; this
@@ -3272,6 +3309,13 @@ pub struct TerminalView {
     /// window restart where `deliverable` deliberately does not. See
     /// [`crate::handover`].
     handovers: crate::handover::Ledger,
+    /// The links this pane's agent listed in a table of a reply — its
+    /// `## Links` — read off the screen for the flyout's `+` page to find.
+    /// Kept apart from `handovers` on purpose: a link a reply referenced is not
+    /// one it made, so none of these names the needs-me link, the header
+    /// chip, the rail or the record. Held for the pane's life and never filed.
+    /// See [`crate::handover::table_links`].
+    linked: crate::handover::Ledger,
     /// The live player child for this pane's ping (hard-killed on stop/drop).
     bell_player: crate::bell::BellPlayer,
     /// Responsive header: when the pane narrows, controls tuck into a ⋯ overflow
@@ -3330,6 +3374,7 @@ pub struct TerminalView {
     /// Last observed agent working state; absent until the first settled scan.
     agent_thinking: Option<bool>,
     /// Throttle for the (cheap) grid scan that detects the agent spinner.
+    last_screen_output: Option<Instant>,
     last_think_scan: Instant,
     /// True while this pane is the one mirrored in the FOCUS modal — a plain Esc
     /// then closes the modal instead of reaching the PTY. Set by the workspace.
@@ -3518,6 +3563,8 @@ pub struct TerminalView {
     /// a hand over a chip and still leave the chip looking exactly as dead as
     /// the label beside it.
     wb_hover: Option<crate::workbench::Hit>,
+    wb_key_focus: Option<crate::workbench::Hit>,
+    wb_draft_verb: Option<(crate::surface::SurfaceId, crate::surface::Action)>,
     /// Whether a dragged file is over the composer right now, so the box can
     /// say it will take it. Set from the same un-bent hover that decides the
     /// pointer, and cleared when the drag leaves the window — which arrives
@@ -3539,6 +3586,7 @@ pub struct TerminalView {
     /// than its pane was clipped and no gesture on the surface could reach the
     /// rest of it — `wheel_target` resolved a turn over the body to `Nothing`.
     wb_card_scroll: gpui::ScrollHandle,
+    wb_rail_scroll: gpui::ScrollHandle,
     /// Which surface the scroll offset above belongs to.
     ///
     /// A card is a different document from the one before it, so the offset
@@ -4996,6 +5044,7 @@ impl TerminalView {
         let arrived = !self.mode.is_agent() && mode.is_agent();
         let departed = self.mode.is_agent() && !mode.is_agent();
         self.mode = mode;
+        self.wake_housekeeping();
         if arrived {
             self.wb_had_agent = true;
             self.wb_briefed = (self.mode == PaneMode::Claude)
@@ -5483,6 +5532,8 @@ impl TerminalView {
 
         // per-pane effects clock. Visibility and a staged resize may interrupt
         // its sleep, but output keeps using the independent terminal event pump.
+        let hidden_wake = session.hidden_wake.clone();
+        let generation = session.generation.clone();
         let (housekeeping_wake, mut housekeeping_wakes) = futures::channel::mpsc::channel(1);
         cx.spawn(async move |this, cx| {
             loop {
@@ -5503,7 +5554,20 @@ impl TerminalView {
                         }
                     }
                     let th = theme::theme(cx);
-                    if view.fx.tick(&th) {
+                    // A direct skin runs no effects clock, unless the CRT glass is
+                    // switched on: its roll and flicker need the clock.
+                    let direct = crate::skin::spec(cx).shape.tube
+                        == Some(crate::skin::Tube::Direct)
+                        && !view.resolved_theme(cx).crt;
+                    if direct
+                        || !view.fx_recent()
+                        || !view.shown.load(std::sync::atomic::Ordering::Relaxed)
+                    {
+                        if view.fx.active() {
+                            view.fx.clear_active();
+                            view.repaint(cx);
+                        }
+                    } else if view.fx.tick(&th) {
                         view.repaint(cx);
                     }
                     view.flush_offscreen(cx);
@@ -5517,7 +5581,7 @@ impl TerminalView {
                     } else {
                         housekeeping::HIDDEN_INTERVAL
                     };
-                    if view.last_think_scan.elapsed() >= every
+                    if view.hosts_agent() && view.last_think_scan.elapsed() >= every
                         || view
                             .completion_deadline()
                             .is_some_and(|at| Instant::now() >= at)
@@ -5741,17 +5805,48 @@ impl TerminalView {
                     // frames are not drawn, so thirty a second is all cost
                     // (#964). The scans below still run at the idle cadence,
                     // which is what keeps its badge and its bell timely.
-                    view.housekeeping_delay()
+                    let hidden = !view.shown.load(std::sync::atomic::Ordering::Relaxed);
+                    (
+                        view.housekeeping_delay(),
+                        hidden.then_some(view.hidden_generation),
+                    )
                 });
                 // `this` is weak: once this pane's TerminalView is dropped (close
                 // a pane / tab / window) the update errors — break so the ticker
                 // ends instead of waking forever on a dead entity. Without this,
                 // every closed pane leaks a permanent background loop and idle
                 // CPU climbs over a session.
-                let Ok(delay) = delay else { break };
-                futures::select_biased! {
-                    _ = housekeeping_wakes.next().fuse() => {},
-                    _ = cx.background_executor().timer(delay).fuse() => {},
+                let Ok((delay, hidden)) = delay else { break };
+                if let Some(delay) = delay {
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = cx.background_executor().timer(delay).fuse() => {},
+                    }
+                } else if let Some(observed) = hidden {
+                    // The pump wakes this only on the first output after parking.
+                    // Register before checking the generation to cover an arrival
+                    // between the previous grid read and this await.
+                    let dirty = futures::future::poll_fn(|cx| {
+                        hidden_wake.register(cx.waker());
+                        if generation.load(std::sync::atomic::Ordering::Acquire) != observed {
+                            std::task::Poll::Ready(())
+                        } else {
+                            std::task::Poll::Pending
+                        }
+                    });
+                    futures::select_biased! {
+                        signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                        _ = dirty.fuse() => {
+                            // The wake only starts the preview deadline. A hidden
+                            // output chunk never runs housekeeping on arrival.
+                            futures::select_biased! {
+                                signal = housekeeping_wakes.next().fuse() => if signal.is_none() { break; },
+                                _ = cx.background_executor().timer(OFFSCREEN_REFRESH).fuse() => {},
+                            }
+                        },
+                    }
+                } else if housekeeping_wakes.next().await.is_none() {
+                    break;
                 }
             }
         })
@@ -5850,6 +5945,7 @@ impl TerminalView {
             deliverable: None,
             access_ask: None,
             handovers: crate::handover::Ledger::default(),
+            linked: crate::handover::Ledger::default(),
             bell_player: crate::bell::BellPlayer::default(),
             hdr_overflow: None,
             copy_hint: None,
@@ -5871,10 +5967,12 @@ impl TerminalView {
             cell_px,
             last_scroll_offset: None,
             seeking: false,
+            keys_pressed: 0,
             theme_cache: RefCell::new(None),
             mirror_doc: RefCell::new(None),
             read_history: RefCell::new(None),
             agent_thinking: None,
+            last_screen_output: None,
             last_think_scan: Instant::now()
                 .checked_sub(std::time::Duration::from_secs(1))
                 .unwrap_or_else(Instant::now),
@@ -5912,10 +6010,13 @@ impl TerminalView {
             wb_bench_rect: std::rc::Rc::new(std::cell::RefCell::new(None)),
             wb_pointer: crate::workbench::Pointer::Arrow,
             wb_hover: None,
+            wb_key_focus: None,
+            wb_draft_verb: None,
             wb_drop: false,
             wb_mirror: false,
             wb_live_q: None,
             wb_card_scroll: gpui::ScrollHandle::new(),
+            wb_rail_scroll: gpui::ScrollHandle::new(),
             wb_card_at: None,
             wb_dial: None,
             wb_dial_options: Vec::new(),
@@ -6286,7 +6387,7 @@ impl TerminalView {
     /// What this pane costs: everything its group holds in RAM and swap, or,
     /// while it rests, what is left in RAM and what went out. `unmeasured`
     /// where the group could not be made or read, never a smaller number.
-    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+    pub(crate) fn memory_label(&self) -> Option<String> {
         use crate::agentrest::short_bytes;
         let parts = crate::lang::current().strings().parts;
         let u = self.rest.usage;
@@ -6309,6 +6410,11 @@ impl TerminalView {
             // Not looked at yet: a blank, not a guess.
             (false, _) => return None,
         };
+        Some(text)
+    }
+
+    fn memory_figure(&self, fg: Hsla, sk: &crate::skin::Skin, scale: f32) -> Option<gpui::Div> {
+        let text = self.memory_label()?;
         Some(
             div()
                 .flex_none()
@@ -6630,6 +6736,11 @@ impl TerminalView {
     fn handle_term_event(&mut self, event: TermEvent, cx: &mut Context<Self>) -> bool {
         match event {
             TermEvent::Wakeup => {
+                let was_quiet = !self.fx_recent();
+                self.last_screen_output = Some(Instant::now());
+                if was_quiet {
+                    self.wake_housekeeping();
+                }
                 #[cfg(test)]
                 {
                     self.output_events += 1;
@@ -7262,6 +7373,7 @@ impl TerminalView {
         }
         out |= self.note_hover.take().is_some();
         out |= self.wb_hover.take().is_some();
+        out |= self.wb_key_focus.take().is_some();
         out |= std::mem::take(&mut self.wb_drop);
         out |= std::mem::take(&mut self.wb_pointer) != crate::workbench::Pointer::Arrow;
         let float_doc = self.float.as_ref().map(|f| f.view.clone());
@@ -7991,6 +8103,7 @@ impl TerminalView {
     /// `if ks.key.as_str() == …` added here is how the order grows back.
     fn on_key(&mut self, ev: &KeyDownEvent, _window: &mut Window, cx: &mut Context<Self>) {
         let ks = &ev.keystroke;
+        self.keys_pressed = self.keys_pressed.wrapping_add(1);
         self.rest.touch(Instant::now());
         // Typing into the pane is attention too — covers the frozen-badge case
         // where the pane kept idle keyboard focus across the whole latch, so
@@ -8103,7 +8216,7 @@ impl TerminalView {
             // `ctrl+c` reach a working agent from the face that is showing you
             // its turn.
             crate::keylayer::Layer::Bench => {
-                if self.bench_key(ks, cx) {
+                if self.bench_key(ks, _window, cx) {
                     Handled::Consumed
                 } else {
                     self.terminal_key(&k, ks, cx)
@@ -9309,14 +9422,30 @@ impl TerminalView {
         // the agent's own scrollback.
         let max_steps = if coarse { 24 } else { 400 };
         self.seeking = true;
+        let keys0 = self.keys_pressed;
+        let mouse0 = mode.intersects(TermMode::MOUSE_MODE);
         cx.spawn(async move |this, cx| {
             let mut stalls = 0;
             for _ in 0..max_steps {
                 let before = match this.update(cx, |view: &mut TerminalView, _cx| {
+                    // Re-check before every write: the walk can run for half a
+                    // minute, and a person typing or the program leaving its
+                    // mouse mode means the next scroll step is no longer ours
+                    // to send (issue #322).
+                    let mouse = view
+                        .session
+                        .term
+                        .lock()
+                        .mode()
+                        .intersects(TermMode::MOUSE_MODE);
+                    if !seek_may_continue(keys0, view.keys_pressed, mouse0, mouse) {
+                        return None;
+                    }
                     view.session.notifier.notify(step.clone());
-                    view.screen_signature()
+                    Some(view.screen_signature())
                 }) {
-                    Ok(sig) => sig,
+                    Ok(Some(sig)) => sig,
+                    Ok(None) => break,
                     Err(_) => return, // pane closed mid-walk
                 };
                 // Wait for the agent to actually repaint before reading the top
@@ -9996,6 +10125,21 @@ impl TerminalView {
         {
             let mods = click_mods(ev.modifiers);
             let link = self.link_under(ev.position);
+            // A link to a local file that is not on disk opened nothing and
+            // said nothing: the desktop's opener failed quietly and Alt found
+            // no document (Parker, 2026-11-18, on a link an agent wrote before
+            // the file existed: "oh, so there just isn't a file.. gross").
+            if let Some(name) = link.as_deref().and_then(missing_local_file) {
+                let (row, _, _) = self.viewport_cell(ev.position);
+                let ui = crate::lang::current().strings().ui;
+                self.say(
+                    crate::lang::fill(ui.link_not_there, &[("name", &name)]),
+                    Some(row),
+                    cx,
+                );
+                cx.stop_propagation();
+                return;
+            }
             let revealable = link.as_deref().and_then(reveal_target);
             let doc = (mods.alt && self.bench.face() == crate::workbench::Face::Terminal)
                 .then(|| link.as_deref().and_then(|l| self.document_of(l)))
@@ -11107,14 +11251,31 @@ pub(crate) fn chrome_glyph_font(ch: char, th: &Theme) -> Option<String> {
 /// first thing the program says to you, and it was crying wolf. Guarded by
 /// `the_font_diagnostic_is_silent_about_a_family_that_resolves`.
 pub fn font_diagnostic(want: &str) -> Option<String> {
-    let got = resolve_family(want);
+    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
+    font_diagnostic_from(want, &resolve_family(want), font_available(want), n)
+}
+
+/// [`font_diagnostic`] over its inputs, so the case with no fallback at all
+/// can be tested without the process-wide font registry.
+fn font_diagnostic_from(want: &str, got: &str, want_installed: bool, n: usize) -> Option<String> {
+    // Handed back unchanged: either it is installed, or nothing matched and the
+    // system will pick a font itself. The second is the case this diagnostic
+    // exists for, and it used to say nothing (issue #205).
+    if got == want {
+        return (!want_installed).then(|| {
+            format!(
+                "font '{want}' not installed, and no fallback font is installed either \
+                 ({n} families available); the system will choose one. \
+                 Install {want} for the intended look."
+            )
+        });
+    }
     // Same font, other spelling — nothing was substituted, so there is nothing
     // to report. Saying "JetBrains Mono not installed" about a box that has
     // JetBrainsMono Nerd Font is how a true warning gets trained into noise.
-    if got == want || same_family_variant(want, &got) {
+    if same_family_variant(want, got) {
         return None;
     }
-    let n = AVAILABLE_FONTS.get().map(|v| v.len()).unwrap_or(0);
     Some(format!(
         "font '{want}' not installed; falling back to '{got}' ({n} families available). \
          Install {want} for the intended look."
@@ -11530,9 +11691,58 @@ fn read_nav(k: &crate::keylayer::Key) -> Option<ReadNav> {
     })
 }
 
+/// Whether a prompt seek may send its next scroll step: nobody has pressed a
+/// key in the pane since it started, and the program is still in the mouse mode
+/// (or not) that the walk chose its step for (issue #322).
+fn seek_may_continue(keys0: u64, keys_now: u64, mouse0: bool, mouse_now: bool) -> bool {
+    keys_now == keys0 && mouse_now == mouse0
+}
+
+/// A function key's xterm sequence, with its modifiers in the CSI parameter
+/// (1 + shift 1 + alt 2 + ctrl 4). F1 never gets here: the key layer routes it
+/// to Help first. Without these, F2 to F12 reached no program at all, since
+/// they carry no `key_char` (issue #1084).
+fn function_key_bytes(key: &str, m: &gpui::Modifiers) -> Option<Vec<u8>> {
+    let n: u8 = key.strip_prefix('f')?.parse().ok()?;
+    let param = 1 + u8::from(m.shift) + 2 * u8::from(m.alt) + 4 * u8::from(m.control);
+    let ss3 = |c: char| {
+        if param == 1 {
+            format!("\x1bO{c}")
+        } else {
+            format!("\x1b[1;{param}{c}")
+        }
+    };
+    let tilde = |code: u8| {
+        if param == 1 {
+            format!("\x1b[{code}~")
+        } else {
+            format!("\x1b[{code};{param}~")
+        }
+    };
+    let seq = match n {
+        1 => ss3('P'),
+        2 => ss3('Q'),
+        3 => ss3('R'),
+        4 => ss3('S'),
+        5 => tilde(15),
+        6 => tilde(17),
+        7 => tilde(18),
+        8 => tilde(19),
+        9 => tilde(20),
+        10 => tilde(21),
+        11 => tilde(23),
+        12 => tilde(24),
+        _ => return None,
+    };
+    Some(seq.into_bytes())
+}
+
 /// gpui Keystroke → PTY bytes.
 fn keystroke_bytes(ks: &Keystroke) -> Option<Vec<u8>> {
     let m = &ks.modifiers;
+    if let Some(bytes) = function_key_bytes(ks.key.as_str(), m) {
+        return Some(bytes);
+    }
     // Enter: plain submits (CR); shift/alt+enter sends a literal newline (LF) so
     // multi-line input in claude/codex inserts a line break instead of submitting.
     if ks.key.as_str() == "enter" && !m.control {
@@ -11778,7 +11988,12 @@ impl Render for TerminalView {
                     .text_color(txt)
                     .hover(move |s| s.bg(acc.alpha(0.22)))
                     .child(label.to_string())
-                    .child(div().text_color(faint).child(keys))
+                    .child(
+                        div()
+                            .debug_selector(move || format!("ctx-hint-{keys}"))
+                            .text_color(txt.alpha(0.8))
+                            .child(keys),
+                    )
             };
             let s = crate::lang::current().strings();
             let mut menu = div()
@@ -11929,18 +12144,20 @@ impl Render for TerminalView {
                 menu = menu.child(div().my(px(3.)).h(px(1.)).bg(faint.alpha(0.35)));
             }
             menu = menu
-                .child(row(s.m_copy, has_sel).on_mouse_down(
-                    MouseButton::Left,
-                    cx.listener(|v, _, _, cx| {
-                        if !v.bench_copy(cx) {
-                            v.copy_selection(cx);
-                        }
-                        v.ctx_menu = None;
-                        cx.stop_propagation();
-                        cx.notify();
-                    }),
-                ))
-                .child(row(s.m_paste, true).on_mouse_down(
+                .when(has_sel, |menu| {
+                    menu.child(link_row(s.m_copy, "Ctrl+Shift+C").on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(|v, _, _, cx| {
+                            if !v.bench_copy(cx) {
+                                v.copy_selection(cx);
+                            }
+                            v.ctx_menu = None;
+                            cx.stop_propagation();
+                            cx.notify();
+                        }),
+                    ))
+                })
+                .child(link_row(s.m_paste, "Ctrl+Shift+V").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.paste_clipboard(cx);
@@ -11949,7 +12166,7 @@ impl Render for TerminalView {
                         cx.notify();
                     }),
                 ))
-                .child(row(s.m_clear, true).on_mouse_down(
+                .child(link_row(s.m_clear, "Ctrl+Shift+K").on_mouse_down(
                     MouseButton::Left,
                     cx.listener(|v, _, _, cx| {
                         v.clear_scrollback(cx);
@@ -11988,12 +12205,12 @@ impl Render for TerminalView {
                     ]
                     .into_iter()
                     .map(|(access, label, id)| {
-                        let mark = if self.agent_access == access {
-                            "\u{25cf}"
-                        } else {
-                            "\u{25cb}"
-                        };
-                        row(&format!("{mark} {label}"), true).id(id).on_mouse_down(
+                        let face = menu_skin.choice_label(
+                            label,
+                            self.agent_access == access,
+                            parts.ctl_selected,
+                        );
+                        row(&face, true).id(id).on_mouse_down(
                             MouseButton::Left,
                             cx.listener(move |v, _, _, cx| {
                                 v.ctx_menu = None;
@@ -13027,8 +13244,9 @@ impl Render for TerminalView {
             // ramp. Both are bench-local: the header above keeps the plain skin,
             // because chrome answers to the menu-bar scale and content answers to
             // these. See [`graded_palette`] and [`crate::skin::Skin::ty`].
-            let bench_th = graded_palette(&th);
+            let mut bench_th = graded_palette(&th);
             let bench_sk = crate::skin::for_theme(cx, &bench_th, scale).with_type(bench_k);
+            bench_sk.apply_chrome_ink(&mut bench_th);
             self.bench_el(
                 &bench_th,
                 &bench_sk,
@@ -13581,7 +13799,11 @@ impl Render for TerminalView {
             header = header.shadow(header_shadows(bar_fg, glow, th.crt, th.grade.phosphor));
         }
 
-        let jiggle = self.fx.jiggle_px;
+        let jiggle = if sk.shape.tube == crate::skin::Tube::Direct {
+            0.
+        } else {
+            self.fx.jiggle_px
+        };
         let shake_y = jiggle;
         // The frame the grid sits in: a 2%/4px breathing border plus a
         // curvature-proportional inset so the bottom prompt clears the barrel
@@ -13955,6 +14177,10 @@ impl Render for TerminalView {
                     .child({
                         let store = self.content_bounds.clone();
                         let weak = cx.entity().downgrade();
+                        // A direct skin registers no tube, so the renderer has
+                        // nothing to bend, unless this pane's theme has the
+                        // CRT glass switched on: then it pays for the glass.
+                        let draw_tube = sk.shape.tube != crate::skin::Tube::Direct || th.crt;
                         div().absolute().inset_0().child(
                             canvas(
                                 move |bounds, window, cx| {
@@ -13985,35 +14211,37 @@ impl Render for TerminalView {
                                     // the bench does its own hit-testing
                                     // through the warp's inverse since — see
                                     // `bench_hit_at` — so the reason is gone.
-                                    let (k1, k2) = crate::theme::warp_coeffs(th.warp);
-                                    // Per-pane crawl: this tube recedes by THIS
-                                    // pane's own crawl perspective (grade.crawl →
-                                    // th.crawl/angle/depth). Identity when off, so
-                                    // a crawling pane and a plain pane coexist.
-                                    let crawl = if th.crawl && on_terminal {
-                                        let (a, d) = crate::theme::crawl_coeffs(
-                                            th.crawl_angle,
-                                            th.crawl_depth,
+                                    if draw_tube {
+                                        let (k1, k2) = crate::theme::warp_coeffs(th.warp);
+                                        // Per-pane crawl: this tube recedes by THIS
+                                        // pane's own crawl perspective (grade.crawl →
+                                        // th.crawl/angle/depth). Identity when off, so
+                                        // a crawling pane and a plain pane coexist.
+                                        let crawl = if th.crawl && on_terminal {
+                                            let (a, d) = crate::theme::crawl_coeffs(
+                                                th.crawl_angle,
+                                                th.crawl_depth,
+                                            );
+                                            [1.0, a, d]
+                                        } else {
+                                            [0.0, 1.0, 1.0]
+                                        };
+                                        crate::warp::register_tube(
+                                            [
+                                                f32::from(bounds.origin.x) * sf,
+                                                f32::from(bounds.origin.y) * sf,
+                                                f32::from(bounds.size.width) * sf,
+                                                f32::from(bounds.size.height) * sf,
+                                            ],
+                                            th.screen_glare,
+                                            k1,
+                                            k2,
+                                            crawl,
+                                            tube_bezel,
+                                            if on_terminal { letter_glow } else { 0.0 },
+                                            if on_terminal { inactive_blur * sf } else { 0.0 },
                                         );
-                                        [1.0, a, d]
-                                    } else {
-                                        [0.0, 1.0, 1.0]
-                                    };
-                                    crate::warp::register_tube(
-                                        [
-                                            f32::from(bounds.origin.x) * sf,
-                                            f32::from(bounds.origin.y) * sf,
-                                            f32::from(bounds.size.width) * sf,
-                                            f32::from(bounds.size.height) * sf,
-                                        ],
-                                        th.screen_glare,
-                                        k1,
-                                        k2,
-                                        crawl,
-                                        tube_bezel,
-                                        if on_terminal { letter_glow } else { 0.0 },
-                                        if on_terminal { inactive_blur * sf } else { 0.0 },
-                                    );
+                                    }
                                     let changed = {
                                         let mut slot = store.lock().unwrap();
                                         let changed = slot.is_none_or(|b| b != bounds);
@@ -14170,15 +14398,18 @@ impl Render for TerminalView {
                         ))
                     }),
             )
-            .when(std::env::var("TD_NOGLASS").is_err(), |el| {
-                // The bench is not in the tube. It keeps the scanlines, the
-                // bloom and the bend, and loses the edge fade that put the
-                // composer — the bench's bottom-most element — in the darkest
-                // band of the pane. See [`crate::workbench::vignette_on`].
-                let mut glass_th = th.clone();
-                glass_th.vignette = crate::workbench::vignette_on(face_now, th.vignette);
-                el.child(crt::glass(&glass_th, &self.fx))
-            })
+            .when(
+                sk.shape.tube != crate::skin::Tube::Direct && std::env::var("TD_NOGLASS").is_err(),
+                |el| {
+                    // The bench is not in the tube. It keeps the scanlines, the
+                    // bloom and the bend, and loses the edge fade that put the
+                    // composer — the bench's bottom-most element — in the darkest
+                    // band of the pane. See [`crate::workbench::vignette_on`].
+                    let mut glass_th = th.clone();
+                    glass_th.vignette = crate::workbench::vignette_on(face_now, th.vignette);
+                    el.child(crt::glass(&glass_th, &self.fx))
+                },
+            )
             // raised bezel frame sits above the glass, framing the whole pane
             .when(th.bezel > 0.001 && sk.glass(), |el| {
                 el.child(crt::bezel(&th))
@@ -16069,6 +16300,27 @@ mod tests {
         );
     }
 
+    /// Issue #205: when the wanted family is missing and no fallback resolves
+    /// either, the diagnostic says so instead of going silent. Mutation:
+    /// returning None for `got == want` regardless fails the first assertion.
+    #[test]
+    fn the_font_diagnostic_speaks_when_no_fallback_resolves_either() {
+        let msg = font_diagnostic_from("Ghost Mono", "Ghost Mono", false, 3)
+            .expect("nothing resolved, so it must warn");
+        assert!(
+            msg.contains("Ghost Mono") && msg.contains("no fallback"),
+            "{msg}"
+        );
+        assert_eq!(
+            font_diagnostic_from("Real Mono", "Real Mono", true, 3),
+            None
+        );
+        assert!(
+            font_diagnostic_from("Ghost Mono", "DejaVu Sans Mono", false, 3)
+                .is_some_and(|m| m.contains("falling back to 'DejaVu Sans Mono'"))
+        );
+    }
+
     #[test]
     fn highlight_tints_only_the_selected_span() {
         // one 5-byte run "hello"; select glyphs [1,3) → three runs, middle tinted
@@ -16192,6 +16444,34 @@ mod tests {
         // resolves to a cell further from centre — matching what's drawn there)
         let (ex, _) = warp_screen_to_content(0.8, 0.5, 0.14, 0.06);
         assert!(ex > 0.8);
+    }
+
+    /// A click on a link to a local file that is not there says so (Parker,
+    /// 2026-11-18: "oh, so there just isn't a file.. gross"). A file that is
+    /// there, one reached with a #section, a web link and another machine's
+    /// file are not "missing". Mutation: dropping the exists checks reports a
+    /// file that is there as missing.
+    #[test]
+    fn a_link_to_a_file_that_is_not_there_is_named_as_missing() {
+        let dir = std::env::temp_dir().join(format!("td-missing-link-{}", std::process::id()));
+        std::fs::create_dir_all(&dir).unwrap();
+        let here = dir.join("06-themes.html");
+        std::fs::write(&here, "x").unwrap();
+        let gone = dir.join("08-home-colour-workshop.html");
+        let url = |p: &std::path::Path| format!("file://{}", p.display());
+        assert_eq!(
+            missing_local_file(&url(&gone)).as_deref(),
+            Some("08-home-colour-workshop.html")
+        );
+        assert_eq!(missing_local_file(&url(&here)), None);
+        assert_eq!(missing_local_file(&format!("{}#sec-one", url(&here))), None);
+        assert_eq!(missing_local_file(&here.display().to_string()), None);
+        assert_eq!(missing_local_file("https://github.com/o/r/issues/1"), None);
+        assert_eq!(
+            missing_local_file("file://another-machine/tmp/nothing.html"),
+            None
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     // Super+Ctrl-click reveals the ITEM, so the target has to survive the round
@@ -17543,6 +17823,47 @@ mod tests {
                 Some(format!("{home}/a.md").as_str())
             );
         }
+    }
+
+    #[test]
+    fn a_prompt_seek_stops_when_a_key_is_pressed_or_the_mode_changes() {
+        // Issue #322. Mutation: making seek_may_continue ignore either input
+        // fails one of these.
+        assert!(seek_may_continue(4, 4, true, true));
+        assert!(!seek_may_continue(4, 5, true, true), "a key was pressed");
+        assert!(
+            !seek_may_continue(4, 4, true, false),
+            "the program left mouse mode"
+        );
+        assert!(
+            !seek_may_continue(4, 4, false, true),
+            "the program entered mouse mode"
+        );
+    }
+
+    /// Issue #901: one rule decides Claude for the window, the host and the
+    /// resume line, and it reads the program, not any path that happens to
+    /// contain `/claude`. Mutation: restoring `cmdline.contains("/claude")`
+    /// fails the vim case.
+    #[test]
+    fn a_path_that_merely_mentions_claude_is_not_claude_code() {
+        assert!(!runs_claude("vim", "vim /tmp/claude-probe/x.txt"));
+        assert!(!runs_claude("vim", "vim /home/p/Work/claude-tools/x"));
+        assert!(runs_claude(
+            "node",
+            "node /usr/lib/node_modules/@anthropic-ai/claude-code/cli.js"
+        ));
+        assert!(runs_claude("node", "node /home/x/.local/bin/claude"));
+        assert!(runs_claude("claude", ""));
+        assert!(runs_claude("2.1.3", "claude --resume abc"));
+        assert_ne!(
+            PaneMode::classify("bash", "/bin/bash /tmp/claude-1000/x/bin/codex resume 0199"),
+            PaneMode::Claude
+        );
+        assert_ne!(
+            PaneMode::classify("vim", "vim /tmp/claude-probe/x.txt"),
+            PaneMode::Claude
+        );
     }
 
     #[test]
@@ -19071,6 +19392,14 @@ mod tests {
         // workspace-owned chords must NOT reach the shell
         assert_eq!(bytes("alt-left"), None);
         assert_eq!(bytes("ctrl-pageup"), None);
+        // Function keys reach the program as xterm sends them (#1084).
+        // Mutation: dropping the function_key_bytes call fails every one.
+        assert_eq!(bytes("f2"), Some(b"\x1bOQ".to_vec()));
+        assert_eq!(bytes("f5"), Some(b"\x1b[15~".to_vec()));
+        assert_eq!(bytes("f11"), Some(b"\x1b[23~".to_vec()));
+        assert_eq!(bytes("f12"), Some(b"\x1b[24~".to_vec()));
+        assert_eq!(bytes("shift-f12"), Some(b"\x1b[24;2~".to_vec()));
+        assert_eq!(bytes("ctrl-f3"), Some(b"\x1b[1;5R".to_vec()));
         // alt+<char> needs a key_char to encode, and Keystroke::parse doesn't
         // synthesise one — gpui fills it at runtime. Supply it, or an assertion
         // here passes for the wrong reason.

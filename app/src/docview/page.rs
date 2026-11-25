@@ -64,6 +64,7 @@ use super::notes::{self, NotesRead};
 use super::notes_ui::{self, LayerPress, Mark, MarkHit, NotesLayer, Pasting, Said, Words};
 use super::progress::Reading;
 use super::reading;
+use super::sections;
 use super::snapshot::EXTRACT_VERSION;
 use super::{resolve_link, DocumentView, FileStamp, FollowLink, LinkTarget};
 use crate::docopen::DocScroll;
@@ -569,10 +570,31 @@ pub struct PageDoc {
     exposure_saving: bool,
     exposure_sent: Option<reading::Session>,
     exposure_on: bool,
+    /// What a press goes to a passage from, as last drawn: each section's
+    /// pip on the rail, then the list's rows while it is open.
     reading_zones: Vec<(Bounds<Pixels>, String)>,
+    /// How many of those are pips.
+    reading_pips: usize,
+    /// Whether the pointer holds the sections list open; see
+    /// [`sections::opens`].
+    reading_open: bool,
+    /// The list as last drawn. `None` while it is shut.
+    reading_list: Option<sections::List>,
+    /// Which zone the pointer is on, to repaint when that changes.
+    reading_hot: Option<usize>,
     reading_offset: Option<usize>,
     reading_active_anchor: Option<String>,
     reading_cover: Option<Bounds<Pixels>>,
+}
+
+/// One frame's sections chrome, as [`PageDoc::lay_reading`] placed it.
+struct ReadingFrame {
+    /// The passage being read: an index into the layout's targets.
+    active: usize,
+    pips: Vec<(Bounds<Pixels>, sections::Pip)>,
+    /// The open list, and each of its rows with the target it shows.
+    list: Option<sections::List>,
+    rows: Vec<(Bounds<Pixels>, usize)>,
 }
 
 /// Elapsed milliseconds from the view's open request. Missing stages remain
@@ -620,19 +642,126 @@ fn page_of(view: &mut DocumentView) -> Option<&mut PageDoc> {
 }
 
 impl PageDoc {
-    fn draw_reading(&mut self, th: &Theme) -> Vec<gpui::AnyElement> {
+    /// Where this frame's sections chrome goes, and what a press on it means:
+    /// a pip beside the progress rail where each section starts, and the
+    /// list's rows while the pointer holds it open. Worked out apart from the
+    /// painting, with no theme, so a test can ask what a pointer would find.
+    /// `None` for a page with no passages to list. See [`sections`].
+    fn lay_reading(&mut self) -> Option<ReadingFrame> {
         self.reading_zones.clear();
+        self.reading_pips = 0;
         self.reading_cover = None;
-        let (Some(r), Some(m), Some(clock)) = (&self.current, self.view, &self.exposure_clock)
-        else {
+        self.reading_list = None;
+        let (Some(r), Some(m), Some(_)) = (&self.current, self.view, &self.exposure_clock) else {
+            return None;
+        };
+        let layout = r
+            .layout
+            .reading_layout
+            .as_ref()
+            .filter(|l| !l.targets.is_empty())?;
+        let width: f32 = m.size.width.into();
+        let height: f32 = m.size.height.into();
+        let active = layout
+            .targets
+            .iter()
+            .enumerate()
+            .rfind(|(_, t)| {
+                matches!(t.kind.as_str(), "opening" | "section")
+                    && t.rect.is_some_and(|rc| rc.y <= self.scroll_css + 120.0)
+            })
+            .map(|(i, _)| i)
+            .unwrap_or(0);
+        if self.reading_active_anchor.as_deref() != Some(&layout.targets[active].anchor) {
+            self.reading_offset = None;
+            self.reading_active_anchor = Some(layout.targets[active].anchor.clone());
+        }
+        // The pips sit beside the rail, so only where a rail is drawn: a page
+        // that fits its view has nowhere to go.
+        let view_css = height / self.stretch(r);
+        let scrolls = Reading::of(self.scroll_css, view_css, r.layout.height_css)
+            .is_some_and(|reading| !reading.fits());
+        // The notes bar and its cue, where the last frame painted them: they
+        // sit over the end of the rail, and a pip under them is lost.
+        let chrome_top = self
+            .notes
+            .as_ref()
+            .zip(m.origin)
+            .and_then(|(layer, origin)| Some((layer.obscuring_bounds()?, origin)))
+            .and_then(|(bounds, origin)| {
+                bounds
+                    .iter()
+                    .map(|b| f32::from(b.origin.y - origin.y) - 3.0)
+                    .reduce(f32::min)
+            });
+        let pips: Vec<(Bounds<Pixels>, sections::Pip)> = match scrolls {
+            true => sections::pips(&layout.targets, r.layout.height_css, height, chrome_top),
+            false => Vec::new(),
+        }
+        .into_iter()
+        .map(|pip| {
+            let bounds = Bounds {
+                origin: point(
+                    px(width - super::progress::INSET - sections::PIP_W),
+                    px(pip.top),
+                ),
+                size: size(px(sections::PIP_W), px(sections::PIP_H)),
+            };
+            (bounds, pip)
+        })
+        .collect();
+        self.reading_zones
+            .extend(pips.iter().map(|(b, pip)| (*b, pip.anchor.clone())));
+        self.reading_pips = pips.len();
+        let list = self
+            .reading_open
+            .then(|| {
+                sections::list(
+                    width,
+                    height,
+                    layout.targets.len(),
+                    active,
+                    self.reading_offset,
+                )
+            })
+            .flatten();
+        let mut rows = Vec::new();
+        if let Some(l) = list {
+            for offset in 0..l.rows {
+                let y = sections::LIST_HEAD + offset as f32 * sections::LIST_ROW;
+                let bounds = Bounds {
+                    origin: point(px(l.x + 8.0), px(l.y + y)),
+                    size: size(px(l.w - 16.0), px(sections::LIST_ROW - 2.0)),
+                };
+                let target = l.start + offset;
+                self.reading_zones
+                    .push((bounds, layout.targets[target].anchor.clone()));
+                rows.push((bounds, target));
+            }
+            self.reading_list = Some(l);
+            self.reading_cover = Some(Self::list_bounds(l));
+        }
+        Some(ReadingFrame {
+            active,
+            pips,
+            list,
+            rows,
+        })
+    }
+
+    /// The brief's sections over the page, as [`Self::lay_reading`] placed
+    /// them: the pips, and the list of every passage with its visible time
+    /// while it is open. Nothing else sits on the page.
+    fn draw_reading(&mut self, th: &Theme, sk: &crate::skin::Skin) -> Vec<gpui::AnyElement> {
+        let Some(frame) = self.lay_reading() else {
+            return vec![];
+        };
+        let (Some(r), Some(clock)) = (&self.current, &self.exposure_clock) else {
             return vec![];
         };
         let Some(layout) = &r.layout.reading_layout else {
             return vec![];
         };
-        if layout.targets.is_empty() {
-            return vec![];
-        }
         let totals = self
             .exposure_record
             .as_ref()
@@ -665,91 +794,121 @@ impl PageDoc {
         } else {
             saved
         };
-        let wide = r.layout.geometry.css_width >= 1100;
-        let width: f32 = m.size.width.into();
-        let height: f32 = m.size.height.into();
-        let active = layout
-            .targets
-            .iter()
-            .enumerate()
-            .rfind(|(_, t)| {
-                matches!(t.kind.as_str(), "opening" | "section")
-                    && t.rect.is_some_and(|rc| rc.y <= self.scroll_css + 120.0)
-            })
-            .map(|(i, _)| i)
-            .unwrap_or(0);
-        let rows = if wide {
-            ((height - 105.0) / 36.0).max(1.0) as usize
-        } else {
-            2
-        };
-        let automatic_start = active
-            .saturating_sub(rows / 2)
-            .min(layout.targets.len().saturating_sub(rows));
-        if self.reading_active_anchor.as_deref() != Some(&layout.targets[active].anchor) {
-            self.reading_offset = None;
-            self.reading_active_anchor = Some(layout.targets[active].anchor.clone());
-        }
-        let start = self
-            .reading_offset
-            .unwrap_or(automatic_start)
-            .min(layout.targets.len().saturating_sub(rows));
-        let rail_w = if wide { 216.0 } else { (width - 24.0).max(1.0) };
-        self.reading_cover = Some(Bounds {
-            origin: point(px(12.0), px(12.0)),
-            size: size(px(rail_w), px(28.0 + rows as f32 * 36.0)),
-        });
-        let mut children: Vec<gpui::AnyElement> = vec![div()
-            .absolute()
-            .left(px(8.0))
-            .top(px(6.0))
-            .text_size(px(11.0))
-            .text_color(th.text.alpha(0.8))
-            .child(format!("{label} · {status}"))
-            .into_any_element()];
-        for (offset, target) in layout.targets.iter().skip(start).take(rows).enumerate() {
-            let y = 28.0 + offset as f32 * 36.0;
-            let time = totals
-                .as_ref()
-                .and_then(|totals| totals.get(&target.anchor))
-                .map(|ms| format!("{}:{:02}", ms / 60000, ms / 1000 % 60))
-                .unwrap_or_else(|| "—".into());
-            let prefix = if target.parent.is_some() { "  " } else { "" };
-            children.push(
+        let family = gpui::SharedString::from(sk.font_family.clone());
+        let pointer = self.pointer;
+        let reading_at = &layout.targets[frame.active].anchor;
+        let mut out: Vec<gpui::AnyElement> = Vec::new();
+
+        let ink = th.complement;
+        for (bounds, pip) in &frame.pips {
+            let here = &pip.anchor == reading_at;
+            let hot = pointer.is_some_and(|at| bounds.contains(&at));
+            let (fill, text) = match (here, hot) {
+                (true, _) => (ink, th.bg),
+                (false, true) => (ink.alpha(0.34), th.text),
+                (false, false) => (ink.alpha(0.12), ink),
+            };
+            out.push(
                 div()
                     .absolute()
-                    .left(px(8.0))
-                    .top(px(y))
-                    .w(px(rail_w - 16.0))
-                    .h(px(34.0))
-                    .overflow_hidden()
-                    .text_size(px(12.0))
-                    .text_color(th.text)
-                    .bg(th
-                        .text
-                        .alpha(if target.anchor == layout.targets[active].anchor {
-                            0.14
-                        } else {
-                            0.03
-                        }))
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .rounded(sk.rad_raw(4.))
+                    .bg(th.bg.alpha(0.94))
                     .child(
                         div()
-                            .w(px((rail_w - 80.0).max(1.0)))
-                            .h(px(34.0))
-                            .overflow_hidden()
-                            .child(format!("{prefix}{}", target.title)),
+                            .absolute()
+                            .inset_0()
+                            .rounded(sk.rad_raw(4.))
+                            .bg(fill)
+                            .border_1()
+                            .border_color(ink.alpha(if hot || here { 1.0 } else { 0.7 }))
+                            // The label keeps clear of the rail, which is
+                            // drawn over the pip's right end.
+                            .pr(px(super::progress::GUTTER - super::progress::INSET))
+                            .flex()
+                            .items_center()
+                            .justify_center()
+                            .font_family(family.clone())
+                            .text_size(sk.text_px(11.))
+                            .text_color(text)
+                            .child(format!("§{}", pip.label)),
                     )
-                    .child(div().absolute().right(px(4.0)).top(px(8.0)).child(time))
                     .into_any_element(),
             );
-            self.reading_zones.push((
-                Bounds {
-                    origin: point(px(20.0), px(12.0 + y)),
-                    size: size(px(rail_w - 16.0), px(34.0)),
-                },
-                target.anchor.clone(),
-            ));
         }
+
+        if let Some(l) = frame.list {
+            let mut children: Vec<gpui::AnyElement> = vec![div()
+                .absolute()
+                .left(px(10.0))
+                .top(px(7.0))
+                .text_size(sk.text_px(11.))
+                .text_color(th.text.alpha(0.8))
+                .child(format!("{label} · {status}"))
+                .into_any_element()];
+            for (bounds, index) in &frame.rows {
+                let target = &layout.targets[*index];
+                let time = totals
+                    .as_ref()
+                    .and_then(|totals| totals.get(&target.anchor))
+                    .map(|ms| format!("{}:{:02}", ms / 60000, ms / 1000 % 60))
+                    .unwrap_or_else(|| "—".into());
+                let prefix = if target.parent.is_some() { "  " } else { "" };
+                let here = &target.anchor == reading_at;
+                let hot = pointer.is_some_and(|at| bounds.contains(&at));
+                children.push(
+                    div()
+                        .absolute()
+                        .left(bounds.origin.x - px(l.x))
+                        .top(bounds.origin.y - px(l.y))
+                        .w(bounds.size.width)
+                        .h(bounds.size.height)
+                        .overflow_hidden()
+                        .rounded(sk.rad_raw(4.))
+                        .text_size(sk.text_px(12.))
+                        .text_color(th.text)
+                        .bg(match (here, hot) {
+                            (true, _) => th.accent.alpha(0.2),
+                            (false, true) => th.text.alpha(0.12),
+                            (false, false) => th.text.alpha(0.04),
+                        })
+                        .child(
+                            // Two lines and no sliver of a third.
+                            div()
+                                .absolute()
+                                .left(px(6.0))
+                                .top(px(2.0))
+                                .w(px((l.w - 86.0).max(1.0)))
+                                .h(px(30.0))
+                                .line_height(px(15.0))
+                                .overflow_hidden()
+                                .child(format!("{prefix}{}", target.title)),
+                        )
+                        .child(div().absolute().right(px(6.0)).top(px(8.0)).child(time))
+                        .into_any_element(),
+                );
+            }
+            let bounds = Self::list_bounds(l);
+            out.push(
+                div()
+                    .absolute()
+                    .left(bounds.origin.x)
+                    .top(bounds.origin.y)
+                    .w(bounds.size.width)
+                    .h(bounds.size.height)
+                    .rounded(sk.rad_raw(6.))
+                    .bg(th.bg.alpha(0.95))
+                    .border_1()
+                    .border_color(th.accent.alpha(0.4))
+                    .font_family(family)
+                    .children(children)
+                    .into_any_element(),
+            );
+        }
+
         let mut summary = super::reading::summary(layout, totals.as_ref());
         let pending = self
             .exposure_record
@@ -774,15 +933,40 @@ impl PageDoc {
                     .is_some_and(|r| r.sessions.iter().any(|s| s.revision == layout.revision));
             notes.set_reading_summary(if measured { summary } else { String::new() });
         }
-        vec![div()
-            .absolute()
-            .left(px(12.0))
-            .top(px(12.0))
-            .w(px(rail_w))
-            .h(px(28.0 + rows as f32 * 36.0))
-            .bg(th.bg.alpha(0.93))
-            .children(children)
-            .into_any_element()]
+        out
+    }
+
+    /// Where an open sections list is, as a press and the visible-time clock
+    /// see it.
+    fn list_bounds(l: sections::List) -> Bounds<Pixels> {
+        Bounds {
+            origin: point(px(l.x), px(l.y)),
+            size: size(px(l.w), px(l.h)),
+        }
+    }
+
+    /// Whether the pointer holds the sections list open, and which pip or row
+    /// it is on, from where they were last drawn.
+    fn reading_pointer(&self, at: Option<Point<Pixels>>) -> (bool, Option<usize>) {
+        let listed = self.dialog.is_none()
+            && self.exposure_clock.is_some()
+            && self
+                .current
+                .as_ref()
+                .and_then(|r| r.layout.reading_layout.as_ref())
+                .is_some_and(|l| !l.targets.is_empty());
+        let open = listed
+            && self.view.is_some_and(|m| {
+                sections::opens(
+                    at.map(|p| (p.x.into(), p.y.into())),
+                    m.size.width.into(),
+                    self.reading_list.filter(|_| self.reading_open),
+                )
+            });
+        let hot = at
+            .filter(|_| listed)
+            .and_then(|p| self.reading_zones.iter().position(|(b, _)| b.contains(&p)));
+        (open, hot)
     }
 
     fn exposure_tick(&mut self, active: bool, cx: &mut Context<DocumentView>) {
@@ -968,6 +1152,10 @@ impl PageDoc {
             exposure_sent: None,
             exposure_on: false,
             reading_zones: Vec::new(),
+            reading_pips: 0,
+            reading_open: false,
+            reading_list: None,
+            reading_hot: None,
             reading_offset: None,
             reading_active_anchor: None,
             reading_cover: None,
@@ -1833,36 +2021,27 @@ impl PageDoc {
             cx.notify();
             return;
         }
-        if self
-            .pointer
-            .is_some_and(|at| self.reading_zones.iter().any(|(b, _)| b.contains(&at)))
-        {
-            if let Some(layout) = self
+        // Over the open list the wheel moves the list, a row a notch, and
+        // never the page beneath it.
+        if let Some(l) = self.reading_list.filter(|l| {
+            self.reading_open
+                && self
+                    .pointer
+                    .is_some_and(|at| Self::list_bounds(*l).contains(&at))
+        }) {
+            let targets = self
                 .current
                 .as_ref()
                 .and_then(|r| r.layout.reading_layout.as_ref())
-            {
-                let first = self
-                    .reading_zones
-                    .first()
-                    .and_then(|(_, id)| layout.targets.iter().position(|t| &t.anchor == id))
-                    .unwrap_or(0);
-                let next = if dy < 0.0 {
-                    first.saturating_add(1)
-                } else {
-                    first.saturating_sub(1)
-                };
-                self.reading_offset = Some(
-                    next.min(
-                        layout
-                            .targets
-                            .len()
-                            .saturating_sub(self.reading_zones.len()),
-                    ),
-                );
-                cx.notify();
-                return;
-            }
+                .map_or(0, |layout| layout.targets.len());
+            let next = if dy < 0.0 {
+                l.start.saturating_add(1)
+            } else {
+                l.start.saturating_sub(1)
+            };
+            self.reading_offset = Some(next.min(targets.saturating_sub(l.rows)));
+            cx.notify();
+            return;
         }
         let stretch = self
             .current
@@ -1956,7 +2135,8 @@ impl PageDoc {
     }
 
     /// The pointer moved over the view, or left it. Repaints only when that
-    /// changes which note buttons show.
+    /// changes which note buttons show, opens or shuts the sections list, or
+    /// moves onto another pip or row of it.
     pub fn hover(&mut self, at: Option<Point<Pixels>>, cx: &mut Context<DocumentView>) {
         if self.pointer == at {
             return;
@@ -1964,9 +2144,17 @@ impl PageDoc {
         let before = self.lit();
         let entered = self.pointer.is_some() != at.is_some();
         self.pointer = at;
+        let (open, hot) = self.reading_pointer(at);
+        let sections = open != self.reading_open || hot != self.reading_hot;
+        if self.reading_open && !open {
+            // Shut, the list forgets where the wheel left it.
+            self.reading_offset = None;
+        }
+        self.reading_open = open;
+        self.reading_hot = hot;
         // Coming onto the page or leaving it changes what Alt shows.
         let revealing = self.notes.as_ref().is_some_and(NotesLayer::revealing);
-        if self.lit() != before || (entered && revealing) {
+        if self.lit() != before || (entered && revealing) || sections {
             cx.notify();
         }
     }
@@ -1989,7 +2177,9 @@ impl PageDoc {
             "saved": self.exposure_record,
             "saving": self.exposure_saving,
             "pending_error": self.exposure_error,
-            "rail_targets": self.reading_zones.len()
+            "rail_targets": self.reading_zones.len(),
+            "rail_pips": self.reading_pips,
+            "rail_open": self.reading_open
         });
         Some(report)
     }
@@ -2461,6 +2651,14 @@ impl PageDoc {
             {
                 let anchor = anchor.clone();
                 self.show_fragment(anchor, cx);
+                return Pressed::Took;
+            }
+            // The list's own ground is the list's: a press between its rows
+            // does not fall through to a note button under it.
+            if self
+                .reading_list
+                .is_some_and(|l| Self::list_bounds(l).contains(&at))
+            {
                 return Pressed::Took;
             }
         }
@@ -2992,7 +3190,7 @@ impl PageDoc {
             }
         }
         if self.dialog.is_none() {
-            layers.extend(self.draw_reading(th));
+            layers.extend(self.draw_reading(th, sk));
         }
         // Forget where the bar and the note box were; the canvases below
         // record where they land this frame.
@@ -3468,6 +3666,219 @@ mod tests {
             "the deferred atlas release has run"
         );
         assert!(!flag.load(std::sync::atomic::Ordering::SeqCst));
+    }
+
+    /// A brief of three sections and a figure, 6,000 CSS px tall, open in a
+    /// view 1,200 by 900 at one logical px per CSS px.
+    fn a_brief_with_sections(p: &mut PageDoc) {
+        use super::super::engine::{
+            ConcurSupport, LayoutHash, NotesCapability, ReadingLayout, ReadingTarget,
+        };
+        let target = |anchor: &str, title: &str, kind: &str, y: f32| ReadingTarget {
+            anchor: anchor.into(),
+            title: title.into(),
+            kind: kind.into(),
+            parent: None,
+            words: Some(120),
+            rect: Some(RectCss {
+                x: 40.,
+                y,
+                w: 900.,
+                h: 400.,
+            }),
+        };
+        let reading = ReadingLayout {
+            document: "sections-test".into(),
+            revision: format!("sha256:{}", "0".repeat(64)),
+            targets: vec![
+                target("top", "The brief", "opening", 0.),
+                target("sec-why", "01 Why", "section", 600.),
+                target("fig-today", "01 · Today", "figure", 900.),
+                target("sec-how", "02 How", "section", 2400.),
+                target("sec-next", "03 Next", "section", 4800.),
+            ],
+        };
+        p.exposure_clock = reading::Clock::new(&reading).ok();
+        assert!(p.exposure_clock.is_some());
+        let layout = PageLayout {
+            page: None,
+            generation: 1,
+            rendered: LayoutHash(1),
+            geometry: Geometry {
+                css_width: 1200,
+                viewport_css_height: 900,
+                scale: 1.,
+            },
+            height_css: 6000.,
+            notes_file: None,
+            reading_layout: Some(reading),
+            capability: NotesCapability {
+                notes_islands: 0,
+                concurs_island: false,
+                tagged: 0,
+                concur: ConcurSupport::Unknown,
+            },
+            anchors: vec![],
+            links: vec![],
+            targets: Some(
+                [("sec-why", 600.), ("sec-how", 2400.), ("sec-next", 4800.)]
+                    .into_iter()
+                    .map(|(id, top)| super::super::engine::Target {
+                        id: id.into(),
+                        top: Some(top),
+                    })
+                    .collect(),
+            ),
+            openers: vec![],
+            dialogs: vec![],
+            diagnostics: vec![],
+            videos: None,
+        };
+        let tiles = TileSet::new(&layout);
+        p.current = Some(Rendered {
+            layout,
+            tiles,
+            stale_scroll: None,
+            zoom: 1.,
+        });
+        p.view = Some(Measured {
+            origin: None,
+            size: size(px(1200.), px(900.)),
+            scale: 1.,
+        });
+    }
+
+    /// At rest the page carries a pip for each section and nothing else: no
+    /// list, nothing kept out of visible time. The pointer on the right edge
+    /// opens the list, the pointer on the list keeps it, and anywhere else
+    /// shuts it. The old panel was drawn at every width whether or not the
+    /// reader wanted it.
+    #[gpui::test]
+    fn the_sections_list_opens_only_under_the_pointer_and_pips_stay(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| super::super::set_engine(cx, Err(Unavailable::Off)));
+        let view = cx.new(|cx| {
+            DocumentView::new(
+                crate::docopen::DocTarget {
+                    path: "/missing/sections-test.html".into(),
+                    kind: crate::docopen::DocKind::Html,
+                },
+                cx,
+            )
+        });
+        view.update(cx, |v, cx| {
+            let p = page_of(v).unwrap();
+            a_brief_with_sections(p);
+            let frame = p.lay_reading().expect("a brief with passages");
+            let labels: Vec<_> = frame.pips.iter().map(|(_, p)| p.label.clone()).collect();
+            assert_eq!(labels, ["01", "02", "03"], "the figure gets no pip");
+            assert_eq!((p.reading_pips, p.reading_zones.len()), (3, 3));
+            assert!(frame.list.is_none() && p.reading_cover.is_none());
+            // Every pip is inside the strip that opens the list, so the
+            // pointer cannot reach one without the list coming with it.
+            for (b, _) in &frame.pips {
+                assert!(f32::from(b.origin.x) >= 1200. - sections::EDGE, "{b:?}");
+            }
+
+            // Mid-page: still shut.
+            p.hover(Some(point(px(600.), px(450.))), cx);
+            assert!(!p.reading_open);
+            // The right edge: open, with a row for every passage.
+            p.hover(Some(point(px(1196.), px(450.))), cx);
+            assert!(p.reading_open);
+            let frame = p.lay_reading().unwrap();
+            let list = frame.list.expect("open under the pointer");
+            assert_eq!(frame.rows.len(), 5);
+            assert_eq!(p.reading_zones.len(), 3 + 5);
+            assert_eq!(
+                p.reading_cover,
+                Some(PageDoc::list_bounds(list)),
+                "what the list covers is kept out of visible time"
+            );
+            // Onto the list itself: held. Off both: shut, and nothing covered.
+            p.hover(Some(point(px(list.x + 20.), px(list.y + 40.))), cx);
+            assert!(p.reading_open);
+            p.lay_reading();
+            p.hover(Some(point(px(300.), px(450.))), cx);
+            assert!(!p.reading_open);
+            assert!(p.lay_reading().unwrap().list.is_none());
+            assert!(p.reading_cover.is_none() && p.reading_list.is_none());
+            // Leaving the view shuts it too.
+            p.hover(Some(point(px(1196.), px(450.))), cx);
+            p.lay_reading();
+            p.hover(None, cx);
+            assert!(!p.reading_open);
+        });
+    }
+
+    /// A press on a pip goes to its section, and so does a press on a row of
+    /// the open list; a press on the list's own ground goes nowhere and is
+    /// not handed on to whatever is under it.
+    #[gpui::test]
+    fn a_press_on_a_pip_or_a_row_goes_to_that_section(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| super::super::set_engine(cx, Err(Unavailable::Off)));
+        let view = cx.new(|cx| {
+            DocumentView::new(
+                crate::docopen::DocTarget {
+                    path: "/missing/sections-press.html".into(),
+                    kind: crate::docopen::DocKind::Html,
+                },
+                cx,
+            )
+        });
+        view.update(cx, |v, cx| {
+            let p = page_of(v).unwrap();
+            a_brief_with_sections(p);
+            let frame = p.lay_reading().unwrap();
+            let (second, _) = frame.pips[1].clone();
+            assert!(matches!(p.press(second.center(), None, cx), Pressed::Took));
+            assert_eq!(p.scroll_css, 2400., "§02 starts 2,400 px down");
+
+            p.hover(Some(point(px(1196.), px(450.))), cx);
+            let frame = p.lay_reading().unwrap();
+            let list = frame.list.unwrap();
+            let (row, target) = frame.rows[4];
+            assert_eq!(target, 4);
+            assert!(matches!(p.press(row.center(), None, cx), Pressed::Took));
+            assert_eq!(p.scroll_css, 4800.);
+            let heading = point(px(list.x + 20.), px(list.y + 10.));
+            assert!(matches!(p.press(heading, None, cx), Pressed::Took));
+            assert_eq!(p.scroll_css, 4800., "the list's ground goes nowhere");
+        });
+    }
+
+    /// Over the open list the wheel moves the list a row and leaves the page
+    /// where it is; anywhere else it scrolls the page.
+    #[gpui::test]
+    fn the_wheel_over_the_list_moves_the_list_and_not_the_page(cx: &mut gpui::TestAppContext) {
+        cx.update(|cx| super::super::set_engine(cx, Err(Unavailable::Off)));
+        let view = cx.new(|cx| {
+            DocumentView::new(
+                crate::docopen::DocTarget {
+                    path: "/missing/sections-wheel.html".into(),
+                    kind: crate::docopen::DocKind::Html,
+                },
+                cx,
+            )
+        });
+        view.update(cx, |v, cx| {
+            let p = page_of(v).unwrap();
+            a_brief_with_sections(p);
+            // A view too short for five rows, so the list has somewhere to go.
+            p.view.as_mut().unwrap().size = size(px(1200.), px(240.));
+            p.hover(Some(point(px(1196.), px(100.))), cx);
+            let list = p.lay_reading().unwrap().list.unwrap();
+            assert!(list.rows < 5, "{list:?}");
+            p.hover(Some(point(px(list.x + 20.), px(list.y + 40.))), cx);
+            let down = ScrollDelta::Pixels(point(px(0.), px(-60.)));
+            p.wheel(down, cx);
+            assert_eq!(p.scroll_css, 0., "the page stayed");
+            assert_eq!(p.lay_reading().unwrap().list.unwrap().start, list.start + 1);
+
+            p.hover(Some(point(px(300.), px(100.))), cx);
+            p.lay_reading();
+            p.wheel(down, cx);
+            assert!(p.scroll_css > 0., "off the list, the page scrolls");
+        });
     }
 
     fn tops(n: u32) -> Vec<u32> {

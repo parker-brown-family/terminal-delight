@@ -42,13 +42,7 @@
 //! `ink_tokens!` below, where the `None` arm reaches for the recipe rather than
 //! for a default value.
 
-use std::{
-    collections::BTreeMap,
-    fs,
-    path::PathBuf,
-    sync::Arc,
-    time::{Duration, SystemTime},
-};
+use std::{collections::BTreeMap, fs, path::PathBuf, sync::Arc, time::SystemTime};
 
 use gpui::{
     div, hsla, px, App, Div, Global, Hsla, InteractiveElement, ParentElement, Pixels, Stateful,
@@ -316,6 +310,7 @@ macro_rules! ink_tokens {
 ink_tokens! {
     // ---- grounds ----
     panel        => "panel",        Recipe::of(Role::Bg),                          "the ground a chrome region sits on";
+    terminal_field => "terminal_field", Recipe::of(Role::Bg),                      "ground under terminal cells when the field dial is set; inherits panel when omitted";
     panel_raised => "panel_raised", Recipe::of(Role::Surface),                     "a surface lifted off the ground: a bar, a card";
     panel_sunken => "panel_sunken", Recipe::of(Role::Surface).l(0.40),             "a well: a track, an input field, an inset";
     panel_glass  => "panel_glass",  Recipe::of(Role::Bg).a(0.70),                  "the scrim an overlay lays over the workspace";
@@ -574,6 +569,8 @@ pub enum Emphasis {
 pub enum Divider {
     #[default]
     Line,
+    /// A fine rule capped by perpendicular witness marks.
+    Dimension,
     Double,
     None,
 }
@@ -662,6 +659,8 @@ pub enum Tube {
     #[default]
     Glass,
     Stock,
+    /// Draw directly to the surface and omit decorative shadows.
+    Direct,
 }
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq, Default)]
@@ -841,6 +840,9 @@ impl SkinSpec {
 
     pub fn bake(&self, th: &Theme, scale: f32) -> Skin {
         let mut ink = self.ink.bake(th);
+        if self.ink.terminal_field.is_none() {
+            ink.terminal_field = ink.panel;
+        }
         if self.shape.bake().material == Material::Paper {
             let light = if th.bg.l < th.text.l { th.text } else { th.bg };
             if self.ink.btn_face.is_none() {
@@ -927,7 +929,7 @@ impl Skin {
     /// Keep a popup sharp while gently diffusing the scene around it. The
     /// existing reader pass measures physical pixels and resets every frame.
     pub fn popup<E: Styled + ParentElement>(&self, d: E) -> E {
-        if !self.unboxed() {
+        if !self.unboxed() || self.shape.tube == Tube::Direct {
             return d;
         }
         d.child(
@@ -980,18 +982,42 @@ impl Skin {
     /// Resolve the default terminal field at the presentation edge. This is
     /// separate from program-authored cell backgrounds and the legacy grade.
     pub fn terminal_theme(&self, mut th: Theme) -> Theme {
+        if self.shape.tube == Tube::Direct {
+            // Pay only for what is switched on. Without the CRT glass, a direct
+            // skin draws flat: no bend, glow or linger. With it switched on by
+            // a theme or a design (intrusive, say), the glass runs as asked and
+            // costs only itself. Parker, 2026-11-17: "i really love the CRT +
+            // intrusive etc ... We really need to get the best of both worlds."
+            if !th.crt {
+                crate::theme::hold_clean(&mut th);
+                th.crawl = false;
+            }
+            th.grade.inactive_blur = Some(0.);
+            th.grade.doc_brightness = None;
+            th.grade.doc_contrast = None;
+        }
         th.field_background = th
             .grade
             .field_colour
             .or_else(|| self.unboxed().then_some(1.))
-            .map(|level| crate::mix(gpui::black(), self.ink.panel, level.clamp(0., 1.)));
+            .map(|level| crate::mix(gpui::black(), self.ink.terminal_field, level.clamp(0., 1.)));
         th
     }
 
     /// Project the skin's native ink into legacy chrome. This value is local
     /// to a native renderer; never store it as a Design or pass it to a grid.
     pub fn chrome_theme(&self, th: &Theme) -> Theme {
-        let mut chrome = th.clone();
+        let mut chrome = if self.shape.tube == Tube::Direct {
+            self.terminal_theme(th.clone())
+        } else {
+            th.clone()
+        };
+        self.apply_chrome_ink(&mut chrome);
+        chrome
+    }
+
+    /// Apply native ink to a local palette that already has its terminal grade.
+    pub fn apply_chrome_ink(&self, chrome: &mut Theme) {
         if self.text_controls() {
             chrome.bg = self.ink.panel;
             chrome.surface = self.ink.panel_raised;
@@ -1004,7 +1030,6 @@ impl Skin {
             chrome.glow = 0.;
             chrome.grade.phosphor = 0.;
         }
-        chrome
     }
 
     pub fn glass(&self) -> bool {
@@ -1957,6 +1982,19 @@ impl Skin {
             .bg(self.ink.panel_raised)
     }
 
+    /// A menu choice shares its spoken label across the pane and the Floor.
+    pub fn choice_label(&self, label: &str, active: bool, selected: &str) -> String {
+        if self.text_controls() {
+            if active {
+                format!("{label} · {selected}")
+            } else {
+                label.to_owned()
+            }
+        } else {
+            format!("{} {label}", if active { "●" } else { "○" })
+        }
+    }
+
     /// The divider between two stacked things. Returns a container rather than a
     /// bare line so `Divider::Double` can be two lines without the call site
     /// knowing there are two.
@@ -1969,6 +2007,15 @@ impl Skin {
         match self.shape.divider {
             Divider::None => div().h(px(0.)),
             Divider::Line => line(self.ink.rule),
+            Divider::Dimension => div()
+                .w_full()
+                .h(self.px(5.))
+                .flex()
+                .items_center()
+                .border_l_1()
+                .border_r_1()
+                .border_color(self.ink.rule_strong)
+                .child(line(self.ink.rule)),
             Divider::Double => div()
                 .flex()
                 .flex_col()
@@ -1984,6 +2031,15 @@ impl Skin {
         match self.shape.divider {
             Divider::None => div().w(px(0.)),
             Divider::Line => line(self.ink.rule),
+            Divider::Dimension => div()
+                .h_full()
+                .w(self.px(5.))
+                .flex()
+                .justify_center()
+                .border_t_1()
+                .border_b_1()
+                .border_color(self.ink.rule_strong)
+                .child(line(self.ink.rule)),
             Divider::Double => div()
                 .flex()
                 .flex_row()
@@ -2801,7 +2857,11 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
         let u = &mut spec.unknown;
         spec.shape.tube = enum_of(
             sh.tube.as_ref(),
-            &[("glass", Tube::Glass), ("stock", Tube::Stock)],
+            &[
+                ("glass", Tube::Glass),
+                ("stock", Tube::Stock),
+                ("direct", Tube::Direct),
+            ],
             "shape.tube",
             u,
         );
@@ -2854,6 +2914,7 @@ pub fn parse(source: &str) -> Result<SkinSpec, String> {
             &[
                 ("line", Divider::Line),
                 ("double", Divider::Double),
+                ("dimension", Divider::Dimension),
                 ("none", Divider::None),
             ],
             "shape.divider",
@@ -2997,6 +3058,37 @@ pub fn picker_cells(id: &str) -> u8 {
     }
 }
 
+pub(crate) fn picker_caption<'a>(
+    id: &'a str,
+    t: &crate::lang::Strings,
+    text_controls: bool,
+) -> &'a str {
+    match id {
+        "default" => t.ui.pal_skin_default,
+        "deco" => t.ui.pal_skin_deco,
+        "chalk" => t.ui.pal_skin_chalk,
+        "ops" => t.ui.pal_skin_ops,
+        "clean" => t.ui.pal_skin_clean,
+        "custom" if text_controls => t.parts.ctl_custom_file,
+        "custom" => t.ui.pal_skin_custom,
+        // Every skin's name is lowercase, as its id is (Parker, 2026-11-17:
+        // "BAREMETAL in all caps, terminimalist in all caps - let's make this
+        // consistent").
+        "terminimalist" => "terminimalist",
+        other => other,
+    }
+}
+
+/// The installed looks in picker order. Include a personal file when it is in use.
+pub(crate) fn gallery_skins(cx: &App) -> Vec<(String, Arc<SkinSpec>)> {
+    let reg = cx.global::<SkinRegistry>();
+    let mut skins = reg.builtins.clone();
+    if reg.active_id == USER_FILE {
+        skins.push((USER_FILE.to_owned(), reg.custom.clone()));
+    }
+    skins
+}
+
 /// Every skin that can be selected, as `(id, icon, whether it is active now)`.
 /// `custom` appears only when the user actually has a file.
 pub fn all_skins(cx: &App) -> Vec<(String, String, bool)> {
@@ -3107,7 +3199,7 @@ pub fn open_tiling(cx: &App) -> bool {
 /// Design; projecting chrome never mutates the registry or a saved palette.
 pub fn native_theme(cx: &App, th: Arc<Theme>) -> Arc<Theme> {
     let spec = spec(cx);
-    if spec.shape.controls == Some(Controls::Text) {
+    if spec.shape.controls == Some(Controls::Text) || spec.shape.tube == Some(Tube::Direct) {
         Arc::new(spec.bake(&th, 1.).chrome_theme(&th))
     } else {
         th
@@ -3182,11 +3274,12 @@ pub fn init(cx: &mut App) {
         active_id,
     });
 
+    let mut changes = crate::filewatch::Changes::new(std::slice::from_ref(&path));
     let mut last = mtime(&path);
     cx.spawn(async move |cx| loop {
-        cx.background_executor()
-            .timer(Duration::from_millis(300))
-            .await;
+        let executor = cx.background_executor().clone();
+        changes.wait(&executor).await;
+        changes = crate::filewatch::Changes::new(std::slice::from_ref(&path));
         let now = mtime(&path);
         if now != last {
             last = now;
@@ -3256,6 +3349,10 @@ fn canonical_id(id: &str) -> &str {
     match id {
         "paper" => "chalk",
         "console" => "ops",
+        // BAREMETAL became TERMINIMALIST, and BLUEPRINT was retired, both on
+        // 2026-11-17; a saved choice of either still opens a skin.
+        "baremetal" => "terminimalist",
+        "blueprint" => "default",
         _ => id,
     }
 }
@@ -3558,6 +3655,32 @@ mod tests {
     use super::*;
 
     #[test]
+    fn menu_clarity_uses_the_local_word_for_an_active_text_choice() {
+        let th = palette();
+        for (id, body) in BUILTIN_SKINS {
+            if !["terminimalist", "default"].contains(id) {
+                continue;
+            }
+            let spec = parse(body).unwrap();
+            let sk = spec.bake(&th, 1.);
+            for language in crate::lang::Lang::ALL {
+                let parts = language.strings().parts;
+                let label = parts.pane_ctx_read_only;
+                let mark = parts.ctl_selected;
+                if *id == "terminimalist" {
+                    assert_eq!(
+                        sk.choice_label(label, true, mark),
+                        format!("{label} · {mark}")
+                    );
+                    assert_eq!(sk.choice_label(label, false, mark), label);
+                } else {
+                    assert_eq!(sk.choice_label(label, true, mark), format!("● {label}"));
+                }
+            }
+        }
+    }
+
+    #[test]
     fn terminimalist_follows_the_palette_and_only_overrides_the_default_field() {
         let spec = parse(builtin_toml("terminimalist").unwrap()).unwrap();
         for id in ["osaka-jade", "tokyo-night", "flexoki-light"] {
@@ -3566,13 +3689,28 @@ mod tests {
             // Deliberately non-neutral: the field endpoint must still match.
             th.grade = theme::house_outer().grade;
             let sk = spec.bake(&th, 1.);
-            assert_eq!(sk.ink.panel, th.bg, "{id}");
+            // BAREMETAL's ground, kept in the merge: the palette's own ground,
+            // lifted five percent toward its text.
+            let lifted = th.bg.l + 0.05 * (th.text.l - th.bg.l);
+            assert!(
+                (sk.ink.panel.l - lifted).abs() < 0.01,
+                "{id}: {:?}",
+                sk.ink.panel
+            );
+            assert!(
+                (sk.ink.panel.h - th.bg.h).abs() < 0.03,
+                "{id}: the palette's hue"
+            );
             assert_eq!(sk.ink.ink, th.text, "{id}");
             assert_eq!(sk.ink.mark, th.accent, "{id}");
             let matching = sk.terminal_theme(th.clone());
             assert_eq!(matching.field_background, Some(sk.ink.panel));
             assert_eq!(matching.ansi, th.ansi);
-            assert_eq!(matching.grade, th.grade);
+            // Drawing directly holds the inactive blur at zero and leaves the
+            // rest of the grade as the palette set it.
+            let mut held = th.grade;
+            held.inactive_blur = Some(0.);
+            assert_eq!(matching.grade, held);
             th.grade.set(theme::GradeKey::FieldColour, 0.);
             let black = sk.terminal_theme(th.clone()).field_background.unwrap();
             assert_eq!(black.l, 0.);
@@ -3594,11 +3732,12 @@ mod tests {
             let th = palette();
             let sk = parse(source).unwrap().bake(&th, 1.);
             assert_eq!(sk.terminal_theme(th.clone()).field_background, None, "{id}");
+            let field = sk.ink.panel;
             let mut chosen = th;
             chosen.grade.set(theme::GradeKey::FieldColour, 1.);
             assert_eq!(
                 sk.terminal_theme(chosen).field_background,
-                Some(sk.ink.panel),
+                Some(field),
                 "{id}"
             );
         }
@@ -3779,15 +3918,17 @@ mod tests {
             assert_eq!(d.style().border_widths, zero);
         }
         let mut selected = sk.choice(border(), true);
-        let mut expected = div().border(px(0.)).border_l(px(1.));
+        // BAREMETAL's two-pixel rail, kept in the merge.
+        let mut expected = div().border(px(0.)).border_l(px(2.));
         assert_eq!(
             selected.style().border_widths,
             expected.style().border_widths
         );
         let mut warning = sk.finish_edged(border(), sk.ink.danger);
+        let mut hairline = div().border(px(0.)).border_l(px(1.));
         assert_eq!(
             warning.style().border_widths,
-            expected.style().border_widths
+            hairline.style().border_widths
         );
         assert_eq!(warning.style().border_color, Some(sk.ink.danger));
         assert_eq!(sk.box_border(2.), px(0.));
@@ -3912,6 +4053,49 @@ mod tests {
 
     fn palette() -> Theme {
         theme::parse(theme::DEFAULT_THEME_TOML).expect("the embedded theme parses")
+    }
+
+    /// TERMINIMALIST draws directly and pays only for what is switched on.
+    /// With the CRT glass off, a theme's bend and glow are held flat; with it
+    /// switched on (as the intrusive design does), the glass runs as asked.
+    /// The inactive blur and the document grade stay off either way.
+    ///
+    /// Mutation-tested: holding the theme clean unconditionally fails the
+    /// switched-on half.
+    #[test]
+    fn terminimalist_holds_effects_flat_unless_the_crt_glass_is_switched_on() {
+        let mut th = palette();
+        th.warp = 2.0;
+        th.crawl = true;
+        th.crt = false;
+        th.grade.image_glow = Some(0.8);
+        th.grade.inactive_image_glow = Some(0.6);
+        th.grade.inactive_blur = Some(1.);
+        th.grade.doc_brightness = Some(0.8);
+        let skin = parse(builtin_toml("terminimalist").unwrap())
+            .unwrap()
+            .bake(&th, 1.);
+        assert_eq!(skin.shape.tube, Tube::Direct);
+        let flat = skin.terminal_theme(th.clone());
+        assert_eq!(flat.warp, 0.);
+        assert!(!flat.crawl && !flat.crt);
+        assert_eq!(flat.grade.image_glow, Some(0.));
+        assert_eq!(flat.grade.inactive_blur_at_edge(), 0.);
+        assert_eq!(flat.grade.doc_grade(), None);
+        assert_eq!(
+            th.grade.image_glow,
+            Some(0.8),
+            "the theme itself is untouched"
+        );
+        th.crt = true;
+        let glass = skin.terminal_theme(th.clone());
+        assert!(glass.crt, "the switched-on glass runs");
+        assert_eq!(glass.warp, 2., "with its bend");
+        assert_eq!(glass.grade.image_glow, Some(0.8), "and its glow");
+        assert!(glass.crawl, "and its crawl");
+        assert_eq!(glass.grade.doc_grade(), None);
+        assert_eq!(builtin_toml("baremetal"), builtin_toml("terminimalist"));
+        assert_eq!(builtin_toml("blueprint"), builtin_toml("default"));
     }
 
     /// The gate on the whole layer. Every ink the shipped default skin resolves

@@ -24,9 +24,11 @@ use std::sync::Mutex;
 /// radius in physical px: 0 is sharp ([`register_tube`]).
 type Tube = ([f32; 4], f32, f32, f32, [f32; 3], [f32; 2], f32, f32);
 
-/// One floating document's grade: its rect (physical px) and its brightness and
-/// contrast gains around `1.0`.
-type DocGrade = ([f32; 4], f32, f32);
+/// One floating document's grade: its rect (physical px), its brightness and
+/// contrast gains around `1.0`, and whether the rect is a document (`true`) or
+/// something kept out of one's grade (`false`). Only a document takes the curved
+/// tube's highlight shoulder (patch 0018, `doc_shoulder`).
+type DocGrade = ([f32; 4], f32, f32, bool);
 
 /// A tube with no bezel drawn round its glass.
 pub const NO_BEZEL: [f32; 2] = [0.0, 0.0];
@@ -184,7 +186,7 @@ pub fn register_doc_grade(rect: [f32; 4], brightness: f32, contrast: f32) {
     DOC_GRADES
         .lock()
         .unwrap()
-        .push((rect, brightness, contrast));
+        .push((rect, brightness, contrast, true));
     push_doc_grades();
 }
 
@@ -213,7 +215,7 @@ fn composed_doc_grades() -> Vec<DocGrade> {
     grades
         .iter()
         .copied()
-        .chain(kept.iter().map(|rect| (*rect, 1.0, 1.0)))
+        .chain(kept.iter().map(|rect| (*rect, 1.0, 1.0, false)))
         .take(MAX_TUBES)
         .collect()
 }
@@ -322,9 +324,9 @@ mod tests {
         set_suppressed(true);
         let rect = [10., 20., 300., 400.];
         register_doc_grade(rect, 1.4, 0.8);
-        assert_eq!(doc_grades(), vec![(rect, 1.4, 0.8)], "suppressed");
+        assert_eq!(doc_grades(), vec![(rect, 1.4, 0.8, true)], "suppressed");
         flatten();
-        assert_eq!(doc_grades(), vec![(rect, 1.4, 0.8)], "flattened");
+        assert_eq!(doc_grades(), vec![(rect, 1.4, 0.8, true)], "flattened");
         set_suppressed(false);
         begin_frame();
         assert_eq!(
@@ -346,8 +348,9 @@ mod tests {
         register_doc_grade(square, 0.5, 1.0);
         assert_eq!(
             doc_grades(),
-            vec![(square, 0.5, 1.0), (tray, 1.0, 1.0)],
-            "neutral, and last, because the last rect holding a pixel wins"
+            vec![(square, 0.5, 1.0, true), (tray, 1.0, 1.0, false)],
+            "neutral, last because the last rect holding a pixel wins, and not \
+             a document, so the curved tube's shoulder leaves it alone"
         );
         begin_frame();
         assert_eq!(doc_grades(), vec![], "and gone with the frame");

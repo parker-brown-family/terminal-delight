@@ -134,6 +134,12 @@ impl Fx {
         changed
     }
 
+    pub fn clear_active(&mut self) {
+        self.band = None;
+        self.flicker_mul = 1.;
+        self.jiggle_px = 0.;
+    }
+
     /// True while an animation needs frame-rate ticks (else the ticker can idle).
     pub fn active(&self) -> bool {
         self.band.is_some() || self.jiggle_px != 0. || self.flicker_mul != 1.0

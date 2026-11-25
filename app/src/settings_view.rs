@@ -508,6 +508,28 @@ impl Workspace {
         if key == "escape" {
             return self.settings_escape(cx);
         }
+        if matches!(key, "left" | "right")
+            && !(m.control || m.alt || m.platform || m.function || m.shift)
+            && self
+                .settings
+                .as_ref()
+                .is_some_and(|b| b.page == Page::Appearance && !b.searching())
+        {
+            let choices = skin::gallery_skins(cx);
+            if let Some(i) = choices
+                .iter()
+                .position(|(id, _)| *id == skin::active_id(cx))
+            {
+                let n = choices.len();
+                let next = if key == "right" {
+                    (i + 1) % n
+                } else {
+                    (i + n - 1) % n
+                };
+                self.settings_choose_skin(&choices[next].0, cx);
+            }
+            return true;
+        }
         let pages = self.settings_hit_pages();
         if key == "," && m.control {
             self.close_settings(cx);
@@ -759,6 +781,7 @@ fn settings_items_in(l: lang::Lang) -> Vec<Item> {
         (Page::General, s.s_window, s.r_scale, s.r_scale_sub),
         (Page::General, s.s_window, s.r_updates, s.r_updates_sub),
         (Page::General, s.s_window, s.r_admin, s.r_admin_sub),
+        (Page::Appearance, ui.pal_hdr_skin, ui.pal_hdr_skin, ""),
         (Page::Appearance, s.s_look, s.r_palette, s.r_palette_sub),
         (Page::Appearance, s.s_look, s.r_gauges, s.r_gauges_sub),
         (Page::Appearance, s.s_agent_panes, s.r_tint, s.r_tint_sub),
@@ -932,6 +955,7 @@ impl Workspace {
             })
             .flex()
             .flex_row()
+            .flex_wrap()
             .items_center()
             .justify_between()
             .gap_4()
@@ -943,7 +967,8 @@ impl Workspace {
                     .flex_col()
                     .gap_0p5()
                     .flex_1()
-                    .min_w(px(0.))
+                    .min_w(px(112.))
+                    .when_some(id, |d, id| d.debug_selector(move || format!("{id}-label")))
                     .child(
                         div()
                             .text_size(sk.text_px(10.5))
@@ -1054,6 +1079,84 @@ impl Workspace {
         }
     }
 
+    fn settings_choose_skin(&mut self, id: &str, cx: &mut Context<Self>) {
+        match skin::select(cx, id) {
+            Ok(_) => self.save(cx),
+            Err(e) => eprintln!("terminal-delight: {e}"),
+        }
+        cx.notify();
+    }
+
+    fn st_skin_gallery(
+        &self,
+        look: &theme::Theme,
+        sk: &skin::Skin,
+        cx: &mut Context<Self>,
+    ) -> gpui::Div {
+        let t = self.lang.strings();
+        if !row_shown(t.ui.pal_hdr_skin) {
+            return div().hidden();
+        }
+        let active = skin::active_id(cx);
+        let caption = skin::picker_caption(&active, t, sk.text_controls());
+        let mut gallery = div().w_full().flex().flex_wrap().gap(px(4.));
+        for (id, spec) in skin::gallery_skins(cx) {
+            let selected = id == active;
+            let caption = skin::picker_caption(&id, t, sk.text_controls()).to_owned();
+            let selector = format!("st-skin-{id}");
+            let hint = if selected { sk.ink.mark } else { sk.ink.rule };
+            gallery = gallery.child(
+                div()
+                    .id(SharedString::from(selector.clone()))
+                    .debug_selector(move || selector.clone())
+                    .w(px(98.))
+                    .flex_none()
+                    .flex()
+                    .flex_col()
+                    .border_1()
+                    .border_color(hint)
+                    .rounded(sk.radius())
+                    .overflow_hidden()
+                    .cursor_pointer()
+                    .child(settings_preview::skin_sample(look, &spec))
+                    .child(
+                        div()
+                            .w_full()
+                            .px(px(3.))
+                            .h(px(16.))
+                            .line_height(px(15.))
+                            .truncate()
+                            .text_size(sk.text_px(9.))
+                            .text_color(sk.ink.ink)
+                            .when(selected, |d| {
+                                d.bg(sk.ink.mark_wash)
+                                    .debug_selector(|| "st-current-skin".into())
+                            })
+                            .child(caption),
+                    )
+                    .on_mouse_down(
+                        MouseButton::Left,
+                        cx.listener(move |ws, _, _, cx| {
+                            cx.stop_propagation();
+                            ws.settings_choose_skin(&id, cx);
+                        }),
+                    ),
+            );
+        }
+        div()
+            .p_2()
+            .flex()
+            .flex_col()
+            .gap_1()
+            .child(
+                div()
+                    .text_size(sk.text_px(10.))
+                    .text_color(sk.ink.ink)
+                    .child(format!("←  →    {caption} · {}", t.parts.ctl_selected)),
+            )
+            .child(gallery)
+    }
+
     /// Every language by its own name, the one in use lit. A press changes
     /// every word in the window at once.
     fn st_languages(&self, th: &theme::Theme, sk: &skin::Skin, cx: &mut Context<Self>) -> Ctl {
@@ -1062,8 +1165,7 @@ impl Workspace {
             .flex()
             .flex_row()
             .flex_wrap()
-            .justify_end()
-            .max_w(px(640.))
+            .w_full()
             .gap_1()
             .children(lang::Lang::ALL.iter().copied().map(|l| {
                 let id = SharedString::from(format!("st-lang-{}", l.code()));
@@ -1763,7 +1865,11 @@ impl Workspace {
                         s.r_language,
                         s.r_language_sub,
                         self.st_languages(th, sk, cx),
-                    )],
+                    )
+                    // All nine names wrap within the available page width.
+                    .flex_col()
+                    .items_stretch()
+                    .gap_1()],
                 ),
                 Self::st_section(
                     th,
@@ -1800,6 +1906,13 @@ impl Workspace {
                 ),
             ],
             Page::Appearance => vec![
+                Self::st_section(
+                    th,
+                    sk,
+                    "st-sec-skins",
+                    ui.pal_hdr_skin,
+                    vec![self.st_skin_gallery(&look, sk, cx)],
+                ),
                 Self::st_section(
                     th,
                     sk,
@@ -2738,6 +2851,7 @@ impl Workspace {
         &self,
         th: &theme::Theme,
         hosted: Option<AnyElement>,
+        window: &Window,
         cx: &mut Context<Self>,
     ) -> Option<gpui::Div> {
         let b = self.settings.clone()?;
@@ -2754,11 +2868,30 @@ impl Workspace {
         let h = (vh - 64.).max(300.);
         let host = self.hosting();
         let acc = th.accent;
-        // The three bands of the book take definite heights, so the nav and
-        // the page between them keep the full height their panels measure
-        // against: the filter box's band, and the footer's line.
+        // The navigation and page share the space between the filter and
+        // the footer, whose translated shortcuts can wrap in a narrow tile.
         let top_h = f32::from(sk.text_px(12.5)) * 1.6 + 26.;
-        let foot_h = f32::from(sk.text_px(9.)) * 1.6 + 10.;
+        let footer = SharedString::from(s.footer);
+        let font_size = sk.text_px(9.);
+        let mut run = window.text_style().to_run(footer.len());
+        run.font = gpui::font(sk.font_family.clone());
+        let rows = window
+            .text_system()
+            .shape_text(
+                footer.clone(),
+                font_size,
+                &[run],
+                Some(px(w - 24. - 2. * f32::from(sk.box_border(2.)))),
+                None,
+            )
+            .map(|lines| {
+                lines
+                    .iter()
+                    .map(|line| line.wrap_boundaries().len() + 1)
+                    .sum::<usize>()
+            })
+            .unwrap_or(2);
+        let foot_h = f32::from(font_size) * 1.6 * rows as f32 + 10.;
         let mid_h = (h - top_h - foot_h).max(120.);
         // A panel shown in place takes the keys, so the filter is the book's
         // only while no panel is open.
@@ -2984,15 +3117,22 @@ impl Workspace {
                     .flex_none()
                     .h(px(foot_h))
                     .px_3()
+                    .py_1()
                     .flex()
-                    .items_center()
+                    .flex_col()
                     .justify_center()
                     .overflow_hidden()
                     .border_t(px(sk.m.hairline.max(1.)))
                     .border_color(sk.ink.rule)
                     .text_size(sk.text_px(9.))
                     .text_color(th.text.alpha(0.5))
-                    .child(SharedString::from(s.footer.to_string())),
+                    .child(
+                        div()
+                            .w_full()
+                            .text_center()
+                            .whitespace_normal()
+                            .child(footer),
+                    ),
             )
             .child(close)
             // Everything behind the book is frosted while it is open, and the
@@ -3103,6 +3243,128 @@ mod tests {
             cx.update(|w, _| w.refresh());
             cx.run_until_parked();
         }
+    }
+
+    #[gpui::test]
+    fn skin_gallery_draws_only_open_choices_and_supports_click_and_keys(
+        cx: &mut gpui::TestAppContext,
+    ) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        let count = || settings_preview::SKIN_SAMPLE_COUNT.get();
+        let closed = count();
+        redraw(cx);
+        assert_eq!(count(), closed);
+        cx.simulate_resize(size(px(600.), px(950.)));
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        redraw(cx);
+        assert!(count() >= closed + 6);
+        let page = cx.debug_bounds("st-page").unwrap();
+        for id in ["default", "chalk", "clean", "deco", "ops", "terminimalist"] {
+            let card = cx
+                .debug_bounds(Box::leak(format!("st-skin-{id}").into_boxed_str()))
+                .unwrap();
+            assert!(
+                card.size.width >= px(90.)
+                    && page.contains(&card.origin)
+                    && page.contains(&card.bottom_right()),
+                "{id}: {card:?} outside {page:?}"
+            );
+        }
+        let pick = cx.debug_bounds("st-skin-ops").unwrap();
+        cx.simulate_click(pick.center(), gpui::Modifiers::none());
+        redraw(cx);
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "ops");
+        assert!(pick.contains(&cx.debug_bounds("st-current-skin").unwrap().center()));
+        cx.simulate_keystrokes("left");
+        redraw(cx);
+        assert_ne!(cx.update(|_, cx| skin::active_id(cx)), "ops");
+        cx.simulate_keystrokes("right");
+        redraw(cx);
+        assert_eq!(cx.update(|_, cx| skin::active_id(cx)), "ops");
+        cx.simulate_keystrokes("escape");
+        redraw(cx);
+        let closed = count();
+        redraw(cx);
+        assert_eq!(count(), closed);
+        assert!(cx.debug_bounds("st-skin-ops").is_none());
+    }
+
+    #[gpui::test]
+    fn menu_clarity_settings_titles_keep_a_readable_measure(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::Appearance), cx));
+        for width in [600., 1600.] {
+            cx.simulate_resize(size(px(width), px(950.)));
+            redraw(cx);
+            for name in ["st-open-palette-label", "st-open-gauges-label"] {
+                let label = cx.debug_bounds(name).unwrap();
+                assert!(label.size.width >= px(112.), "{width}: {name} {label:?}");
+            }
+        }
+    }
+
+    #[gpui::test]
+    fn language_choices_fit_the_settings_column_on_tiled_windows(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| skin::select(cx, "terminimalist").unwrap());
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        for width in [900., 600.] {
+            cx.simulate_resize(size(px(width), px(600.)));
+            redraw(cx);
+            let section = cx.debug_bounds("st-sec-language").unwrap();
+            let viewport = cx.debug_bounds("st-page").unwrap();
+            for lang in [
+                "st-lang-en",
+                "st-lang-es",
+                "st-lang-de",
+                "st-lang-fr",
+                "st-lang-ru",
+                "st-lang-zh",
+                "st-lang-ja",
+                "st-lang-ko",
+                "st-lang-hi",
+            ] {
+                let chip = cx.debug_bounds(lang).unwrap();
+                assert!(
+                    chip.left() >= viewport.left() && chip.right() <= viewport.right(),
+                    "{width}px: {lang:?} at {chip:?} outside {viewport:?}"
+                );
+            }
+            assert!(
+                section.size.height < px(180.),
+                "{width}px: language section {section:?}"
+            );
+        }
+    }
+
+    #[gpui::test]
+    fn the_narrow_settings_footer_gives_its_shortcuts_a_second_line(cx: &mut gpui::TestAppContext) {
+        let _warp = crate::warp::WARP_SERIAL
+            .lock()
+            .unwrap_or_else(|p| p.into_inner());
+        let (ws, cx) = book_window(cx);
+        cx.update(|_, cx| skin::select(cx, "terminimalist").unwrap());
+        ws.update(cx, |ws, cx| ws.open_settings(Some(Page::General), cx));
+        cx.simulate_resize(size(px(900.), px(600.)));
+        redraw(cx);
+        let wide = cx.debug_bounds("st-footer").unwrap();
+        cx.simulate_resize(size(px(600.), px(600.)));
+        redraw(cx);
+        let narrow = cx.debug_bounds("st-footer").unwrap();
+        assert!(
+            narrow.size.height >= wide.size.height + px(8.),
+            "footer {wide:?} → {narrow:?}"
+        );
+        assert!(narrow.bottom() <= px(600.));
     }
 
     #[gpui::test]
