@@ -8,8 +8,9 @@ downloading it, and when.
 
 0.5.5 is frozen at the commit it was tagged from, and its
 [milestone](https://github.com/parker-brown-family/terminal-delight/milestone/7) is closed.
-The next release has no number yet. New work lands on `dev/0.5.5`, which stays
-the integration branch until one is chosen, unassigned until it has a milestone.
+The next release is **0.5.6**, a placeholder with no objectives yet: new work
+lands on `dev/0.5.6`, with the 0.5.6
+[milestone](https://github.com/parker-brown-family/terminal-delight/milestone/8).
 
 A PR’s **milestone** records its intended release. Its **base branch** records
 where it will merge. **Area labels** describe the work; `area:agent-comms`
@@ -57,9 +58,9 @@ work going in for manual testing and cut the next RC after each wave."* Every
 change waiting on a 37-minute CI run against the newest branch head had made
 eight small changes take about five hours to land, one after another.
 
-- **Landing does not wait for CI.** `dev/0.5.5` has no required checks, no
+- **Landing does not wait for CI.** `dev/0.5.6` has no required checks, no
   up-to-date rule and no required review; it still refuses force-pushes and
-  deletion. Land with a merge commit once your own gates pass: for anything
+  deletion, as `main` and every `dev/*` branch do, for administrators too. Land with a merge commit once your own gates pass: for anything
   under `app/`, `cargo fmt --check`, `cargo clippy --locked -- -D warnings` and
   `cargo test --locked --no-fail-fast`.
 - **CI still runs on every push, and reports.** A red run names the push that
