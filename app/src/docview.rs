@@ -98,6 +98,7 @@ pub mod notes;
 pub mod notes_ui;
 pub mod page;
 pub mod pdf;
+pub mod pdf_look;
 pub mod poppler;
 pub mod pref;
 pub mod prepare;
@@ -1582,6 +1583,10 @@ mod tests {
             ("docview/mpv.rs", strip(include_str!("docview/mpv.rs"))),
             ("docview/pdf.rs", strip(include_str!("docview/pdf.rs"))),
             (
+                "docview/pdf_look.rs",
+                strip(include_str!("docview/pdf_look.rs")),
+            ),
+            (
                 "docview/poppler.rs",
                 strip(include_str!("docview/poppler.rs")),
             ),
@@ -1704,6 +1709,7 @@ mod tests {
             "docview/page.rs",
             "docview/engine.rs",
             "docview/pdf.rs",
+            "docview/pdf_look.rs",
             "docview/poppler.rs",
         ] {
             let src = find(name);
