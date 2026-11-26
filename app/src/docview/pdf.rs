@@ -58,6 +58,7 @@ use gpui::{
 use super::backend::{Backend, Drawn};
 use super::image::{ImageZoom, ZoomStep};
 use super::page::{give_back, snap_offset, Measured, Wanted};
+use super::pdf_look;
 use super::poppler::{self, PageBox, Picture, Refused, Region, Tools};
 use super::progress::{Reading, GUTTER};
 use super::{DocumentView, FileStamp};
@@ -265,6 +266,10 @@ pub fn fragment_page(fragment: &str) -> Option<usize> {
 struct TileKey {
     /// The reading of the file it was drawn from.
     generation: u64,
+    /// The colours it was drawn in: counts the changes of theme and the
+    /// Paper chip's turns. A tile from an earlier look covers its page only
+    /// until this one's land, as one from an earlier reading does.
+    look: u64,
     region: Region,
 }
 
@@ -320,8 +325,30 @@ pub struct PdfDoc {
     woken: bool,
     reading: Option<(Task<()>, Wanted)>,
     drawn: bool,
+    /// The page as printed, by the Paper chip. Off when a PDF opens: pages
+    /// wear the theme by default.
+    paper: bool,
+    /// The colours tiles are being drawn in now, `None` for as printed, and
+    /// the count of its changes ([`TileKey::look`]).
+    look: Option<pdf_look::Look>,
+    look_gen: u64,
+    /// Where each page's pictures are, from `mutool trace`, for this
+    /// reading. `None` until it answers, and for good when it cannot.
+    spots: Option<Arc<pdf_look::Spots>>,
+    /// The trace still running, and when it started: themed tiles wait for
+    /// it a moment, so a photograph is not first drawn as a negative.
+    tracing: Option<(Task<()>, Wanted, std::time::Instant)>,
+    /// The Paper chip, view-local, as last drawn: `(x, y, w, h)`.
+    chip: Option<(f32, f32, f32, f32)>,
     _pump: Task<()>,
 }
+
+/// The Paper chip's size, logical pixels.
+const CHIP: (f32, f32) = (58.0, 20.0);
+
+/// How long themed tiles wait for the picture trace before drawing without
+/// it. A short paper traces in under a tenth of a second.
+const TRACE_WAIT: std::time::Duration = std::time::Duration::from_millis(1200);
 
 #[derive(Clone, Copy, Debug)]
 enum Land {
@@ -372,6 +399,12 @@ impl PdfDoc {
             woken: false,
             reading: None,
             drawn: false,
+            paper: false,
+            look: None,
+            look_gen: 0,
+            spots: None,
+            tracing: None,
+            chip: None,
             _pump: pump,
         }
     }
@@ -392,6 +425,9 @@ impl PdfDoc {
         self.generation += 1;
         // Tiles still being drawn from the last reading are not wanted.
         self.fetching.clear();
+        // Nor is where the last reading's pictures were.
+        self.spots = None;
+        self.tracing = None;
         let generation = self.generation;
         let path = self.path.clone();
         let wanted = Wanted::new();
@@ -442,6 +478,7 @@ impl PdfDoc {
                         pages.len()
                     );
                 }
+                self.trace(&pages, cx);
                 self.pages = Pages::Ready(Arc::new(pages));
                 self.pump(cx);
             }
@@ -456,6 +493,90 @@ impl PdfDoc {
                 }
             }
         }
+    }
+
+    /// Ask `mutool` where this reading's pictures are, if it is on PATH, and
+    /// wake the pump when it answers or when themed tiles have waited long
+    /// enough ([`TRACE_WAIT`]).
+    fn trace(&mut self, pages: &[PageBox], cx: &mut Context<DocumentView>) {
+        let Some(mutool) = pdf_look::mutool() else {
+            return;
+        };
+        let generation = self.generation;
+        let path = self.path.clone();
+        let shown: Vec<(f32, f32)> = pages.iter().map(PageBox::shown).collect();
+        let wanted = Wanted::new();
+        let still = wanted.flag();
+        let task = cx.spawn(async move |this, cx| {
+            let waited = cx.background_executor().timer(TRACE_WAIT);
+            let got = cx
+                .background_executor()
+                .spawn(async move { pdf_look::trace(&mutool, &path, &shown, &still) });
+            futures::pin_mut!(waited, got);
+            // Whichever comes first wakes the pump; the trace still lands.
+            let got = match futures::future::select(waited, got).await {
+                futures::future::Either::Left((_, got)) => {
+                    let _ = this.update(cx, |view, _| {
+                        if let Some(doc) = view.backend.downcast_mut::<PdfDoc>() {
+                            doc.wake();
+                        }
+                    });
+                    got.await
+                }
+                futures::future::Either::Right((got, _)) => got,
+            };
+            let _ = this.update(cx, |view, cx| {
+                if let Some(doc) = view.backend.downcast_mut::<PdfDoc>() {
+                    doc.traced(generation, got);
+                }
+                cx.notify();
+            });
+        });
+        self.tracing = Some((task, wanted, std::time::Instant::now()));
+    }
+
+    /// The trace answered. Tiles already drawn without it are drawn again
+    /// only if some page has a picture to keep.
+    fn traced(&mut self, generation: u64, got: Option<pdf_look::Spots>) {
+        if generation != self.generation {
+            return;
+        }
+        // Detached, not dropped: this runs inside that task, which is ending.
+        if let Some((task, ..)) = self.tracing.take() {
+            task.detach();
+        }
+        let Some(spots) = got else {
+            self.wake();
+            return;
+        };
+        let any = spots.values().any(|v| {
+            v.iter()
+                .any(|s| (s.x1 - s.x0) * (s.y1 - s.y0) < pdf_look::WHOLE_PAGE)
+        });
+        let drawn_without = self.look.is_some() && !self.tiles.is_empty();
+        self.spots = Some(Arc::new(spots));
+        if any && drawn_without {
+            self.relook();
+        } else {
+            self.wake();
+        }
+    }
+
+    /// The colours changed: every tile is drawn again in the new ones, the
+    /// old ones covering their pages until they land.
+    fn relook(&mut self) {
+        self.look_gen += 1;
+        self.fetching.clear();
+        self.wake();
+    }
+
+    /// Whether themed tiles are still waiting on the picture trace.
+    fn awaiting_trace(&self) -> bool {
+        self.look.is_some()
+            && self
+                .tracing
+                .as_ref()
+                .is_some_and(|(.., at)| at.elapsed() < TRACE_WAIT)
     }
 
     /// Lay the column out for the view as it is now, keeping the reader's
@@ -514,6 +635,7 @@ impl PdfDoc {
             .filter(|r| !self.broken.contains_key(&r.page))
             .map(|region| TileKey {
                 generation: self.generation,
+                look: self.look_gen,
                 region,
             })
             .collect()
@@ -550,6 +672,7 @@ impl PdfDoc {
                     return false;
                 }
                 let current = k.generation == self.generation
+                    && k.look == self.look_gen
                     && self.full_of(k.region.page) == Some(k.region.full);
                 let p = k.region.page;
                 current || p >= n || !seen_pages.contains(&p) || !uncovered.contains(&p)
@@ -574,6 +697,9 @@ impl PdfDoc {
         }
         // Stop drawing what the view has moved away from.
         self.fetching.retain(|k, _| want.contains(k));
+        if self.awaiting_trace() {
+            return changed;
+        }
         for key in wanted {
             if self.fetching.len() >= AT_ONCE {
                 break;
@@ -621,11 +747,29 @@ impl PdfDoc {
         let wanted = Wanted::new();
         let still = wanted.flag();
         let path = self.path.clone();
+        // The colours to draw it in, and the page's pictures to leave alone.
+        let tint = self.look.map(|look| {
+            let spots = self
+                .spots
+                .as_ref()
+                .and_then(|s| s.get(&key.region.page).cloned())
+                .unwrap_or_default();
+            (look, spots)
+        });
         let task = cx.spawn(async move |this, cx| {
             let started = std::time::Instant::now();
             let got = cx
                 .background_executor()
-                .spawn(async move { poppler::render(&tools, &path, &key.region, rot, &still) })
+                .spawn(async move {
+                    let mut p = poppler::render(&tools, &path, &key.region, rot, &still)?;
+                    if let Some((look, spots)) = tint {
+                        let r = &key.region;
+                        let keep =
+                            pdf_look::spots_in_tile(&spots, r.full, (r.x, r.y, p.width, p.height));
+                        pdf_look::recolour(&mut p.bgra, p.width, p.height, &look, &keep);
+                    }
+                    Ok::<Picture, Refused>(p)
+                })
                 .await;
             let took = started.elapsed();
             let _ = this.update(cx, |view, cx| {
@@ -659,7 +803,7 @@ impl PdfDoc {
             Some(fetch) => fetch.task.detach(),
             None => return false,
         }
-        if key.generation != self.generation {
+        if key.generation != self.generation || key.look != self.look_gen {
             return false;
         }
         match got {
@@ -742,6 +886,11 @@ impl Backend for PdfDoc {
         let Some((size, sf)) = view.frame else {
             return Self::note(t.doc_opening.into(), th);
         };
+        let look = (!self.paper).then(|| pdf_look::Look::of(th));
+        if look != self.look {
+            self.look = look;
+            self.relook();
+        }
         if self.frame != view.frame {
             self.frame = view.frame;
             self.wake();
@@ -804,7 +953,9 @@ impl Backend for PdfDoc {
                 .h(px(tile.height as f32 * per_y))
                 .object_fit(ObjectFit::Fill)
                 .into_any_element();
-            let current = key.generation == self.generation && page_dev(&r, sf) == key.region.full;
+            let current = key.generation == self.generation
+                && key.look == self.look_gen
+                && page_dev(&r, sf) == key.region.full;
             if current {
                 over.push(el);
             } else {
@@ -827,6 +978,31 @@ impl Backend for PdfDoc {
                 .child(format!("{} / {}", p + 1, col.pages.len()))
                 .into_any_element()
         });
+        // The Paper chip, top right: lit while the pages are as printed.
+        let (chip_x, chip_y) = (vw - GUTTER - CHIP.0, 8.0);
+        self.chip = Some((chip_x, chip_y, CHIP.0, CHIP.1));
+        let chip = sk
+            .chrome(sk.sheet())
+            .absolute()
+            .left(px(chip_x))
+            .top(px(chip_y))
+            .w(px(CHIP.0))
+            .h(px(CHIP.1))
+            .flex()
+            .items_center()
+            .justify_center()
+            .rounded(sk.radius())
+            .bg(if self.paper {
+                th.accent.alpha(0.85)
+            } else {
+                th.bg.alpha(0.85)
+            })
+            .border_1()
+            .border_color(th.accent.alpha(0.4))
+            .text_size(sk.text_px(11.))
+            .text_color(if self.paper { th.bg } else { th.accent })
+            .child(t.pdf_paper)
+            .into_any_element();
         if !self.drawn && !over.is_empty() {
             self.drawn = true;
             if std::env::var_os("TD_DOCDEBUG").is_some() {
@@ -856,6 +1032,7 @@ impl Backend for PdfDoc {
             .children(under)
             .children(over)
             .children(counter)
+            .child(chip)
             .into_any_element()
     }
 
@@ -877,9 +1054,17 @@ impl Backend for PdfDoc {
     }
 
     /// A press grabs the column, to move it by dragging, as on a picture.
-    fn press(&mut self, at: Point<Pixels>, _view: &Drawn, _cx: &mut Context<DocumentView>) -> bool {
+    fn press(&mut self, at: Point<Pixels>, _view: &Drawn, cx: &mut Context<DocumentView>) -> bool {
         if !matches!(self.pages, Pages::Ready(_)) {
             return false;
+        }
+        let (x, y) = (f32::from(at.x), f32::from(at.y));
+        if let Some((cx0, cy0, w, h)) = self.chip {
+            if x >= cx0 && x < cx0 + w && y >= cy0 && y < cy0 + h {
+                self.paper = !self.paper;
+                cx.notify();
+                return true;
+            }
         }
         self.held = Some((at, self.top, self.left));
         true

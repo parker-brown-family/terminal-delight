@@ -294,7 +294,7 @@ pub fn parse_info(text: &str) -> Result<Vec<PageBox>, Refused> {
 }
 
 /// A path as an argument no tool can mistake for an option.
-fn arg_path(path: &Path) -> PathBuf {
+pub(super) fn arg_path(path: &Path) -> PathBuf {
     if path.is_absolute() {
         path.to_path_buf()
     } else {
@@ -469,7 +469,7 @@ pub fn ppm_to_bgra(bytes: &[u8]) -> Result<Picture, String> {
 /// soon as `still` is lowered. Both pipes are read on threads of their own: a
 /// broken file can make poppler write more complaints than a pipe holds, and
 /// a child blocked writing its errors never finishes its picture.
-fn run(
+pub(super) fn run(
     cmd: &mut Command,
     limit: Duration,
     most: usize,
@@ -550,6 +550,44 @@ pub fn two_page_pdf() -> Vec<u8> {
          /Contents 6 0 R >>"
             .into(),
         format!("<< /Length {} >>\nstream\n{red}\nendstream", red.len()),
+    ];
+    let mut out = b"%PDF-1.4\n".to_vec();
+    let mut offsets = Vec::new();
+    for (i, o) in objects.iter().enumerate() {
+        offsets.push(out.len());
+        out.extend(format!("{} 0 obj\n{o}\nendobj\n", i + 1).bytes());
+    }
+    let xref = out.len();
+    out.extend(format!("xref\n0 {}\n0000000000 65535 f \n", objects.len() + 1).bytes());
+    for o in offsets {
+        out.extend(format!("{o:010} 00000 n \n").bytes());
+    }
+    out.extend(
+        format!(
+            "trailer\n<< /Size {} /Root 1 0 R >>\nstartxref\n{xref}\n%%EOF\n",
+            objects.len() + 1
+        )
+        .bytes(),
+    );
+    out
+}
+
+/// A PDF built by hand for the tests: one 200 × 200 page with a 1 × 1 RGB
+/// image painted over its middle half, 50 to 150 points each way, so the
+/// picture's place is a quarter of the page in from every edge.
+#[cfg(test)]
+pub fn picture_pdf() -> Vec<u8> {
+    let draw = "q 100 0 0 100 50 50 cm /Im0 Do Q";
+    let objects = [
+        "<< /Type /Catalog /Pages 2 0 R >>".to_string(),
+        "<< /Type /Pages /Kids [3 0 R] /Count 1 >>".into(),
+        "<< /Type /Page /Parent 2 0 R /MediaBox [0 0 200 200] \
+         /Resources << /XObject << /Im0 5 0 R >> >> /Contents 4 0 R >>"
+            .into(),
+        format!("<< /Length {} >>\nstream\n{draw}\nendstream", draw.len()),
+        "<< /Type /XObject /Subtype /Image /Width 1 /Height 1 /ColorSpace /DeviceRGB \
+         /BitsPerComponent 8 /Length 3 >>\nstream\n\u{0}\u{0}\u{0}\nendstream"
+            .into(),
     ];
     let mut out = b"%PDF-1.4\n".to_vec();
     let mut offsets = Vec::new();
